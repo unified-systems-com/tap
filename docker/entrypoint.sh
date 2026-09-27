@@ -7,7 +7,7 @@
 # 3. The web server (gunicorn) + the Steady Queue supervisor
 #
 # The dependency sync lives here (rather than in the Dockerfile) because
-# /app/.venv and /root/.cache/uv are named volumes mounted at runtime —
+# /app/.venv and $UV_CACHE_DIR are named volumes mounted at runtime —
 # anything we install at build time is hidden at runtime. Doing it in the
 # entrypoint means the install lands in the per-project container venv and
 # uv cache volumes, which is what we actually want to use. The image ships a
@@ -36,15 +36,37 @@ emit_abort() { echo "TAP-ABORT: $1: $2" >&2; }
 # against its build-time manifest first (full bidirectional reconciliation:
 # mismatch, missing, extra), and present-but-INVALID is a fail-closed abort —
 # inside an immutable image that means corruption or tamper, never staleness.
-if [[ -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
+#
+# UV_CACHE_DIR is set by the image (Dockerfile `app` stage) and is the mount target of
+# the per-project `uv_cache` volume. The fallback is uv's own $HOME-relative default and
+# exists only so this script stays runnable under an older image that predates the move
+# off /root/.cache/uv — it is never the path a current stack uses.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME:-/root}/.cache/uv}"
+# CREATE IT. This script is BIND-MOUNTED (`entrypoint: ["/app/docker/entrypoint.sh"]`), so a
+# checkout ALWAYS runs its own entrypoint against whatever image is pulled — including an
+# image published before this file changed. That is not a migration corner, it is the normal
+# state of every dev stack, and an entrypoint that assumes the image already matches it will
+# crash-loop on the one before.
+#
+# Proved on PR# 759 - tap: against the published image, UV_CACHE_DIR is unset, HOME is /root,
+# the fallback resolves to /root/.cache/uv, compose now mounts the cache volume somewhere
+# else, and the copy died with `cp: can't create directory '/root/.cache/uv/'` — restarting
+# forever. The new image prepares this path already, so this is a no-op there.
+mkdir -p "${UV_CACHE_DIR}" 2>/dev/null || true
+if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
   if [[ -d /opt/uv-cache-seed && -f /opt/uv-cache-seed.manifest.json ]]; then
     # Verifier is taken from the TREE when running under the dev bind mount is
     # impossible here: this script itself runs from /app (compose entrypoint), but
     # the verifier + manifest + seed are IMAGE artifacts — use the baked copy.
     echo "==> Verifying wheel-cache seed against its build-time manifest..."
     if python3 /usr/local/lib/tap/seed_manifest.py verify /opt/uv-cache-seed /opt/uv-cache-seed.manifest.json; then
-      echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> /root/.cache/uv)..."
-      cp -a /opt/uv-cache-seed/. /root/.cache/uv/
+      echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> ${UV_CACHE_DIR})..."
+      # `cp -r`, NOT `cp -a`: the seed is root-owned inside the image and this script runs
+      # unprivileged (tap#754), so `-a`'s ownership preservation fails the chown, and under
+      # BusyBox cp that is a non-zero exit — i.e. `set -e` would turn a successful seed into
+      # a dead container. Ownership of the copy is ours by construction (we created it);
+      # what has to survive is the BYTES, which the manifest verified above.
+      cp -r /opt/uv-cache-seed/. "${UV_CACHE_DIR}/"
     else
       emit_abort seed-verify "wheel-cache seed does not match its build-time manifest (see above) — image corruption or tamper; refusing to seed or serve"
       exit 1
@@ -65,6 +87,67 @@ if [[ -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
   else
     echo "==> No wheel-cache seed in image — uv will download/compile (slow path, uv.lock hash-verified)."
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Codespaces derivation (gs#101) — before ANY settings are read.
+# ---------------------------------------------------------------------------
+# A Codespace forwards its port on a hostname generated per Codespace, and four
+# settings depend on it: ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, the forwarded-proto
+# header to trust, and TAP_BASE_URL — plus SECRET_KEY, which has no fallback, and
+# TAP_AUTH_INSTANCE_OWNER, which names the account that opened the Codespace.
+#
+# It runs HERE, inside the container, rather than on the host before `compose up`,
+# and that is forced rather than chosen: compose substitutes `${VAR}` from the
+# shell and from `.env` (checked in) and never from `.env.local`, and
+# devcontainer.json has no hook to pass `--env-file`. Codespaces injects its own
+# variables into the dev container, so the inputs are present here. See
+# scripts/codespace-env for the full reasoning.
+#
+# NO-OP unless CODESPACES=true, so an ordinary dev or production boot is
+# untouched.
+#
+# In a Codespace the derivation is AUTHORITATIVE — it overwrites what compose
+# supplied. The first draft did the opposite, preserving any value already in the
+# environment on the reasoning that an operator outranks a derivation, and testing
+# showed that rule can never fire: docker-compose.yml gives every one of these keys
+# a default, so ALLOWED_HOSTS always arrives as `localhost,127.0.0.1,.localhost`
+# and SECRET_KEY always arrives as the development value. "Already set" cannot
+# distinguish an operator's choice from compose's default, so the protective rule
+# would have skipped exactly the two keys that matter most — the instance would
+# have served 400s on its own hostname and then refused to boot on a SECRET_KEY the
+# deploy gate rejects by digest.
+#
+# The escape hatch is therefore the whole block, not a per-key comparison:
+# TAP_CODESPACE_DERIVE=false turns the derivation off and leaves the environment
+# exactly as compose built it.
+if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_CODESPACE_DERIVE:-true}" != "false" ]; then
+    echo "==> Codespace detected: deriving the forwarded origin and instance owner..."
+    _cs_env=/run/tap-codespace.env
+    if /app/scripts/codespace-env --output "$_cs_env" --force; then
+        while IFS='=' read -r _k _v; do
+            case "$_k" in ''|\#*) continue ;; esac
+            export "$_k=$_v"
+        done < "$_cs_env"
+        echo "==> Codespace origin: ${TAP_BASE_URL:-<none>}"
+    else
+        # FATAL. The first version warned and continued, on the reasoning that "the boot
+        # below will fail loudly and specifically on whichever value is actually missing".
+        # That reasoning was WRONG, and a live Codespace proved it on 2026-09-21: the
+        # instance came up serving, looked healthy, and had silently fallen back to
+        # core_dev — which declares no auth provider, so the login page offered a password
+        # fallback and no GitHub button. Nothing failed loudly. It failed politely, and
+        # looked like a product bug.
+        #
+        # This step establishes SECRET_KEY, TAP_BOOT_PROFILE, the owner-only identity and
+        # the trusted-proxy header. A boot that proceeds without them is not a degraded
+        # instance, it is a DIFFERENT one wearing the same hostname — and the auth posture
+        # is the half that goes quiet rather than loud. Raised as a finding by the Codex
+        # seat on PR# 755 - tap, which asked for fail-closed behaviour to be proven or
+        # restored; it could not be proven, so it is restored.
+        emit_abort codespace-derive "Codespace derivation failed; refusing to serve with an unestablished posture (SECRET_KEY / TAP_BOOT_PROFILE / owner / proxy header)"
+        exit 1
+    fi
 fi
 
 echo "==> Syncing Python dependencies (uv sync --all-packages)..."
@@ -148,10 +231,19 @@ export TAP_PLUGINS
 # that do NOT inherit this shell's env read the SAME authoritative plugin set, instead of
 # racing live entry-point discovery (importlib.metadata's mtime cache can disagree across
 # processes → a registered type with no migrated table, the plugin-loading race 2026-08-11).
-# /run is tmpfs; rewritten every boot, so never stale. Best-effort: the export above covers
-# the server; a persist failure only degrades sibling execs back to the warned fallback.
-printf '%s' "${TAP_PLUGINS}" > /run/tap-plugins \
-    || echo "==> WARN: could not persist TAP_PLUGINS to /run/tap-plugins (sibling execs fall back to discovery)" >&2
+# /run/tap lives in the container's own writable layer — per-container, discarded with it,
+# so the file is rewritten every boot and can never be stale. (It is NOT a tmpfs, as this
+# comment claimed until tap#754 went looking: `/run` here is plain image-layer storage;
+# only `/run/tap-gunicorn` and `/run/tap-secrets` are mounts.) The directory is created and
+# made writable in the image because this script no longer runs as root and cannot create a
+# path in the root-owned `/run` itself. Best-effort: the export above covers the server; a
+# persist failure only degrades sibling execs back to the warned fallback.
+# Same reason as UV_CACHE_DIR above: the image that prepares /run/tap may not be the image
+# this entrypoint is running on. /run is root-owned, so this succeeds on the old image (root)
+# and is a no-op on the new one (the Dockerfile already made it, owned nonroot:0).
+mkdir -p /run/tap 2>/dev/null || true
+printf '%s' "${TAP_PLUGINS}" > /run/tap/plugins \
+    || echo "==> WARN: could not persist TAP_PLUGINS to /run/tap/plugins (sibling execs fall back to discovery)" >&2
 echo "==> Pre-boot complete. TAP_PLUGINS=[${TAP_PLUGINS:-<none>}]"
 
 # ---------------------------------------------------------------------------
@@ -197,6 +289,53 @@ echo "==> Running database migrations..."
 # reaching a plugin-only dependency raises ModuleNotFoundError here. The sentinel turns that
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
 uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Boot orchestration — CODESPACES ONLY (req-boot-*, spec-tap-boot-v0.md).
+# ---------------------------------------------------------------------------
+# The comment above pre-boot says "`manage.py boot` (population) still runs at spawn
+# time", and for a developer stack that is true: scripts/spawn-session.sh runs it.
+#
+# A CODESPACE NEVER RUNS spawn-session.sh. The devcontainer brings compose up and that
+# is the whole of it — so the boot orchestrator never ran, and the instance served in a
+# half-provisioned state that looked healthy from every angle we had been checking.
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j. THREE separate
+# user-visible failures, all this one omission:
+#
+#   * `Forbidden (capability_denied)` after a fully successful GitHub device login —
+#     the auth phase never applied, so no role groups existed at all (the `tap_admin`
+#     group had to be CREATED by hand; adding a user to a group that does not exist
+#     grants nothing).
+#   * `ORM search execution failed: ... password authentication failed for user
+#     "tap_gryphon_ro"` — which is not a password problem. The Grid-infra phase
+#     provisions that role, so the role did not EXIST. PostgreSQL reports a missing
+#     role as an authentication failure to avoid user enumeration, and that wording
+#     sent the first diagnosis looking for a credential that was never the issue.
+#   * No population applied.
+#
+# RAN, on that instance, as the proof: `manage.py boot` emitted "provisioned search
+# role tap_gryphon_ro with SELECT on 17 tables", "last-admin invariant OK", and
+# "boot complete" — and the failing page recovered.
+#
+# GATED ON CODESPACES, deliberately. A developer stack must keep getting its boot from
+# spawn-session.sh: that script owns the admin bootstrap and the registry row, and
+# running the orchestrator twice from two owners is how you get two sources of truth
+# for the same population. This closes the gap only where no other owner exists.
+#
+# NOT fail-closed. A boot failure here leaves an instance that still serves and can
+# still be signed into, which is a better place to debug from than a container that
+# refuses to start — and the message names the step for anyone reading the log.
+if [ "${CODESPACES:-}" = "true" ]; then
+    echo "==> Codespace: running boot orchestration (no spawn-session.sh exists here)..."
+    if uv run python manage.py boot; then
+        echo "==> Codespace: boot complete."
+    else
+        echo "==> WARN: Codespace boot orchestration FAILED. The instance will still serve," >&2
+        echo "          but expect capability_denied on login and a failing search until this" >&2
+        echo "          is resolved — the search role and role groups are created by this step." >&2
+    fi
+fi
 
 # Note: tailwindcss is NOT rebuilt at container start. The committed
 # tap_web/static/tap_web/css/tailwind.css is served as-is. Dev work that

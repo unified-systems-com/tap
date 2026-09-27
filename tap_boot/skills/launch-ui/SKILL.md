@@ -13,6 +13,13 @@ ceremony — resolve, verify, print, open. This is an operational procedure auth
 as an AI-operable skill (`spec-ai-integration.md`): the coding agent inside a session
 is the expected operator, on the human's "open the UI".
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Step 1 — Resolve the session from the worktree
 
 Read `.env.local` in the worktree root for `WEB_PORT` and `TAP_SESSION_LABEL`.

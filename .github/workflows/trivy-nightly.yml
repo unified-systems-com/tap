@@ -6,7 +6,7 @@
 # Findings land as SARIF in code scanning (same per-image categories as the
 # publish-time scan, so alerts dedupe rather than duplicate). Report-only by
 # design: the response loop for a real finding is a Renovate digest-bump PR
-# (Chainguard patches fast) through the test_all gate, then publish ships the
+# (Chainguard patches fast) through the PR `gate`, then publish ships the
 # patched image — not a red nightly blocking anything.
 #
 # Waivers: .trivyignore at the repo root; every entry carries a mandatory reason
@@ -60,7 +60,7 @@ jobs:
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}

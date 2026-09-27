@@ -101,6 +101,9 @@
         },
         "node": {
           "type": "object"
+        },
+        "retirement": {
+          "$ref": "#/$defs/GriftRetirement"
         }
       }
     },
@@ -168,6 +171,9 @@
         },
         "edge": {
           "$ref": "#/$defs/GriftEdgePayload"
+        },
+        "retirement": {
+          "$ref": "#/$defs/GriftRetirement"
         }
       }
     },
@@ -199,6 +205,60 @@
         },
         "purges": {
           "$ref": "#/$defs/GriftPurgesSection"
+        },
+        "contents": {
+          "$ref": "#/$defs/GriftContents"
+        }
+      }
+    },
+    "GriftRetirement": {
+      "description": "The entity's retirement in the grid the record came from, carried as plain data. Present only on a retired node or edge. It is the source grid's record, never the importing grid's provenance: the importer retires the row in its own batch and keeps this block beside that record. See req-grift-retirement.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retired_at", "batch_id", "reason", "metadata"],
+      "properties": {
+        "retired_at": {
+          "description": "When the source grid retired the entity (its Entity.deleted_at).",
+          "type": "string",
+          "format": "date-time"
+        },
+        "batch_id": {
+          "description": "The source grid's retiring batch, or null when the source grid recorded none.",
+          "oneOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]
+        },
+        "reason": {
+          "description": "The reason the source grid recorded for the retirement, or null when it recorded no retirement event for this entity.",
+          "oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]
+        },
+        "metadata": {
+          "description": "The rest of the source grid's retirement event metadata; empty when it recorded none.",
+          "type": "object"
+        }
+      }
+    },
+    "GriftContents": {
+      "description": "What kinds of record this batch carries, one key per aspect. The exporter declares; the importer verifies the declaration against the batch and decides which aspects it accepts. An aspect declared included:false is always accepted. See req-grift-contents.",
+      "type": "object",
+      "required": ["tombstones"],
+      "properties": {
+        "tombstones": {
+          "description": "Retired nodes and edges, each carrying a retirement block; nodes and edges are their counts in this batch.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["included", "nodes", "edges"],
+          "properties": {
+            "included": {"type": "boolean"},
+            "nodes": {"type": "integer", "minimum": 0},
+            "edges": {"type": "integer", "minimum": 0}
+          }
+        }
+      },
+      "additionalProperties": {
+        "description": "An aspect this version does not define (for example history or flip). Its included flag says whether the batch carries it.",
+        "type": "object",
+        "required": ["included"],
+        "properties": {
+          "included": {"type": "boolean"}
         }
       }
     },

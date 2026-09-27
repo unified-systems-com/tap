@@ -301,13 +301,60 @@ wishlist and all three external studies. What it changes:
   in action (GRY-ARCH-3) — the corpus shows they're *demanded*, which is what makes fail-closed
   (vs. silent-wrong) the right posture until they're built.
 
-### 5.1 Reachability will be served by named paths, not variable-length traversal (planned, per George)
+### 5.1 Reachability is served by named paths AND variable-length traversal — they are complementary (corrected 2026-09-22, per George)
+
+> **CORRECTED 2026-09-22.** This section previously said the planned implementation *"replaces
+> reachability-by-traversal with reachability-by-declared-path membership"*, and that var-length
+> `-[*n..m]-` was therefore not on the near-term path because *"the reachability demand it represents
+> is met by the named-path primitive instead."* That was George's July 2026 position and he has
+> revised it. The substitution claim is withdrawn; the rest of the section — the three
+> implementations, the APOC comparison, the design input — stands. The correction is recorded rather
+> than silently rewritten, because a study that shows where it changed its mind is worth more than one
+> that appears never to have needed to.
+>
+> George, 2026-09-22: *"paths and traversals are two different, but complimentary things. paths are
+> designed to be persistent, traversals are ad-hoc / real-time. they're apples and oranges but both of
+> them are fruit."*
 
 The demand this study surfaces for Bucket E (attack-path / blast-radius reachability, §3.4) is real,
-but the **planned implementation replaces reachability-by-traversal with reachability-by-declared-path
-membership** — a deliberately cheaper route that sidesteps E1's recursive-CTE, the heaviest wishlist
-item. **Named paths become first-class declared structure**, and "what is reachable" collapses into
-"select the elements on named path *P*" — an indexed membership filter, not a query-time graph walk.
+and it is served by **two primitives, not one**. **Named paths become first-class declared structure**,
+so "is the route we named still intact?" becomes an indexed membership filter rather than a query-time
+graph walk. That is a genuine and large win. It is not the same question as "what routes exist?", and
+it cannot be made into one.
+
+**Why substitution cannot work, stated once so nobody re-derives it.** Declared membership answers a
+question about a route somebody already named. Reachability asks what routes exist, *including the
+ones nobody named*. The second cannot be derived from the first: falsification machinery can tell you
+whether a recorded fact is still true, and can say nothing whatsoever about a fact that was never
+recorded. An instance is exactly the case that matters — `vuln-triage` asks "what route exists from
+here to that?", and a declared path cannot enumerate the route nobody thought to declare.
+
+**The genus, and what the two therefore share.** Both are statements about connectivity, which means
+they want ONE vocabulary rather than two. GQL's ISO-standard restrictors (`WALK` / `TRAIL` / `SIMPLE`
+/ `ACYCLIC`) and selectors (`ANY`, `ALL SHORTEST`, `SHORTEST k`) describe what *kind* of route is
+meant, and that question is identical whether the route is being declared or being found. Inventing
+separate TAP vocabulary for each side would be the private-notation trap twice over.
+
+**The four axes on which they differ.** These are the reason they are not interchangeable, and each
+has a design consequence:
+
+| Axis | Traversal | Declared path |
+| --- | --- | --- |
+| **Time** | True at the instant of the query; claims nothing beyond it | A standing claim that persists *so that it can be falsified* — you cannot detect drift against something that evaporates |
+| **Cost** | Scales with the **branching** factor | Revalidation scales with **length** — Θ(k), measured. Different curves, so neither subsumes the other's cost |
+| **Lifecycle** | None | Identity, version, owner, tombstone, history. "Chart how this path changed" has no traversal equivalent |
+| **Authorization** | Filtered per query by the viewer's dimensions — the viewer simply sees less | An **object** with its own dimensions, readable by someone who cannot see its members. Persistence is what turns "you saw less" into "you saw that something was hidden" — an inference channel that exists on only one side |
+
+**And the bridge, which the original framing could not express.** A traversal is how you *find* a path
+worth declaring. Walk the graph, find the route that matters, **save it as a path**. Discovery feeds
+declaration; declaration then makes that route monitorable in a way a repeated query never is. Framing
+one as the successor to the other hides this workflow entirely, and without it declared paths are
+something a user must author from scratch — which is how a good primitive goes unused.
+
+The product is the **gap between them**: a path TAP discovers is a fact about the graph this morning; a
+path somebody declares is a claim about how the organisation believes it works. The distance between
+the two has a name in three separate literatures — conformance, drift, reconvergence — it is
+measurable, and it is precisely what cannot be computed if only one side was ever stored.
 Three implementations, in order (the first two targeted near-term):
 
 1. **Module / model-defined paths** — a module declares its trajectory along a named path at the model
@@ -324,9 +371,11 @@ Cypher/APOC users hand-roll reachability per query — `apoc.path.expandConfig` 
 (§7.3). TAP declares the trajectory once as a named path and filters by membership; the APOC `sequence`
 config is the query-time shadow of what TAP makes a first-class type.
 
-**Consequences for this study:** var-length `-[*n..m]-` stays parse-but-reject (fail-closed) and is
-*not* on the near-term path; the reachability demand it represents is met by the named-path primitive
-instead. `shortestPath` (true least-cost / centrality) is a separate concern and still routes to the
+**Consequences for this study (revised 2026-09-22):** var-length `-[*n..m]-` remains parse-but-reject
+(fail-closed) **today**, which is the correct posture for an unbuilt feature — but it is no longer
+*deprioritised on the grounds that named paths cover it*, because they do not. E1's demand stands on
+its own and the named-path primitive is additive to it, not a substitute. The original text is
+preserved in the correction note above. `shortestPath` (true least-cost / centrality) is a separate concern and still routes to the
 analytics backend (`doc-gryphon-networkx-opportunity.md`), not to named paths. Design input still
 transfers: APOC's `expandConfig` knobs (edge-type / label / depth / node allow-deny, §7.3) are the
 vocabulary a named-path *definition* will want to express.

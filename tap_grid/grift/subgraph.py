@@ -60,6 +60,22 @@ SubgraphLayer = Literal["lite", "full", "extended"]
 _BASEMODEL_UNIVERSAL_FIELDS: tuple[str, ...] = ("description", "batch_id", "flip_map")
 
 
+def json_safe(value: Any) -> Any:
+    """Coerce one ORM field value into a JSON-safe scalar.
+
+    The single derivation of "how a stored value becomes a serialized value"
+    for every GRIFT surface — the read-shape lanes below and the re-importable
+    document built by :mod:`tap_grid.grift.exporter`. UUIDs become strings,
+    anything date-like becomes ISO 8601, everything else is returned unchanged
+    (JSONField contents are already JSON by construction).
+    """
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
 def build_spine_surface(entity: Entity) -> dict[str, Any]:
     """Build the top-level spine surface for an envelope.
 
@@ -78,12 +94,7 @@ def build_spine_surface(entity: Entity) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for serialized_name in _Entity.SPINE_FIELD_NAMES:
         django_name = _Entity.SPINE_DJANGO_NAME.get(serialized_name, serialized_name)
-        value = getattr(entity, django_name, None)
-        if isinstance(value, uuid.UUID):
-            value = str(value)
-        elif hasattr(value, "isoformat"):
-            value = value.isoformat()
-        result[serialized_name] = value
+        result[serialized_name] = json_safe(getattr(entity, django_name, None))
     return result
 
 
@@ -116,23 +127,13 @@ def build_data_lane(typed_model: BaseModel | None) -> dict[str, Any]:
     for field_name in typed_model.FIELD_CRUD_SCHEMA:
         if field_name == "entity_type":
             continue  # Spine field; never in data.
-        value = getattr(typed_model, field_name, None)
-        if isinstance(value, uuid.UUID):
-            value = str(value)
-        elif hasattr(value, "isoformat"):
-            value = value.isoformat()
-        result[field_name] = value
+        result[field_name] = json_safe(getattr(typed_model, field_name, None))
 
     # Universal BaseModel fields not already declared in FIELD_CRUD_SCHEMA.
     for field_name in _BASEMODEL_UNIVERSAL_FIELDS:
         if field_name in result:
             continue
-        value = getattr(typed_model, field_name, None)
-        if isinstance(value, uuid.UUID):
-            value = str(value)
-        elif hasattr(value, "isoformat"):
-            value = value.isoformat()
-        result[field_name] = value
+        result[field_name] = json_safe(getattr(typed_model, field_name, None))
 
     return result
 
@@ -256,12 +257,7 @@ def _build_edge_data_lane(edge: Edge) -> dict[str, Any]:
     for field_name in _BASEMODEL_UNIVERSAL_FIELDS:
         if field_name in result:
             continue
-        value = getattr(edge, field_name, None)
-        if isinstance(value, uuid.UUID):
-            value = str(value)
-        elif hasattr(value, "isoformat"):
-            value = value.isoformat()
-        result[field_name] = value
+        result[field_name] = json_safe(getattr(edge, field_name, None))
     return result
 
 

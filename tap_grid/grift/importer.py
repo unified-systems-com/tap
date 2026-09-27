@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/ba2804af6085 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0c50944318b9 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -94,6 +94,10 @@ class GriftCounts:
     edges_purged: int = 0
     nodes_purged: int = 0
     removals_skipped: int = 0
+    # Retired entities carried by a `retirement` block (req-grid-import-grift-retired).
+    edges_retired: int = 0
+    nodes_retired: int = 0
+    retirements_skipped: int = 0
     errors: int = 0
     warnings: int = 0
 
@@ -158,6 +162,10 @@ class GriftImportedBatch:
     edges_purged: int = 0
     nodes_purged: int = 0
     removals_skipped: int = 0
+    # Retired entities carried by a `retirement` block (req-grid-import-grift-retired).
+    edges_retired: int = 0
+    nodes_retired: int = 0
+    retirements_skipped: int = 0
     # Batch-local refs and the ids they resolved to (the gate, shape A —
     # Issue# 593 - tap): the one place a collector learns what its refs became.
     resolved_refs: dict[str, str] = None  # type: ignore[assignment]
@@ -240,11 +248,11 @@ _BATCH_REQUIRED = frozenset(["batch_entity", "batch_node", "nodes", "edges"])
 # Removal sections (`deletes`, `purges`) are optional per
 # req-grift-import-deletes; presence is detected at parse time and validated
 # in removal preflight. They are NOT in _BATCH_REQUIRED.
-_BATCH_ALLOWED = frozenset(["batch_entity", "batch_node", "nodes", "edges", "deletes", "purges"])
+_BATCH_ALLOWED = frozenset(["batch_entity", "batch_node", "nodes", "edges", "deletes", "purges", "contents"])
 _NODE_REQUIRED = frozenset(["entity", "node"])
-_NODE_ALLOWED = frozenset(["entity", "node"])
+_NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
-_EDGE_ALLOWED = frozenset(["entity", "edge"])
+_EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
 _ENVELOPE_REQUIRED = frozenset(["entity_id", "entity_type", "dimensions"])
 # `entity_expected_version` is the optional OCC declaration on upsert
 # envelopes (req-grift-concurrency-version). The importer parses and
@@ -274,6 +282,11 @@ _DELETES_ALLOWED = frozenset(["on_missing", "on_tombstoned", "edges", "nodes"])
 _PURGES_REQUIRED = frozenset(["on_missing", "edges", "nodes"])
 _PURGES_ALLOWED = frozenset(["on_missing", "edges", "nodes"])
 _REMOVAL_POLICY_VALUES = frozenset(["error", "warn", "ignore"])
+# The retirement block a retired node or edge carries (req-grift-retirement).
+_RETIREMENT_KEYS = frozenset(["retired_at", "batch_id", "reason", "metadata"])
+# Contents aspects this importer accepts when declared included (req-grift-contents-3).
+_ACCEPTED_CONTENTS = frozenset(["tombstones"])
+_TOMBSTONES_KEYS = frozenset(["included", "nodes", "edges"])
 
 # Codes that are always treated as hard errors (not warnings).
 _ERROR_CODES = frozenset(
@@ -324,6 +337,10 @@ _ERROR_CODES = frozenset(
         # type has declared no search at all.
         "identity_ambiguous",
         "identity_undeclared",
+        # The contents declaration (req-grift-contents): a declaration the batch does not
+        # match, or an aspect this importer does not accept.
+        "contents_mismatch",
+        "unsupported_contents",
     ]
 )
 
@@ -675,6 +692,187 @@ def _validate_envelope(
             )
 
     return entity_id
+
+
+# ---------------------------------------------------------------------------
+# Retirement block and contents declaration (req-grift-retirement, req-grift-contents)
+# ---------------------------------------------------------------------------
+
+
+def _validate_retirement_block(
+    retirement: Any,
+    path: str,
+    issues: list[GriftIssue],
+    *,
+    reference_time: datetime,
+    batch_entity_id: str | None,
+    entity_id: str | None,
+) -> None:
+    """Check one ``retirement`` block (req-grift-retirement-1).
+
+    The document schema holds the shape; this adds what the schema cannot: a
+    parseable ``retired_at`` no later than the reference time, and a ``batch_id``
+    in its one canonical spelling (req-grid-import-grift-identity-4), written back.
+    """
+    if not isinstance(retirement, dict):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"retirement must be an object at {path}",
+                "schema",
+                path,
+                batch_entity_id=batch_entity_id,
+                entity_id=entity_id,
+            )
+        )
+        return
+    for key in sorted(set(retirement) ^ _RETIREMENT_KEYS):
+        state = "Unknown" if key in retirement else "Missing required"
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"{state} key '{key}' in retirement at {path}",
+                "schema",
+                f"{path}.{key}",
+                batch_entity_id=batch_entity_id,
+                entity_id=entity_id,
+            )
+        )
+    retired_at = _check_datetime(
+        retirement.get("retired_at"), f"{path}.retired_at", issues, batch_entity_id=batch_entity_id
+    )
+    if retired_at is not None and _make_aware(retired_at) > reference_time:
+        issues.append(
+            _issue(
+                "timestamp_in_future",
+                f"retired_at is in the future at {path}.retired_at",
+                "validation",
+                f"{path}.retired_at",
+                entity_id=entity_id,
+                batch_entity_id=batch_entity_id,
+            )
+        )
+    if retirement.get("batch_id") is not None:
+        canonical = _check_uuid(retirement["batch_id"], f"{path}.batch_id", issues, batch_entity_id=batch_entity_id)
+        if canonical is not None:
+            retirement["batch_id"] = canonical
+    reason = retirement.get("reason")
+    if reason is not None and (not isinstance(reason, str) or not reason.strip()):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"retirement reason must be a non-empty string or null at {path}.reason",
+                "schema",
+                f"{path}.reason",
+                batch_entity_id=batch_entity_id,
+                entity_id=entity_id,
+            )
+        )
+    if "metadata" in retirement and not isinstance(retirement["metadata"], dict):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"retirement metadata must be an object at {path}.metadata",
+                "schema",
+                f"{path}.metadata",
+                batch_entity_id=batch_entity_id,
+                entity_id=entity_id,
+            )
+        )
+
+
+def _validate_contents(
+    contents: Any,
+    *,
+    retired_nodes: int,
+    retired_edges: int,
+    path: str,
+    issues: list[GriftIssue],
+    batch_entity_id: str | None,
+) -> None:
+    """Verify a batch's ``contents`` declaration and decide on it (req-grift-contents).
+
+    Declare-vs-decide: the declaration is checked against the retirement blocks the
+    batch actually carries, never trusted (-2), and an aspect declared included that
+    this importer does not accept is refused rather than silently dropped (-3).
+    """
+    if not isinstance(contents, dict):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"contents must be an object at {path}",
+                "schema",
+                path,
+                batch_entity_id=batch_entity_id,
+            )
+        )
+        return
+    for aspect, declared in sorted(contents.items()):
+        aspect_path = f"{path}.{aspect}"
+        if not isinstance(declared, dict) or not isinstance(declared.get("included"), bool):
+            issues.append(
+                _issue(
+                    "schema_validation_failed",
+                    f"contents aspect '{aspect}' must be an object with a boolean 'included' at {aspect_path}",
+                    "schema",
+                    aspect_path,
+                    batch_entity_id=batch_entity_id,
+                )
+            )
+            continue
+        if declared["included"] and aspect not in _ACCEPTED_CONTENTS:
+            issues.append(
+                _issue(
+                    "unsupported_contents",
+                    f"The batch declares it includes '{aspect}', which this importer does not accept "
+                    f"(it accepts {sorted(_ACCEPTED_CONTENTS)}); nothing was imported.",
+                    "preflight",
+                    aspect_path,
+                    batch_entity_id=batch_entity_id,
+                )
+            )
+
+    tombstones = contents.get("tombstones")
+    if not isinstance(tombstones, dict):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"contents must declare 'tombstones' at {path}.tombstones",
+                "schema",
+                f"{path}.tombstones",
+                batch_entity_id=batch_entity_id,
+            )
+        )
+        return
+    if set(tombstones) != _TOMBSTONES_KEYS or not all(
+        isinstance(tombstones[k], int) and not isinstance(tombstones[k], bool) and tombstones[k] >= 0
+        for k in ("nodes", "edges")
+    ):
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                f"contents.tombstones must hold exactly included, nodes and edges (non-negative "
+                f"integers) at {path}.tombstones",
+                "schema",
+                f"{path}.tombstones",
+                batch_entity_id=batch_entity_id,
+            )
+        )
+        return
+    # The counts must be the batch's own, and "not included" must mean none are carried.
+    miscounted = (tombstones["nodes"], tombstones["edges"]) != (retired_nodes, retired_edges)
+    undeclared = not tombstones["included"] and bool(retired_nodes or retired_edges)
+    if miscounted or undeclared:
+        issues.append(
+            _issue(
+                "contents_mismatch",
+                f"The batch declares tombstones {tombstones!r} but carries {retired_nodes} retired "
+                f"node(s) and {retired_edges} retired edge(s).",
+                "preflight",
+                f"{path}.tombstones",
+                batch_entity_id=batch_entity_id,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1244,13 +1442,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/2a2b761438e6 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/82e93521ac55 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/2a2b761438e6 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/82e93521ac55 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1511,6 +1709,10 @@ def _run_preflight(
             )
             continue
 
+        # Retirement blocks this batch carries, counted for its contents declaration.
+        retired_nodes = 0
+        retired_edges = 0
+
         # Validate each node object.
         for node_idx, node_obj in enumerate(batch_container["nodes"]):
             node_path = f"{batch_path}.nodes[{node_idx}]"
@@ -1588,6 +1790,16 @@ def _run_preflight(
                 batch_entity_id=batch_entity_id,
                 entity_id=node_entity_id,
             )
+            if "retirement" in node_obj:
+                retired_nodes += 1
+                _validate_retirement_block(
+                    node_obj["retirement"],
+                    f"{node_path}.retirement",
+                    issues,
+                    reference_time=reference_time,
+                    batch_entity_id=batch_entity_id,
+                    entity_id=node_entity_id,
+                )
 
             # Identity Sanity for redundant identity-bearing fields. The GRIFT
             # envelope can carry `name` alongside the typed model payload that
@@ -1707,6 +1919,26 @@ def _run_preflight(
 
             _validate_edge_payload(
                 edge_obj["edge"], f"{edge_path}.edge", issues, batch_entity_id=batch_entity_id, entity_id=edge_entity_id
+            )
+            if "retirement" in edge_obj:
+                retired_edges += 1
+                _validate_retirement_block(
+                    edge_obj["retirement"],
+                    f"{edge_path}.retirement",
+                    issues,
+                    reference_time=reference_time,
+                    batch_entity_id=batch_entity_id,
+                    entity_id=edge_entity_id,
+                )
+
+        if "contents" in batch_container:
+            _validate_contents(
+                batch_container["contents"],
+                retired_nodes=retired_nodes,
+                retired_edges=retired_edges,
+                path=f"{batch_path}.contents",
+                issues=issues,
+                batch_entity_id=batch_entity_id,
             )
 
         # --- Removal section preflight (req-grid-import-grift-removal-preflight) ---
@@ -2348,7 +2580,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/c5b1b4fd2122 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/68bde357beb7 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2363,6 +2595,9 @@ def _execute_grift_batch(
     edges_purged = 0
     nodes_purged = 0
     removals_skipped = 0
+    edges_retired = 0
+    nodes_retired = 0
+    retirements_skipped = 0
     swept_entities: list[GriftSweptEntity] = []
     sweep_skipped: list[GriftSweepSkipped] = []
     sweep_strict_aborted = False
@@ -2493,6 +2728,30 @@ def _execute_grift_batch(
             # for every replace_node target and apply them in a post-pass after
             # the batch succeeds. See req-grid-import-grift-batch (Spine Sync).
             replace_spine_intents: list[dict[str, Any]] = []
+            # Objects carrying a `retirement` block, retired after every upsert
+            # (req-grid-import-grift-retired-1): (path, entity_id, entity_type, block).
+            retire_nodes: list[tuple[str, str, str, dict[str, Any]]] = []
+            retire_edges: list[tuple[str, str, str, dict[str, Any]]] = []
+
+            def _tombstone_stands(path: str, entity_id: str, entity_type: str) -> bool:
+                """An existing tombstone is left as it is (req-grid-import-grift-retired-3)."""
+                nonlocal retirements_skipped
+                if not Entity.objects.filter(pk=uuid.UUID(entity_id), deleted_at__isnull=False).exists():
+                    return False
+                retirements_skipped += 1
+                issues.append(
+                    _issue(
+                        "retired_target_already_tombstoned",
+                        f"Retired object {entity_id} is already tombstoned here; left as it is.",
+                        "execution",
+                        path,
+                        entity_id=entity_id,
+                        batch_entity_id=batch_entity_id,
+                        entity_type=entity_type,
+                        operation="skip",
+                    )
+                )
+                return True
 
             for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
                 node_entity_id = node_obj["entity"]["entity_id"]
@@ -2502,6 +2761,11 @@ def _execute_grift_batch(
                 envelope_expected_version = node_obj["entity"].get("entity_expected_version")
                 payload = node_obj["node"]
                 node_path = f"{batch_path}.nodes[{node_idx}]"
+
+                if "retirement" in node_obj:
+                    if _tombstone_stands(node_path, node_entity_id, entity_type):
+                        continue
+                    retire_nodes.append((node_path, node_entity_id, entity_type, node_obj["retirement"]))
 
                 entity_exists = Entity.objects.filter(pk=uuid.UUID(node_entity_id)).exists()
 
@@ -2595,6 +2859,11 @@ def _execute_grift_batch(
                     )
                     continue
 
+                if "retirement" in edge_obj:
+                    if _tombstone_stands(edge_path, edge_entity_id, "edge"):
+                        continue
+                    retire_edges.append((edge_path, edge_entity_id, "edge", edge_obj["retirement"]))
+
                 properties = edge.get("properties") or {}
                 edge_exists = Entity.objects.filter(pk=uuid.UUID(edge_entity_id)).exists()
 
@@ -2650,6 +2919,36 @@ def _execute_grift_batch(
                         )
                     )
                 op_meta.append({"path": edge_path, "entity_id": edge_entity_id, "entity_type": "edge", "kind": "edge"})
+
+            # --- Retirement phase (req-grid-import-grift-retired). Each retired object
+            # was written above; it is retired here, in the same write_batch call, edges
+            # first so each records its own retirement instead of being ended silently by
+            # its endpoint's. The retirement is the import's act; the source grid's block
+            # rides on its event as data, never as this grid's provenance (-2). ---
+            if retire_nodes or retire_edges:
+                from tap_auth import policy
+                from tap_auth.capabilities import DELETE_CAPABILITY
+
+                policy.authorize(ctx, DELETE_CAPABILITY, operation="grift_import_retire")
+                for path, entity_id, entity_type, block in retire_edges + retire_nodes:
+                    is_edge = entity_type == "edge"
+                    ops.append(
+                        WriteOperation(
+                            verb="delete_edge" if is_edge else "delete_node",
+                            target=entity_id,
+                            reason="grift_import",
+                            metadata={"grift_operation": "retire", "original_retirement": block},
+                            cascade="none",
+                        )
+                    )
+                    op_meta.append(
+                        {
+                            "path": f"{path}.retirement",
+                            "entity_id": entity_id,
+                            "entity_type": entity_type,
+                            "kind": "retire_edge" if is_edge else "retire_node",
+                        }
+                    )
 
             # --- Imperative removal phase (req-grid-import-grift-removals,
             # req-grid-import-grift-removal-preflight). Transaction-scoped
@@ -2732,6 +3031,10 @@ def _execute_grift_batch(
                             nodes_imported += 1
                         elif meta["kind"] == "edge":
                             edges_imported += 1
+                        elif meta["kind"] == "retire_edge":
+                            edges_retired += 1
+                        elif meta["kind"] == "retire_node":
+                            nodes_retired += 1
                         elif meta["kind"] == "removal_delete_edge":
                             edges_deleted += 1
                             _record_removal_reason_event(meta["removal_target"], batch, actor)
@@ -2981,7 +3284,13 @@ def _execute_grift_batch(
     warnings_count = sum(
         1
         for i in issues
-        if i.code in ("dangling_edge", "removal_target_missing_warned", "removal_target_tombstoned_warned")
+        if i.code
+        in (
+            "dangling_edge",
+            "removal_target_missing_warned",
+            "removal_target_tombstoned_warned",
+            "retired_target_already_tombstoned",
+        )
     )
 
     # On rollback the removal counters are stale (the work didn't persist).
@@ -2992,6 +3301,8 @@ def _execute_grift_batch(
         nodes_deleted = 0
         edges_purged = 0
         nodes_purged = 0
+        edges_retired = 0
+        nodes_retired = 0
 
     return (
         GriftImportedBatch(
@@ -3012,6 +3323,9 @@ def _execute_grift_batch(
             edges_purged=edges_purged,
             nodes_purged=nodes_purged,
             removals_skipped=removals_skipped,
+            edges_retired=edges_retired,
+            nodes_retired=nodes_retired,
+            retirements_skipped=retirements_skipped,
             resolved_refs=final_refs,
         ),
         issues,
@@ -3845,6 +4159,9 @@ def _grift_import_impl(
         edges_purged=sum(b.edges_purged for b in imported_batches),
         nodes_purged=sum(b.nodes_purged for b in imported_batches),
         removals_skipped=sum(b.removals_skipped for b in imported_batches),
+        edges_retired=sum(b.edges_retired for b in imported_batches),
+        nodes_retired=sum(b.nodes_retired for b in imported_batches),
+        retirements_skipped=sum(b.retirements_skipped for b in imported_batches),
         errors=len(all_errors),
         warnings=len(all_warnings),
     )

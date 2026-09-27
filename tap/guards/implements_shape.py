@@ -32,7 +32,7 @@ class ImplementsShapeGuard(Guard):
         from tap.spec_trace import malformed_claims
 
         offenders = malformed_claims(REPO_ROOT)
-        assert not offenders, (
+        assert not offenders, (  # nosec B101
             "Malformed implementation claim(s). The grammar is "
             "`TAP-" + "IMPLEMENTS: <rid>@<hash> (<role>) — <reason>`; mint the line with "
             "`scripts/implements-tag <rid> [role]` rather than hand-writing it:\n  "

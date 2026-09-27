@@ -77,6 +77,15 @@
             "type": "array",
             "items": {"type": "integer", "minimum": 1}
           },
+          "device_flow": {
+            "description": "github_oauth: authenticate by GitHub's DEVICE flow instead of the redirect flow (req-tap-auth-github-device-flow). For a deployment whose hostname is generated per instance — a Codespace forwards its port on an unpredictable *.app.github.dev host — the redirect flow cannot register a callback, and covering it would need wildcard matching against a domain we do not own PLUS a client_secret shipped in a public template. Device flow has no callback and needs no secret: GitHub's contract is client_id + device_code + grant_type. The client is therefore PUBLIC and declares its `client_id` here rather than resolving a secret, so a profile using it needs no required_secrets entry. Identity and access policy are unchanged — a device login passes the same evaluate_access gate, on the same numeric user id, as a redirect login.",
+            "type": "boolean"
+          },
+          "client_id": {
+            "description": "github_oauth + device_flow: the PUBLIC OAuth client id. Declared in the profile rather than the secret store because it is not a secret — GitHub's device flow sends it with no client_secret, which is what lets one app registration serve many isolated instances without distributing anything confidential. Required when device_flow is true; meaningless otherwise (the redirect flow resolves both halves from the secret envelope).",
+            "type": "string",
+            "minLength": 1
+          },
           "owner_only": {
             "description": "github_oauth: permit only the account that created this instance. The owner's value is DERIVED at boot from the environment (TAP_AUTH_INSTANCE_OWNER), never written here, so a single-operator standup declares the intent without hardcoding a handle in committed config. The owner is matched by NUMERIC user_id only; an owner supplied as a login alone is unresolvable. When declared against an unresolvable owner the provider's self-test FAILs and every login is refused (policy_unresolvable) — a declared policy with no value denies, it never degrades to allow-anyone.",
             "type": "boolean"

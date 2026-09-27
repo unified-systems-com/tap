@@ -1,0 +1,69 @@
+{
+  // TAP / git-serious in a GitHub Codespace (gs#99, gs#102).
+  //
+  // COMPOSE-NATIVE, not docker-in-docker. Ruled 2026-09-21 on evidence rather
+  // than taste: a GitHub code search that day returned 39,808 devcontainer.json
+  // files using a compose service against 18,304 using docker-in-docker, with
+  // only 1,660 using both — so ~91% of DinD adopters are not running a compose
+  // stack inside it. DinD clusters around projects that build images;
+  // compose-native clusters around applications with a database, which is TAP.
+  // It is also the faster first paint, and first paint is the product here
+  // (gs#103).
+  //
+  // THE ACCEPTED COST, stated so nobody rediscovers it as a bug: the visitor
+  // lands INSIDE the `web` container. `scripts/dc` and the multi-session spawn
+  // workflow do not mean the same thing there — they drive compose from the
+  // host, and there is no host shell here. A Codespace is one stack, already up.
+  "name": "TAP — git-serious",
+
+  // The stack the repository actually ships. Pointing at the real file rather
+  // than a Codespaces-only copy is the whole point: a trial that exercises a
+  // forked stack definition proves nothing about the product.
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "web",
+  "workspaceFolder": "/app",
+
+  // FALSE on purpose. The default replaces the container's command with a sleep
+  // so the tooling has something to attach to — which would mean TAP never
+  // starts. Here the container's own entrypoint runs: pre-boot, migrate, then
+  // gunicorn, and it is gunicorn that keeps the container alive.
+  //
+  // It is also what makes the Codespaces derivation fire at all: that step lives
+  // in docker/entrypoint.sh (see scripts/codespace-env for why it cannot live on
+  // the host), so an overridden command would skip it and the instance would
+  // serve 400s on its own forwarded hostname.
+  "overrideCommand": false,
+
+  "shutdownAction": "stopCompose",
+
+  // The forwarded port. `onAutoForward: openBrowser` is the one-click claim in
+  // gs#99: the visitor should arrive at a running instance, not at a terminal
+  // holding a URL. Codespaces forwards it as https and terminates TLS itself,
+  // which is why the container trusts X-Forwarded-Proto.
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "TAP",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  // Nothing here provisions the app. Boot is the entrypoint's job and always has
+  // been; a postCreateCommand that also migrated or seeded would be a second
+  // standup path that drifts from the one every other environment uses.
+  //
+  // Prebuilds are the answer to cold start (gs#103), not a script in this file:
+  // they bake the image pull and the uv sync into the prebuilt snapshot, which is
+  // where the minutes actually are.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python"
+      }
+    }
+  }
+}

@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from collections import deque
-from collections.abc import Collection, Sequence
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -418,6 +418,40 @@ def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
     return metadata
 
 
+def _flip_record_retirement(model_cls: type, entity_ids: list[Any], batch_id: str) -> None:
+    """Record the retiring batch in FLIP for objects this retirement tombstones.
+
+    A tombstone is written with a bulk update on the Entity spine, which bypasses
+    BaseModel.save() and so the save-time FLIP hook; the retirement path stamps
+    `flip_map["deleted_at"]` itself, in the tombstone's transaction
+    (req-grid-flip-retirement). Exceptions propagate so the retirement rolls back.
+
+    Every retirement runs inside `write_batch`, which resolves a batch id before any
+    operation executes, so a missing one is a broken caller. It raises rather than
+    returning: a tombstone without its FLIP entry must not commit.
+    """
+    from tap_grid.flip import is_flip_enabled
+
+    if not batch_id:
+        raise ValueError("a retirement must name its retiring batch; refusing to tombstone without a FLIP entry")
+    if not entity_ids or not is_flip_enabled(model_cls):
+        return
+    from django.db.models import F, Func, JSONField, Value
+    from django.db.models.functions import Coalesce, JSONObject
+
+    # One UPDATE for the whole set: merge the entry into each row's map in place, so a
+    # cascade's query count does not grow with the number of rows it retires. Built
+    # from ORM expressions, so the batch id is always a bound parameter.
+    merged = Func(
+        Coalesce(F("flip_map"), Value({}, output_field=JSONField())),
+        JSONObject(deleted_at=Value(str(batch_id))),
+        template="(%(expressions)s)",
+        arg_joiner=" || ",
+        output_field=JSONField(),
+    )
+    model_cls.all_objects.filter(entity_id__in=entity_ids).update(flip_map=merged)  # type: ignore[attr-defined]
+
+
 def _record_provenance(
     verb: str,
     entity: Entity,
@@ -449,36 +483,8 @@ def _record_provenance(
     )
 
 
-def _auto_batch_name(operations: Sequence[WriteOperation]) -> str:
-    """Name an auto-created batch after the work it is scaffolding.
-
-    The name has to be TRUE, not merely present: it is derived from the
-    operations themselves, never authored. A single op names its verb and its
-    subject (the node type, the edge type, or a short target id); a multi-op
-    batch names its size and the distinct verbs in it.
-    """
-
-    def subject(op: WriteOperation) -> str:
-        if op.type_slug:
-            return op.type_slug
-        if op.edge_type:
-            return op.edge_type
-        if op.target:
-            return str(op.target)[:8]
-        return ""
-
-    # No truncation here: `create_batch()` clamps to what both ends of the spine
-    # can hold, and it is the only place that writes them. A second clamp would
-    # be a second copy of the limit, free to drift from the first.
-    if len(operations) == 1:
-        op = operations[0]
-        return f"Service write: {op.verb} {subject(op)}".rstrip()
-    verbs = ", ".join(sorted({op.verb for op in operations}))
-    return f"Service write: {len(operations)} ops ({verbs})"
-
-
-def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]) -> None:
-    """Auto-create a named Batch for batch_id if one does not already exist.
+def _ensure_batch(batch_id: str, user: Any, *, name: str, description: str) -> None:
+    """Create the named Batch for batch_id if one does not already exist.
 
     Runs inside the service layer's transaction so the row participates in
     rollback, and before any operation executes so it is visible to
@@ -491,8 +497,13 @@ def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]
     spine sync projecting `Batch.get_name()` — `""` — back over it, because no
     `name=` reached the Batch. `create_batch()` is the one place that sets both
     ends from one resolved value, so the divergence cannot reappear.
+
+    ``name`` / ``description`` say what the change is. `write_batch` refuses a
+    minting write that has none before it gets here
+    (req-grid-service-batch-label-required), so both are always present. ``source``
+    stays the service layer: it is the producer, whoever named the change.
     """
-    from tap_grid.batch import AUTO_BATCH_DESCRIPTION, AUTO_BATCH_SOURCE, create_batch
+    from tap_grid.batch import AUTO_BATCH_SOURCE, create_batch
     from tap_grid.models import Batch
 
     if Batch.objects.filter(entity_id=batch_id).exists():
@@ -500,9 +511,9 @@ def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]
 
     create_batch(
         entity_id=uuid.UUID(batch_id),
-        name=_auto_batch_name(operations),
+        name=name,
         source=AUTO_BATCH_SOURCE,
-        description=AUTO_BATCH_DESCRIPTION,
+        description=description,
         actor=user,
     )
 
@@ -854,6 +865,7 @@ def _execute_write_pipeline(
                 updated_at=now,
                 version=F("version") + 1,
             )
+            _flip_record_retirement(model_cls, [instance.entity_id], batch_id)
             # Edges to end, gathered under this node's lock. A plain delete locks them now,
             # in id order (a cascade already holds every edge of its closure); the ending
             # is conditional on the row still being live, so an edge another writer ended
@@ -887,6 +899,7 @@ def _execute_write_pipeline(
                 updated_at=now,
                 version=F("version") + 1,
             )
+            _flip_record_retirement(Edge, edge_entity_ids, batch_id)
 
             # The walk: a queue of (child, parent). Each child goes through this same
             # pipeline — the same load, INTERNAL_ONLY and authority checks as any delete —

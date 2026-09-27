@@ -68,7 +68,13 @@ def get_builtin_actor(builtin_key: str) -> AbstractUser:
 
 
 @contextlib.contextmanager
-def acting_as(actor: AbstractUser, *, batch_id: str | None = None) -> Iterator[None]:
+def acting_as(
+    actor: AbstractUser,
+    *,
+    batch_id: str | None = None,
+    batch_name: str | None = None,
+    batch_description: str | None = None,
+) -> Iterator[None]:
     """Bind `actor` as the active `CallerContext` for the duration of the block.
 
     The no-request analogue of `CallerContextMiddleware`: where the middleware
@@ -95,9 +101,15 @@ def acting_as(actor: AbstractUser, *, batch_id: str | None = None) -> Iterator[N
             defect — resolve it or fail loudly at `get_builtin_actor`).
         batch_id: An optional existing batch scope to join. When omitted, the
             service layer mints a fresh batch_id per write as usual.
+        batch_name: The name a batch minted inside the block carries when the write
+            names none itself (req-grid-service-batch-label-required). Ignored by a
+            write that joins an existing batch.
+        batch_description: The description that goes with `batch_name`.
     """
     prior = get_caller_context()
-    set_caller_context(CallerContext(user=actor, batch_id=batch_id))
+    set_caller_context(
+        CallerContext(user=actor, batch_id=batch_id, batch_name=batch_name, batch_description=batch_description)
+    )
     try:
         yield
     finally:

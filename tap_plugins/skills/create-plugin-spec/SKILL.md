@@ -18,6 +18,15 @@ Extracted 2026-09-12 from the dcom spec's first cut, which got the shape mostly 
 wrong in four places (legacy dist prefix, repo name, missing dev-workspace row, non-canonical tail
 sections). Every one of those is a check below. Reference spec: any current plugin's `specs/spec-<slug>-v0.md` (zizmor-tap's is a complete example).
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## The order is conversation first, draft last
 
 The spec is the author's, not yours. The failure this skill exists to prevent (dcom, 2026-09-12): the

@@ -23,7 +23,7 @@ class LogSiteUniquenessGuard(Guard):
         from tap.logging import find_within_file_duplicates
 
         dups = find_within_file_duplicates(scan().well_formed)
-        assert not dups, (
+        assert not dups, (  # nosec B101
             "Duplicate log-site hex within a file (likely copy-paste) — regenerate one with "
             f"`scripts/log-site-id`:\n  {dups}"
         )

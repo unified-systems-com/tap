@@ -11,11 +11,12 @@
 # identical job at ~9 min vs ~7 min on CodeBuild — under the consolidation threshold,
 # so CodeBuild was retired (runs 31443692421/31444605018/31444606509 hold the
 # measurements). The Terraform + account 180731181784 teardown is tracked separately
-# (account retirement is deliberately LAST in the migration plan). Adding a line is
-# now just a matrix entry here.
+# (account retirement is deliberately LAST in the migration plan). The core_ci line's
+# job bodies live in core-ci.yml, which the release gate calls too (tap#638).
 #
-# PROMOTE GATE: the `core_ci` lane here is the promote gate (the `test_all` PR line was
-# eliminated 2026-09-10, tap#369; the full set runs in bom-boot.yml) — promote-to-main.sh
+# PROMOTE GATE: the `core_ci` lane here is the promote gate (the union PR line was
+# eliminated 2026-09-10, tap#369, and the union itself retired with tap#638: plugins are
+# proven by their own repositories' nightlies against core main) — promote-to-main.sh
 # Step 2.6 opens the PR and blocks on `gate` (option B,
 # req-dev-validation-product-line-lanes-6). The monorepo-era sharded all-plugins.yml
 # fallback was retired 2026-09-09 (tap#364); this workflow is the one gate.
@@ -23,13 +24,9 @@
 name: product-lines
 
 on:
+  # Dispatch runs the same battery a PR does; there is one line (core_ci), so there is no
+  # lane to choose.
   workflow_dispatch:
-    inputs:
-      line:
-        description: "Lane to run on dispatch. 'all' runs every lane; a single lane runs just that one. PR events always run all lanes."
-        type: choice
-        options: [core_ci, samsite, all]
-        default: core_ci
   # merge_group: the gate must also run when a merge queue tests a PR against
   # projected main (req-cicd-branch-protection PR-flow endgame). Harmless until the
   # queue is enabled.
@@ -51,6 +48,18 @@ on:
   # `scripts/change-tier origin/main`, always against main, so a stacked PR is measured
   # against main and gets a tier at least as high as it would have — never lower.
   pull_request:
+  # Nightly against main (tap#791, req-dev-validation-product-line-lanes-12). Every PR runs
+  # against its merge ref, but nothing ran the battery on main's OWN content — so two PRs
+  # green apart and red together, or a ratchet baseline drifting on main, went unseen (main's
+  # last full run was 1542 commits old when that was counted). On `schedule` the ref is main,
+  # so `scripts/change-tier origin/main` sees an empty diff and fails closed to `full`: the
+  # whole battery runs. A red run files ONE issue (`owner-issue`, below). Minute 23 of 08 UTC
+  # is clear of every other cron in this repo (05:45, 09:17, 09:30, 09:31, 09:47) and is
+  # off the hour, which GitHub delays or drops most. There is deliberately NO `push` trigger
+  # (maintainer's call, 2026-09-25): the nightly answers "is main green", a per-merge run
+  # would answer it sooner at a cost not yet asked for.
+  schedule:
+    - cron: "23 8 * * *"
 
 # Explicit least-privilege GITHUB_TOKEN (org default is read-only; stated here so the
 # file is self-describing and CodeQL's missing-workflow-permissions check passes).
@@ -62,10 +71,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Pick the lane set. On dispatch, run only the selected lane (default core_ci); a
-  # 'line=all' dispatch and every PR run all lanes. The matrix context is not available
-  # in a job-level if, so we compute the matrix here and feed it in via fromJSON.
-  # NOTE: since 2026-08-08 every plugin repo is PUBLIC on unified-systems-com, so both
+  # Classify the diff into a tier; every lane below gates on it.
+  # NOTE: since 2026-08-08 every plugin repo is PUBLIC on unified-systems-com, so the
   # lanes git-install anonymously — no credential, no Secrets Manager round-trip. The
   # plugin-pull machinery (routing manifest + provider preinstall + ambient-creds export,
   # driven by a needs_plugin_pull matrix flag) was removed here the same day; a fork that
@@ -74,7 +81,6 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.pick.outputs.matrix }}
       # Validation tier of this diff vs origin/main (scripts/change-tier —
       # req-dev-validation-product-line-lanes-7): docs | specs | full. Jobs gate
       # on it; the `gate` aggregator accepts a skip ONLY when the tier justifies
@@ -88,9 +94,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: pick
-        env:
-          EVENT: ${{ github.event_name }}
-          LINE: ${{ github.event.inputs.line }}
         run: |
           git fetch origin main --quiet || true
           # OBSERVE the host interpreter, do not assume it. change-tier runs its BOM
@@ -102,29 +105,10 @@ jobs:
           tier="$(scripts/change-tier origin/main)"
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"
-          core_ci='{"line":"core_ci","profile":"core_ci"}'
-          samsite='{"line":"samsite","profile":"samsite"}'
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$LINE" != "all" ]; then
-            case "$LINE" in
-              core_ci)  inc="$core_ci" ;;
-              samsite)  inc="$samsite" ;;
-              test_all) echo "::error::the test_all PR line was eliminated (tap#369): the full set runs in bom-boot.yml — dispatch that workflow"; exit 1 ;;
-              *) echo "::error::unknown line '$LINE'"; exit 1 ;;
-            esac
-          else
-            # The PR gate is core_ci (core + fixtures + the github_core canary, tap#366/#374).
-            # The `test_all` PR line was eliminated 2026-09-10 (tap#369, George's ruling: do what
-            # it says on the tin or go): it walked the core tree and never the installed plugin
-            # suites, so its green claimed a full set it did not run. The full set — every
-            # installed plugin's shipped tests, by owner — runs in bom-boot.yml (boot tier,
-            # nightly, release). `boot/test_all.boot.json` stays as the BOM that lane boots.
-            inc="$core_ci,$samsite"
-          fi
-          # specs tier: every spec-consuming test (Map sync, RID resolution) is a core test,
-          # which the core_ci line runs; the samsite lane adds no spec coverage.
-          # docs tier skips `line` entirely via its job-level if.
-          if [ "$tier" = "specs" ]; then inc="$core_ci"; fi
-          echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
+          # One line runs on every non-docs tier: core_ci (core + the three fixture plugins;
+          # tap#366/#374, tap#638), defined in core-ci.yml and shared with the release gate.
+          # The union PR line was eliminated 2026-09-10 (tap#369), the `samsite` product line
+          # left with tap#638, and the union lane itself was retired with tap#638.
 
   # Broad credential scan — the complement to the in-repo `secret-pattern` guard
   # (req-tap-cares-secrets-credential-patterns). The guard is exact and always-on over six
@@ -191,7 +175,7 @@ jobs:
           # The check walks commits back to the merge-base with origin/main.
           fetch-depth: 0
       # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the same
-      # allowlisted numeric id + type Bot the issue-link step uses, derived once in
+      # allowlisted numeric id + recorded account type the issue-link step uses, derived once in
       # scripts/pr_bot_identity.py — never off the commit's author string, which any
       # contributor can set to "renovate[bot]" (tap#335). All three values are empty on a
       # merge_group event, so nothing is exempt there.
@@ -208,7 +192,7 @@ jobs:
       # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
       # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
       # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the
-      # numeric account id plus type Bot, matched against the declared allowlist
+      # numeric account id plus the entry's recorded type, matched against the allowlist
       # tap/tap.pr-bots.json (tap#342) — never off commit metadata, which any
       # contributor can set to "renovate", and never off the login alone, which is a
       # mutable string. All three are empty on a merge_group event, so nothing is
@@ -269,141 +253,15 @@ jobs:
     # and there is no value in testing a tree that is leaking a credential.
     # Tier-gated (req-dev-validation-product-line-lanes-7): a docs-tier diff (inert
     # documentation only) cannot red pytest — skip; the gate aggregator accepts the
-    # skip only when the tier justifies it. specs-tier runs core_ci only (see setup).
+    # skip only when the tier justifies it. The job body lives in core-ci.yml, shared
+    # with the release gate (publish-release-tags.yml).
     if: needs.setup.outputs.tier != 'docs'
     needs: [setup, secret-scan]
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
-    # Free GitHub-hosted runner (4 vCPU) — measured at ~9 min for the identical job
-    # vs ~7 min on the retired 8-vCPU CodeBuild runner (see header RUNNER HISTORY).
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      # Name of the per-worker clone-source template built below (in-container).
-      TAP_TEST_DB_TEMPLATE: tap_test_template
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Provide empty secrets root
-        run: |
-          rm -f tap_secrets
-          mkdir -p tap_secrets
-
-      - name: Point the uv cache at an out-of-tree dir (runner temp)
-        # $RUNNER_TEMP is outside the workspace, so the container's `.:/app` mount
-        # never sweeps the persisted cache into the scanned repo tree (the
-        # secret-pattern guard walks /app). Set via $GITHUB_ENV in a run step, NOT a
-        # job-level `env:` — the `runner` context is unavailable at job level, and
-        # referencing it there is an invalid-workflow error (no jobs even schedule).
-        run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
-
-      - name: Provide web image (pull published when inputs unchanged, else build)
-        uses: ./.github/actions/ci-web-image
-
-      # The samsite record ships inside tap-plugin-samsite (req-boot-bootstrap-samsite-rehome);
-      # the lane fetches it by the same pointer operators use — one copy, no lane-local fork
-      # (rehome-5). Staged into boot/ it is thereafter an ordinary local profile. The
-      # pointer's rev is DERIVED from boot/test_all.boot.json's samsite pin (one place a
-      # plugin version lives; it had drifted to @v0.2.0 against the union's v0.2.4 until
-      # tap#364). Lane is deprecation-slated: its successor is the product journey in
-      # tap-plugin-samsite (tap#368, tap-plugin-samsite#4); it is deleted only after that
-      # is observed green — coverage is replaced before it is retired.
-      - name: Restore uv cache (wheels + plugin git-installs)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-${{ matrix.profile }}-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
-          restore-keys: |
-            uv-ci-${{ matrix.profile }}-
-            uv-ci-
-      # `python3 -m tap.boot_pointer` is repo code: run it on the repo's interpreter, derived from
-      # requires-python, not the runner's python3 (req-dev-localexec-runner-interpreter).
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: matrix.line == 'samsite'
-        with:
-          python-version-file: "pyproject.toml"
-      - name: Stage the samsite record (bootstrap pointer, rev from the union's pin)
-        if: matrix.line == 'samsite'
-        run: |
-          rev="$(python3 -c '
-          import json
-          plugins = json.load(open("boot/test_all.boot.json"))["install"]["plugins"]
-          [entry] = [p for p in plugins if p["slug"] == "samsite"]
-          print(entry["source"]["rev"])
-          ')"
-          echo "samsite rev from boot/test_all.boot.json: $rev"
-          python3 -m tap.boot_pointer \
-            "git+https://github.com/unified-systems-com/tap-plugin-samsite@${rev}#samsite" \
-            --out boot
-
-      # Boot THIS line's profile (preboot installs exactly that profile's plugins).
-      - name: Boot the ${{ matrix.profile }} profile
-        env:
-          TAP_BOOT_PROFILE: ${{ matrix.profile }}
-          TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
-        run: |
-          docker compose --env-file .env up -d
-          ok=0
-          for i in $(seq 1 300); do
-            if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
-              echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
-              docker compose --env-file .env logs web; exit 1
-            fi
-            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
-              echo "web healthy after ~$((i * 3))s"; ok=1; break
-            fi
-            # 3s, not 10: readiness lands mid-interval, so the poll step is pure
-            # quantization waste — same total timeout via the higher loop bound.
-            sleep 3
-          done
-          if [ "$ok" != 1 ]; then
-            echo "::error::web did not become healthy within the timeout"
-            docker compose --env-file .env logs web | tail -150; exit 1
-          fi
-
-      # Cold-resolve the staged samsite record against the stack it just booted:
-      # schema + the required_secrets coherence rules + every seed slug/bundle and
-      # collector key checked against the live registries — offline, secrets-free,
-      # zero mutation (`boot --check`). This is the CORE-side half of the record-gate
-      # seam (req-boot-bootstrap-samsite-rehome-4): the record's own shipped suite
-      # runs in the plugin repo's CI on its cadence; this step catches the other
-      # direction — a core/plugin-registry change that rots the record — on tap's
-      # cadence. Population still never runs here (no collectors, empty secrets).
-      - name: Cold-resolve the samsite record (boot --check)
-        if: matrix.line == 'samsite'
-        run: |
-          docker compose --env-file .env exec -T web sh -c \
-            'cd /app && uv run python manage.py boot --profile samsite --check'
-
-      # Build the per-profile template DB workers clone from. Honors the booted profile's
-      # installed app set (entry-point discovery), so the template schema matches the run.
-      - name: Build per-profile test-DB template
-        run: docker compose --env-file .env exec -T web sh -c 'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template scripts/build-test-template'
-
-      # This line's tests. install-aware collection (req-dev-validation-collection-complete)
-      # runs core + the booted profile's plugin tests. Worker DBs clone the template.
-      - name: Test lane — ${{ matrix.line }}
-        # -n auto: workers == cores. Measured on the 4-vCPU free runner (tmpfs pg,
-        # so the lane is CPU-bound): -n 4 = 233s, -n 6 = 243s, -n 8 = 256s — and
-        # auto keeps tracking the runner size if GitHub resizes it again.
-        run: |
-          docker compose --env-file .env exec -T web sh -c '
-            set -euo pipefail
-            cd /app
-            uv run python -m tap.plugin_testing --record boot/${{ matrix.profile }}.boot.json --check --plan
-            TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
-              --root /app --record boot/${{ matrix.profile }}.boot.json --summary /app/lane-summary.md -- -n auto
-          '
-          docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Dump web logs on failure
-        if: failure()
-        run: docker compose --env-file .env logs web | tail -200
-      - name: Make uv cache saveable (container wrote it as root)
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true
+    permissions:
+      contents: read
+    uses: ./.github/workflows/core-ci.yml
+    with:
+      lane: line
 
   # CI boot gates (req-dev-validation-smoke-gate / req-dev-validation-lean-boot).
   # The SAME scripts/gate + scripts/gate-lean artifacts the local promote runs —
@@ -415,65 +273,20 @@ jobs:
     # Tier-gated (req-dev-validation-product-line-lanes-7): markdown cannot affect
     # boot — docs/specs-tier diffs skip both boot gates; the gate aggregator
     # accepts the skip only when the tier justifies it.
+    #
+    # Boots `core_ci` (core + the fixture plugins) and runs on BOTH `full` and `boot`.
+    # Until tap#638 it booted the then-current plugin union on `full` only, and on the boot
+    # tier it skipped because the union's BOM lane ran the same gate over the same profile.
+    # That made the core cold-boot verdict depend on the union booting; the union is retired
+    # (tap#638), so the gate proves core's own set on every non-docs/specs diff and accepts
+    # no skip justified by another job. The job body lives in core-ci.yml.
     if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
     needs: [setup, secret-scan]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      TAP_BOOT_PROFILE: test_all
-      TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Provide empty secrets root
-        run: |
-          rm -f tap_secrets
-          mkdir -p tap_secrets
-      - name: Point the uv cache at an out-of-tree dir (runner temp)
-        # See the `line` job: $RUNNER_TEMP is outside the workspace (out of the
-        # scanned /app tree); set via $GITHUB_ENV, not job-level `env:`, because the
-        # `runner` context is unavailable at job level.
-        run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
-      - name: Provide web image (pull published when inputs unchanged, else build)
-        uses: ./.github/actions/ci-web-image
-      - name: Restore uv cache (wheels + plugin git-installs)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
-          restore-keys: |
-            uv-ci-test_all-
-            uv-ci-
-      - name: Boot the test_all profile
-        run: |
-          docker compose --env-file .env up -d
-          ok=0
-          for i in $(seq 1 300); do
-            if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
-              echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
-              docker compose --env-file .env logs web; exit 1
-            fi
-            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
-              echo "web healthy after ~$((i * 3))s"; ok=1; break
-            fi
-            # 3s, not 10: readiness lands mid-interval, so the poll step is pure
-            # quantization waste — same total timeout via the higher loop bound.
-            sleep 3
-          done
-          if [ "$ok" != 1 ]; then
-            echo "::error::web did not become healthy within the timeout"
-            docker compose --env-file .env logs web | tail -150; exit 1
-          fi
-      - name: Cold-boot gate (scripts/gate — fresh scratch-DB boot cycle)
-        run: scripts/gate
-      - name: Dump web logs on failure
-        if: failure()
-        run: docker compose --env-file .env logs web | tail -200
-      - name: Make uv cache saveable (container wrote it as root)
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true
+    permissions:
+      contents: read
+    uses: ./.github/workflows/core-ci.yml
+    with:
+      lane: cold-boot
 
   lean-boot:
     # Tier-gated: markdown cannot affect boot (see cold-boot).
@@ -507,70 +320,24 @@ jobs:
       max_examples: 20
       fail_on_findings: true
 
-  # The BOM lane (req-dev-validation-bom-lane): the full set boots + its whole suite,
-  # ONLY when a boot record changed (`boot` tier) — the bill of materials moved. Nightly
-  # and release-candidate runs live in bom-boot.yml itself; here it is required through
-  # the gate for exactly that tier.
-  bom-boot:
-    if: needs.setup.outputs.tier == 'boot'
-    needs: [setup, secret-scan]
-    uses: ./.github/workflows/bom-boot.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
   # The single stable required-check target — rulesets point ONLY at this name.
-  # The matrix names its `line` instances from matrix DATA ("line (core_ci, ...)"),
-  # so those names silently change whenever the matrix shape changes; requiring them
-  # directly leaves the ruleset pinned to strings that stop reporting. This job has a
+  # Lane check names are derived (a reusable-workflow call reports as
+  # "line / core_ci line"; a matrix names instances from its data), so they change
+  # whenever a lane's shape changes; requiring them directly leaves the ruleset pinned to
+  # strings that stop reporting. This job has a
   # hand-chosen name and one opinion. `if: always()` means it cannot be skipped into
   # a false green (GitHub treats a skipped required check as satisfied — fail-open);
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz, bom-boot]
+    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      # `gate` re-derives the BOM verdict ITSELF (below) instead of trusting setup's tier, so
-      # it needs the tree and the history.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      # INDEPENDENT BOM VERDICT (tap#379). The other arms below read `tier` from setup; this
-      # one does not, because a wrong tier is exactly how the requirement went missing: on run
-      # 34457835453 the classifier could not run, the tier degraded to `full`, bom-boot skipped
-      # and this job went green on `[ "$TIER" != "boot" ]` — the check trusted the value it was
-      # meant to be checking. Here the verdict comes from the same declaration
-      # (`tap/bom_inputs.py`) applied to this diff, and an unanswered verdict REQUIRES the lane.
-      # The classifier is repo code: run it on the repo's interpreter, derived from requires-python,
-      # not the runner's python3 (req-dev-localexec-runner-interpreter) — its `2>/dev/null || true`
-      # would otherwise turn a parse failure into an unanswered verdict, as in tap#400.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: "pyproject.toml"
-      - name: The BOM lane is required when a BOM input moved
-        env:
-          R_BOM: ${{ needs.bom-boot.result }}
-        run: |
-          git fetch origin main --quiet || true
-          base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
-          if [ -n "$base" ]; then files="$(git diff --name-only "$base" HEAD)"; else files=""; fi
-          verdict="$(printf '%s\n' "$files" | python3 tap/bom_inputs.py --classify --root "$PWD" 2>/dev/null || true)"
-          case "$verdict" in
-            boot)    need=1 ;;
-            no-boot) need=0 ;;
-            *) echo "::error::gate: the BOM classifier gave no verdict (got '$verdict') — requiring bom-boot"; need=1 ;;
-          esac
-          echo "independent BOM verdict: '$verdict' (require bom-boot: $need); bom-boot=$R_BOM"
-          if [ "$need" = "1" ] && [ "$R_BOM" != "success" ]; then
-            echo "::error::a BOM input moved in this diff, so bom-boot must succeed — it finished '$R_BOM'"
-            exit 1
-          fi
       # A skip is acceptable ONLY where the change tier justifies it
       # (req-dev-validation-product-line-lanes-7): docs-tier may skip the lanes,
-      # docs/specs-tier may skip the boot gates; bom-boot is required only on the
-      # boot tier (a boot record changed). Everything else — including a
+      # docs/specs-tier may skip the boot gates. The `boot` tier (a BOM input moved) skips
+      # nothing: every job below treats it as `full`. Everything else — including a
       # skip with an empty/failed setup, a cancelled job, or a skip the tier does
       # not explain — fails. setup and secret-scan are unconditionally required
       # (docs leak credentials too, and the tier itself comes from setup).
@@ -586,9 +353,8 @@ jobs:
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
-          R_BOM: ${{ needs.bom-boot.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -608,9 +374,11 @@ jobs:
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;
             *) die "line finished '$R_LINE'" ;;
           esac
+          # cold-boot may skip ONLY where the tier justifies it (docs/specs). It boots core_ci on
+          # both `full` and `boot`, so no other job's result can stand in for it (tap#638).
           case "$R_COLD" in
             success) : ;;
-            skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "cold-boot skipped on a full-tier diff" ;;
+            skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "cold-boot skipped on a '$TIER'-tier diff" ;;
             *) die "cold-boot finished '$R_COLD'" ;;
           esac
           case "$R_LEAN" in
@@ -625,11 +393,84 @@ jobs:
             skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "api-fuzz skipped on a full-tier diff" ;;
             *) die "api-fuzz finished '$R_FUZZ'" ;;
           esac
-          # The BOM lane is required exactly when a boot record changed (`boot` tier,
-          # req-dev-validation-bom-lane-2); on any other tier its skip is the design.
-          case "$R_BOM" in
-            success) : ;;
-            skipped) [ "$TIER" != "boot" ] || die "bom-boot skipped on a boot-tier diff" ;;
-            *) die "bom-boot finished '$R_BOM'" ;;
-          esac
           echo "gate GREEN (tier: $TIER)"
+
+  # The nightly's owner issue (tap#791, req-dev-validation-product-line-lanes-12). A red run
+  # nobody hears about is the failure tap#791 describes, one level up — so a red `gate` on
+  # the nightly files or updates ONE open issue, and the next green nightly closes it.
+  # Modelled on the plugin nightlies' "Nightly red vs core main" job
+  # (tap-plugin-github-core .github/workflows/nightly.yml), with three differences:
+  #   - the open-issue listing passes `--limit` and FAILS if it hits it, because a truncated
+  #     listing reads as "no issue yet" and files a duplicate;
+  #   - the issue is matched by author (the Actions bot) AND a hidden marker in its body,
+  #     never by title: anyone can open an issue with this title, and closing theirs — or
+  #     commenting on it — on a green night is a write this job must not be steerable into;
+  #   - a `concurrency` group, so two runs (a slow nightly and a dispatch) cannot each see
+  #     no issue and both file one.
+  #
+  # Deliberately OUTSIDE `gate` and after it: it reports gate's verdict, so it cannot be one of
+  # gate's inputs, and it runs only on `schedule` — a PR or dispatch never files anything
+  # (test_product_lines_gate.py holds the exemption to exactly this job, and exactly this shape).
+  # Its token is `issues: write` and nothing else, and it checks out no repository code: every
+  # value it writes is fixed text, the run URL and gate's result, so nothing in the tree under
+  # test can reach the write.
+  owner-issue:
+    name: file or close the nightly owner issue
+    needs: [gate]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: product-lines-owner-issue
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GATE_RESULT: ${{ needs.gate.result }}
+      TITLE: "Nightly red: tap main"
+      MARKER: "<!-- tap-nightly-main-owner-issue -->"
+      ASSIGNEE: notgeorge   # the first CODEOWNERS default owner (.github/CODEOWNERS `*`)
+      LIMIT: "1000"
+    steps:
+      - name: Red main files or updates one issue; green main closes it
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # `gh issue list` reports the Actions bot as `app/github-actions` (the REST API says
+          # `github-actions[bot]`). Author AND marker: either alone is forgeable or shared.
+          listed="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit "$LIMIT" \
+            --json number,author,body)"
+          count="$(jq 'length' <<<"$listed")"
+          if [ "$count" -ge "$LIMIT" ]; then
+            echo "::error::$count open issues reached --limit $LIMIT; the owner issue may be past it — refusing to guess"
+            exit 1
+          fi
+          existing="$(jq -r --arg m "$MARKER" '[.[] | select(.author.login == "app/github-actions"
+            and .author.is_bot == true and ((.body // "") | contains($m)))] | sort_by(.number) | .[0].number // empty' \
+            <<<"$listed")"
+          case "$GATE_RESULT" in
+            success)
+              if [ -n "$existing" ]; then
+                gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Green again on main: $run_url"
+              fi
+              echo "nightly on main: green"
+              ;;
+            failure)
+              if [ -n "$existing" ]; then
+                gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "Still red: $run_url"
+              else
+                body="$(printf '%s\n\n%s\n\n%s\n' \
+                  "The nightly \`product-lines\` run against \`main\` finished with \`gate\` = **failure**: $run_url" \
+                  "Every PR is tested against its own merge ref; this run tests main's own content, so a red here is usually two changes that were green apart, or a baseline that drifted on main. Fix it on main. This issue is updated by each red nightly and closed by the next green one (tap#791)." \
+                  "$MARKER")"
+                gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE"
+              fi
+              echo "::error::nightly on main: gate finished '$GATE_RESULT' — see $run_url"
+              ;;
+            *)
+              # cancelled or skipped: the run proved nothing either way, so the issue neither
+              # opens nor closes. Said loudly, so a nightly that keeps getting cancelled shows.
+              echo "::warning::nightly on main: gate finished '$GATE_RESULT'; owner issue left as it was"
+              ;;
+          esac

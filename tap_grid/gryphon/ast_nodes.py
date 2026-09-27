@@ -242,6 +242,64 @@ class ObservationComparison:
 
 
 @dataclass(frozen=True)
+class ParamNullTest:
+    """A predicate about a runtime INPUT, not about graph data: `$org IS [NOT] NULL`.
+
+    This is the only predicate leaf that carries no `FieldPath`: it asks a
+    question about the query's own inputs. It exists for one demand shape, the
+    commonest filter in the product — *an optional filter that, when the caller
+    does not supply a value, must not constrain at all*::
+
+        MATCH (o:org) WHERE $org IS NULL OR o.data.name = $org RETURN o
+
+    **Absent vs null vs empty string** — the whole feature, and the part that
+    ships subtly broken if it is got wrong:
+
+    - **ABSENT** (the name is not a key in ``inputs``) remains a hard
+      ``SearchExecutionError``, unchanged by this construct: a param named in
+      a query is still a required param. That guard is what catches a caller
+      who forgot to wire the filter at all — an omission that would otherwise
+      silently widen the query to everything, which is precisely the
+      plausible-and-alarmless wrong answer GRY-ARCH-3 exists to prevent.
+    - **NULL** (supplied, with the value ``None``) is the "do not constrain on
+      this" signal. ``$p IS NULL`` is true, and in the idiom above the whole
+      ``WHERE`` folds away.
+    - **EMPTY STRING** (supplied, ``""``) is an ordinary value. It is neither
+      absent nor null: it constrains, and matches only a literally-empty field.
+      A caller wiring an HTTP ``?org=`` must therefore map a blank value to
+      ``None`` itself (``request.GET.get("org") or None``); the language will
+      not guess that a blank string means "unfiltered".
+
+    Resolution happens against the supplied inputs *before* lowering
+    (``_fold_param_predicates``), so no lowering path ever sees this node —
+    the not-supplied case emits the genuinely unfiltered plan rather than a
+    no-op predicate, and the walkers that would otherwise need to learn a
+    field-path-less leaf never meet one.
+
+    .. tap:capability:: Gryphon input-null predicate
+       :id: cap-grid-gryphon-param-null
+       :status: implemented
+       :audience: external-user; agent; developer
+       :affordance: querying
+       :covered-by: pytest:tap_grid/tests/test_gryphon.py::TestGryphonParamNullExecutor
+       :limitations: A WHERE that folds to a constant FALSE under the supplied inputs is refused rather than returning an empty result. Gridkin scenarios and model-oracle support are not built.
+
+       ``WHERE $p IS NULL`` / ``$p IS NOT NULL`` test a runtime input rather
+       than graph data — the optional-filter idiom. An absent input is still
+       an error; an explicitly-null one means "do not constrain".
+
+       Example::
+
+          MATCH (o:github_organization)
+          WHERE $org IS NULL OR o.data.login = $org
+          RETURN o
+    """
+
+    param: str
+    negated: bool
+
+
+@dataclass(frozen=True)
 class AndPred:
     """Conjunction: both operands must be true."""
 
@@ -264,7 +322,9 @@ class NotPred:
     operand: Predicate
 
 
-Predicate = Comparison | InComparison | IsNullComparison | ObservationComparison | AndPred | OrPred | NotPred
+Predicate = (
+    Comparison | InComparison | IsNullComparison | ObservationComparison | ParamNullTest | AndPred | OrPred | NotPred
+)
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +546,11 @@ def _collect_params_from_predicate(pred: Predicate | None, out: set[str]) -> Non
         # required-param collection (silent-drop footgun for any predicate
         # walker that doesn't know about a new leaf).
         pass
+    elif isinstance(pred, ParamNullTest):
+        # The param a null-test names IS a required param: ABSENT stays an
+        # error (req-grid-traversal-lang-param-null). Only an explicitly
+        # supplied NULL means "do not constrain".
+        out.add(pred.param)
     elif isinstance(pred, (AndPred, OrPred)):
         _collect_params_from_predicate(pred.left, out)
         _collect_params_from_predicate(pred.right, out)

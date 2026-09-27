@@ -63,7 +63,7 @@ class CredentialBindProvenanceGuard(Guard):
         for tag in result.orphan_tags:
             problems.append(f"{_rel(tag.path, tag.lineno)}: `# {_TAG}` tag on no identity-bind write (stale).")
 
-        assert not problems, (
+        assert not problems, (  # nosec B101
             "Credential-bind provenance violation(s): an identity bind lacks a valid, model-appropriate "
             "`# TAP-CRED-BIND` provenance tag (spec-tap-auth-v0.md req-tap-auth-credential-bind-provenance). "
             "A public-key credential may be bound only by `pop-ceremony` (a verified WebAuthn ceremony) or "

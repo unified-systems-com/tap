@@ -174,6 +174,9 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
 
 
 def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) -> dict[str, Any]:
+    from dataclasses import replace
+
+    from tap_grid.caller_context import CallerContext, get_caller_context
     from tap_grid.services import write_batch
 
     since = _derived_at(batch)
@@ -249,10 +252,21 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
         # entry names and nothing else: the write pipeline's delete backstop consults it. The
         # licence is derived from the entry, not from the operation, so an operation formed for
         # the wrong row is refused rather than licensed by its own target (Codex on PR# 658).
+        # Each verdict's write mints its own batch, and a minted batch must say what it is
+        # (req-grid-service-batch-label-required). The label rides on the context, so a
+        # caller that bound a batch scope still joins it.
+        labelled = replace(
+            get_caller_context() or CallerContext(),
+            batch_name=f"Reconcile: {plan} {entity_id}",
+            batch_description=(
+                f"The reconcile verb applied a {plan!r} verdict to {entity_id}, judged on collection "
+                f"run batch {batch.entity_id}."
+            ),
+        )
         with reconcile_write_scope(licensed):
             result = (
                 write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
-                    [op], result_mode="minimal"
+                    [op], caller_context=labelled, result_mode="minimal"
                 )
             )
         outcome = result.results[0] if result.results else None

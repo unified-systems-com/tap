@@ -62,7 +62,7 @@ class SecretPatternGuard(Guard):
 
     def check(self) -> None:
         matches = scan_paths(REPO_ROOT, _repo_text_files())
-        assert not matches, (
+        assert not matches, (  # nosec B101
             f"Credential-shaped material found in the repository tree ({len(matches)}):\n"
             + format_matches(matches)
             + "\n\nTreat any real match as COMPROMISED: rotate the credential first, then remove it from the "

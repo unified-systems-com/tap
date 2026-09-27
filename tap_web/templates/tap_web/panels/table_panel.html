@@ -34,7 +34,8 @@
 
     {# Tabulator mount point. data-tap-table-panel-id links to the JSON data block below. #}
     <div data-tap-table-mount
-         data-tap-table-panel-id="{{ panel.entity_id }}"
+         data-tap-table-panel-id="{{ panel.entity_id }}"{% if table_mode == "raw" %}
+         data-tap-table-mode="raw"{% endif %}
          id="tap-table-mount-{{ panel.entity_id }}"
          {% if table_height %}data-tap-table-height="{{ table_height }}"{% endif %}
          {% if table_refresh_seconds %}data-tap-table-refresh="{{ table_refresh_seconds }}"{% endif %}

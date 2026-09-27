@@ -645,7 +645,7 @@ def _iter_python_citations(repo_root: Path, roots: list[Path]) -> Iterator[Citat
                         continue
                     for token in _CITATION.findall(tok.string):
                         yield Citation(token=token, path=parsed.path, lineno=tok.start[0])
-        except tokenize.TokenError, SyntaxError, UnicodeDecodeError, OSError:
+        except (tokenize.TokenError, SyntaxError, UnicodeDecodeError, OSError):
             continue
 
 
@@ -653,7 +653,7 @@ def _iter_text_citations(paths: list[Path]) -> Iterator[Citation]:
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             for token in _CITATION.findall(line):
@@ -1250,7 +1250,7 @@ def render_evidence_markdown(repo_root: Path) -> str:
 
     lines += [
         "",
-        "**Declared `Verified` without two evidence classes** — this one fails " "(`req-tap-traceability-status`):",
+        "**Declared `Verified` without two evidence classes** — this one fails (`req-tap-traceability-status`):",
     ]
     lines += ["", "None." if not unearned else ""]
     lines += [f"- `{e.rid}` (evidence classes: {e.classes})" for e in unearned]

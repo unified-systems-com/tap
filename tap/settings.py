@@ -16,8 +16,10 @@ Key environment variables:
     TAP_WEB_WORKERS - gunicorn sync-worker count (default 3)
 """
 
+import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -129,7 +131,26 @@ DEBUG = _env_flag("DEBUG", False)
 # that an EMPTY list falls back to a permissive development default. So this list is the
 # enforcement, and a deployment must name its own hostnames here: inheriting these means
 # the deployment answers nothing (a loud 400), never that it answers everything.
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+ALLOWED_HOSTS = [h for h in (h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")) if h]
+
+# Origins whose cross-origin POSTs Django trusts for CSRF. Django compares the request's
+# Origin/Referer against this list SCHEME-AND-ALL, and its default is EMPTY — so the
+# moment an instance is reached over a scheme or host that is not the one it thinks it is
+# serving, every form post fails, login included.
+#
+# This is the setting a per-instance forwarded hostname needs, and it is a SEPARATE fact
+# from ALLOWED_HOSTS (req-tap-serving-codespace-5). ALLOWED_HOSTS answers "is this
+# Host header mine?" and takes bare hostnames; this answers "did this POST come from
+# me?" and takes scheme-qualified origins. A GitHub Codespace makes the difference
+# concrete: the browser reaches `https://<name>-8000.app.github.dev` while the container
+# serves plain `http` behind the port forwarder, so the host matches and the ORIGIN does
+# not. The symptom is a login page that renders perfectly and rejects every submission —
+# which reads as a broken credential rather than as a missing setting, and is why this
+# is named here rather than left to a deployment to discover.
+#
+# Empty by default, like Django's own: an origin list is an assertion about who fronts
+# this instance, and inventing one would be guessing at the deployment's topology.
+CSRF_TRUSTED_ORIGINS = [o for o in (o.strip() for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")) if o]
 
 
 # =============================================================================
@@ -266,6 +287,29 @@ TAP_CASCADE_MAX_CLOSURE = int(os.environ.get("TAP_CASCADE_MAX_CLOSURE", "5000"))
 # which isolated stack a browser tab is pointing at. Empty for the primary stack.
 # Set per-worktree in .env.local — see specs/spec-dev-multisession.md.
 TAP_SESSION_LABEL = os.environ.get("TAP_SESSION_LABEL", "")
+
+# Cookie names per stack (tap#773). Browsers scope cookies by host, not port, and every
+# dev stack runs on `localhost`, so with Django's default names each stack overwrote the
+# others' `sessionid` / `csrftoken` — a panel refreshing in one stack's tab could replace
+# another stack's session between a passkey ceremony's options and verify calls. A
+# labelled stack suffixes both names; an unlabelled one (production, CI) keeps Django's.
+# JavaScript never reads the CSRF cookie by name: base.html carries the token in
+# <meta name="csrf-token">.
+def per_stack_cookie_names(label: str) -> tuple[str, str]:
+    """(session, csrf) cookie names for a stack label; Django's defaults when unlabelled."""
+    suffix = re.sub(r"[^A-Za-z0-9_-]", "_", label)
+    if not suffix:
+        return "sessionid", "csrftoken"
+    if suffix != label:
+        # Cleaning is lossy (`a/b` and `a b` both become `a_b`), and two stacks sharing a name is
+        # the collision this function exists to prevent. spawn-session.sh only mints
+        # ^[a-z][a-z0-9_-]*$ labels, so this is for a hand-set TAP_SESSION_LABEL: keep the
+        # readable form and add a short digest of the original, so distinct labels stay distinct.
+        suffix += "-" + hashlib.sha256(label.encode()).hexdigest()[:8]
+    return f"sessionid_{suffix}", f"csrftoken_{suffix}"
+
+
+SESSION_COOKIE_NAME, CSRF_COOKIE_NAME = per_stack_cookie_names(TAP_SESSION_LABEL)
 
 # =============================================================================
 # tap-cares Runtime Secrets
@@ -677,14 +721,39 @@ SITE_ID = 1
 # federated allauth login (account_login) is still mounted and reachable at its own URL
 # for instances that DO configure a provider; full repointing of the secondary template
 # links + logout redirect is Phase 3 (spec-tap-auth-passkey-v0 webauthn-6/slim-6).
-LOGIN_URL = "passkey_login"
+#
+# OVERRIDABLE, because the constant above is wrong for at least one real deployment.
+# A Codespace boots `codespace_demo`, which declares exactly one provider (GitHub device
+# flow), sets local_password_enabled=false, and cannot do passkeys AT ALL — a WebAuthn
+# ceremony is pinned to a canonical origin, and a Codespace's hostname is generated per
+# instance. Sending that visitor to `passkey_login` offers them the one method that
+# provably cannot work, plus a "sign in at the canonical address instead" link pointing
+# at localhost:8000. OBSERVED 2026-09-22 on a live Codespace with every other derived
+# value correct.
+#
+# This is NOT Phase 3. Phase 3 is making the login wall genuinely profile-aware — asking
+# the configured auth methods where to send someone, rather than being told. This is the
+# narrow seam that lets the Codespaces derivation (scripts/codespace-env) answer the
+# question for the one deployment where the answer is unambiguous, without changing the
+# default for anyone else. The fallback below is the previous constant, so an install
+# that sets nothing behaves exactly as it did.
+# `or`, NOT `.get(key, default)`. A compose passthrough supplies an EMPTY string for an
+# unset variable, and `.get` only falls back when the key is ABSENT — so the two-argument
+# form resolves LOGIN_URL to "" on every ordinary install the moment a passthrough exists,
+# and the login wall redirects to nowhere. Caught by testing the FALLBACK, not the feature.
+# Same empty-value class as the ALLOWED_HOSTS=[""] fail-open this file already guards.
+LOGIN_URL = os.environ.get("TAP_LOGIN_URL") or "passkey_login"
 LOGIN_REDIRECT_URL = "/"
 # Log out to TAP's own front door, not allauth's (req-tap-auth-passkey-rollout-5). Until
 # 2026-08-08 this was "account_login", so every logout landed the user on the federated
 # login page — which on a zero-provider instance is a bare username/password form. The
 # front door and the back door disagreed; they now both point at the passkey page, which
 # links onward to the password form when TAP_LOCAL_PASSWORD_ENABLED permits it.
-ACCOUNT_LOGOUT_REDIRECT_URL = "passkey_login"
+# Follows LOGIN_URL deliberately. The comment above records that the front door and the
+# back door disagreeing was a real 2026-08-08 defect; repointing only the front door
+# would recreate it in a Codespace, where logout would land the visitor on a passkey
+# page that cannot complete a ceremony on this hostname.
+ACCOUNT_LOGOUT_REDIRECT_URL = os.environ.get("TAP_LOGIN_URL") or "passkey_login"
 
 # Path prefixes the login wall does NOT gate. Each has its own enforcement:
 #   /auth/    — the login routes themselves (gating them would loop)
@@ -803,6 +872,20 @@ TAP_WEB_LANDING = landing_for_settings(_TAP_BOOT_PROFILE)
 # itself (reading a Codespaces environment) is deliberately not wired here.
 _env_owner = os.environ.get("TAP_AUTH_INSTANCE_OWNER")
 TAP_AUTH_INSTANCE_OWNER = json.loads(_env_owner) if _env_owner else {}
+
+# The role the INSTANCE OWNER receives on first sign-in, keyed on (provider, uid) rather than
+# on email — see TapSocialAdapter._apply_owner_grant for the full reasoning.
+#
+# EMPTY BY DEFAULT, and that is the safety property: an install that does not set this sees no
+# behaviour change at all, so this can never retroactively hand anyone a role. It exists because
+# TAP_AUTH_INSTANCE_OWNER above already identifies exactly one person well enough to ADMIT them
+# (`owner_only`), and an instance that admits exactly one account and then grants it nothing
+# serves that person a capability_denied page — which is what a Codespace did, 2026-09-22.
+#
+# `or ""` rather than a two-argument get: a compose passthrough supplies an empty string for an
+# unset variable, and the distinction between "absent" and "set to empty" is not one any caller
+# should have to think about for a value that means "off".
+TAP_AUTH_OWNER_ROLE = (os.environ.get("TAP_AUTH_OWNER_ROLE") or "").strip()
 
 _env_providers = os.environ.get("TAP_AUTH_PROVIDERS")
 TAP_AUTH_PROVIDERS = json.loads(_env_providers) if _env_providers else providers_for_settings(_TAP_BOOT_PROFILE)

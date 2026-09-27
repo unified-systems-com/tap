@@ -18,6 +18,15 @@ phase and no in-tree `plugins/` directory: every plugin is standalone from its f
 whoever runs it — this organisation, a customer, an outsider — and TAP never assumes which. This skill is
 independent of any one GitHub organisation; where it needs a location it asks.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Declare vocabulary contract-first** (3): start from the `BaseModel` contract and the spec, not a neighbouring model.
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## Gate 0: There is a spec, or you stop
 
 The spec drives everything below. Resolve it before touching a file:
@@ -180,6 +189,8 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
 
 ## Step 5: Models, edges, pages, panels
 
+**Every model goes through `add-model` and every edge through `add-edge`, one at a time. No exceptions.** Do not write a generator, script or template that emits models or edges in bulk, and do not copy them from another plugin and rename them. Both skills derive each type from the BaseModel and edge contracts. A generator derives from whatever it was copied from. A stub generator built from `aws_core`'s model shape copied its `configuration` field, which holds raw boto3 responses in `aws_core` and nothing at all in the copies, onto about 45 models across six plugins. Removing it took six PRs.
+
 - Models: the [`add-model`](../../../tap_grid/skills/add-model/SKILL.md) skill, one per model; re-export via
   `tap_plugin.<slug>.models`. Every TAP-managed type declares `DEFAULT_DIMENSIONS` per the spec's default
   dimensions table (a dimension-less type is a design error to justify in the spec).
@@ -219,6 +230,10 @@ only that plugin gives it meaning. Four rules, each of which has been broken in 
   two nodes: the neutral `git_core__git_repository` and the forge's own hosting record. Another forge's
   plugin will mint the SAME neutral type, so a vocabulary stamped there by one forge makes the type
   unqueryable across forges.
+- **Query a key by bracket, never by dotted path.** `n.dimensions["git.host"]`, not `n.dimensions.git.host`:
+  the dots in a key are part of the name, and the dotted path reads them as nesting and returns a silent
+  zero until tap#781 turns it into an error (`spec-grid-dimension.md`, `req-grid-dimension-query-form`).
+  Every query in a spec, a page bundle or a test uses the bracketed form.
 
 ### The `dcom` axis — say what KIND of fact a node is
 
@@ -295,7 +310,9 @@ validation system already checks.
 TAP assumes nothing about the owner's CI, code review or scanners; wire whatever the owner runs (Step 1).
 The one piece TAP itself offers is its **reusable per-repo plugin CI** (`req-tap-plugin-extdev-repo-ci`): a
 thin `.github/workflows/ci.yml` that calls `<tap-core-owner>/tap/.github/workflows/plugin-ci.yml@<sha>` with
-`plugin_slug` and a read-only PAT the owner provides for fetching the core harness. Two independent pins:
+`plugin_slug` and a read-only PAT the owner provides for fetching the core harness; the calling job grants
+`permissions: {contents: read, security-events: write}` (the workflow's SARIF upload job needs the second, and
+GitHub refuses the whole call at startup without it — tap#772). Two independent pins:
 the workflow SHA picks the validation logic; the manifest's `requires_tap` picks the core it runs against.
 It boots the plugin's in-package `ci` record and runs its tests — the same gates as Step 11, on every PR.
 Optional; an owner with their own CI runs the same commands there.

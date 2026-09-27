@@ -83,7 +83,7 @@ def _read_zone_markers(init_path: Path) -> tuple[list[str] | None, tuple[str, ..
     (`req-service-boundary-discovery-2`).
     """
     parsed = parse_file(init_path)
-    assert parsed is not None, f"service boundary __init__ failed to read/parse: {init_path}"
+    assert parsed is not None, f"service boundary __init__ failed to read/parse: {init_path}"  # nosec B101
 
     declared_all: list[str] | None = None
     contract: tuple[str, ...] = ()
@@ -95,14 +95,14 @@ def _read_zone_markers(init_path: Path) -> tuple[list[str] | None, tuple[str, ..
         targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
         if _ALL_VAR in targets:
             value = _literal(node.value)
-            assert isinstance(value, (list, tuple)), (
+            assert isinstance(value, (list, tuple)), (  # nosec B101
                 f"{init_path}: {_ALL_VAR} must be a static list/tuple literal so the boundary "
                 f"guard can read it without importing the package"
             )
             declared_all = [str(item) for item in value]
         if _CONTRACT_MODULES_VAR in targets:
             value = _literal(node.value)
-            assert isinstance(
+            assert isinstance(  # nosec B101
                 value, (list, tuple)
             ), f"{init_path}: {_CONTRACT_MODULES_VAR} must be a static list/tuple literal"
             contract = tuple(str(item) for item in value)
@@ -131,7 +131,7 @@ def _classify_public_defs(path: Path) -> tuple[set[str], set[str]]:
     inventory and skipped (`req-service-boundary-below-gate`).
     """
     parsed = parse_file(path)
-    assert parsed is not None, f"gateway module failed to read/parse: {path}"
+    assert parsed is not None, f"gateway module failed to read/parse: {path}"  # nosec B101
     gated: set[str] = set()
     ungated: set[str] = set()
     for node in parsed.tree.body:
@@ -227,7 +227,7 @@ class ServiceBoundaryGuard(Guard):
 
     def check(self) -> None:
         discovered = _discover_boundaries()
-        assert discovered, (
+        assert discovered, (  # nosec B101
             "no `services/` boundary packages discovered under any first-party source root — the "
             "boundary guard has nothing to protect, which almost certainly means discovery broke"
         )
@@ -243,7 +243,7 @@ class ServiceBoundaryGuard(Guard):
             )
             problems.extend(_boundary_violations(boundary))
 
-        assert not problems, (
+        assert not problems, (  # nosec B101
             "Service-layer boundary violation(s). Every guarded `services/` package is a trust "
             "boundary: every __all__ entry must be a gated operation, and no ungated public "
             "function may exist in a gateway module (spec-service-layer-boundary.md). Fix by "

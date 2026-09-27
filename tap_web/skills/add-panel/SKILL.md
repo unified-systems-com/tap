@@ -14,6 +14,16 @@ You are adding a panel to a TAP page. There are two distinct artifacts and you n
 
 Most "add a panel" requests need both. A few need only one — e.g. seeding a second instance of an existing panel type on a different page is instance-only; building a brand-new dashboard widget that no consumer needs yet is type-only.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+- **Write programmatic layouts through the layout skill** (8): [`create-layout`](../../../tap_viz/skills/create-layout/SKILL.md) configures the tap_viz runtime; shared geometry lives in tap_viz.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`tap_web/specs/spec-web-page.md`](../../specs/spec-web-page.md)** — Page model, layout JSON shape, how slots work, `USES_PANEL` hotlink.
@@ -309,12 +319,15 @@ The standard table panel (`spec-web-panels-standard-table.md`) is search-bound a
 most of a table is `Panel.config`. These are the things that cost a round trip each on the first
 real one (git-serious's status wall, `tap_plugin/git_serious/grift/landing.grift.json`):
 
-- **Envelope mode, not projection mode.** A Gryphon search that `RETURN`s aliases yields `rows` and
-  **zero `nodes`**; the v1 table reads only `nodes` and renders nothing, silently. Bind the table to
-  `MATCH (r:…) … RETURN r` (envelope mode); keep projections for badges and counts. ORDER BY a field
-  path works only in envelope mode and never on a traversal pattern (tap#297, tap#298). Prove it
-  before seeding: `execute_search(...)` under `acting_as(get_builtin_actor(COLLECTOR))` and check
-  `len(envelope["nodes"])`.
+- **Envelope mode OR projection mode — the panel follows the envelope's shape.** `RETURN r`
+  yields `nodes` and a node table; `RETURN a.x AS col, …` yields `rows` and zero `nodes`, and the
+  table renders the rows (`req-web-stdpanel-table-rows`, tap#432): each `columns[].field` names a
+  RETURN alias, `link`'s `href_template` takes `{alias}` placeholders, and `row_url_template` makes
+  a whole row a link. A join (an assignment, a rule and its policy) is a projection table, not a
+  custom panel. ORDER BY a field path never works on a traversal pattern (tap#298). Prove it before
+  seeding: `execute_search(...)` under `acting_as(get_builtin_actor(COLLECTOR))` and check
+  `len(envelope["nodes"])` or `len(envelope["rows"])` — for a projection the envelope's
+  `info.total_count` counts nodes (0), so read the rows, not it.
 - **Page inputs reach the search coerced by its own schema.** `?workflow_id=123` arrives as a string;
   the panel passes it through `tap_grid.search.inputs_from_query`, which coerces by the search's
   `input_schema` type. Declare the input's real type (`integer`) — an untyped or `string` schema
@@ -352,6 +365,16 @@ merges and pre-bakes, then hands to the tap_viz runtime (`spec-viz-projection.md
 the scene, not the drawing. These cost a day between them on the git-serious machinery views
 (tap#402):
 
+- **`icon-badge` is the node style, unless you are formally told otherwise.** Set the projection's
+  `definition.node_style` to `{"mode": "icon-badge"}`: each node's type icon becomes a badge at its
+  upper-left corner, containers included, which is the look every TAP graph shares. `"default"`
+  (the icon as the node body) is a deliberate exception that needs an explicit ask. It is not a way to
+  make a small icon look bigger. When an icon renders tiny or off-centre as a badge, the SVG is the
+  bug: give it `width`/`height` and a square `viewBox`. Ruled by George 2026-09-22 after the highbar
+  landing diagram shipped `"default"` tiles and hand-drew account icons in the upper-right.
+- **A search that filters on a dimension brackets the key.** `WHERE n.dimensions["tap.graph"] = "web"`,
+  never `n.dimensions.tap.graph`: dimension keys contain dots, and the dotted path matches nothing without
+  an error (tap#781, `req-grid-dimension-query-form` in `tap_grid/specs/spec-grid-dimension.md`).
 - **The scene's edge search names the edge types it draws.** `panel-graph.js` keeps only edges whose
   BOTH endpoints are in the node set — that is a guard against adding an edge to a graph that has no
   such node, **not a fetch strategy**. Leaning on it (`"filters": {}`, "the panel filters by

@@ -72,7 +72,7 @@ class ImplementsUniquenessGuard(Guard):
             return
 
         offenders = undeclared_duplicates(duplicates, groups_by_file(), REPO_ROOT)
-        assert not offenders, (
+        assert not offenders, (  # nosec B101
             "One requirement-and-role, more than one authoritative implementation. Collapse "
             "them to a single derivation every consumer reads — or, if both must exist, tag "
             "every site with the same `TAP-KNOWN" + "-DUPE(<group>)` and document that group "

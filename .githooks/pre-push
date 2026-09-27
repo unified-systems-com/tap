@@ -1,0 +1,179 @@
+#!/usr/bin/env sh
+# Refuse a push whose bookkeeping CI will reject anyway (req-dev-localexec-prepush, tap#345).
+#
+# WHY THIS EXISTS, from two observations rather than a principle:
+#
+#   * PR# 343 - tap (2026-09-08) went red on THREE pure-bookkeeping failures — a stale
+#     implements claim, an unsynced traceability fragment, an unsynced Validation Map row —
+#     every one of which `scripts/promote-to-main.sh` runs locally before it pushes. The PR
+#     was opened with `git push` + `gh pr create` instead, so none of them ran.
+#   * PR# 818 - tap (2026-09-25) went red on the mypy ratchet. mypy HAD been run locally,
+#     on that module, early — and then the module was rewritten four times. A subset that
+#     passed is not the lane, and "I ran it earlier" is evidence about a different tree.
+#
+# Both are ~90 seconds of local work against ~10 minutes of CI and a red pull request.
+#
+# NOT the test lanes. Those stay the promote's job and CI's — a hook long enough to make
+# people reach for --no-verify is a hook that protects nothing.
+#
+# Bypass is git's own: `git push --no-verify`. Deliberate and visible in a transcript beats
+# an env var nobody can see afterwards.
+#
+# ---------------------------------------------------------------------------
+# THREE THINGS THIS HOOK REFUSES TO DO, each because the first draft did it
+# ---------------------------------------------------------------------------
+#
+# 1. IT DOES NOT RUN REPO CODE UNDER STALE CONSENT. The first draft called
+#    `tap_consent_gate || true` and carried on, copying `.githooks/pre-commit`'s protective
+#    stance. That reasoning does not transfer. pre-commit's action is a stdlib-only SCAN of
+#    staged content, and declining to scan is what a hostile change would want. This hook's
+#    action is to EXECUTE four repository scripts and a container command — so running it
+#    under stale consent does not protect the developer, it enlarges exactly the surface
+#    `req-dev-localexec-reconsent` exists to freeze. On a mismatch the gate turns itself off,
+#    says so, and lets the push through: never running unconsented code, never blocking work.
+#    (The residual regress — this file and `_consent_check.sh` both come from the checkout —
+#    is the one `_consent_check.sh` documents and terminates out of band, through CODEOWNERS
+#    and a CI guard that runs off this machine. Not fixable locally, not pretended otherwise.)
+#
+# 2. IT DOES NOT ATTEST TO A TREE IT DID NOT CHECK. Every check here reads the WORKING TREE.
+#    That is only evidence about the push when the pushed commit IS the working tree: so the
+#    hook requires each non-deletion ref to be HEAD and the tree to be clean, and otherwise
+#    prints that it cannot attest and gets out of the way. A gate that says "green" about a
+#    different revision than the one leaving the machine is worse than no gate.
+#
+# 3. IT DOES NOT TURN A MISSING CHECKER INTO A PASS. A checker that is absent, or an
+#    interpreter that is missing, is REPORTED — in an armed clone those files are present by
+#    construction, so an absence is a finding rather than a condition to route around.
+#
+# Spec: specs/spec-dev-local-execution.md
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$ROOT" ] || exit 0
+cd "$ROOT" || exit 0
+
+# ---------------------------------------------------------------------------
+# Consent, before any repository code is executed (finding 1).
+# ---------------------------------------------------------------------------
+. "$(dirname "$0")/_consent_check.sh"
+if ! tap_consent_gate; then
+    echo "pre-push: the local-execution consent hash does not match, so this gate is OFF." >&2
+    echo "  It will not run repository scripts on your machine until you re-approve them —" >&2
+    echo "  running MORE repo code while consent is stale is what the consent model forbids." >&2
+    echo "  Re-approve with 'scripts/hooks-install' after reading the diff; the push proceeds." >&2
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Is the working tree the thing being pushed? (finding 2)
+# ---------------------------------------------------------------------------
+HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)" || exit 0
+_updates=0
+_mismatch=""
+while read -r _local_ref _local_sha _remote_ref _remote_sha; do
+    [ -z "$_local_ref" ] && continue
+    case "$_local_sha" in
+        0000000000000000000000000000000000000000) continue ;;  # a deletion adds no commits
+    esac
+    _updates=$((_updates + 1))
+    [ "$_local_sha" = "$HEAD_SHA" ] || _mismatch="$_mismatch $_local_ref"
+done
+[ "$_updates" -gt 0 ] || exit 0
+
+if [ -n "$_mismatch" ]; then
+    echo "pre-push: not checking — these refs are not the checked-out HEAD:$_mismatch" >&2
+    echo "  Every check here reads the working tree, which is evidence about the push only" >&2
+    echo "  when the pushed commit IS the working tree. Check out the ref and push again if" >&2
+    echo "  you want the gate; CI remains the enforcement boundary either way." >&2
+    exit 0
+fi
+
+if ! git diff --quiet HEAD 2>/dev/null; then
+    echo "pre-push: not checking — the working tree differs from HEAD." >&2
+    echo "  A verdict about a dirty tree is not a verdict about the commit being pushed." >&2
+    echo "  Commit or stash, then push again." >&2
+    exit 0
+fi
+
+FAILED=""
+UNCHECKED=""
+note_fail() { FAILED="$FAILED
+  - $1"; }
+note_unchecked() { UNCHECKED="$UNCHECKED
+  - $1"; }
+
+# ---------------------------------------------------------------------------
+# Host checks — no container, no Django, no .venv. A missing one is a finding (3).
+# ---------------------------------------------------------------------------
+
+if ! command -v python3 >/dev/null 2>&1; then
+    note_unchecked "python3 not found — the host syntax floor did not run"
+elif [ -f "$ROOT/tap/host_syntax_floor.py" ]; then
+    python3 "$ROOT/tap/host_syntax_floor.py" >/dev/null 2>&1 ||
+        note_fail "host syntax floor — a host-runnable module will not parse on the oldest supported interpreter: python3 tap/host_syntax_floor.py"
+else
+    note_unchecked "tap/host_syntax_floor.py missing — the host syntax floor did not run"
+fi
+
+for _spec in \
+    "scripts/implements-tag|--check|implements claims stale, drifted or unstamped: scripts/implements-tag --check, then --resync <file> after re-reading the claim" \
+    "scripts/check-dco||DCO sign-off missing: scripts/check-dco" \
+    "scripts/check-issue-link||no issue trailer on this range: scripts/check-issue-link (Closes:/Part-of:/No-issue:)"
+do
+    _prog="${_spec%%|*}"
+    _rest="${_spec#*|}"
+    _arg="${_rest%%|*}"
+    _msg="${_rest#*|}"
+    if [ ! -x "$ROOT/$_prog" ]; then
+        note_unchecked "$_prog missing or not executable — that check did not run"
+        continue
+    fi
+    if [ -n "$_arg" ]; then
+        "$ROOT/$_prog" "$_arg" >/dev/null 2>&1 || note_fail "$_msg"
+    else
+        "$ROOT/$_prog" >/dev/null 2>&1 || note_fail "$_msg"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Container checks — the three guards that have actually reddened a PR here.
+#
+# They need the stack: mypy runs against the container's interpreter and installed plugin
+# set, and host python is stale by construction. No stack means UNCHECKED, printed — a bare
+# clone must still be able to push, and refusing there would teach --no-verify as the
+# ordinary road. Every session worktree has a stack, which is where both failures happened.
+# ---------------------------------------------------------------------------
+
+if [ ! -x "$ROOT/scripts/dc" ]; then
+    note_unchecked "scripts/dc missing — mypy ratchet, fragment sync and Map sync did not run"
+elif ! "$ROOT/scripts/dc" ps --status running 2>/dev/null | grep -q web; then
+    note_unchecked "no running stack — mypy ratchet, fragment sync and Map sync did not run (scripts/dc up -d)"
+else
+    for _t in \
+        "tap/tests/test_guards.py::test_guard_holds[mypy-static-typing]" \
+        "tap/tests/test_requirement_dispositions.py::test_committed_fragments_are_in_sync" \
+        "tap/tests/test_guards.py::test_spec_map_in_sync"
+    do
+        if ! "$ROOT/scripts/dc" exec -T web uv run pytest "$_t" -q >/dev/null 2>&1; then
+            case "$_t" in
+                *mypy*) note_fail "mypy ratchet: scripts/dc exec -T web uv run mypy . — fix the new error, do not add a baseline entry for a file this branch adds" ;;
+                *fragments*) note_fail "traceability fragments out of sync: scripts/dc exec -T web uv run python manage.py guards --sync-accounting --sync-evidence" ;;
+                *spec_map*) note_fail "Validation Map out of sync: scripts/dc exec -T web uv run python manage.py guards --sync-map" ;;
+            esac
+        fi
+    done
+fi
+
+if [ -n "$UNCHECKED" ]; then
+    echo "" >&2
+    echo "pre-push: these checks did NOT run, so this gate covers less than it looks:$UNCHECKED" >&2
+fi
+
+if [ -n "$FAILED" ]; then
+    echo "" >&2
+    echo "pre-push: refused — CI would fail on this, and each of these is a local fix:$FAILED" >&2
+    echo "" >&2
+    echo "  Push anyway with 'git push --no-verify' if you know why." >&2
+    exit 1
+fi
+
+exit 0

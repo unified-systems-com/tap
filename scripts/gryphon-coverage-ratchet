@@ -35,7 +35,7 @@ COV_JSON="/tmp/gryphon-coverage.json"
 # next honest run, and the whole point is measuring across the corpus.
 if [ -z "$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p; print(p('gryphon_playground') or '', end='')")" ]; then
     echo "FAIL: tap_plugin.gryphon_playground is not installed — the gridkin corpus ships in that plugin." >&2
-    echo "      Boot a profile that installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`." >&2
+    echo "      Boot a profile that installs it (core_ci, soak) or \`spawn --dev-plugins gryphon_playground\`." >&2
     exit 2
 fi
 

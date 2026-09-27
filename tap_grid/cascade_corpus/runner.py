@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from django.test import override_settings
 
+from tap_grid.caller_context import CallerContext, get_caller_context
 from tap_grid.cascade_corpus.loader import Scenario
 from tap_grid.cascade_corpus.model_oracle import RESERVED_KEYS
 from tap_grid.models import Batch, BatchEvent, BatchEventType, Entity
@@ -58,6 +59,20 @@ def apply_containment(scenario: Scenario, monkeypatch: Any) -> None:
         monkeypatch.setattr(model, "INTERNAL_ONLY", False, raising=False)
 
 
+def labelled(purpose: str) -> CallerContext:
+    """The ambient context with a corpus batch label (req-grid-service-batch-label-required).
+
+    Corpus writes keep the batch scope they had — the ambient one, unchanged — and a
+    batch they mint says what it is. The label rides on the context, not the call, so a
+    write joining a batch it opened keeps that batch's own label.
+    """
+    return replace(
+        get_caller_context() or CallerContext(),
+        batch_name=f"Corpus: {purpose}",
+        batch_description=f"Test-corpus writes: {purpose}.",
+    )
+
+
 def apply_blocks(scenario: Scenario, monkeypatch: Any) -> None:
     """Set INTERNAL_ONLY on the blocked types AFTER the graph exists: the public create
     path refuses an internal-only type too, and the block under test is the delete's."""
@@ -70,21 +85,23 @@ def apply_blocks(scenario: Scenario, monkeypatch: Any) -> None:
 def build(scenario: Scenario) -> Built:
     node_ids: dict[str, uuid.UUID] = {}
     for ref, entity_type in scenario.graph.node_type.items():
-        result = create_node(entity_type, {"name": ref})
+        result = create_node(entity_type, {"name": ref}, caller_context=labelled(f"build {scenario.id}"))
         if not result.success or result.entity_id is None:
             raise BuildError(f"{scenario.id}: could not create node {ref}: {result.errors}")
         node_ids[ref] = uuid.UUID(str(result.entity_id))
     entities = {ref: Entity.objects.get(pk=eid) for ref, eid in node_ids.items()}
     edge_ids: dict[str, uuid.UUID] = {}
     for ref, a, b, edge_type in scenario.graph.edges:
-        edge = create_edge(entities[a], entities[b], edge_type)
+        edge = create_edge(entities[a], entities[b], edge_type, caller_context=labelled(f"build {scenario.id}"))
         edge_ids[ref] = uuid.UUID(str(edge.entity_id))
     for ref in sorted(scenario.graph.pre_retired):
-        result = delete_node(node_ids[ref], reason="resolved")
+        result = delete_node(node_ids[ref], reason="resolved", caller_context=labelled(f"build {scenario.id}"))
         if not result.success:
             raise BuildError(f"{scenario.id}: could not pre-retire {ref}: {result.errors}")
     for ref in sorted(scenario.graph.pre_retired_edges):
-        result = delete_edge_by_entity(edge_ids[ref], reason="resolved")
+        result = delete_edge_by_entity(
+            edge_ids[ref], reason="resolved", caller_context=labelled(f"build {scenario.id}")
+        )
         if not result.success:
             raise BuildError(f"{scenario.id}: could not pre-retire edge {ref}: {result.errors}")
     return Built(node_ids, edge_ids)
@@ -294,6 +311,7 @@ def run(scenario: Scenario, built: Built) -> list[str]:
             reason=scenario.reason,
             metadata=scenario.metadata or None,
             cascade=scenario.cascade,  # type: ignore[arg-type]  # invalid values are the point of some scenarios
+            caller_context=labelled(f"run {scenario.id}"),
         )
     after = snapshot()
     delta = event_delta(events_before, event_counts())

@@ -53,10 +53,18 @@ class CallerContext:
             valid only below the service layer (model-level saves).
         batch_id: An existing batch scope to join. None means the service
             layer will generate a new batch_id for this operation.
+        batch_name: The name a batch minted under this context carries, when the
+            write itself passes none (req-grid-service-batch-label-required). A
+            boundary that binds a context for a known purpose — the test harness,
+            a program actor's scope — labels its writes once here instead of at
+            every call. Ignored when the write joins an existing batch.
+        batch_description: The description that goes with `batch_name`.
     """
 
     user: AbstractUser | None = None
     batch_id: str | None = None
+    batch_name: str | None = None
+    batch_description: str | None = None
 
 
 def get_caller_context() -> CallerContext | None:

@@ -35,7 +35,7 @@ from django.test import override_settings
 
 from tap_grid.batch_corpus import model_oracle
 from tap_grid.batch_corpus.loader import Scenario
-from tap_grid.cascade_corpus.runner import BuildError, event_counts, event_delta, snapshot
+from tap_grid.cascade_corpus.runner import BuildError, event_counts, event_delta, labelled, snapshot
 from tap_grid.grift import grift_import
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
 from tap_grid.models import Batch, BatchEvent, BatchStatus, Edge, Entity
@@ -80,21 +80,27 @@ def build(scenario: Scenario) -> Built:
     ids: dict[str, uuid.UUID] = {}
     grid = scenario.grid
     for n in grid["nodes"]:
-        result = create_node(n["type"], dict(n["props"]))
+        result = create_node(n["type"], dict(n["props"]), caller_context=labelled(f"build {scenario.id}"))
         if not result.success or result.entity_id is None:
             raise BuildError(f"{scenario.id}: could not create grid node {n['name']}: {result.errors}")
         ids[n["name"]] = uuid.UUID(str(result.entity_id))
     entities = {n["name"]: Entity.objects.get(pk=ids[n["name"]]) for n in grid["nodes"]}
     for e in grid["edges"]:
-        edge = create_edge(entities[e["from"]], entities[e["to"]], e["type"])
+        edge = create_edge(
+            entities[e["from"]], entities[e["to"]], e["type"], caller_context=labelled(f"build {scenario.id}")
+        )
         ids[e["name"]] = uuid.UUID(str(edge.entity_id))
     edge_names = {e["name"] for e in grid["edges"]}
     for name in grid.get("tombstoned", ()):
-        result = (delete_edge_by_entity if name in edge_names else delete_node)(ids[name], reason="operator")
+        result = (delete_edge_by_entity if name in edge_names else delete_node)(
+            ids[name], reason="operator", caller_context=labelled(f"build {scenario.id}")
+        )
         if not result.success:
             raise BuildError(f"{scenario.id}: could not tombstone {name}: {result.errors}")
     for name in grid.get("cascaded", ()):
-        result = delete_node(ids[name], reason="operator", cascade="contained")
+        result = delete_node(
+            ids[name], reason="operator", cascade="contained", caller_context=labelled(f"build {scenario.id}")
+        )
         if not result.success:
             raise BuildError(f"{scenario.id}: could not cascade from {name}: {result.errors}")
     for name in scenario.raw.get("phantoms", ()):

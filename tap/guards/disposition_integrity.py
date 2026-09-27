@@ -47,7 +47,7 @@ class DispositionIntegrityGuard(Guard):
             "an excluded requirement cannot carry evidence — remove whichever side is wrong"
             for e in contradicted_dispositions(REPO_ROOT)
         ]
-        assert not problems, (
+        assert not problems, (  # nosec B101
             "Coverage-disposition defect(s). The grammar is `Trace: `<category>` — <target/reason>` "
             "beside the Status: line; categories: process | narrative | non-python <path> | "
             "external <name> (see req-tap-traceability-disposition):\n  " + "\n  ".join(problems)

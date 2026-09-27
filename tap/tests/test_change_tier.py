@@ -1,6 +1,6 @@
 """`scripts/change-tier` classifies a diff into docs | specs | full | boot, fail-closed.
 
-Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-7, req-dev-validation-bom-lane-2).
+Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-7, req-dev-validation-product-line-lanes-9).
 """
 
 from __future__ import annotations
@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from tap.tests.test_bom_inputs import EXAMPLES as _BOM_EXAMPLES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "change-tier"
@@ -126,11 +128,11 @@ def test_empty_diff_is_full(tmp_path: Path) -> None:
     assert _tier_after(tmp_path, {}) == "full"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 @pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 def test_boot_record_is_boot(tmp_path: Path) -> None:
     """A core boot record in the diff is the BOM moving: `boot`, on top of full."""
-    assert _tier_after(tmp_path, {"boot/test_all.boot.json": "{}\n"}) == "boot"
+    assert _tier_after(tmp_path, {"boot/core_ci.boot.json": "{}\n"}) == "boot"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-9")
@@ -138,7 +140,7 @@ def test_in_package_boot_record_is_boot(tmp_path: Path) -> None:
     assert _tier_after(tmp_path, {"tap_plugins/tests/fixtures/x/tap_plugin/x/boot/ci.boot.json": "{}\n"}) == "boot"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 def test_boot_outranks_docs_and_code(tmp_path: Path) -> None:
     assert (
         _tier_after(tmp_path, {"docs/x.md": "x\n", "boot/core_ci.boot.json": "{}\n", "tap/x.py": "x = 1\n"}) == "boot"
@@ -148,22 +150,12 @@ def test_boot_outranks_docs_and_code(tmp_path: Path) -> None:
 # --- The BOM inputs are declared once; the classifier derives from them (tap#379) ---------------
 
 
+# Derived, not retyped. This list was a third hand-maintained copy of the same example paths and
+# carried the same wrong `docker/Dockerfile` as the other two (tap#765) — three copies that agreed
+# with each other and with nothing on disk. One source now; importing the test module that owns it
+# is the cheap way to make a drift here impossible.
 @pytest.mark.spec("req-dev-validation-product-line-lanes-9")
-@pytest.mark.parametrize(
-    "path",
-    [
-        "uv.lock",
-        "pyproject.toml",
-        "docker/Dockerfile",
-        "docker/entrypoint.sh",
-        "docker/build-openssl-fips.sh",
-        "docker/openssl-release-keys.asc",
-        "docker-compose.ci.yml",
-        ".env",
-        "tap/preboot.py",
-        "tap_boot/schemas/boot.schema.json",
-    ],
-)
+@pytest.mark.parametrize("path", sorted(set(_BOM_EXAMPLES.values())))
 def test_every_bom_input_is_boot(tmp_path: Path, path: str) -> None:
     """A lockfile-only PR (PR# 373) was `full`, not `boot`: the two globs stood proxy for the BOM.
     Every declared input now classifies `boot` through tap.bom_inputs."""
@@ -189,28 +181,28 @@ def test_change_under_a_records_editable_path_is_boot(tmp_path: Path) -> None:
     assert out.strip() == "boot"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 @pytest.mark.parametrize("shell", ["bash", "sh"])
 def test_boot_tier_survives_a_posix_shell(tmp_path: Path, shell: str) -> None:
     """A BOM change classifies `boot` under sh as well as bash.
 
     `BASH_SOURCE` is a bash extension and is EMPTY under dash: it pointed the classifier's
     module path at the parent directory, the classifier could not run, its output came back
-    empty, and the tier degraded to `full` with no error — the BOM lane then skipped and
-    `gate` accepted the skip (observed on run 34457835453). A bash-only construct in this
+    empty, and the tier degraded to `full` with no error — the then-current BOM lane skipped
+    and `gate` accepted the skip (observed on run 34457835453). A bash-only construct in this
     script fails quietly, so both shells are exercised.
     """
-    assert _tier_after_with_shell(tmp_path, {"boot/test_all.boot.json": "{}\n"}, shell) == "boot"
+    assert _tier_after_with_shell(tmp_path, {"boot/core_ci.boot.json": "{}\n"}, shell) == "boot"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 @pytest.mark.spec("req-dev-localexec-host-syntax-floor-3")
 def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No verdict means MORE validation, never less.
 
     When the classifier cannot run at all (no python3 on PATH here), the script must still
-    require the BOM lane. Degrading to `full` would drop the requirement silently, which is
-    the failure this tier exists to remove.
+    answer `boot`. Degrading to `full` would silently drop what the tier adds (the promote's
+    local boot gates), which is the failure this tier exists to remove.
     """
     repo = _repo_with_base(tmp_path)
     (repo / "tap").mkdir(parents=True, exist_ok=True)
@@ -252,7 +244,7 @@ def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeyp
     )
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
 def test_the_classifier_always_answers(tmp_path: Path) -> None:
     """`--classify` prints `boot` or `no-boot` — never silence, which reads as "did not run"."""
     # nosemgrep — a literal interpreter plus the repo's own module path; no input reaches argv.

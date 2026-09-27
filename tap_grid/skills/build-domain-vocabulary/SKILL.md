@@ -16,6 +16,16 @@ This skill sits **above** [`add-model`](../add-model/SKILL.md) and [`add-edge`](
 on the emergence ladder. Those build a type; this decides which types are worth building. It runs
 **once per domain**, then again — cheaply — whenever the domain moves under us.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Declare vocabulary contract-first** (3): start from the `BaseModel` contract and the spec, not a neighbouring model.
+- **Give each relationship its own edge** (6): one specific mechanical relationship per edge type.
+- **Key identity on stable columns** (4): stable source identifiers stored as fields, scoped by what makes them unique.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## The principle: gather, then invent
 
 Almost every domain worth modelling has already been catalogued by someone. Standards bodies argue

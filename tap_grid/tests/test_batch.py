@@ -353,12 +353,12 @@ class TestProducedBatches:
 
 @pytest.mark.django_db
 class TestAutoCreatedBatchAttribution:
-    """A batch the service layer mints for a caller that supplied none of its own
-    must still be named and attributed.
+    """A batch the service layer mints must be named and attributed.
 
-    req-grid-service-batch-metadata-1 / -7: `name` is required on every batch,
-    including the auto-created ones, and `source` names the service layer as the
-    producer. The defect this covers: `Batch.get_name()` projects the Batch's
+    req-grid-service-batch-metadata-1: `name` is required on every batch, including
+    the ones the service layer mints, and `source` names the service layer as the
+    producer. (The name itself now always comes from the caller or its context,
+    req-grid-service-batch-label-required.) The defect this covers: `Batch.get_name()` projects the Batch's
     name down onto `Entity.name` on every save, so an auto-created batch that
     was handed no `name=` erased the Entity name a hand-rolled create had just
     set — presence-is-not-correctness on the spine.
@@ -378,17 +378,6 @@ class TestAutoCreatedBatchAttribution:
         # something true to project, rather than overwriting with "".
         assert batch.entity.name == batch.name
 
-    def test_auto_created_batch_names_the_write_it_scaffolds(self):
-        """The name is derived from the operations, never authored."""
-        from tap_grid.services import create_node
-
-        result = create_node("grid_fixtures__constrained_source", {"name": "Sam"})
-        batch = get_batch(result.batch_id)
-
-        assert batch is not None
-        assert "create_node" in batch.name
-        assert "grid_fixtures__constrained_source" in batch.name
-
     def test_auto_created_batch_carries_a_source(self):
         """`source=""` must no longer mean "the service layer made this"."""
         from tap_grid.batch import AUTO_BATCH_SOURCE
@@ -399,27 +388,6 @@ class TestAutoCreatedBatchAttribution:
 
         assert batch is not None
         assert batch.source == AUTO_BATCH_SOURCE
-
-    def test_multi_op_batch_names_its_size_and_verbs(self):
-        from tap_grid.service_types import WriteOperation
-        from tap_grid.services import write_batch
-
-        result = write_batch(
-            [
-                WriteOperation(
-                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "A"}
-                ),
-                WriteOperation(
-                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "B"}
-                ),
-            ]
-        )
-        assert result.success
-        batch = get_batch(result.batch_id)
-
-        assert batch is not None
-        assert "2 ops" in batch.name
-        assert "create_node" in batch.name
 
     def test_caller_supplied_batch_is_left_alone(self):
         """_ensure_batch stays idempotent: a caller's own batch keeps its identity."""
@@ -481,3 +449,425 @@ class TestBatchNameClamp:
             create_batch(name="z" * 300, source="test:clamp")
 
         assert any("truncated" in r.message or "truncated" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.django_db
+class TestCallerNamedServiceBatches:
+    """req-grid-service-batch-caller-name: an ad-hoc service-layer write can say
+    what the change was, instead of only being named after its operations.
+
+    Mandatory for a minting write since req-grid-service-batch-label-required; see
+    TestMintedBatchLabelRequired.
+    """
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-1")
+    def test_write_batch_names_the_batch_it_mints(self):
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        result = write_batch(
+            [WriteOperation(verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "A"})],
+            batch_name="highbar design: add the shared account",
+            batch_description="Gruntwork's default Shared account and its cross-account key.",
+        )
+        assert result.success
+
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name == "highbar design: add the shared account"
+        assert batch.description == "Gruntwork's default Shared account and its cross-account key."
+        # Both ends of the spine carry the caller's name, not the derived one.
+        batch.refresh_from_db()
+        assert batch.entity.name == batch.name
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-2")
+    def test_create_node_passes_the_name_through(self):
+        from tap_grid.services import create_node
+
+        result = create_node(
+            "grid_fixtures__constrained_source",
+            {"name": "Frodo"},
+            batch_name="named by create_node",
+            batch_description="through the single-op verb",
+        )
+        assert result.success
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name == "named by create_node"
+        assert batch.description == "through the single-op verb"
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-2")
+    def test_delete_node_passes_the_name_through(self):
+        """The delete runs in a batch of its own: the test harness binds one ambient
+        batch per test, which the create mints first, and a write joining an existing
+        batch keeps that batch's name (-4)."""
+        import uuid
+
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import create_node, delete_node
+
+        created = create_node("grid_fixtures__constrained_source", {"name": "Boromir"})
+        assert created.success
+
+        assert created.entity_id is not None
+        result = delete_node(
+            created.entity_id,
+            caller_context=CallerContext(batch_id=str(uuid.uuid7())),
+            batch_name="retire a stale design node",
+        )
+        assert result.success
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name == "retire a stale design node"
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-2")
+    @pytest.mark.parametrize(
+        ("verb", "args"),
+        [
+            ("create_node", ("grid_fixtures__constrained_source", {"name": "x"})),
+            ("patch_node", ("00000000-0000-0000-0000-000000000000", {"name": "x"})),
+            ("replace_node", ("00000000-0000-0000-0000-000000000000", {"name": "x"})),
+            ("delete_node", ("00000000-0000-0000-0000-000000000000",)),
+            ("patch_edge", ("00000000-0000-0000-0000-000000000000", {})),
+            ("replace_edge", ("00000000-0000-0000-0000-000000000000", {})),
+            ("delete_edge_by_entity", ("00000000-0000-0000-0000-000000000000",)),
+        ],
+    )
+    def test_every_single_operation_verb_forwards_both_arguments(self, monkeypatch, verb, args):
+        """The forward is checked at the seam, so a verb that drops either argument fails."""
+        import tap_grid.services as services
+        from tap_grid.service_types import BatchWriteResult
+
+        seen: dict[str, object] = {}
+
+        def fake_write_batch(operations, **kwargs):
+            seen.update(kwargs)
+            return BatchWriteResult(success=False, batch_id="x", dry_run=False, results=[], errors=[])
+
+        monkeypatch.setattr(services, "write_batch", fake_write_batch)
+        getattr(services, verb)(*args, batch_name="the name", batch_description="the description")
+
+        assert seen.get("batch_name") == "the name"
+        assert seen.get("batch_description") == "the description"
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-2")
+    def test_create_edge_names_the_batch_not_the_edge(self):
+        """`create_edge` already takes `name` for the edge; `batch_name` is the batch's."""
+        producer = create_entity("concept", name="producer")
+        target = create_batch(source="t:target")
+
+        edge = create_edge(
+            from_entity=producer,
+            to_entity=target.entity,
+            edge_type="PRODUCED_BATCH",
+            properties={"disposition": "imported"},
+            name="the edge",
+            batch_name="the batch",
+        )
+
+        assert edge.entity.name == "the edge"
+        names = [b.name for b in get_entity_batches(edge.entity.id)]
+        assert "the batch" in names
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-1")
+    def test_a_named_batch_is_still_attributed_to_the_service_layer(self):
+        from tap_grid.batch import AUTO_BATCH_SOURCE
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Merry"}, batch_name="named")
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.source == AUTO_BATCH_SOURCE
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-4")
+    def test_joining_an_existing_batch_with_its_own_name_is_accepted(self):
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import create_node
+
+        mine = create_batch(name="My own batch", source="test:caller-owned")
+        result = create_node(
+            "grid_fixtures__constrained_source",
+            {"name": "Pippin"},
+            caller_context=CallerContext(batch_id=str(mine.entity_id)),
+            batch_name="My own batch",
+        )
+        assert result.success
+        mine.refresh_from_db()
+        assert mine.name == "My own batch"
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-4")
+    @pytest.mark.parametrize("field", ["batch_name", "batch_description"])
+    def test_renaming_an_existing_batch_is_refused_before_any_write(self, field):
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.models import Entity
+        from tap_grid.services import create_node
+
+        mine = create_batch(name="My own batch", description="mine", source="test:caller-owned")
+        before = Entity.objects.filter(entity_type="grid_fixtures__constrained_source").count()
+
+        joined = CallerContext(batch_id=str(mine.entity_id))
+        with pytest.raises(ValueError, match="keeps its own") as refused:
+            if field == "batch_name":
+                create_node(
+                    "grid_fixtures__constrained_source",
+                    {"name": "Gandalf"},
+                    caller_context=joined,
+                    batch_name="something else",
+                )
+            else:
+                create_node(
+                    "grid_fixtures__constrained_source",
+                    {"name": "Gandalf"},
+                    caller_context=joined,
+                    batch_description="something else",
+                )
+
+        # The refusal names only the caller's value, not the stored one.
+        assert "My own batch" not in str(refused.value)
+        assert "'mine'" not in str(refused.value)
+        mine.refresh_from_db()
+        assert mine.name == "My own batch"
+        assert mine.description == "mine"
+        assert Entity.objects.filter(entity_type="grid_fixtures__constrained_source").count() == before
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-4")
+    def test_an_ambient_batch_scope_is_held_to_the_same_rule(self):
+        """The harness binds one ambient batch per test: the first write mints it with
+        its name, and a second write naming it differently is refused, not ignored."""
+        from tap_grid.services import create_node
+
+        first = create_node("grid_fixtures__constrained_source", {"name": "Legolas"}, batch_name="A")
+        assert first.success
+
+        with pytest.raises(ValueError, match="keeps its own"):
+            create_node("grid_fixtures__constrained_source", {"name": "Gimli"}, batch_name="B")
+
+        # The same name joins it without complaint.
+        again = create_node("grid_fixtures__constrained_source", {"name": "Gimli"}, batch_name="A")
+        assert again.success
+        assert again.batch_id == first.batch_id
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-4")
+    def test_a_batch_id_with_no_batch_row_is_minted_with_the_callers_name(self):
+        import uuid
+
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import create_node
+
+        fresh = str(uuid.uuid7())
+        result = create_node(
+            "grid_fixtures__constrained_source",
+            {"name": "Radagast"},
+            caller_context=CallerContext(batch_id=fresh),
+            batch_name="pre-generated id, caller's name",
+        )
+        assert result.success
+        batch = get_batch(fresh)
+        assert batch is not None
+        assert batch.name == "pre-generated id, caller's name"
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-5")
+    def test_an_overlong_caller_name_is_clamped_not_refused(self):
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Treebeard"}, batch_name="n" * 300)
+        assert result.success
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name == "n" * 255
+        assert batch.entity.name == batch.name
+
+
+@pytest.mark.django_db
+@pytest.mark.no_default_batch_label
+class TestMintedBatchLabelRequired:
+    """req-grid-service-batch-label-required: a write that mints its batch must say
+    what the change is; a write that joins an existing batch need not.
+
+    These tests run without the harness's default batch label, so the context they
+    write under is unlabelled unless a test binds one.
+    """
+
+    @staticmethod
+    def _op(name: str = "A"):
+        from tap_grid.service_types import WriteOperation
+
+        return WriteOperation(verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": name})
+
+    @staticmethod
+    def _codes(result) -> list[str]:
+        return [e.code for e in result.errors]
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-1")
+    @pytest.mark.parametrize(
+        "name, description",
+        [(None, None), ("a name", None), (None, "a description"), ("", ""), ("   ", "a description"), ("a name", "  ")],
+    )
+    def test_an_unlabelled_minting_write_is_refused_and_writes_nothing(self, name, description):
+        from tap_grid.models import Batch, Entity
+        from tap_grid.services import write_batch
+
+        batches, nodes = Batch.objects.count(), Entity.objects.count()
+        result = write_batch([self._op()], batch_name=name, batch_description=description)
+
+        assert not result.success
+        assert self._codes(result) == ["batch_label_required"]
+        assert Batch.objects.count() == batches
+        assert Entity.objects.count() == nodes
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-1")
+    def test_the_refusal_names_what_is_missing(self):
+        from tap_grid.services import write_batch
+
+        result = write_batch([self._op()], batch_name="named only")
+        assert "missing batch_description (" in result.errors[0].message
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-1")
+    def test_a_labelled_minting_write_succeeds(self):
+        from tap_grid.services import write_batch
+
+        result = write_batch([self._op()], batch_name="Seed A", batch_description="Why A exists")
+        assert result.success
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert (batch.name, batch.description) == ("Seed A", "Why A exists")
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-1")
+    def test_a_dry_run_is_held_to_the_rule_too(self):
+        from tap_grid.services import write_batch
+
+        result = write_batch([self._op()], dry_run=True)
+        assert self._codes(result) == ["batch_label_required"]
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-2")
+    def test_joining_an_existing_batch_needs_no_label(self):
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import write_batch
+
+        opened = create_batch(name="Opened elsewhere", description="by a collector", source="test:opener")
+        result = write_batch([self._op()], caller_context=CallerContext(batch_id=str(opened.entity_id)))
+
+        assert result.success
+        opened.refresh_from_db()
+        assert opened.name == "Opened elsewhere"
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-2")
+    def test_an_ambient_existing_batch_is_joined_without_a_label(self):
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.services import write_batch
+
+        opened = create_batch(name="Ambient scope", description="bound upstream", source="test:opener")
+        prior = get_caller_context()
+        set_caller_context(CallerContext(user=prior.user if prior else None, batch_id=str(opened.entity_id)))
+        try:
+            result = write_batch([self._op()])
+        finally:
+            set_caller_context(prior)
+        assert result.success
+        assert result.batch_id == str(opened.entity_id)
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-2")
+    def test_a_fresh_batch_id_with_no_row_is_minting_and_refused(self):
+        import uuid
+
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.models import Batch
+        from tap_grid.services import write_batch
+
+        fresh = str(uuid.uuid7())
+        result = write_batch([self._op()], caller_context=CallerContext(batch_id=fresh))
+
+        assert self._codes(result) == ["batch_label_required"]
+        assert not Batch.objects.filter(entity_id=fresh).exists()
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-3")
+    @pytest.mark.parametrize("verb", ["create_node", "delete_node"])
+    def test_single_operation_verbs_return_the_refusal(self, verb):
+        import uuid
+
+        from tap_grid import services
+        from tap_grid.caller_context import CallerContext, get_caller_context
+
+        bound = get_caller_context()
+        assert bound is not None
+        user = bound.user
+        if verb == "create_node":
+            result = services.create_node("grid_fixtures__constrained_source", {"name": "Boromir"})
+        else:
+            # Seed in a batch of its own, so the delete below mints a fresh one.
+            made = services.create_node(
+                "grid_fixtures__constrained_source",
+                {"name": "Faramir"},
+                caller_context=CallerContext(user=user, batch_id=str(uuid.uuid7())),
+                batch_name="seed",
+                batch_description="seed",
+            )
+            assert made.success
+            assert made.entity_id is not None
+            result = services.delete_node(
+                made.entity_id, reason="operator", caller_context=CallerContext(user=user, batch_id=str(uuid.uuid7()))
+            )
+
+        assert not result.success
+        assert [e.code for e in result.errors] == ["batch_label_required"]
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-3")
+    def test_create_edge_raises_the_refusal(self):
+        from tap_grid.exceptions import EdgePropertyValidationError
+        from tap_grid.services import create_edge
+
+        producer = create_entity("concept", name="producer")
+        target = create_batch(source="t:target")
+        with pytest.raises(EdgePropertyValidationError, match="batch_description"):
+            create_edge(
+                from_entity=producer,
+                to_entity=target.entity,
+                edge_type="PRODUCED_BATCH",
+                properties={"disposition": "imported"},
+            )
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-4")
+    def test_a_context_label_names_the_minted_batch(self):
+        from tap_grid.caller_context import CallerContext, get_caller_context
+        from tap_grid.services import write_batch
+
+        prior = get_caller_context()
+        ctx = CallerContext(
+            user=prior.user if prior else None, batch_name="From the context", batch_description="context why"
+        )
+        result = write_batch([self._op()], caller_context=ctx)
+
+        assert result.success
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert (batch.name, batch.description) == ("From the context", "context why")
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-4")
+    def test_the_calls_own_label_wins_over_the_contexts(self):
+        from tap_grid.caller_context import CallerContext, get_caller_context
+        from tap_grid.services import write_batch
+
+        prior = get_caller_context()
+        ctx = CallerContext(user=prior.user if prior else None, batch_name="context", batch_description="context")
+        result = write_batch([self._op()], caller_context=ctx, batch_name="call", batch_description="call why")
+
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert (batch.name, batch.description) == ("call", "call why")
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-4")
+    def test_an_explicit_context_inherits_the_ambient_label(self):
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.services import write_batch
+
+        prior = get_caller_context()
+        user = prior.user if prior else None
+        set_caller_context(CallerContext(user=user, batch_name="ambient", batch_description="ambient why"))
+        try:
+            result = write_batch([self._op()], caller_context=CallerContext(user=user))
+        finally:
+            set_caller_context(prior)
+
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert (batch.name, batch.description) == ("ambient", "ambient why")

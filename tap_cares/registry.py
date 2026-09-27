@@ -154,7 +154,10 @@ def reconcile_collector_nodes() -> dict[str, int]:
     boot relies on this reconcile, so a missing descriptor must never be a partial,
     silent skip-as-success.
     """
+    from dataclasses import replace
+
     from tap_cares.models import Collector
+    from tap_grid.caller_context import CallerContext, get_caller_context
     from tap_grid.service_types import WriteOperation
     from tap_grid.services import write_batch
 
@@ -226,8 +229,21 @@ def reconcile_collector_nodes() -> dict[str, int]:
     # write_batch inherits it from the ambient context. INTERNAL_ONLY would block the
     # public batch path, so this uses the trusted-internal `_internal_only_bypass` —
     # the same escape hatch `_create_node_internal` wraps, now over N ops at once.
+    # Labelled through the context, not the call: if the caller bound a batch this
+    # joins it (a joined batch keeps its own label), otherwise the label names the
+    # batch it mints (req-grid-service-batch-label-required).
+    bound = get_caller_context() or CallerContext()
+    labelled = replace(
+        bound,
+        batch_name="Reconcile collector nodes",
+        batch_description=(
+            f"Converge the grid's Collector nodes on the registered collectors: "
+            f"{summary['created']} created, {summary['updated']} updated."
+        ),
+    )
     result = write_batch(  # TAP-AUTHZ-COV: runs under the caller-bound program actor; grid.write re-checked at the write backstop
         ops,
+        caller_context=labelled,
         _internal_only_bypass=True,
     )
     if not result.success:

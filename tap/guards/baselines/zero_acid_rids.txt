@@ -38,6 +38,7 @@ req-grift-subgraph-shape
 req-grift-subgraph-wrap
 req-grift-v0-nongoals
 req-grift-validation
+req-tap-cares-collector-call-ceiling
 req-tap-cares-collector-config
 req-tap-cares-collector-job-edge
 req-tap-cares-collector-job-lifecycle

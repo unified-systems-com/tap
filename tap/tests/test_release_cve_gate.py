@@ -155,3 +155,169 @@ def test_a_non_sarif_file_is_refused(tmp_path) -> None:
     report.write_text("clean, honest", encoding="utf-8")
     code, _ = gate.classify(report, scanner_ok=True, root=tmp_path)
     assert code == gate.EXIT_NOT_OBSERVABLE
+
+
+# --- plugin CI's closure gate (tap#772) --------------------------------------------------------
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+def test_the_plugin_closure_gate_names_its_own_remedy(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report = _write(tmp_path, _sarif(_result("CVE-2026-4444", "django", "4.2.0", "4.2.1")))
+    code = gate.main(
+        [
+            "--report",
+            str(report),
+            "--scanner-outcome",
+            "failure",
+            "--subject",
+            "github_core",
+            "--gate",
+            "plugin-closure",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == gate.EXIT_FINDINGS
+    assert "CVE-2026-4444" in out and "github_core" in out
+    assert "pyproject.toml" in out and ".trivyignore" in out
+    assert "promote" not in out, "the release refusal is not this gate's"
+
+
+def test_the_default_gate_is_still_the_release_one(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report = _write(tmp_path, _sarif(_result("CVE-2026-4444", "zlib", "1", "2")))
+    gate.main(["--report", str(report), "--scanner-outcome", "failure"])
+    assert "refusing to promote" in capsys.readouterr().out
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+def test_markdown_lists_every_finding_worst_first(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report = _write(
+        tmp_path,
+        _sarif(
+            _result("CVE-1", "pyyaml", "6.0.1", ""),
+            _result("CVE-2", "django", "4.2.0", "4.2.1"),
+            _result("CVE-3", "httpx", "0.27.0", "0.27.1"),
+            rules=[_rule("CVE-1", "LOW"), _rule("CVE-2", "CRITICAL"), _rule("CVE-3", "HIGH")],
+        ),
+    )
+    assert gate.main(["--report", str(report), "--markdown"]) == gate.EXIT_CLEAN
+    out = capsys.readouterr().out
+    assert "3 finding(s): 1 CRITICAL, 1 HIGH, 1 LOW." in out
+    rows = [line for line in out.splitlines() if line.startswith("| ") and "CVE-" in line]
+    assert [row.split(" | ")[1] for row in rows] == ["CVE-2", "CVE-3", "CVE-1"]
+    # An unfixed finding is listed, with no fix, rather than hidden because the gate ignores it.
+    assert rows[-1].endswith("| — |")
+
+
+def test_markdown_of_a_clean_report_says_so(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert gate.main(["--report", str(_write(tmp_path, _sarif())), "--markdown"]) == gate.EXIT_CLEAN
+    assert "No findings." in capsys.readouterr().out
+
+
+def test_markdown_of_a_missing_report_is_not_observable_not_clean(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert gate.main(["--report", str(tmp_path / "never.sarif"), "--markdown"]) == gate.EXIT_NOT_OBSERVABLE
+    assert "NOT OBSERVABLE" in capsys.readouterr().out
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+@pytest.mark.parametrize(
+    ("ledger", "missing"),
+    [
+        pytest.param("# CVE-1 (x): not reachable; accepted G, 2026-09-25.\nCVE-1\n", [], id="reasoned"),
+        pytest.param("CVE-1\n", [(1, "CVE-1")], id="bare-entry"),
+        pytest.param("#\nCVE-1\n", [(2, "CVE-1")], id="empty-comment"),
+        pytest.param("# reason\n\nCVE-1\n", [(3, "CVE-1")], id="blank-line-breaks-the-link"),
+        pytest.param("# reason for one\nCVE-1\nCVE-2\n", [(3, "CVE-2")], id="one-reason-one-entry"),
+        pytest.param("# header only\n\n", [], id="no-entries"),
+    ],
+)
+def test_every_waiver_needs_a_reason_directly_above_it(ledger: str, missing: list[tuple[int, str]]) -> None:
+    assert gate.unreasoned_waivers(ledger) == missing
+
+
+def test_cores_own_waiver_ledger_meets_the_rule_it_sets() -> None:
+    assert gate.unreasoned_waivers((REPO_ROOT / ".trivyignore").read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+def test_check_waivers_fails_an_unreasoned_ledger(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plugin").mkdir()
+    (tmp_path / "plugin" / ".trivyignore").write_text("CVE-2026-9\n", encoding="utf-8")
+    assert gate.main(["--check-waivers", "plugin/.trivyignore"]) == gate.EXIT_FINDINGS
+    assert "CVE-2026-9" in capsys.readouterr().out
+
+
+def test_check_waivers_passes_a_reasoned_ledger(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".trivyignore").write_text("# why, who, when\nCVE-2026-9\n", encoding="utf-8")
+    assert gate.main(["--check-waivers", ".trivyignore"]) == gate.EXIT_CLEAN
+
+
+@pytest.mark.parametrize("name", ["ledger.txt", "../.trivyignore"])
+def test_check_waivers_reads_only_a_trivyignore_inside_the_workspace(tmp_path, monkeypatch, name) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    (workspace / "ledger.txt").write_text("# r\nCVE-1\n", encoding="utf-8")
+    (tmp_path / ".trivyignore").write_text("# r\nCVE-1\n", encoding="utf-8")
+    assert gate.main(["--check-waivers", name]) == gate.EXIT_NOT_OBSERVABLE
+
+
+def test_the_two_waiver_parsers_agree() -> None:
+    """`tap_plugins.validate.repo` carries a second copy of `unreasoned_waivers`, deliberately.
+
+    `scripts/release_cve_gate.py` is stdlib-only and runs on the runner's bare interpreter under
+    `scripts/`, which is not shipped in the `tap_plugins` wheel; the checker's copy has to work
+    from an installed wheel against a repository that is not TAP. Duplication is the right call
+    there and the wrong one to leave unheld — two implementations of "waived" that drift are two
+    different gates wearing one name. This is the corpus that keeps them one rule, and every case
+    in it is a shape that has to be decided the same way on both roads.
+    """
+    from tap_plugins.validate.repo import unreasoned_waivers as checker_side
+
+    corpus = [
+        "",
+        "\n\n\n",
+        "CVE-1\n",
+        "# reason\nCVE-1\n",
+        "#\nCVE-1\n",
+        "#   \nCVE-1\n",
+        "# reason\n\nCVE-1\n",
+        "# reason\nCVE-1\nCVE-2\n",
+        "# a\n# b\nCVE-1\n",
+        "  # indented reason\n  CVE-1\n",
+        "# reason\nCVE-1\n\n# other\nCVE-2\n",
+        "# reason\nCVE-1\n# no id follows\n",
+        "CVE-1\n# reason\nCVE-2\n",
+    ]
+    for text in corpus:
+        assert gate.unreasoned_waivers(text) == checker_side(text), f"the two parsers disagree on {text!r}"
+
+
+def test_each_gates_verdict_says_what_it_actually_gated_on(tmp_path: Path) -> None:
+    """A clean line must not claim more than the scan made (Q94d, 2026-09-26).
+
+    The two roads no longer share a severity scope: the release gate passes `--ignore-unfixed`
+    and blocks only on a FIXABLE High/Critical; the plugin closure gate blocks on any. Before
+    this, both printed "no fixable High/Critical" — so a plugin run that had in fact blocked on
+    unfixable findings reported itself in the release gate's narrower words. The flag changed and
+    the sentence did not, which is the defect a live run surfaced.
+    """
+    empty = _write(tmp_path, _sarif())
+
+    release_code, release_lines = gate.classify(empty, scanner_ok=True, root=tmp_path, scope=gate.SCOPES["release"])
+    plugin_code, plugin_lines = gate.classify(
+        empty, scanner_ok=True, root=tmp_path, scope=gate.SCOPES["plugin-closure"]
+    )
+
+    assert release_code == plugin_code == gate.EXIT_CLEAN
+    assert "no fixable High/Critical" in release_lines[0]
+    assert "no High/Critical" in plugin_lines[0]
+    assert "fixable" not in plugin_lines[0], "the plugin road does not ignore unfixed, so it must not say fixable"
+    assert "fixable" not in gate.REFUSALS["plugin-closure"]
+    assert "fixable" in gate.REFUSALS["release"]

@@ -16,6 +16,15 @@ This skill covers two flows that share most of their machinery:
 
 Most of the friction with pages is in the layout JSON's grammar (which is strict) and in the `USES_PANEL` hotlink invariant (which is exact-match against the layout's slots). This skill walks both.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`tap_web/specs/spec-web-page.md`](../../specs/spec-web-page.md)** — Page model, layout JSON contract, slug rules, hotlink semantics. This is the canonical source for everything in this skill.

@@ -229,12 +229,18 @@ class TestBreadcrumbRendering:
         assert '<span class="text-slate-400"></span>' not in body
 
     def test_lookup_is_batched_in_one_query(self, django_assert_num_queries):
-        """All Page lookups happen in a single batched query."""
+        """All Page lookups happen in a single batched query.
+
+        The count is two: one for the NESTS_UNDER edges (req-web-nav-explicit-parent-edge),
+        one for every Page on the path. Neither grows with the depth of the URL.
+        """
         _create_page("A", "/a")
         _create_page("B", "/a/b")
         _create_page("C", "/a/b/c")
-        with django_assert_num_queries(1):
+        with django_assert_num_queries(2):
             build_breadcrumb("/a/b/c")
+        with django_assert_num_queries(2):
+            build_breadcrumb("/a")
 
 
 @pytest.mark.django_db

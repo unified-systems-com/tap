@@ -20,9 +20,17 @@ seats on tap PR# 328 and closed there; this module is that fix, shared.
 THE AUTHORITY. The only thing a contributor cannot set is GitHub's own view of who opened the pull
 request: `github.event.pull_request.user.{id,type}`, which the `dco` job passes through. The
 NUMERIC account id is the identity — a login is a mutable, reassignable string (tap#342) — and the
-type must be `Bot`. The id must appear in the declared allowlist `tap/tap.pr-bots.json` (schema
-`tap/schemas/pr-bots.schema.json`), every entry of which was verified against GitHub's
-`/users/<login>` response on the date it records. The login rides along for diagnostics only.
+type GitHub reports must equal the type the entry records. The id must appear in the declared
+allowlist `tap/tap.pr-bots.json` (schema `tap/schemas/pr-bots.schema.json`), every entry of which
+was verified against GitHub's `/users/<login>` response on the date it records. The login rides
+along for diagnostics only.
+
+WHY A `User` ENTRY EXISTS. Most entries are GitHub Apps (`Bot`). The fork bot that runs Renovate
+and release-please from `unified-systems-com/org-bots` is a machine USER account with no role on
+any org repository: it opens PRs from its own fork, so no write credential exists anywhere. GitHub
+reports such an account as `User`, so an entry records that type explicitly and the match is
+still exact: id AND type, both from the authenticated event. An approved `User` id arriving as
+`Bot` (or an approved `Bot` id arriving as `User`) is not exempt.
 
 WHERE IT CANNOT DECIDE. Nothing outside a pull-request event has an authenticated author: a local
 promote gate has no PR yet, and a `merge_group` event carries no `pull_request.user`. Both pass
@@ -57,21 +65,24 @@ from pathlib import Path
 #: relative to this file so an ad-hoc run and CI consult the same file. Commit author strings and
 #: logins are never consulted for authorization.
 APPROVED_BOTS_PATH = Path(__file__).resolve().parent.parent / "tap" / "tap.pr-bots.json"
-#: The only account type that can be exempt.
+#: The account types an entry may record. `Bot` is a GitHub App; `User` is a declared machine user
+#: (see WHY A `User` ENTRY EXISTS above). The authenticated type must equal the entry's.
 BOT_TYPE = "Bot"
+ALLOWED_TYPES = ("Bot", "User")
 
 
 class AllowlistError(Exception):
     """The approved-bots file is missing or malformed: a configuration error, never a silent pass."""
 
 
-def load_approved_bots(path: Path = APPROVED_BOTS_PATH) -> dict[int, str]:
-    """Return {numeric id: recorded login} from the allowlist, shape-checked (stdlib, fail-closed).
+def load_approved_bots(path: Path = APPROVED_BOTS_PATH) -> dict[int, tuple[str, str]]:
+    """Return {numeric id: (recorded login, recorded type)} from the allowlist, shape-checked
+    (stdlib, fail-closed).
 
     The schema (`tap/schemas/pr-bots.schema.json`) is the full contract and is enforced by test;
     this reader asserts the load-bearing shape — an object with an `approved` list of objects
-    carrying a positive integer `id`, `type == "Bot"` and a string `login` — so a malformed file
-    can never widen the exemption.
+    carrying a positive integer `id`, a `type` in ALLOWED_TYPES and a string `login` — so a
+    malformed file can never widen the exemption.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -80,28 +91,31 @@ def load_approved_bots(path: Path = APPROVED_BOTS_PATH) -> dict[int, str]:
     entries = data.get("approved") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         raise AllowlistError(f"{path}: expected an object with an `approved` list")
-    approved: dict[int, str] = {}
+    approved: dict[int, tuple[str, str]] = {}
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise AllowlistError(f"{path}: approved[{i}] is not an object")
         ident, kind, login = entry.get("id"), entry.get("type"), entry.get("login")
         if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1:
             raise AllowlistError(f"{path}: approved[{i}].id must be a positive integer, got {ident!r}")
-        if kind != BOT_TYPE:
-            raise AllowlistError(f"{path}: approved[{i}].type must be {BOT_TYPE!r}, got {kind!r}")
+        if kind not in ALLOWED_TYPES:
+            raise AllowlistError(f"{path}: approved[{i}].type must be one of {ALLOWED_TYPES!r}, got {kind!r}")
         if not isinstance(login, str) or not login:
             raise AllowlistError(f"{path}: approved[{i}].login must be a non-empty string")
         if ident in approved:
             raise AllowlistError(f"{path}: approved id {ident} is listed twice")
-        approved[ident] = login
+        approved[ident] = (login, kind)
     return approved
 
 
-def exempt_author(author_id: str, author_type: str, login: str, approved: dict[int, str]) -> tuple[bool, str]:
+def exempt_author(
+    author_id: str, author_type: str, login: str, approved: dict[int, tuple[str, str]]
+) -> tuple[bool, str]:
     """Decide the exemption from the AUTHENTICATED identity; return (exempt, one-line reason).
 
-    Authorization is `id in approved and type == "Bot"`. The login only shapes the message —
-    a matching login with the wrong id, or a matching id with the wrong type, is not exempt.
+    Authorization is `id in approved and type == the entry's recorded type`. The login only
+    shapes the message — a matching login with the wrong id, or a matching id with the wrong
+    type, is not exempt.
     """
     who = login or "<no login>"
     if not author_id:
@@ -112,9 +126,9 @@ def exempt_author(author_id: str, author_type: str, login: str, approved: dict[i
         return False, f"pull request by {who}: author id {author_id!r} is not an integer — not a bot exemption"
     if ident not in approved:
         return False, f"pull request by {who} (id {ident}, type {author_type or '?'}) is not an approved bot identity"
-    if author_type != BOT_TYPE:
-        return False, f"pull request by {who}: id {ident} is approved but type is {author_type!r}, not {BOT_TYPE!r}"
-    recorded = approved[ident]
+    recorded, recorded_type = approved[ident]
+    if author_type != recorded_type:
+        return False, f"pull request by {who}: id {ident} is approved but type is {author_type!r}, not {recorded_type!r}"
     note = "" if login == recorded else f" (login now {who!r}; approved as {recorded!r})"
     return (
         True,

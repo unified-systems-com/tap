@@ -4,6 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {# The CSRF token for scripts (tap#773): read this, never the cookie, whose name is per stack. #}
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% if session_label %}[{{ session_label }}] {% endif %}{% block title %}{{ product_name }}{% endblock %}</title>
     <link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">
     <link rel="stylesheet" href="{% static 'tap_web/css/tailwind.css' %}">

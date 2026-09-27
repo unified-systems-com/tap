@@ -62,6 +62,8 @@ def create_edge_endpoint(request: HttpRequest, payload: EdgeIn) -> tuple[int, Ed
             properties=payload.properties,
             name=payload.name,
             caller_context=require_caller_context(),
+            batch_name=payload.batch_name,
+            batch_description=payload.batch_description,
         )
     except InvalidEdgeError as e:
         return 400, {"detail": str(e)}

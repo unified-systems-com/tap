@@ -70,6 +70,16 @@ predicate: predicate _OR_KW predicate    -> or_pred
          | _NOT_KW predicate             -> not_pred
          | "(" predicate ")"             -> paren_pred
          | comparison
+         | param_test
+
+// A predicate about a runtime INPUT rather than about graph data
+// (req-grid-traversal-lang-param-null). The optional-filter idiom:
+//   WHERE $org IS NULL OR o.data.name = $org
+// -- "if this input was not supplied, do not constrain on it." Resolved
+// against the supplied inputs BEFORE lowering, so the not-supplied case emits
+// the unfiltered plan rather than a no-op predicate.
+param_test: param_ref _IS_KW _NULL_KW           -> param_is_null
+          | param_ref _IS_KW _NOT_KW _NULL_KW   -> param_is_not_null
 
 comparison: field_path COMPARE_OP value
           | field_path STRING_OP value

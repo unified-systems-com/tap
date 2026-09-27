@@ -1,7 +1,7 @@
 """The lane runner and the seam it derives from (tap#369, Codex's five additions).
 
 Spec: specs/spec-dev-validation.md (req-dev-validation-collection-complete-4,
-req-dev-validation-bom-lane-1, req-dev-validation-product-line-lanes-8).
+req-dev-validation-product-line-lanes-8).
 
 What is proven here, without booting anything: expected membership is derived from the boot
 record and an omission is red; a suite with test files that collects nothing is red; a suite

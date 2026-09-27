@@ -18,6 +18,14 @@ Both are machine-enforced, and the enforcement tells you which KIND of gap you h
 
 **Division of labor with `/manage-secret`:** that skill *authors* — a new secret kind, a new consumer, scanner/redaction wiring (developer-facing). This skill *provisions* — supplies values for already-declared requirements (operator-facing). If the work turns into "TAP doesn't have a kind/consumer for this yet," switch skills.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## Redaction discipline (read first, non-negotiable)
 
 - **Never print, echo, or paste a secret value into the conversation** — not the `data` block of an envelope, not a token "just to check it." When inspecting envelopes, read **identity fields only** (`scope`, `key`, `kind`, `description`, `metadata`); a one-liner that cannot leak: `python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print({k: d[k] for k in ('scope','key','kind','description') if k in d})" <path>`.

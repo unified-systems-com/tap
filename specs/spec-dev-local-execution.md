@@ -53,6 +53,7 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 | req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only distributed re-consent exists |
 | req-dev-localexec-host-syntax-floor | [Host Code Parses On A Host Interpreter](#host-code-parses-on-a-host-interpreter) | Implemented | The container is 3.14; the machine running the code is not |
 | req-dev-localexec-runner-interpreter | [CI Runs Repo Python On The Repo's Interpreter](#ci-runs-repo-python-on-the-repos-interpreter) | Implemented | A workflow job installs the interpreter `requires-python` names before it runs repo code; the floor is never CI's safety net |
+| req-dev-localexec-prepush | [The Push Is Gated Locally](#the-push-is-gated-locally) | Implemented | A pre-push hook refuses a push whose bookkeeping CI would reject; skipped-with-a-warning when no stack is up |
 
 ---
 
@@ -246,6 +247,86 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 | req-dev-localexec-elevated-review-3 | Independent Reviewer | Proposed | An approver who is a different person from the author signs off on this tier. | Blocked on a second human with write access; NOT satisfied by a second account of the same person. |
 
 ---
+
+### The Push Is Gated Locally
+----
+RID: `req-dev-localexec-prepush`
+
+Status: `Implemented`
+
+`.githooks/pre-push` refuses a push that CI will reject for bookkeeping, naming the local command
+that fixes each finding.
+
+#### Implementation
+
+`scripts/promote-to-main.sh` runs the local gates before it pushes, but it is worth being precise
+about what that does and does not cover: it promotes THE session branch of the worktree it runs in,
+and it refuses any branch not named `session/<name>`. Every other road to `origin` — a `feat/`
+branch pushed by hand, a bundle onto a pending bot PR, a bootstrap push — had **no client-side gate
+at all**. This closes that road rather than narrowing the first one.
+
+**Two observations, not a principle.** `PR# 343 - tap` (2026-09-08) went red on three pure-bookkeeping
+failures — a stale implements claim, an unsynced traceability fragment, an unsynced Validation Map
+row — each of which the promote runs locally and none of which ran, because the PR was opened with
+`git push` plus `gh pr create`. `PR# 818 - tap` (2026-09-25) went red on the mypy ratchet, and that
+one is the sharper case: mypy HAD been run locally on the module in question, early, and then the
+module was rewritten four times. The failure was not forgetting to run a tool; it was running it
+against a tree that no longer existed. Remembering harder does not fix that and a hook fixes it
+completely.
+
+**What it runs.** Host-side, needing no container, no Django and no `.venv`: the host syntax floor,
+`scripts/implements-tag --check`, `scripts/check-dco`, `scripts/check-issue-link`. Then, when a
+stack is running, the three guards that have actually reddened a pull request here — the mypy
+ratchet, the committed-fragment sync, and the Validation Map sync — invoked as their own pytest node
+ids rather than as the whole corpus.
+
+**What it does NOT run: the test lanes.** They stay the promote's job and CI's. A hook long enough
+to make people reach for `--no-verify` protects nothing, which is a real cost and not a
+hypothetical one — the whole mechanism depends on never being the obstacle it is cheaper to disable
+than to satisfy.
+
+**When no stack is up the container checks are SKIPPED WITH A WARNING, not blocked.** A bare clone
+must still be able to push; refusing there would teach `--no-verify` as the ordinary road and cost
+more than it saves. Every session worktree has a stack, which is where both observed failures
+happened, so the skip is a concession at the edge rather than a hole in the middle.
+
+**On a consent mismatch it turns ITSELF off — the opposite call from `pre-commit`, and the
+reasoning does not transfer between them.** `pre-commit`'s action is a stdlib-only SCAN of staged
+content, so declining to scan is exactly what a hostile change would want and it keeps running. This
+hook's action is to EXECUTE four repository scripts and a container command. Running that under a
+stale consent hash does not protect the developer; it enlarges the very surface
+`req-dev-localexec-reconsent` exists to freeze. So on a mismatch it prints that the gate is off,
+names `scripts/hooks-install`, and lets the push proceed: never unconsented code, never blocked
+work. The residual regress — this hook and `_consent_check.sh` both come from the checkout — is the
+one `_consent_check.sh` documents and terminates out of band, through CODEOWNERS plus a CI guard
+that runs off this machine.
+
+**It refuses to attest to a tree it did not check.** Every check reads the WORKING TREE, which is
+evidence about the push only when the pushed commit IS the working tree. So each non-deletion ref
+must equal `HEAD` and the tree must be clean; otherwise the hook prints that it cannot attest and
+gets out of the way. A green verdict about a different revision than the one leaving the machine is
+worse than no verdict, and "covers any branch" would otherwise have been a claim about coverage it
+did not have.
+
+**A missing checker is reported, not skipped.** In an armed clone these files are present by
+construction, so an absent script, a missing interpreter or an absent `scripts/dc` is printed under
+"these checks did NOT run" rather than routed around. Otherwise clearing an executable bit buys a
+green push.
+
+**Bypass is git's own** — `git push --no-verify`. Deliberate, visible in a transcript, and not an
+environment variable nobody can see afterwards.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-localexec-prepush-1 | Refuses With The Fix | Implemented | A push whose claims, fragments, Map or mypy ratchet are out of order is refused, and the message names the command that fixes each one. | A gate that reports a failure without its remedy just moves the search. |
+| req-dev-localexec-prepush-2 | Covers The Second Road | Implemented | The hook runs on a push of ANY branch, not only `session/<name>`, so a hand-pushed branch is gated too. | The promote refuses anything else; that was the gap. |
+| req-dev-localexec-prepush-3 | Degrades Visibly | Implemented | With no running stack the container-dependent checks are skipped and the skip is printed; the push proceeds. | A silent skip would read as a pass. |
+| req-dev-localexec-prepush-4 | Not The Lanes | Implemented | The hook runs deterministic bookkeeping checks only; test lanes remain the promote's and CI's. | Keeps it short enough not to be bypassed habitually. |
+| req-dev-localexec-prepush-5 | Off On Mismatch | Implemented | A consent mismatch disables the gate — it runs no repository script and lets the push through, naming `scripts/hooks-install`. | Opposite call from `pre-commit`: that hook SCANS, this one EXECUTES repo code, so running it under stale consent enlarges the frozen surface. |
+| req-dev-localexec-prepush-6 | Only The Pushed Revision | Implemented | Checks run only when every non-deletion ref equals `HEAD` and the tree is clean; otherwise the hook says it cannot attest and exits 0. | A verdict about a different revision is worse than none. |
+| req-dev-localexec-prepush-7 | Absence Is Reported | Implemented | A missing checker, interpreter or `scripts/dc` is printed as not-run rather than skipped silently. | Otherwise clearing an executable bit buys a green push. |
 
 ### Host Code Parses On A Host Interpreter
 

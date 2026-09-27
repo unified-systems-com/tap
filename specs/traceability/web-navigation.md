@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 5 |
+| mapped | 6 |
 | excluded | 5 |
 | unbuilt | 2 |
 | retired | 1 |
@@ -28,6 +28,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | --- | --- | --- | --- | --- |
 | `req-web-nav-auto-parent` | Implemented | Implemented | `build_breadcrumb` | — |
 | `req-web-nav-chrome-read-free` | Implemented | Implemented | `breadcrumb` | — |
+| `req-web-nav-explicit-parent-edge` | Implemented | Verified | `effective_path` | `req-web-nav-explicit-parent-edge-1`, `req-web-nav-explicit-parent-edge-2`, `req-web-nav-explicit-parent-edge-3`, `req-web-nav-explicit-parent-edge-4`, `req-web-nav-explicit-parent-edge-5`, `req-web-nav-explicit-parent-edge-6`, `req-web-nav-explicit-parent-edge-7`, `req-web-nav-explicit-parent-edge-8`, `req-web-nav-explicit-parent-edge-9` |
 | `req-web-nav-index-endpoint` | Implemented | Implemented | `nav_index_view` | — |
 | `req-web-nav-page-discoverable` | Implemented | Implemented | `Page` | — |
 | `req-web-nav-page-weight` | Implemented | Implemented | `Page` | — |

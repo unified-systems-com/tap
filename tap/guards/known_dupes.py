@@ -95,7 +95,7 @@ class KnownDupesGuard(Guard):
         for group_id in sorted(set(spec_groups) - set(code_groups)):
             problems.append(f"group '{group_id}' is named in specs but has no code sites — stale documentation")
 
-        assert not problems, (
+        assert not problems, (  # nosec B101
             f"Known-dupe group integrity violations ({len(problems)}):\n  "
             + "\n  ".join(problems)
             + "\n\nEvery TAP-KNOWN-DUPE group needs >=2 tagged code sites and a spec mention; collapsing a "

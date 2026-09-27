@@ -715,7 +715,7 @@ FIELD_CRUD_SCHEMA: ClassVar[dict[str, Any]] = {
     "name": {"type": "string", "minLength": 1},
     "status": {"type": "string"},
     "count": {"type": ["integer", "null"]},
-    "configuration": {"type": "object"},
+    "enabled": {"type": "boolean"},
 }
 ```
 
@@ -726,7 +726,7 @@ FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, Any]] = {
     "name": {"validation": "jsonschema", "schema": {"type": "string", "minLength": 1}},
     "status": {"validation": "jsonschema", "schema": {"type": "string"}},
     "count": {"validation": "jsonschema", "schema": {"type": ["integer", "null"]}},
-    "configuration": {"validation": "jsonschema", "schema": {"type": "object"}},
+    "enabled": {"validation": "jsonschema", "schema": {"type": "boolean"}},
 }
 ```
 

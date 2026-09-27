@@ -30,7 +30,8 @@ The chrome budget is fixed: product mark, breadcrumb, session tag, command-palet
 | --- | --- | :---: | --- |
 | req-web-nav-breadcrumb-header | [Breadcrumb Header](#breadcrumb-header) | Implemented | Header bar IS the breadcrumb of the current page's URL path |
 | req-web-nav-segment-interactions | [Segment Interactions](#segment-interactions) | Implemented | Single-click navigates; chevron-click shows immediate sibling popover; alt-click opens expanded column-view |
-| req-web-nav-auto-parent | [Auto-Derived Parent From URL](#auto-derived-parent-from-url) | Implemented | Each URL segment is a breadcrumb level; v0 has no explicit override |
+| req-web-nav-auto-parent | [Auto-Derived Parent From URL](#auto-derived-parent-from-url) | Implemented | Each URL segment is a breadcrumb level unless an explicit `NESTS_UNDER` parent overrides it (`req-web-nav-explicit-parent-edge`) |
+| req-web-nav-explicit-parent-edge | [Explicit Parent Edge](#explicit-parent-edge) | Implemented | A `NESTS_UNDER` edge from one Page to another moves the source page under the target in every navigation surface; URLs never change |
 | req-web-nav-command-palette | [Command Palette Affordance](#command-palette-affordance) | In Development | Cmd-K + chrome affordance + Pages index landed; entity / recent-visits / migrated-chrome indexing still Proposed (ACIDs -3 + -4) |
 | req-web-nav-mini-graph | [Mini-Graph Affordance](#mini-graph-affordance) | Backlog | Reserved chrome slot held; mini-graph itself is backlog pending sibling `spec-viz-mini-map.md` |
 | req-web-nav-user-menu | [User Menu](#user-menu) | Implemented | Avatar + identity + Sign out in the upper-right; consumes the auth identity (`request.user`), logs out via `tap_auth` `/auth/logout/` |
@@ -133,7 +134,7 @@ RID: `req-web-nav-auto-parent`
 
 Status: `Implemented`
 
-A page's breadcrumb parent is derived from its URL by removing the trailing path slice. No explicit page-to-parent edge is required in v0. The URL hierarchy is the canonical hierarchy.
+A page's breadcrumb parent is derived from its URL by removing the trailing path slice. No explicit page-to-parent edge is required. The URL hierarchy is the default hierarchy; an explicit `NESTS_UNDER` edge overrides it for the page it leaves from (`req-web-nav-explicit-parent-edge`), and every level without one keeps the URL-derived parent.
 
 #### Implementation
 
@@ -147,7 +148,7 @@ Parameterized URL paths (e.g., `/object/<entity_type>/<url_id>/`) are out of sco
 
 Auto-derive is dead simple to implement, matches what users already expect from URLs, and doesn't require plugin authors to declare anything. The cost: pages can't override their breadcrumb parent. The benefit in v0: zero plugin friction, zero data model surface area.
 
-If a real need for breadcrumb-different-than-URL emerges, the seam is `Page.parent_url` (a property that overrides the auto-derive). Not built; not used by anything in v0.
+The need for a breadcrumb that differs from the URL did emerge: an instance plugin wanted other plugins' pages nested under its own without either side renaming a route. The override is a page-to-page edge rather than a `Page.parent_url` field, so the page that is moved never has to name its new parent and the instance that arranges the pages can draw the relationship in its own bundle. See `req-web-nav-explicit-parent-edge`.
 
 #### Acceptance Criteria
 
@@ -160,7 +161,55 @@ If a real need for breadcrumb-different-than-URL emerges, the seam is `Page.pare
 
 #### Future
 
-`Page.parent_url` override field for the case where a page wants a non-URL-derived breadcrumb parent. Parameterized entity routes (`/object/<type>/<id>/`) get their breadcrumb from the entity itself rather than the URL pattern; either keep that as a separate renderer path or fold it into a generalized "page reports its own breadcrumb" extension.
+The explicit parent override is built as the `NESTS_UNDER` edge — see `req-web-nav-explicit-parent-edge`. Parameterized entity routes (`/object/<type>/<id>/`) get their breadcrumb from the entity itself rather than the URL pattern; either keep that as a separate renderer path or fold it into a generalized "page reports its own breadcrumb" extension.
+
+
+### Explicit Parent Edge
+----
+RID: `req-web-nav-explicit-parent-edge`
+
+Status: `Implemented`
+
+A page can be placed under a parent other than its URL-derived one by a `NESTS_UNDER` edge. The source of the edge is the child page; the target is the parent page: the child page NESTS_UNDER the parent page. Every navigation surface reads the edge before falling back to the URL-derived parent of `req-web-nav-auto-parent`. The edge changes where a page appears, never where it lives: its URL, its query string and its route are untouched.
+
+#### Status Details
+
+Built for the case where an instance plugin arranges several vendor plugins' pages under its own page. The vendor pages keep their top-level URLs (`/vendor-a`, `/vendor-b`), and none of them names the instance plugin; the instance plugin draws one `NESTS_UNDER` edge from each vendor page to its own page, in its own GRIFT bundle. The same shape serves any writer that wants to arrange pages it does not own.
+
+#### Implementation
+
+- **The edge type.** `NESTS_UNDER` is declared by `tap_web` (it owns `Page`) in `TapWebConfig.edge_types`. Sources and targets are both `page`. It carries the web dimension `{"tap.graph": "web"}` like the other web edge types, and no properties: its property schema is closed and empty, so a write that adds one is refused (`req-grid-edge-schema-required`). It is a reference, not containment: retiring the parent page does not retire the child.
+- **Which edges count.** A live `NESTS_UNDER` edge counts when both ends are live Pages and the target Page is discoverable (`req-web-nav-page-discoverable`). An edge to a non-discoverable page is ignored, because no discovery surface can link to that page.
+- **Several parents.** If a page has more than one counting edge, the parent with the highest `nav_weight` (`req-web-nav-page-weight`) wins; equal weights resolve by the lower slug. The choice never depends on the order edges were written.
+- **The effective path.** Starting from the requested URL, each level's parent is its explicit parent when it has one and its URL-derived parent otherwise, until the walk reaches `/`. Example: with `/vendor-a` NESTS_UNDER `/instance`, the breadcrumb for `/vendor-a` is `[home] › Instance › Vendor A`, and for an unregistered or registered `/vendor-a/detail` it is `[home] › Instance › Vendor A › Detail`. The current segment is always the requested URL.
+- **Cycles.** Refusing a cycle at write time would need a per-edge-type write hook that the grid service layer does not have, so cycles are detected at read time instead. If the walk revisits a level, the whole breadcrumb falls back to the URL-derived path and a warning is logged. The walk visits each level at most once, so no edge set can hang it. A page that nests under itself is a one-page cycle and falls back the same way.
+- **Every surface agrees.** `build_breadcrumb` computes the effective path for the header. `/__nav-index.json` reads the edges once per request and reports each page's effective path as its `breadcrumb` (`req-web-nav-index-endpoint`). The palette tree, the chevron sibling popover and the column view all take a page's parent from that breadcrumb, so they nest the page under its explicit parent without code of their own.
+- **Read-free chrome.** A caller without `grid.read` gets no edge read and the URL-derived path, exactly as `req-web-nav-chrome-read-free` requires for the page read.
+- **No edges, no change.** With no counting `NESTS_UNDER` edge, every surface produces exactly what the URL-derived rule produced before this requirement.
+
+#### Development
+
+The navigation philosophy says the hierarchy a user walks is the graph projected as a path. Until this requirement the projection had one input, the URL. The edge makes it a real graph projection: the instance that arranges pages says so on the grid, where the arrangement can be queried, versioned and removed like any other relationship.
+
+An edge was chosen over a `Page.parent_url` field so that the page being moved stays ignorant of its parent. A vendor plugin is reusable across instances; if it had to carry `parent_url = "/instance"`, it would name one instance. With the edge, only the instance names the vendor pages, which it already depends on.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-nav-explicit-parent-edge-1 | Edge Type Declared | Implemented | `NESTS_UNDER` is registered by `tap_web` with source `page`, target `page`, the web default dimension, and a closed empty property schema; any other endpoint type or any property is refused at write. | `tap_web/apps.py`. |
+| req-web-nav-explicit-parent-edge-2 | Explicit Parent Overrides URL Parent | Implemented | A page with a counting `NESTS_UNDER` edge takes the target page as its breadcrumb parent; each level above continues by the same rule. | `tap_web/navigation.py` `effective_path()`. |
+| req-web-nav-explicit-parent-edge-3 | URL Unchanged | Implemented | The current segment is the requested URL; no URL, route or query string is rewritten, and the page renders at its own URL with its query string. | |
+| req-web-nav-explicit-parent-edge-4 | Nav Index Reports The Effective Path | Implemented | `/__nav-index.json` reports each page's effective path as its `breadcrumb`, so the palette tree, sibling popover and column view nest the page under its explicit parent. | Edges read once per index request. |
+| req-web-nav-explicit-parent-edge-5 | Several Parents Resolve Deterministically | Implemented | Among several counting edges, the parent with the highest `nav_weight` wins, then the lower slug. | `choose_explicit_parents()`. |
+| req-web-nav-explicit-parent-edge-6 | Cycles Fall Back To The URL | Implemented | A cycle of `NESTS_UNDER` edges, including a self-edge, never hangs navigation: the breadcrumb falls back to the URL-derived path and a warning is logged. | Detected at read time; write-time refusal is not built. |
+| req-web-nav-explicit-parent-edge-7 | Only Live, Discoverable Parents Count | Implemented | An edge whose target page is non-discoverable, or whose edge or either page is retired, is ignored. | |
+| req-web-nav-explicit-parent-edge-8 | No Edges, No Change | Implemented | With no counting edge, the header breadcrumb and the nav index are identical to the URL-derived output. | |
+| req-web-nav-explicit-parent-edge-9 | Read-Free When Unauthorized | Implemented | A caller without `grid.read` triggers no edge read and gets the URL-derived breadcrumb. | Same gate as `req-web-nav-chrome-read-free`. |
+
+#### Future
+
+Write-time cycle refusal, if the grid service layer grows a per-edge-type write validation hook. A column-view or palette affordance that shows a page's URL parent beside its explicit parent, for operators debugging an arrangement.
 
 
 ### Command Palette Affordance
@@ -378,7 +427,7 @@ TAP exposes a machine-readable index of every reachable Page, with each page's c
 #### Implementation
 
 - An endpoint, tentatively `/__nav-index.json`, returns a JSON document enumerating registered Pages.
-- Each entry contains: the page's URL, name, description (if any), and the ordered list of breadcrumb segments from root to that page (each segment as `{label, url}`).
+- Each entry contains: the page's URL, name, description (if any), and the ordered list of breadcrumb segments from root to that page (each segment as `{label, url}`). The breadcrumb is the page's effective path: explicit `NESTS_UNDER` parents where they exist, URL-derived parents elsewhere (`req-web-nav-explicit-parent-edge`).
 - The index updates whenever Pages are added/removed from the grid; it is computed on request rather than cached for v0.
 - The endpoint is unauthenticated for v0 (the index reveals only what's already discoverable by walking links); auth gating may be added in a future revision once user/permission model lands.
 - The endpoint's exact schema is documented in this spec (below) — it is part of the platform contract, not a derivative.
@@ -587,7 +636,7 @@ The root defect behind the login outage was architectural, not a one-line bug: n
 
 A few directions intentionally deferred from v0, kept here as breadcrumbs for the next spec revision:
 
-- **Explicit parent override** — `Page.parent_url` field for pages whose breadcrumb position differs from their URL.
+- **Explicit parent override** — built as the `NESTS_UNDER` page-to-page edge (`req-web-nav-explicit-parent-edge`).
 - **Saved pins** — user-pinned Pages or entities that appear in a dedicated section of the command palette.
 - **Perspective filtering** — breadcrumb path may vary by the user's active perspective / dimension; same URL, different chrome.
 - **Right-click context menus** on breadcrumb segments — open-in-new-tab, copy-URL, pin-here.

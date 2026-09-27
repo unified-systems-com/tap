@@ -29,7 +29,7 @@ name: api-fuzz-nightly
 on:
   schedule:
     # Off-the-hour (GitHub delays/drops on-the-hour crons more aggressively), staggered
-    # after nightly-plugins (09:17) and trivy-nightly (09:30).
+    # after trivy-nightly (09:30).
     - cron: "47 9 * * *"
   workflow_dispatch: {}
 

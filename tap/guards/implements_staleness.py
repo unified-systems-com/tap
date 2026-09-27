@@ -38,7 +38,7 @@ class ImplementsStalenessGuard(Guard):
         from tap.spec_trace import stale_claims
 
         offenders = stale_claims(REPO_ROOT)
-        assert not offenders, (
+        assert not offenders, (  # nosec B101
             "Implementation claim(s) are Outdated — the requirement changed after the claim was "
             "made. Re-read the implementation against the new wording, then re-stamp with "
             "`scripts/implements-tag --resync <path>`:\n  "

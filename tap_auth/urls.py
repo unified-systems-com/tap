@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from django.urls import include, path, register_converter
 
-from tap_auth import views, views_enroll, views_login
+from tap_auth import views, views_device, views_enroll, views_login
 from tap_auth.allauth_surface import tap_allauth_urlpatterns
 
 
@@ -90,5 +90,6 @@ urlpatterns = [
     # named or ruled on (tap#703). tap_auth.allauth_surface mounts a disposition
     # table instead: served routes as-is, closed routes at the same name behind a
     # 403, and anything unclassified closed and logged.
+    *views_device.device_urlpatterns(),
     path("", include(tap_allauth_urlpatterns())),
 ]

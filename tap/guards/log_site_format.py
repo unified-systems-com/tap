@@ -22,7 +22,7 @@ class LogSiteFormatGuard(Guard):
 
     def check(self) -> None:
         malformed = scan().malformed_ids
-        assert not malformed, (
+        assert not malformed, (  # nosec B101
             "Malformed log-site token(s) — must be a bare 4-hex `[<hex>]` (e.g. `[a8f3]`), no slug or "
             "prefix. Mint one with `scripts/log-site-id`:\n  " + "\n  ".join(key(s) for s in malformed)
         )

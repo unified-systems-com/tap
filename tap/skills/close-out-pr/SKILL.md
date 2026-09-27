@@ -15,6 +15,15 @@ Nothing enforces this. There is no hook and no gate — the one that was built w
 withdrawn as unsound (see *What is deliberately not here*). This skill is the
 procedure, and running it is a decision you make each time.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Why this exists
 
 On 2026-09-11 a subagent reported "Triage: no seat findings" for PR# 384 - tap.
@@ -222,13 +231,16 @@ for the same reason: anyone can write into these surfaces.
 
    | repo | workflows with comment-write |
    | --- | --- |
-   | `tap` | `ai-review.yml` only |
+   | `tap` | `ai-review.yml` **and** `product-lines.yml` (`owner-issue`, since tap#791) |
    | `compliance_core`, `git_core`, `github_core` | `ai-review.yml` **and** `nightly.yml` |
    | `dcom` | `ai-review.yml` only |
    | `git_serious` | `nightly.yml` only — **no `ai-review.yml` at all** |
 
-   So in `tap` the publisher is the only thing that could post one. **In three plugin repos
-   it is not**, and the author-plus-marker check is correspondingly weaker there — a second
+   In `tap` the second writer is `product-lines.yml`'s `owner-issue` job: `schedule`-only, no
+   checkout, and every value it posts is fixed text, a run URL and a job result, so nothing a
+   PR controls reaches it. It is still a second holder of the identity, so the author-plus-marker
+   check no longer proves the publisher on its own. **In three plugin repos** the same holds for
+   `nightly.yml`, and the author-plus-marker check is correspondingly weaker there — a second
    writable workflow could post a marker-bearing comment that this query would present as
    the unified review. Treat the fallback as a convenience in those repos and prefer
    `scripts/pr-review-triage`, which lists every bot comment with its author rather than

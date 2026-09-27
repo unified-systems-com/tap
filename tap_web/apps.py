@@ -72,6 +72,30 @@ class TapWebConfig(AppConfig):
             "targets": [{"type": "search"}],
             "default_dimensions": WEB_DIMENSIONS,
         },
+        {
+            # req-web-nav-explicit-parent-edge. Direction: the CHILD page is the source
+            # and NESTS_UNDER its parent page (the target). Navigation-only: it moves
+            # where the child appears in the breadcrumb, palette tree, sibling popover,
+            # column view and nav index; the child's URL is unchanged. Any writer may
+            # draw it (typically an instance plugin nesting other plugins' pages under
+            # its own), so neither page's owner has to name the other. A reference, not
+            # containment: retiring the parent never retires the child.
+            "slug": "NESTS_UNDER",
+            "name": "Nests Under",
+            "description": (
+                "The source page NESTS_UNDER the target page: navigation surfaces show the source as a child "
+                "of the target instead of its URL-derived parent. The source page's URL does not change. When "
+                "a page has several, the parent with the highest nav_weight wins, then the lower slug; a cycle "
+                "falls back to the URL-derived parent."
+            ),
+            "sources": [{"type": "page"}],
+            "targets": [{"type": "page"}],
+            "default_dimensions": WEB_DIMENSIONS,
+            # The relationship carries no data: the pair of pages is the whole fact.
+            # A closed empty schema refuses any property instead of accepting one
+            # unvalidated (req-grid-edge-schema-required).
+            "property_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        },
     ]
 
     def ready(self) -> None:

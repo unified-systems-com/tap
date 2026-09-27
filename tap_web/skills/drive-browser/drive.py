@@ -32,6 +32,11 @@ def main() -> None:
     ap.add_argument(
         "--session", default="", help="Django sessionid cookie value (from mint_session.py); omit for public pages"
     )
+    ap.add_argument(
+        "--cookie-name",
+        default="sessionid",
+        help="Session cookie name — per stack, printed by mint_session.py as SESSIONCOOKIE (tap#773)",
+    )
     ap.add_argument("--host", default="localhost", help="Cookie domain (default: localhost)")
     ap.add_argument(
         "--tz", default="America/New_York", help="IANA timezone the browser reports (default: America/New_York)"
@@ -50,7 +55,7 @@ def main() -> None:
         browser = p.chromium.launch(args=["--no-sandbox"])
         ctx = browser.new_context(timezone_id=args.tz, viewport={"width": 1400, "height": 1000})
         if args.session:
-            ctx.add_cookies([{"name": "sessionid", "value": args.session, "domain": args.host, "path": "/"}])
+            ctx.add_cookies([{"name": args.cookie_name, "value": args.session, "domain": args.host, "path": "/"}])
         page = ctx.new_page()
         errors: list[str] = []
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)

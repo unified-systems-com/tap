@@ -39,7 +39,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:1d95114038f76513a9ace6fca107d5582b08c65981f81f61cb56bf7fd2ef216d AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -61,7 +61,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:1d95114038f76513a9ace6fca107d5582b08c65981f81f61cb56bf7fd2ef216d AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -120,10 +120,10 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
-# build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are
+# build: the compose bind mount `.:/app` overrides /app and /app/.venv + the uv cache are
 # named volumes, so a build-time `uv sync` is hidden and can fossilize a corrupted uv state
 # into the layer cache. We still carry the lock + pyproject so the image has them.
 COPY pyproject.toml uv.lock* ./
@@ -160,16 +160,33 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif
 # never live in git. Files are staged under the SAME app-relative static names
 # the templates reference, so {% static %} lookups are unchanged; the lock rides
 # along into the image as the SBOM's declared-closure source (the js analog of
-# uv.lock). Digest-pinned node from the credential-free ECR mirror
-# (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.
+# uv.lock). The toolchain is Wolfi's own node + npm packages, installed on the
+# SAME digest-pinned wolfi-base as every other stage (req-cicd-base-image-sourcing):
+# no second registry to pull from. This stage used to pull node:24-alpine
+# anonymously from public.ecr.aws, whose per-IP data cap failed CI builds when
+# many repos built at once. Package versions are pinned exactly; Renovate does
+# not watch apk pins, so bump them by hand alongside the wolfi-base digest
+# (`apk policy nodejs-24 npm` inside the new base lists what is available).
+# The output is the lockfile's bytes, not the toolchain's: `npm ci` verifies every
+# tarball against the lock's integrity hash, so a toolchain bump cannot change them.
 # ============================================================================
-FROM public.ecr.aws/docker/library/node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS js-vendor
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS js-vendor
+# Same bounded apk retry as the stages above (Wolfi's repo flakes under load).
+RUN for i in 1 2 3; do \
+      if apk add --no-cache nodejs-24=24.21.0-r3 npm=12.0.2-r0; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
+    done
 WORKDIR /vendor
 COPY package.json package-lock.json ./
 # npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
 # hostile tarball extraction lands as `node`, not root; also SonarCloud
-# S6471). Root only prepares the target dirs.
-RUN mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
+# S6471). Wolfi ships no `node` account, so root creates one (uid/gid 1000,
+# as on the official node images) and prepares the target dirs.
+RUN addgroup -g 1000 node \
+ && adduser -D -u 1000 -G node -h /home/node node \
+ && mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
  && chown -R node:node /vendor /opt/tap-static-vendor
 USER node
 RUN npm ci --ignore-scripts --loglevel=error \
@@ -211,6 +228,50 @@ COPY --from=js-vendor /opt/tap-static-vendor /opt/tap-static-vendor
 # Note on tailwindcss: the image does NOT carry the binary. The /tailwind-rebuild skill
 # installs it on demand into the tailwind_bin volume; the committed
 # tap_web/static/tap_web/css/tailwind.css is served as-is. See spec-web-tailwind-pipeline.md.
+
+# ============================================================================
+# Runtime user — the serving stage does not run as root (tap#754)
+# ============================================================================
+# The stage that SERVES REQUESTS runs unprivileged. `USER nonroot` itself is one line
+# (at the bottom of `final`, after the fips stages' root-only RUNs); what needs stating
+# is the directory preparation here, because every writable path the container touches
+# at runtime is a MOUNT, and a mount's ownership is not something the entrypoint can fix
+# once it has dropped root.
+#
+# Two ownership facts do the work:
+#
+#  1. A fresh NAMED VOLUME inherits the ownership and mode of the image directory at its
+#     mount path — including when that path is nested under a bind mount (verified on
+#     Docker Desktop 2026-09-22 with /app/.venv under `.:/app`). So `/app/.venv`,
+#     the uv cache and `/opt/tailwind` are created HERE, owned and group-writable, and
+#     the volumes Docker creates for them come out writable by the runtime user. A path
+#     NOT created here gets a root-owned mountpoint and a container that dies at `uv sync`.
+#
+#  2. Group 0 + `g+rwX`, not `nonroot:nonroot` alone, because the uid is not fixed in
+#     development. The `.:/app` bind mount is host-owned, so on Linux (CI, Codespaces,
+#     a Linux workstation) the container has to run as the HOST's uid or it cannot write
+#     the tree it is serving from — `scripts/dc` passes that uid through as `TAP_UID`
+#     (docker-compose.yml `user:`). That uid has no passwd entry, so HOME is declared
+#     explicitly below rather than resolved from /etc/passwd. The published image's own
+#     default stays `nonroot` (65532), which is what a plain `docker run` gets.
+#
+# `/run/tap` holds the persisted TAP_PLUGINS set. It is a directory in the image's
+# writable layer — NOT a tmpfs, despite what the entrypoint comment used to say — so it
+# is fresh per container either way, and it has to be prepared here because `/run` itself
+# is root-owned and a non-root process cannot create a path in it.
+RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap \
+ && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap \
+ && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap
+
+# HOME is declared, not inherited: under the dev `user:` override the runtime uid has no
+# /etc/passwd entry, so Docker would hand it HOME=/ and uv, git and anything else reaching
+# for a home directory would write into the image root (or fail).
+ENV HOME=/home/nonroot
+# uv's cache, which used to sit at /root/.cache/uv — literally root's home — and is the
+# mount target of the per-project `uv_cache` volume. Named explicitly rather than left to
+# uv's $HOME-relative default so the compose mount target and the entrypoint's seed
+# destination are the same string in both places.
+ENV UV_CACHE_DIR=/home/nonroot/.cache/uv
 
 EXPOSE 8000
 
@@ -419,3 +480,12 @@ LABEL org.tap.fips="true"
 # final — select the variant by the build flag (default fips-1)
 # ============================================================================
 FROM fips-${TAP_FIPS} AS final
+
+# The serving stage runs unprivileged (tap#754). Declared HERE and not in `app`, because
+# the fips-1 stage in between runs `openssl fipsinstall`, which writes /etc/ssl — a
+# root-only step that must complete BEFORE the drop. Directory preparation is in `app`.
+# 65532 is Wolfi's `nonroot`; development overrides the uid (never back to 0) via the
+# compose `user:` key so the container can write the host-owned `.:/app` bind mount.
+# This is NOT the build-stage `USER node` in js-vendor, which is a separate control in a
+# separate stage that never ships, and stays exactly as it is.
+USER nonroot

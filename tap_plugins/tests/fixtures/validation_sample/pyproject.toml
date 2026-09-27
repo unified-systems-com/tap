@@ -6,7 +6,8 @@
 # real, installable, package-mode plugin they can validate at all three levels
 # (structure / loads / runs) without depending on an evicted repo.
 #
-# Deliberately tiny: one BaseModel, one wildcard edge, one no-op collector. Static
+# Deliberately tiny: one BaseModel, one wildcard edge, one no-op collector, and one
+# GRIFT bundle (two nodes + one edge) for the core suite's seed-path tests (tap#638). Static
 # version (no hatch-vcs) — a test fixture needs no VCS-derived version. The identity
 # chain (slug / namespace / distribution / entry-point) is exact so the validator's
 # identity-coherence check passes: slug=validation_sample, namespace

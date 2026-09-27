@@ -165,7 +165,7 @@ The audit surface moves from the hand-authored install list to the **resolved `u
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-depres-lock-1 | Lock is the BOM | Proposed | `uv.lock` (pinned + hashed) is the recorded known-good-set for an instance. | Replaces/augments the install list as the audit artifact. |
 | req-tap-plugin-depres-lock-2 | Integrity-verified | Proposed | The lockfile is integrity-checked on boot, as the boot record is today. | Reuses the boot-pointer verification model. |
-| req-tap-plugin-depres-lock-3 | CI verifies the set | Proposed | The all-plugins CI lane resolves/verifies against the lock. | Cross-ref `req-dev-validation-all-plugins-lane`. |
+| req-tap-plugin-depres-lock-3 | CI verifies the set | Proposed | The CI that owns the pinned set — a product's own lane, since tap runs no plugin union (tap#638) — resolves/verifies against the lock. | Was the all-plugins CI lane until the union was retired; products own their pinned set and lock (tap#380). |
 
 ### Keyring-Subprocess Materialization
 ----

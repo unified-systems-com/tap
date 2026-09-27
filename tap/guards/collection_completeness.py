@@ -1,6 +1,6 @@
 """Collection-completeness guard — `req-dev-validation-collection-complete`.
 
-TAP-IMPLEMENTS: req-dev-validation-collection-complete@9e8b7b0158f1/8048024a53c6 (enforcement)
+TAP-IMPLEMENTS: req-dev-validation-collection-complete@5ef3a68e6b49/8048024a53c6 (enforcement)
     — the guard that validates the validator: every on-disk test file collects or is
     ledger-justified. (`collection_addopts` is its sub-guard defending the ledger.)
 
@@ -30,7 +30,7 @@ class CollectionCompletenessGuard(Guard):
 
     def check(self) -> None:
         orphans = sorted(filesystem_test_files() - collected_test_files())
-        assert not orphans, (
+        assert not orphans, (  # nosec B101
             "These test files exist on disk but are NOT collected by the default pytest run — they will "
             "silently never gate:\n  "
             + "\n  ".join(orphans)
