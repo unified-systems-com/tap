@@ -16,6 +16,9 @@ check here, on the PR that adds it, instead of at startup in two dozen plugin re
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -304,7 +307,7 @@ def test_every_build_attempt_takes_the_mirror_contexts(workflow: dict[str, Any])
 
 
 def test_the_mirror_mapping_redirects_only_digest_pinned_ecr_library_images(
-    workflow: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """Run the step's own script on a Dockerfile like an old harness tag's: the digest-pinned
     ECR image maps to the same digest on mirror.gcr.io; a tag-only ECR reference and a
@@ -318,10 +321,11 @@ def test_the_mirror_mapping_redirects_only_digest_pinned_ecr_library_images(
         encoding="utf-8",
     )
     out, summary = tmp_path / "out", tmp_path / "summary"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    exec(compile(step["run"], "mirror-step", "exec"), {})  # noqa: S102 - the workflow's own script
+    script = tmp_path / "mirror_step.py"
+    script.write_text(step["run"], encoding="utf-8")
+    # Run it the way Actions does (`shell: python` = the interpreter on a script file).
+    env = {**os.environ, "GITHUB_OUTPUT": str(out), "GITHUB_STEP_SUMMARY": str(summary)}
+    subprocess.run([sys.executable, str(script)], cwd=tmp_path, env=env, check=True, capture_output=True)
     lines = out.read_text(encoding="utf-8").splitlines()
     assert lines[0].startswith("contexts<<") and lines[-1] == lines[0].removeprefix("contexts<<")
     assert lines[1:-1] == [
