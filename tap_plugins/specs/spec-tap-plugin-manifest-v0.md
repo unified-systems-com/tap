@@ -779,14 +779,19 @@ unconstrained relation is not followed) and the opposite of the permissive defau
 validation uses (`tap#397`). A manifest that under-declares should fail loud, not fail open.
 
 **What makes the manifest worth eyeballing, not just present:** the schema alone is necessary but
-not sufficient. Two more legs close the loop:
+not sufficient, and neither leg below is a completeness proof — both are named for what they
+actually are, not oversold.
 1. `validate_plugin` schema validation — well-formed, not necessarily accurate.
 2. A **declared-vs-observed drift check**, the same pattern as `req-github-core-app-permissions-drift`
    one level down: run the plugin's own test/collector suite under Landlock + seccomp in *logging*
    mode (not enforcing), record what it actually touches, fail CI if observed access exceeds
-   declared access. Independently checkable by an outside party without trusting our runtime at all
-   — these are public repos, so anyone can read the CI config and logs and confirm the check
-   genuinely ran and passed, rather than taking our word for it.
+   declared access. **This is a coverage-limited regression signal, not a completeness guarantee** —
+   it only observes code paths the test suite actually exercises; conditional, environment-specific,
+   or deliberately untested access stays invisible to it, the same blind spot any test-suite-driven
+   check has. Reading public CI config and logs establishes that the check ran and passed against
+   whatever it covers; it does not by itself establish runner integrity or that the suite exercises
+   every path. A stronger guarantee — exhaustive tracing, fuzzing, or independent review — is future
+   work, not something this AC claims to deliver.
 
 The manifest itself must be fetchable and mechanically consumable without running or trusting any
 TAP code — a plain, versioned file at a fixed, well-known location, in a shape dumb enough that
@@ -801,7 +806,7 @@ understanding anything about TAP itself.
 | req-tap-plugin-manifest-capability-declaration-2 | Network Destinations Declared | Backlog | A plugin manifest declares network destinations by IP or DNS hostname; URL-path granularity is explicitly a later tier, not v0. | |
 | req-tap-plugin-manifest-capability-declaration-3 | Fail Closed On Omission | Backlog | A binary invocation or network call not covered by the declaration is refused by our own internal enforcement, never silently permitted. | Mirrors `CONTAINMENT_EDGES`'s undeclared-is-not-followed default. |
 | req-tap-plugin-manifest-capability-declaration-4 | Schema Validated | Backlog | `validate_plugin` refuses a malformed capability declaration the same way it refuses other malformed manifest sections. | |
-| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under logging-mode Landlock + seccomp and fails if observed access exceeds the declaration. | Mirrors `req-github-core-app-permissions-drift`. |
+| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under logging-mode Landlock + seccomp and fails if observed access exceeds the declaration. A coverage-limited regression signal, not a completeness proof — it cannot see access outside what the suite exercises. | Mirrors `req-github-core-app-permissions-drift`. AI-review finding (tap#860, Codex seat): the original wording overclaimed this as independent verification; narrowed here and in the prose above. |
 | req-tap-plugin-manifest-capability-declaration-6 | Enforcement Is Plural, None Load-Bearing | Backlog | Our own internal enforcement and any reference external-proxy generator are both documented as optional consumers of the declaration; neither is presented as the security boundary itself. | |
 | req-tap-plugin-manifest-capability-declaration-7 | Manifest Independently Fetchable | Backlog | The capability declaration lives at a fixed, versioned location consumable by generic tooling, without executing or trusting any TAP code. | |
 
