@@ -985,12 +985,20 @@ dispatch." An unhandled 500 is exactly the case a Flaw exists for. The design qu
 requirement leaves open is only *how* `handler500` reaches that emission — directly, or via Django's
 `got_request_exception` signal — not *whether* a new logging surface gets built.
 
+**The confidentiality boundary is inherited, not new.** A raw traceback can carry credentials, request
+data, or filesystem paths, so this requirement does not open a path around the redaction the Flaw sink
+already does: `message_data` is redacted before any handler sees it
+(`spec-tap-logging.md` `req-tap-logging-message-object-5`), and `spec-tap-flaw-v0.md` states a Flaw's
+context is "safe context (no secrets, redacted...)" — Flaw context inherits redaction for free. This
+requirement never asks for an exemption from that; whoever builds it inherits the existing boundary
+rather than re-deciding it.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-serving-error-reference-1 | Reference Id On Every 500 | Backlog | Every unhandled server error shows a short id on the rendered page. | |
-| req-tap-serving-error-reference-2 | Id Resolves To The Real Exception | Backlog | The same id is attached to a Flaw (or an equivalent structured log entry) carrying the actual traceback, so a reported id is a direct lookup, not a re-description. | Route through `tap/flaws.py`, don't build a second signal |
+| req-tap-serving-error-reference-2 | Id Resolves To The Real Exception | Backlog | The same id is attached to a Flaw (or an equivalent structured log entry) carrying the exception, redacted the same way every other Flaw is, so a reported id is a direct lookup, not a re-description. | Route through `tap/flaws.py`; inherits its redaction, does not bypass it |
 
 ### Request Correlation Id
 ----
