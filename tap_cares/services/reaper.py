@@ -132,10 +132,25 @@ def _dead_reason(job: CollectionJob) -> str | None:
 
     steady_job = Job.objects.filter(pk=task_id).first()
     if steady_job is None:
+        # Not a startup-visibility race (Grok, PR# 845 - tap, rounds 3-4): the
+        # enqueue side (`tap_cares/services/__init__.py::_enqueue_and_record_task_id`)
+        # creates this `Job` row synchronously and only patches `task_result_id`
+        # onto CollectionJob *after* `enqueue()` returns; `status` only becomes
+        # RUNNING later still, when a worker claims and starts the task. A `RUNNING`
+        # row can therefore never observe a missing `Job` row for a task that is
+        # actually still alive — a missing row here means the task genuinely
+        # finished (and its row was pruned, if `preserve_finished_jobs` is off) or
+        # the enqueue itself never happened.
         return f"steady_queue has no job record for task {job.task_result_id} (pruned, or never enqueued through it)"
 
     failure = FailedExecution.objects.filter(job_id=steady_job.pk).first()
     if failure is not None:
+        # Not a race against a live claim either: `ClaimedExecution.job` is a
+        # `OneToOneField`, and both `ClaimedExecution.finished()` and
+        # `.failed_with()` delete the claim in the same atomic transaction that
+        # finalizes the Job or creates this FailedExecution row — a live claim and
+        # a FailedExecution for the same job cannot coexist at any observable
+        # instant, so checking this before the claim/heartbeat branch is safe.
         return f"steady_queue recorded this task failed: {failure.error}"
 
     if steady_job.finished_at is not None:

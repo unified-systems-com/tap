@@ -223,6 +223,68 @@ class TestReapStaleCollectionJobs:
         assert job.status == CollectionJobStatus.SUCCESSFUL
         assert job.summary == "Collected 3 repo(s): real success"
 
+    @pytest.mark.django_db(transaction=True)
+    def test_the_write_lock_is_actually_held_through_the_reap_write(self):
+        """The test above patches the row inside `_dead_reason`, before
+        `_reap_if_still_running` ever takes `select_for_update()` — so it never
+        exercises whether the lock actually covers the write (Grok, PR# 845 - tap,
+        round 4: 'a real test would overlap an UPDATE of the same PK after the
+        lock is taken, not during `_dead_reason`'). This one does exactly that,
+        with a second real thread on its own DB connection: a concurrent write on
+        the same row, issued only once the lock is confirmed held, must block
+        until this transaction commits, and its own write must be what's left
+        standing afterward — not a stomped reap. `transaction=True` on this test
+        alone (the class default shares one connection per test, which can't show
+        cross-connection blocking) is what makes real concurrency possible here.
+        """
+        import threading
+        import time as time_module
+        from unittest.mock import patch as mock_patch
+
+        from django.db import close_old_connections, connection
+
+        from tap_cares.services import reaper as reaper_module
+
+        job = _make_running_job(task_result_id="11")
+
+        real_reap_by_id = reaper_module._reap_by_id
+        lock_acquired = threading.Event()
+        hold_seconds = 0.4
+
+        def _slow_reap_by_id(entity_id, reason):
+            lock_acquired.set()
+            time_module.sleep(hold_seconds)
+            real_reap_by_id(entity_id, reason)
+
+        outcome: dict[str, float] = {}
+
+        def _concurrent_real_write() -> None:
+            close_old_connections()
+            assert lock_acquired.wait(timeout=5), "reap never signalled it took the lock"
+            started = time_module.monotonic()
+            CollectionJob.objects.filter(entity_id=job.entity_id).update(
+                status=CollectionJobStatus.SUCCESSFUL, summary="real success, arrived mid-reap"
+            )
+            outcome["elapsed"] = time_module.monotonic() - started
+            connection.close()
+
+        writer_thread = threading.Thread(target=_concurrent_real_write)
+        writer_thread.start()
+
+        with mock_patch("tap_cares.services.reaper._reap_by_id", side_effect=_slow_reap_by_id):
+            reaper_module._reap_if_still_running(job.entity_id, "test reason")
+
+        writer_thread.join(timeout=5)
+        assert not writer_thread.is_alive(), "the concurrent writer never returned"
+        assert outcome.get("elapsed", 0) >= hold_seconds * 0.8, (
+            "the concurrent UPDATE returned before the reap released its lock — "
+            "select_for_update() is not actually blocking a real writer"
+        )
+
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL
+        assert job.summary == "real success, arrived mid-reap"
+
     def test_one_bad_row_does_not_stop_the_rest_of_the_sweep(self):
         """A row that raises while being evaluated is logged and skipped, not left to
         cancel the whole tick — the reaper sits ahead of every schedule's own evaluation,
