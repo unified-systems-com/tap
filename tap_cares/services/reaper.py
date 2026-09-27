@@ -25,7 +25,7 @@ Derive, don't trust (the house order, tap#471's remedy):
     covers a `task_result_id` steady_queue never recognized, or a backend
     that does not use steady_queue's job table shape at all.
 
-TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@6b8e4b96509b/aee55d338faf (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@0bd4cad8499a/02fcc9ff4544 (derivation) —
     the reconciler itself: every derive step in `_dead_reason`, the flat-age
     backstop in `_timeout_reason`, the re-check-before-write in
     `_reap_if_still_running`, and the terminal patch in `_reap_by_id`.
@@ -36,6 +36,8 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+
+from django.db import transaction
 
 from tap_cares.models import CollectionJob, CollectionJobStatus
 
@@ -79,26 +81,42 @@ def _reap_stale_collection_jobs() -> list[str]:
 
 
 def _reap_if_still_running(entity_id: uuid.UUID, reason: str) -> bool:
-    """Re-read the row immediately before writing, and only reap if it is still RUNNING.
+    """Lock the row, re-check it, and only reap if it is still RUNNING.
 
     Closes the gap between the queryset snapshot `_reap_stale_collection_jobs`
     iterates and the write below: the real task body can complete — and write
     its own terminal patch — at any point in between, on its own worker,
-    concurrently with this sweep. Without this check, that legitimate patch
-    would be overwritten with a false `Reaped: ...` the instant this function
-    ran to reap it (Grok, PR# 845 - tap). A job no longer RUNNING by the time
-    this reads it was resolved by its own task body in the interim, correctly,
-    and is left alone.
+    concurrently with this sweep. A plain re-read immediately before the write
+    narrows that gap but does not close it (Grok, PR# 845 - tap, round 3): the
+    task body's own write could still land in the instant between this
+    function's read and `_reap_by_id`'s write, and be overwritten by a false
+    `Reaped: ...`.
+
+    `select_for_update()` closes it for real: it takes a row lock for the rest
+    of this transaction, so the task body's own patch (an `UPDATE` by the same
+    primary key, however it gets there) blocks on this row until this
+    transaction commits or rolls back, rather than interleaving with it. Two
+    orders remain, both correct — the task body wrote first and this
+    transaction's re-check sees its terminal status and backs off; or this
+    transaction wins the lock first, reaps, and commits, and the task body's
+    write is queued behind it and lands after — overwriting the reap with the
+    real terminal state, which is what should win.
     """
-    current = CollectionJob.objects.filter(entity_id=entity_id).values_list("status", flat=True).first()
-    if current != CollectionJobStatus.RUNNING.value:
-        logger.info(
-            "[8a63] CollectionJob %s resolved to %s between the reap scan and the write; not reaping",
-            entity_id,
-            current,
+    with transaction.atomic():
+        current = (
+            CollectionJob.objects.select_for_update()
+            .filter(entity_id=entity_id)
+            .values_list("status", flat=True)
+            .first()
         )
-        return False
-    _reap_by_id(entity_id, reason)
+        if current != CollectionJobStatus.RUNNING.value:
+            logger.info(
+                "[8a63] CollectionJob %s resolved to %s between the reap scan and the write; not reaping",
+                entity_id,
+                current,
+            )
+            return False
+        _reap_by_id(entity_id, reason)
     return True
 
 
