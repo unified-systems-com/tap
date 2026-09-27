@@ -16,7 +16,7 @@ import pytest
 from django.utils import timezone
 
 from tap_cares.models import CollectionJob, CollectionJobStatus, Collector
-from tap_cares.services.reaper import reap_stale_collection_jobs
+from tap_cares.services.reaper import _reap_stale_collection_jobs
 
 
 def _make_collector(suffix: str = "") -> Collector:
@@ -82,7 +82,7 @@ class TestReapStaleCollectionJobs:
         CollectionJob.objects.create(
             name="done", description="", status=CollectionJobStatus.SUCCESSFUL, task_result_id="999999"
         )
-        assert reap_stale_collection_jobs() == []
+        assert _reap_stale_collection_jobs() == []
 
     def test_live_claim_with_recent_heartbeat_is_left_alone(self):
         """The core non-reap case: a real worker is genuinely still working on it."""
@@ -91,7 +91,7 @@ class TestReapStaleCollectionJobs:
         process = _make_process(last_heartbeat_at=timezone.now())
         _claim(steady_job, process)
 
-        assert reap_stale_collection_jobs() == []
+        assert _reap_stale_collection_jobs() == []
         job.refresh_from_db()
         assert job.status == CollectionJobStatus.RUNNING
 
@@ -103,7 +103,7 @@ class TestReapStaleCollectionJobs:
         process = _make_process(last_heartbeat_at=stale_at, pid=301)
         _claim(steady_job, process)
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
         job.refresh_from_db()
@@ -118,7 +118,7 @@ class TestReapStaleCollectionJobs:
         steady_job = _make_steady_queue_job(pk=3)
         _fail(steady_job, error="ProcessPrunedError: 2026-01-01T00:00:00+00:00")
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
         job.refresh_from_db()
@@ -129,7 +129,7 @@ class TestReapStaleCollectionJobs:
         """The steady_queue Job row itself was pruned (or the id never matched one)."""
         job = _make_running_job(task_result_id="999999")
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
         job.refresh_from_db()
@@ -141,7 +141,7 @@ class TestReapStaleCollectionJobs:
         job = _make_running_job(task_result_id="4")
         _make_steady_queue_job(pk=4, finished_at=timezone.now())
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
         job.refresh_from_db()
@@ -153,7 +153,7 @@ class TestReapStaleCollectionJobs:
         a failure — the flat-age backstop, not an exception, governs it."""
         job = _make_running_job(task_result_id="not-a-steady-queue-id", started_at=timezone.now())
 
-        assert reap_stale_collection_jobs() == []
+        assert _reap_stale_collection_jobs() == []
         job.refresh_from_db()
         assert job.status == CollectionJobStatus.RUNNING
 
@@ -164,7 +164,7 @@ class TestReapStaleCollectionJobs:
             started_at=timezone.now() - timedelta(minutes=45),
         )
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
         job.refresh_from_db()
@@ -175,7 +175,7 @@ class TestReapStaleCollectionJobs:
         """No task was ever enqueued for this row at all (req-tap-cares-collector-job-model-6)."""
         job = _make_running_job(task_result_id="", started_at=timezone.now() - timedelta(minutes=45))
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(job.entity_id)]
 
@@ -186,7 +186,7 @@ class TestReapStaleCollectionJobs:
         job_b = _make_running_job(task_result_id="6")
         _make_process_and_claim_stale(job_b, steady_pk=6, pid=11)
 
-        reaped = reap_stale_collection_jobs()
+        reaped = _reap_stale_collection_jobs()
 
         assert set(reaped) == {str(job_a.entity_id), str(job_b.entity_id)}
 
@@ -216,7 +216,7 @@ class TestReapStaleCollectionJobs:
             return reason
 
         with mock_patch("tap_cares.services.reaper._dead_reason", side_effect=_resolve_then_decide):
-            reaped = reap_stale_collection_jobs()
+            reaped = _reap_stale_collection_jobs()
 
         assert reaped == []
         job.refresh_from_db()
@@ -244,7 +244,7 @@ class TestReapStaleCollectionJobs:
             return real_dead_reason(j)
 
         with mock_patch("tap_cares.services.reaper._dead_reason", side_effect=_raise_for_bad_job):
-            reaped = reap_stale_collection_jobs()
+            reaped = _reap_stale_collection_jobs()
 
         assert reaped == [str(good_job.entity_id)]
         bad_job.refresh_from_db()

@@ -1257,7 +1257,7 @@ The stuck-job sweep `req-tap-cares-collector-job-sole-writer-7` deferred. Reconc
 
 #### Implementation
 
-`tap_cares.services.reaper.reap_stale_collection_jobs()` runs at the top of `evaluate_tick`, once per scheduler tick (every minute), before any schedule's `_active_run_count` is read — so the tick that reconciles a stale row and the tick that fires a new run off the newly-freed slot can be the same tick. This also covers "at startup": the scheduler's first tick fires within a minute of the process coming up, with no separate boot-time hook needed.
+`tap_cares.services.reaper._reap_stale_collection_jobs()` runs at the top of `evaluate_tick`, once per scheduler tick (every minute), before any schedule's `_active_run_count` is read — so the tick that reconciles a stale row and the tick that fires a new run off the newly-freed slot can be the same tick. This also covers "at startup": the scheduler's first tick fires within a minute of the process coming up, with no separate boot-time hook needed.
 
 For each `RUNNING` CollectionJob, in order (derive, never re-decide from scratch):
 

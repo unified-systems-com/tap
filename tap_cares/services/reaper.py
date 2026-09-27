@@ -25,7 +25,7 @@ Derive, don't trust (the house order, tap#471's remedy):
     covers a `task_result_id` steady_queue never recognized, or a backend
     that does not use steady_queue's job table shape at all.
 
-TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@72e35881c3bc/b607418108bb (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@6b8e4b96509b/aee55d338faf (derivation) —
     the reconciler itself: every derive step in `_dead_reason`, the flat-age
     backstop in `_timeout_reason`, the re-check-before-write in
     `_reap_if_still_running`, and the terminal patch in `_reap_by_id`.
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 _STALE_RUNNING_TIMEOUT = timedelta(minutes=30)
 
 
-def reap_stale_collection_jobs() -> list[str]:
+def _reap_stale_collection_jobs() -> list[str]:
     """Reconcile every `RUNNING` CollectionJob whose owning task is actually dead.
 
     Called once per scheduler tick (`evaluate_tick`), before any schedule's
@@ -81,7 +81,7 @@ def reap_stale_collection_jobs() -> list[str]:
 def _reap_if_still_running(entity_id: uuid.UUID, reason: str) -> bool:
     """Re-read the row immediately before writing, and only reap if it is still RUNNING.
 
-    Closes the gap between the queryset snapshot `reap_stale_collection_jobs`
+    Closes the gap between the queryset snapshot `_reap_stale_collection_jobs`
     iterates and the write below: the real task body can complete — and write
     its own terminal patch — at any point in between, on its own worker,
     concurrently with this sweep. Without this check, that legitimate patch
