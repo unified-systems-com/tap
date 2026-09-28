@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/dca9076edc32 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/21cf8d807790 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1130,6 +1130,18 @@ def _check_ci_record(
     result.checks.append(check)
 
 
+def _is_release_tag(rev: object) -> bool:
+    """True when *rev* is already a canonical release tag (``v1.2.3``, optional pre-release/build)."""
+    from tap.plugin_release import PluginReleaseError, normalize_tag
+
+    if not isinstance(rev, str):
+        return False
+    try:
+        return normalize_tag(rev) == rev
+    except PluginReleaseError:
+        return False
+
+
 #: A plugin slug as a package name (`tap_plugin.<slug>`): one path component, no `..`, never absolute.
 _PACKAGE_SLUG = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -1185,9 +1197,17 @@ def _check_ci_record_content(
         # shipped in the tag v<X> names v<X> for itself, and cannot also carry the commit that tag
         # will point at, because that commit is the one containing the record. Every consumer
         # of a `ci` record flips self to the checkout under test (-4), so the pin is not what
-        # CI installs. A self `commit` that IS present must still be 40-hex.
+        # CI installs. A self `commit` that IS present must still be 40-hex. The exemption covers a
+        # release tag only: a branch or any other ref as `rev` has no chicken-and-egg to excuse it.
         is_self = entry_slug == slug
-        if source.get("type") == "git" and is_self and "commit" not in source:
+        self_unpinned = source.get("type") == "git" and is_self and "commit" not in source
+        if self_unpinned and not _is_release_tag(source.get("rev")):
+            check.fail(
+                f"{record_path.name}: self entry {entry_slug!r} pins `rev` {source.get('rev')!r} without `commit` — "
+                f"self is exempt from `commit` only when `rev` is its release tag (vMAJOR.MINOR.PATCH); pin the tag "
+                f"(req-boot-bootstrap-install-commit-pin)"
+            )
+        elif self_unpinned:
             check.info(
                 f"{record_path.name}: self entry {entry_slug!r} pins `rev` {str(source.get('rev'))!r} without "
                 f"`commit` — exempt: a record cannot carry the commit of the tag it ships in "

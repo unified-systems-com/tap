@@ -250,12 +250,26 @@ class TestPresence:
         """The self entry is exempt from carrying `commit` (Q62, tap#199): a record shipped in
         tag v<X> names v<X> for itself and cannot contain the commit that tag will point at.
         The exemption is reported, not silent."""
-        record = _record(slugs=["test_plugin"], commit=None)
+        record = _record(slugs=["test_plugin"], commit=None, rev="v1.2.3")
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
         check = _check(validate_plugin(plugin, strict=True))
         assert check.status == "pass", [m.text for m in check.messages]
         infos = [m.text for m in check.messages if m.severity == "info"]
         assert any("self entry 'test_plugin'" in t and "exempt" in t for t in infos), infos
+
+    def test_the_self_exemption_covers_a_release_tag_only(self, tmp_path: Path) -> None:
+        """The chicken-and-egg excuses a record naming its own release tag, nothing wider: a self
+        entry on a branch, a bare version (tags are `v`-prefixed, so it names no tag) or a sha
+        without `commit` still fails."""
+        for case, rev in enumerate(("main", "0.2.2", "v1", "a" * 40)):
+            record = _record(slugs=["test_plugin"], commit=None, rev=rev)
+            root = tmp_path / f"case{case}"
+            root.mkdir()
+            plugin = _make_plugin(root, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+            check = _check(validate_plugin(plugin))
+            errors = [m.text for m in check.messages if m.severity == "error"]
+            assert check.status == "fail", (rev, errors)
+            assert any("only when `rev` is its release tag" in t for t in errors), (rev, errors)
 
     def test_a_self_entry_with_a_malformed_commit_fails(self, tmp_path: Path) -> None:
         """Exempt from presence, not from shape: a `commit` that is there must be a full sha,
@@ -277,7 +291,7 @@ class TestPresence:
     def test_the_exemption_is_self_only(self, tmp_path: Path) -> None:
         """NEGATIVE CONTROL: with self exempt, a dependency entry without `commit` in the same
         record still fails, and only it is named."""
-        record = _record(slugs=["test_plugin", "dep_a"], commit=None)
+        record = _record(slugs=["test_plugin", "dep_a"], commit=None, rev="v1.2.3")
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
         check = _check(validate_plugin(plugin))
         errors = [m.text for m in check.messages if m.severity == "error"]

@@ -590,8 +590,11 @@ never matched, so every boot re-resolved the tag (tap#493).
   The self entry is the install entry whose `slug` is the manifest slug of the package the record
   ships in. For it:
   - **author time** (`validate_plugin`, `ci-record` check): no `commit` is reported as `info`, not
-    a failure; a `commit` that IS present must still be a full 40-hex sha, because pre-boot
-    installs by it. Every other entry is exactly as strict as before.
+    a failure, **when `rev` is a release tag** (`vMAJOR.MINOR.PATCH`, optional pre-release/build).
+    A branch, a bare version or any other ref without `commit` still fails: only the record's own
+    release tag has the chicken-and-egg that excuses it. A `commit` that IS present must still be a
+    full 40-hex sha, because pre-boot installs by it. Every other entry is exactly as strict as
+    before.
   - **the self `rev` is the release tool's job**, not Renovate's: org-bots' Renovate boot-record
     manager matches only entries that carry a `commit`, so a self entry without one is never
     bumped by Renovate. Release tooling writes `rev` = the tag being cut.
@@ -619,8 +622,9 @@ never matched, so every boot re-resolved the tag (tap#493).
   **Implemented** (tap#512).
 - Adopt tooling emits `commit` on every git install entry it writes. **Open** (tap#513).
 - `commit` required. **Open** (tap#514).
-- An in-package record's self entry without `commit` passes `validate_plugin`, reported as `info`;
-  a self `commit` that is not 40-hex still fails; any other entry without `commit` still fails.
+- An in-package record's self entry without `commit` passes `validate_plugin` when its `rev` is a
+  release tag, reported as `info`; a self entry on any other ref without `commit` fails; a self
+  `commit` that is not 40-hex still fails; any other entry without `commit` still fails.
   **Implemented** (Q62, `tap_plugins/tests/test_validate_ci_record.py`).
 
 ### Stage-0 Fetch Without Import
