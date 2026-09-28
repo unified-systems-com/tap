@@ -768,10 +768,18 @@ security claim.** Two separate consumer classes read the same declaration:
 - **Network.** Destinations a plugin's binaries or collector code need to reach, at whichever
   granularity is actually available: IP address or DNS hostname now; URL path is a later, harder
   tier — inspecting a path on an HTTPS connection requires terminating TLS at the enforcement point,
-  which means an egress *proxy* (`HTTPS_PROXY`-routed, hostname/SNI rules first, path rules as a
-  natural extension of the same mechanism later), not a passive firewall rule. A DNS name resolved
-  once into a static IP allow-list goes stale the moment the destination rotates IPs (common behind
-  a CDN); hostname-aware proxy enforcement doesn't have that problem.
+  which means an egress *proxy* (hostname/SNI rules first, path rules as a natural extension of the
+  same mechanism later), not a passive firewall rule. A DNS name resolved once into a static IP
+  allow-list goes stale the moment the destination rotates IPs (common behind a CDN);
+  hostname-aware proxy enforcement doesn't have that problem.
+
+  **`HTTPS_PROXY` alone is not enforcement, and must not be described as if it were.** That
+  environment variable is a voluntary convention well-behaved HTTP clients honor; a compromised or
+  malicious process can simply ignore it and open a direct socket. For an operator who trusts
+  nothing about our runtime — the whole premise of this section — the proxy is only a real boundary
+  if paired with a network-level rule that blocks *all* direct egress except to the proxy itself, so
+  there is no path to the network that isn't through it. That firewall rule, not the environment
+  variable, is what makes the proxy mandatory rather than opt-in.
 
 **Fail-closed by default.** An undeclared network destination or an undeclared binary invocation is
 refused, not silently allowed — the same default `CONTAINMENT_EDGES` uses in `tap_grid` (an
