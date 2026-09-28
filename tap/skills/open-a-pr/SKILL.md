@@ -102,7 +102,11 @@ it.
    It performs the pre-push merge, runs `run_local_gates` → `scripts/test --fast-relevant`,
    opens the PR, and wires the server gate and auto-merge. `gh pr create` does the last of
    those five things. If you open by hand — for a draft, or a PR that is not a promote —
-   you have accepted responsibility for steps 3 and 4 yourself.
+   you have accepted responsibility for steps 3 and 4 yourself, **and for the pre-push
+   merge**: `git fetch origin && git merge origin/main` immediately before
+   `gh pr create`, conflicts resolved as `close-out-pr` *Merge conflicts* says, and steps
+   3-4 run again if the merge brought anything in. A PR opened behind its base can be
+   conflicting from its first minute with every check green.
 
 6. **Write a body that carries evidence, not claims.** Name the repo with every number
    (`PR# 742 - tap`, `Issue# 739 - tap`). State what was run and what it produced, not
@@ -119,6 +123,9 @@ it.
    Run it from a worktree of the upstream repo at a trusted revision — **never the PR's
    own branch worktree**, where the relative path resolves to the reviewed branch's copy
    of the script. Arm it as a Monitor, not a background write-to-log: a log wakes nobody.
+
+   Besides reviews and failing checks it prints a `CONFLICT` line when the PR stops
+   merging into its base, which happens after opening whenever the base moves.
 
    Then hand off: **`close-out-pr` owns everything from here.**
 

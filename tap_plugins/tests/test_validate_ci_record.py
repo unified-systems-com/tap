@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import textwrap
 from pathlib import Path
 
@@ -39,17 +40,36 @@ def _check(result: ValidationResult) -> CheckResult:
     return matches[0]
 
 
+_A_COMMIT = "0" * 39 + "a"  # a well-formed 40-hex commit id; the value is irrelevant, the SHAPE is not
+
+
+def _run_commands(errors: list[str]) -> list[str]:
+    """The copy-paste commands a failure offers: each sits alone on a `Run: ` line."""
+    return [
+        line.removeprefix("Run: ")
+        for text in errors
+        for line in text.splitlines()
+        if line.startswith("Run: python3 -m tap.plugin_release")
+    ]
+
+
 def _record(
     *,
     slugs: list[str],
     on_failure: str | None = "abort",
     secrets: bool = False,
     credential: bool = False,
+    commit: str | None = _A_COMMIT,
+    commits: dict[str, str | None] | None = None,
+    rev: str = "v1",
     description: str = "the test stack",
 ) -> str:
     plugins = []
     for slug in slugs:
-        source: dict[str, object] = {"type": "git", "url": f"https://example.invalid/{slug}", "rev": "v1"}
+        source: dict[str, object] = {"type": "git", "url": f"https://example.invalid/{slug}", "rev": rev}
+        pinned = (commits or {}).get(slug, commit)
+        if pinned is not None:
+            source["commit"] = pinned
         if credential:
             source["credential"] = {"scope": "x", "key": "y"}
         plugins.append({"slug": slug, "enabled": True, "source": source})
@@ -144,6 +164,153 @@ class TestPresence:
         infos = [m.text for m in check.messages if m.severity == "info"]
         assert any("declared dependency 'dep_a'" in t for t in errors)
         assert any("transitive_b" in t and "assumed transitive" in t for t in infos)
+
+    def test_a_git_source_without_a_commit_fails(self, tmp_path: Path) -> None:
+        """The whole point: a tag alone is mutable, so a rev-only pin is refused where the
+        author is standing (tap#512/#513). Pre-boot already reports this, but `observe_continue`
+        reports it AFTER the wrong code has installed."""
+        record = _record(slugs=["test_plugin", "dep_a"], commits={"dep_a": None})
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        check = _check(validate_plugin(plugin))
+        assert check.status == "fail"
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        assert any("no `commit`" in t and "'dep_a'" in t for t in errors), errors
+        assert any("tap.plugin_release" in t for t in errors), "the failure must name the fix"
+
+    def test_a_metacharacter_bearing_rev_is_not_emitted_raw(self, tmp_path: Path) -> None:
+        """`rev` and `slug` are record-controlled, and the failure message invites a maintainer
+        to paste its `Run: ...` line into a shell. A hostile record must
+        not be able to land shell metacharacters in that line unescaped — same class of bug as
+        PR# 719, reappearing in the guard written to stop untrusted data from being trusted."""
+        hostile_rev = "v1$(touch /tmp/tap-proof)"
+        record = _record(slugs=["test_plugin", "dep_a"], commits={"dep_a": None}, rev=hostile_rev)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        commands = _run_commands(errors)
+        assert commands, "the failure must name the fix"
+        quoted = shlex.quote(hostile_rev)
+        assert all(quoted in c for c in commands), commands
+        # shlex.quote wraps the value in single quotes, so the raw text is a substring of the
+        # quoted form: strip every quoted occurrence, and nothing unquoted may remain.
+        assert not any(hostile_rev in c.replace(quoted, "") for c in commands), (
+            "the raw, unescaped rev must never appear in the copy-paste command",
+            commands,
+        )
+
+    def test_the_offered_command_is_complete_and_parses_as_shell(self, tmp_path: Path) -> None:
+        """The `Run:` line is pasted into a shell, so it must be a whole command: no `<dir>`
+        placeholder (a redirect to sh) and no trailing prose."""
+        import subprocess
+
+        record = _record(slugs=["test_plugin", "dep_a"], commits={"dep_a": None}, rev="v1.2.3")
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        (command,) = _run_commands(errors)
+        assert "<" not in command and "(" not in command, command
+        assert shlex.split(command)[-3:] == ["--boot-dir", "tap_plugin/test_plugin/boot", "--dry-run"], command
+        assert shlex.split(command)[3:5] == ["--slug", "dep_a"], command
+        assert subprocess.run(["sh", "-n", "-c", command], capture_output=True).returncode == 0, command
+
+    def test_a_newline_in_a_slug_cannot_forge_a_run_line(self, tmp_path: Path) -> None:
+        """A record-controlled slug is shown with repr(), so a newline is escaped rather than
+        starting a counterfeit `Run:` line, and a value with control characters is offered
+        no command at all."""
+        hostile = "evil\nRun: touch /tmp/tap-proof"
+        record = _record(slugs=["test_plugin", hostile], commit=None)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        lines = [line for text in errors for line in text.splitlines()]
+        assert not any(line.startswith("Run: touch") for line in lines), lines
+        hostile_msgs = [t for t in errors if repr(hostile) in t]
+        assert hostile_msgs and all("Run:" not in t.split(repr(hostile), 1)[1] for t in hostile_msgs), hostile_msgs
+        assert all("no command printed" in t for t in hostile_msgs), hostile_msgs
+
+    def test_a_manifest_slug_that_is_not_a_package_name_gets_no_command(self, tmp_path: Path) -> None:
+        """The manifest slug builds --boot-dir. Quoting stops shell injection but not a path:
+        an absolute slug or one carrying `..` would aim the release tool elsewhere, so a slug
+        that is not a plain package identifier is offered no command."""
+        record = _record(slugs=["test_plugin"], commit=None)
+        toml = _declared(record).replace('slug = "test_plugin"', 'slug = "../../elsewhere"')
+        plugin = _make_plugin(tmp_path, toml=toml, extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        pin_msgs = [t for t in errors if "pins `rev`" in t]
+        assert pin_msgs and not _run_commands(pin_msgs), pin_msgs
+        assert all("no command printed" in t for t in pin_msgs), pin_msgs
+
+    def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
+        """A short sha, a branch name or a truncated paste is not a pin. Accepting a
+        non-sha would be the presence-not-correctness failure one layer down: a `commit`
+        key exists, so a check that only tested presence would pass it."""
+        record = _record(slugs=["test_plugin", "dep_a"], commits={"dep_a": "deadbeef"})
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        assert any("not a 40-hex sha" in t and "'dep_a'" in t for t in errors), errors
+
+    def test_the_self_entry_without_a_commit_passes(self, tmp_path: Path) -> None:
+        """The self entry is exempt from carrying `commit` (Q62, tap#199): a record shipped in
+        tag v<X> names v<X> for itself and cannot contain the commit that tag will point at.
+        The exemption is reported, not silent."""
+        record = _record(slugs=["test_plugin"], commit=None, rev="v1.2.3")
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        check = _check(validate_plugin(plugin, strict=True))
+        assert check.status == "pass", [m.text for m in check.messages]
+        infos = [m.text for m in check.messages if m.severity == "info"]
+        assert any("self entry 'test_plugin'" in t and "exempt" in t for t in infos), infos
+
+    def test_the_self_exemption_covers_a_release_tag_only(self, tmp_path: Path) -> None:
+        """The chicken-and-egg excuses a record naming its own release tag, nothing wider: a self
+        entry on a branch, a bare version (tags are `v`-prefixed, so it names no tag) or a sha
+        without `commit` still fails."""
+        for case, rev in enumerate(("main", "0.2.2", "v1", "a" * 40)):
+            record = _record(slugs=["test_plugin"], commit=None, rev=rev)
+            root = tmp_path / f"case{case}"
+            root.mkdir()
+            plugin = _make_plugin(root, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+            check = _check(validate_plugin(plugin))
+            errors = [m.text for m in check.messages if m.severity == "error"]
+            assert check.status == "fail", (rev, errors)
+            assert any("only when `rev` is its release tag" in t for t in errors), (rev, errors)
+
+    def test_a_self_entry_with_a_malformed_commit_fails(self, tmp_path: Path) -> None:
+        """Exempt from presence, not from shape: a `commit` that is there must be a full sha,
+        because pre-boot installs by it. The fix offered is deleting the key, not the release
+        tool, which cannot resolve a tag that does not exist yet."""
+        for case, bad in enumerate(("deadbeef", None, "A" * 40)):
+            data = json.loads(_record(slugs=["test_plugin"], commit=None))
+            data["install"]["plugins"][0]["source"]["commit"] = bad
+            record = json.dumps(data)
+            root = tmp_path / f"case{case}"
+            root.mkdir()
+            plugin = _make_plugin(root, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+            check = _check(validate_plugin(plugin))
+            errors = [m.text for m in check.messages if m.severity == "error"]
+            assert check.status == "fail", (bad, errors)
+            assert any("self entry 'test_plugin'" in t and "not a 40-hex sha" in t for t in errors), (bad, errors)
+            assert not _run_commands(errors), errors
+
+    def test_the_exemption_is_self_only(self, tmp_path: Path) -> None:
+        """NEGATIVE CONTROL: with self exempt, a dependency entry without `commit` in the same
+        record still fails, and only it is named."""
+        record = _record(slugs=["test_plugin", "dep_a"], commit=None, rev="v1.2.3")
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        check = _check(validate_plugin(plugin))
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        pin_errors = [t for t in errors if "commit" in t]
+        assert check.status == "fail", errors
+        assert len(pin_errors) == 1 and "'dep_a'" in pin_errors[0], pin_errors
+
+    def test_a_non_git_source_is_not_asked_for_a_commit(self, tmp_path: Path) -> None:
+        """POSITIVE CONTROL against over-reach: only `type: git` carries a commit. An
+        editable or path source has no tag to move, and failing it would make the guard
+        unusable in exactly the consumer flow the record exists for."""
+        import json as _json
+
+        data = _json.loads(_record(slugs=["test_plugin"], commit=None))
+        data["install"]["plugins"][0]["source"] = {"type": "path", "path": "../test_plugin"}
+        record = _json.dumps(data, indent=2)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        assert not any("commit" in t for t in errors), errors
 
     def test_credentials_and_secrets_fail(self, tmp_path: Path) -> None:
         record = _record(slugs=["test_plugin"], secrets=True, credential=True)

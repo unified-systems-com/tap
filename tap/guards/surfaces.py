@@ -595,8 +595,15 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         surface="Git plugin pin integrity (author-time: tag names the pinned commit)",
         rid="req-boot-bootstrap-install-commit-pin",
         cadence="Per-PR (product-lines `pins` job, clean checkout) + per-commit (`pytest`, the checker itself)",
-        status="Gate-guarded (fail-closed; forge-not-observable fails too) — tap's own `boot/` only; plugin in-package records are not yet checked (per-plugin sub-issues of tap#493)",
+        status="Gate-guarded (fail-closed; forge-not-observable fails too) — tap's own `boot/` only; plugin in-package records are covered at AUTHOR time by the row below (493-D, tap#514), which checks the pair is present and well-formed without asking the forge",
         enforced_by="`python3 -m tap.git_pin --check boot/*.boot.json` in `.github/workflows/product-lines.yml` `pins` (in `gate`'s needs); `tap/tests/test_git_pin.py` (checker logic; deliberately NOT a glob of `boot/` — the test lanes stage released plugin records there, which gain `commit` per tap#493 sub-issue C)",
+    ),
+    DeclaredSurface(
+        surface="Git plugin pin presence in a plugin's own `ci` record (author-time)",
+        rid="req-boot-bootstrap-install-commit-pin",
+        cadence="Per-plugin (`validate_plugin`, incl. `--strict` in the reusable plugin-repo conformance job)",
+        status="Conformance-guarded (fail-closed) — closes the documented gap where a plugin's in-package record could pin a MUTABLE tag with no commit and pass every gate; pre-boot already reported this but `observe_continue` reports after the wrong code installed, which is detect-tier. Deliberately asks NO forge, so it runs offline and in a fork PR: it checks the pair is PRESENT and a 40-hex sha, while `tap.git_pin --check` remains the one surface that verifies the tag still NAMES that commit. The record's SELF entry, when its `rev` is a release tag, is exempt from presence, never from shape (a record in tag vX cannot carry the commit vX will name; Q62, tap#199)",
+        enforced_by="`tap_plugins.validate.service._check_ci_record_content` (`ci-record` check) → `tap.git_pin.is_commit_sha` — the one sha validator, shared with `tap.plugin_release`; `tap_plugins/tests/test_validate_ci_record.py` covers missing, malformed, the self exemption (and that it is self-only), and a positive control that a non-git source is never asked for a commit",
     ),
     DeclaredSurface(
         surface="Git plugin tag drift at boot (moved/missing tag, unpinned entry)",

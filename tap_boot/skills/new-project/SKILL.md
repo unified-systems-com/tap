@@ -144,7 +144,7 @@ prints a single line, which is already the commit.
 This is not hypothetical here — every TAP plugin tag checked is annotated:
 
 ```
-$ git ls-remote https://github.com/unified-systems-com/tap-plugin-github-core 'refs/tags/v0.9.0*'
+$ git ls-remote https://github.com/unified-systems-com/github-core-tap 'refs/tags/v0.9.0*'
 76635dca571cc024bdaf9aa0ab0de68e75e80aa1  refs/tags/v0.9.0        <- tag object, NOT what installs
 796a782adefc026a8da34bce10295ac8e21d3f2b  refs/tags/v0.9.0^{}     <- the commit, record this
 ```

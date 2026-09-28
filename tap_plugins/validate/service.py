@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/db7553de0589 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/21cf8d807790 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from tap.git_pin import is_commit_sha
 from tap.jsonfiles import validate_json
 
 logger = logging.getLogger(__name__)
@@ -1127,6 +1130,22 @@ def _check_ci_record(
     result.checks.append(check)
 
 
+def _is_release_tag(rev: object) -> bool:
+    """True when *rev* is already a canonical release tag (``v1.2.3``, optional pre-release/build)."""
+    from tap.plugin_release import PluginReleaseError, normalize_tag
+
+    if not isinstance(rev, str):
+        return False
+    try:
+        return normalize_tag(rev) == rev
+    except PluginReleaseError:
+        return False
+
+
+#: A plugin slug as a package name (`tap_plugin.<slug>`): one path component, no `..`, never absolute.
+_PACKAGE_SLUG = re.compile(r"[a-z][a-z0-9_]*")
+
+
 def _check_ci_record_content(
     record_path: Path, slug: str, package_root: Path, check: CheckResult, plugin_deps: Any
 ) -> None:
@@ -1166,6 +1185,68 @@ def _check_ci_record_content(
                 f"{record_path.name}: install entry '{entry_slug}' names a source credential — a CI record is "
                 f"credential-free (req-boot-bootstrap-ci-record-5)"
             )
+        # A git source pins the readable tag AND the commit it names, as one pair
+        # (req-boot-bootstrap-install-commit-pin; 493-D, tap#514).
+        # The tag is mutable: retagged upstream, a rev-only pin installs different code with this
+        # record unchanged and nothing to notice. Pre-boot already treats a missing commit as a
+        # security Flaw, but it handles it `observe_continue` — it reports after the fact, which is
+        # the weakest of derive/verify/detect. This refuses it at AUTHORING time, where the author
+        # is present and the fix is one command.
+        #
+        # The self entry is exempt from PRESENCE, never from shape (Q62, tap#199): a record
+        # shipped in the tag v<X> names v<X> for itself, and cannot also carry the commit that tag
+        # will point at, because that commit is the one containing the record. Every consumer
+        # of a `ci` record flips self to the checkout under test (-4), so the pin is not what
+        # CI installs. A self `commit` that IS present must still be 40-hex. The exemption covers a
+        # release tag only: a branch or any other ref as `rev` has no chicken-and-egg to excuse it.
+        is_self = entry_slug == slug
+        self_unpinned = source.get("type") == "git" and is_self and "commit" not in source
+        if self_unpinned and not _is_release_tag(source.get("rev")):
+            check.fail(
+                f"{record_path.name}: self entry {entry_slug!r} pins `rev` {source.get('rev')!r} without `commit` — "
+                f"self is exempt from `commit` only when `rev` is its release tag (vMAJOR.MINOR.PATCH); pin the tag "
+                f"(req-boot-bootstrap-install-commit-pin)"
+            )
+        elif self_unpinned:
+            check.info(
+                f"{record_path.name}: self entry {entry_slug!r} pins `rev` {str(source.get('rev'))!r} without "
+                f"`commit` — exempt: a record cannot carry the commit of the tag it ships in "
+                f"(req-boot-bootstrap-install-commit-pin); consumers flip self to the checkout under test"
+            )
+        elif source.get("type") == "git" and not is_commit_sha(source.get("commit")):
+            has = source.get("commit")
+            detail = "no `commit`" if "commit" not in source else f"`commit` is not a 40-hex sha: {has!r}"
+            if is_self:
+                check.fail(
+                    f"{record_path.name}: self entry {entry_slug!r} has {detail} — self is exempt from carrying a "
+                    f"commit, not from carrying a well-formed one: delete the key, then scripts/boot-record-hash "
+                    f"--refresh (req-boot-bootstrap-install-commit-pin)"
+                )
+                continue
+            # entry_slug and rev are record-controlled. Every display of them is repr() (control
+            # characters escaped, so a newline cannot start a counterfeit line), and the command
+            # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is.
+            # A value carrying control characters gets no command at all, and neither does a
+            # manifest slug that is not a plain package identifier: the slug builds --boot-dir,
+            # and quoting stops shell injection but not an absolute path or `..` from pointing
+            # the tool somewhere else.
+            rev = str(source.get("rev"))
+            boot_dir = str(PurePosixPath("tap_plugin", slug, record_path.parent.name))
+            message = (
+                f"{record_path.name}: install entry {entry_slug!r} pins `rev` {rev!r} with {detail} — a tag is "
+                f"mutable, so the pair must be written together by the release tool, never hand-typed: run the "
+                f"command below, then again without --dry-run, then scripts/boot-record-hash --refresh"
+            )
+            if (entry_slug + rev).isprintable() and _PACKAGE_SLUG.fullmatch(slug):
+                message += (
+                    f"\nRun: python3 -m tap.plugin_release --slug {shlex.quote(entry_slug)} "
+                    f"--version {shlex.quote(rev)} --boot-dir {shlex.quote(boot_dir)} --dry-run"
+                )
+            else:
+                message += (
+                    " (no command printed: the slug or rev is not safe to put in a command; fix the record by hand)"
+                )
+            check.fail(message)
 
     declared = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}
     if slug not in installed:

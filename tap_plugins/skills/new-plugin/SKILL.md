@@ -277,7 +277,7 @@ The plugin's own spec gains a dcom section listing every node and edge type with
   usually is: (1) prefer a substrate type both sides can target (`identity_core__oidc_issuer`, not
   `aws_core__aws_iam_oidc_provider`); (2) if the end is genuinely open, omit that side and explain it in the
   description (`AFFECTS_RESOURCE__fedramp_20x_ksi`); (3) only then a closed foreign list, declared here with a
-  `note` naming it a vocabulary dependency. Worked example: `unified-systems-com/tap-plugin-github-core#148`.
+  `note` naming it a vocabulary dependency. Worked example: `unified-systems-com/github-core-tap#148`.
 
 ## Step 7: GRIFT seed data
 

@@ -61,7 +61,7 @@ command:
 
 ```
 scripts/spawn-session.sh sam-dev cli \
-  --from git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite \
+  --from git+https://github.com/unified-systems-com/samsite-tap@v0.2.0#samsite \
   --dev-plugins samsite
 ```
 

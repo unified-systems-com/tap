@@ -545,12 +545,85 @@ jobs:
           JSON
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build web image (GHA layer cache)
+      # Older harness tags build a stage FROM public.ecr.aws/docker/library/<image>@sha256:…,
+      # and ECR Public's anonymous rate cap (429) fails those builds even with the retry below.
+      # ECR's docker/library is a copy of Docker Hub's official images, so the SAME digest is
+      # on mirror.gcr.io, which has no anonymous cap. This maps each digest-pinned ECR
+      # reference in the Dockerfile being built to that digest on the mirror, as a buildx
+      # named context: the FROM line is untouched and the bytes are identical (a digest names
+      # content, not a location). Tag-only references are left alone, since a tag on another
+      # registry is not guaranteed to be the same image. The logic is inline, not a tap
+      # script, because this workflow builds old harness tags that would not contain one.
+      - name: Map digest-pinned ECR Public base images to mirror.gcr.io
+        id: mirror
+        shell: python
+        run: |
+          import os, re, secrets
+          pat = re.compile(
+              r"^\s*FROM\s+(?:--\S+\s+)*"
+              r"(public\.ecr\.aws/docker/library/([a-z0-9][a-z0-9._-]*)(?::[\w.-]+)?@(sha256:[0-9a-f]{64}))\b",
+              re.IGNORECASE | re.MULTILINE,
+          )
+          text = open("Dockerfile", encoding="utf-8").read()
+          pairs = sorted({f"{ref}=docker-image://mirror.gcr.io/library/{name}@{digest}" for ref, name, digest in pat.findall(text)})
+          delim = "EOF_" + secrets.token_hex(8)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"contexts<<{delim}\n" + "".join(p + "\n" for p in pairs) + f"{delim}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("".join(f"- base image from mirror.gcr.io: `{p.split('=', 1)[0]}`\n" for p in pairs))
+          print(f"{len(pairs)} ECR Public reference(s) mapped to mirror.gcr.io")
+      # The build pulls its base images from public registries (Chainguard, and Amazon's
+      # ECR Public at older harness tags), which fail transiently under anonymous rate
+      # caps. Up to three attempts, a pause between each. The third attempt is not
+      # continue-on-error, so a real build failure still fails the job, and every retry
+      # is written to the job summary so a flaky registry stays visible.
+      - name: Build web image (GHA layer cache), attempt 1
+        id: build1
+        continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           load: true
           tags: tap-web:ci
+          build-contexts: ${{ steps.mirror.outputs.contexts }}
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
+          cache-to: type=gha,mode=max
+      - name: Pause before build attempt 2
+        if: steps.build1.outcome == 'failure'
+        run: |
+          echo "::warning::Web image build attempt 1 failed; retrying in 60s (registry flake?)"
+          echo "- Web image build attempt 1 failed; retried." >> "$GITHUB_STEP_SUMMARY"
+          sleep 60
+      - name: Build web image (GHA layer cache), attempt 2
+        id: build2
+        if: steps.build1.outcome == 'failure'
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          tags: tap-web:ci
+          build-contexts: ${{ steps.mirror.outputs.contexts }}
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
+          cache-to: type=gha,mode=max
+      - name: Pause before build attempt 3
+        if: steps.build2.outcome == 'failure'
+        run: |
+          echo "::warning::Web image build attempt 2 failed; retrying in 120s (registry flake?)"
+          echo "- Web image build attempt 2 failed; retried." >> "$GITHUB_STEP_SUMMARY"
+          sleep 120
+      - name: Build web image (GHA layer cache), attempt 3
+        if: steps.build2.outcome == 'failure'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          tags: tap-web:ci
+          build-contexts: ${{ steps.mirror.outputs.contexts }}
           cache-from: |
             type=gha
             type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64

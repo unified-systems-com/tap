@@ -39,10 +39,16 @@ def test_execute_gryphon_raw_binds_readonly_when_alias_omitted(monkeypatch):
     db_alias reaches the executor body on the read-only alias."""
     seen: dict[str, str] = {}
 
-    def _spy(query, inputs, *, db_alias, layer):
+    def _spy(query, inputs, *, db_alias, layer, scope):
         seen["db_alias"] = db_alias
+        seen["scope"] = scope
         return {"nodes": [], "edges": []}
 
     monkeypatch.setattr(executor, "_execute_gryphon_raw_impl", _spy)
     executor.execute_gryphon_raw("MATCH (a:program) RETURN a", {})
     assert seen["db_alias"] == _READONLY_ALIAS
+    # The same call also reaches the body under the default read scope
+    # (req-grid-traversal-exec-read-scope-1).
+    from tap_grid.gryphon.read_scope import LiveNow
+
+    assert isinstance(seen["scope"], LiveNow)

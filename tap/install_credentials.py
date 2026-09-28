@@ -1,6 +1,6 @@
 """Enumerate-first preflight for the boot record's install-source credentials.
 
-TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@d6c1cb0e9a14/2394c157c833 (enforcement) — the one
+TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@6c734b6c96de/2394c157c833 (enforcement) — the one
 derivation of "which install credentials does this record declare, and can this host satisfy them",
 enforced offline before any install or clone runs (`req-tap-plugin-arch-source-secret-7`/`-8`/`-9`).
 `tap/plugin_source_auth.py` stays the derivation of the resolution itself; this front-runs its

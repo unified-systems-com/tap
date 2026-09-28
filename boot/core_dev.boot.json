@@ -9,7 +9,7 @@
         "enabled": true,
         "source": {
           "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-grid-fixtures",
+          "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
           "rev": "v0.3.1",
           "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"
         },
