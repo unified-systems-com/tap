@@ -243,9 +243,15 @@ def declaration_problems(model: Any, declared: Sequence[str], *, check_schema: b
 
 def _canonical(value: object) -> object:
     """A value in the form the JSON search treats as equal: ``jsonb`` numbers compare by value,
-    so ``1.0`` and ``1`` are one identity and must be one lock key."""
+    so ``1.0`` and ``1`` are one identity and must be one lock key. Recursive, because a leaf may
+    be an object or an array (``{"n": 1}`` equals ``{"n": 1.0}`` under ``jsonb``); object key order
+    is settled by the sorted serialisation."""
     if isinstance(value, float) and value.is_integer():
         return int(value)
+    if isinstance(value, Mapping):
+        return {key: _canonical(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_canonical(item) for item in value]
     return value
 
 

@@ -129,6 +129,17 @@ class TestLockKey:
         assert identity_lock_key("panel", {"config.k": 1.0}) == identity_lock_key("panel", {"config.k": 1})
         assert identity_lock_key("panel", {"config.k": 1.5}) != identity_lock_key("panel", {"config.k": 1})
 
+    @SPEC_15
+    def test_the_canonical_form_reaches_into_object_and_array_leaves(self) -> None:
+        """A leaf may be an object or array; ``jsonb`` equates ``{"n": 1}`` and ``{"n": 1.0}``, so the
+        lock key must too, or two writers of one database identity take different locks."""
+        key = identity_lock_key
+        assert key("panel", {"config.k": {"n": 1}}) == key("panel", {"config.k": {"n": 1.0}})
+        assert key("panel", {"config.k": [1, {"a": 2}]}) == key("panel", {"config.k": [1.0, {"a": 2.0}]})
+        assert key("panel", {"config.k": {"a": 1, "b": 2}}) == key("panel", {"config.k": {"b": 2, "a": 1}})
+        assert key("panel", {"config.k": {"n": 1}}) != key("panel", {"config.k": {"n": 1.5}})
+        assert key("panel", {"config.k": [1, 2]}) != key("panel", {"config.k": [2, 1]}), "array order is identity"
+
     @SPEC_14
     def test_the_key_is_a_function_of_the_declared_entries(self) -> None:
         one = constituting_properties(DECLARED, {"slug": "s", "config": {"tenant": "t"}})
@@ -189,6 +200,17 @@ class TestTheGeneratedSearch:
         assert by_string is not None and by_string.entity_id == as_string.entity_id
         assert Panel.find_existing(**{"slug": "p", "config.tenant": True}) is None
 
+    @SPEC_15
+    def test_an_object_leaf_compares_by_jsonb_value_which_the_lock_key_mirrors(
+        self, keyed_on_a_path: tuple[str, ...]
+    ) -> None:
+        made = _panel("p", {"tenant": {"n": 1}})
+        found = Panel.find_existing(**{"slug": "p", "config.tenant": {"n": 1.0}})
+        assert found is not None and found.entity_id == made.entity_id
+        assert identity_lock_key("panel", {"config.tenant": {"n": 1}}) == identity_lock_key(
+            "panel", {"config.tenant": {"n": 1.0}}
+        )
+
     @SPEC_16
     def test_none_is_absent_without_a_query(
         self, keyed_on_a_path: tuple[str, ...], django_assert_num_queries: Any
@@ -239,11 +261,9 @@ class TestTheIndexAnswersTheSearch:
         """The search's expression and the index's are the same text, so PostgreSQL can match them.
         Two authored copies would drift silently into a sequential scan; this reads the plan."""
         _panel("p", {"tenant": "t"})
-        sql, params = search(Panel.objects.live(), {"slug": "p", "config.tenant": "t"}).query.sql_with_params()
         with connection.cursor() as cursor:
             cursor.execute("SET LOCAL enable_seqscan = off")
-            cursor.execute("EXPLAIN " + sql, params)
-            plan = "\n".join(row[0] for row in cursor.fetchall())
+        plan = search(Panel.objects.live(), {"slug": "p", "config.tenant": "t"}).explain()
         assert "nk_web_panel_json_probe" in plan, plan
 
     @SPEC_15
