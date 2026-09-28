@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""scripts/check-pr-title — every PR names its initiating session (a gate, not a reminder).
+
+`spec-dev-multisession.md`'s "Session attribution in PR titles" (2026-08-24) has always been
+prose discipline: a promote PR carries `promote: <session> → main` natively, and an ad-hoc PR is
+supposed to append `[via <session>]` via `scripts/pr-via`, DERIVED never hand-typed. Nothing
+checked it. On 2026-09-28 a session opened `tap` PR#867 with a hand-rolled `gh pr create --title`
+and skipped the suffix; George caught it by eye, not by a gate — the exact "boundary that depends
+on remembering is not a boundary" shape `open-a-pr` already names for the promote lane. This is
+that check for the title.
+
+The bot exemption reuses `scripts/pr_bot_identity`'s allowlist (the SAME derivation `check-dco`
+and `check-issue-link` use) — a bot's PR title is its own convention, not ours to enforce.
+
+Spec: specs/spec-dev-multisession.md (req-dev-multisession-push-workflow).
+
+Usage:
+    scripts/check-pr-title --title "<title>"
+    scripts/check-pr-title --title "<title>" --pr-author-id <n> --pr-author-type <type> --pr-author <login>
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pr_bot_identity import decide as bot_exempt  # noqa: E402
+
+_PROMOTE_PREFIX = "promote: "
+_VIA_SUFFIX = re.compile(r"\[via [^\[\]]+\]$")
+
+
+def check(title: str, bot_argv: list[str]) -> tuple[int, str]:
+    if not title.strip():
+        # No PR context (merge_group, workflow_dispatch off a plain ref) carries no
+        # title to check — not a violation, there is nothing here to have skipped.
+        return 0, "check-pr-title: no PR title in this event context — nothing to check"
+    bot_code, bot_reason = bot_exempt(bot_argv)
+    if bot_code == 0:
+        return 0, bot_reason
+    if title.startswith(_PROMOTE_PREFIX):
+        return 0, f"title {title!r} carries session attribution natively (promote PR)"
+    if _VIA_SUFFIX.search(title):
+        return 0, f"title {title!r} carries a [via <session>] suffix"
+    return 1, (
+        f"title {title!r} names no session — append scripts/pr-via's output "
+        '(`gh pr create --title "... $(scripts/pr-via)"`), or use scripts/promote-to-main.sh, '
+        "which carries attribution natively"
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = {"--title": "", "--pr-author-id": "", "--pr-author-type": "", "--pr-author": ""}
+    rest = list(argv)
+    for flag in list(args):
+        if flag in rest:
+            i = rest.index(flag)
+            if i + 1 >= len(rest):
+                print(f"check-pr-title: {flag} needs a value", file=sys.stderr)
+                return 2
+            args[flag] = rest[i + 1]
+            del rest[i : i + 2]
+    if rest:
+        print(f"check-pr-title: unexpected argument(s): {' '.join(rest)}", file=sys.stderr)
+        return 2
+    if not args["--title"]:
+        print("check-pr-title: --title is required", file=sys.stderr)
+        return 2
+    bot_argv = [
+        "--pr-author-id",
+        args["--pr-author-id"],
+        "--pr-author-type",
+        args["--pr-author-type"],
+        "--pr-author",
+        args["--pr-author"],
+    ]
+    code, reason = check(args["--title"], bot_argv)
+    print(reason, file=sys.stderr if code else sys.stdout)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
