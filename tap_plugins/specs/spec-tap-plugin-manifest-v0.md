@@ -798,6 +798,26 @@ TAP code — a plain, versioned file at a fixed, well-known location, in a shape
 someone else's generic tooling can turn it into a firewall ruleset or proxy config without
 understanding anything about TAP itself.
 
+**Detecting an attempted breakout, not just preventing it.** Enforcement alone answers "did the
+binary get away with it" (no); it does not by itself tell anyone that the attempt happened at all.
+Verified 2026-09-27, in the same unprivileged nonroot posture as the rest of this section: kernel
+audit-log-based detection (seccomp's `SCMP_ACT_LOG` routed through the Linux audit subsystem) does
+**not** work here — no `auditd` runs in this deployment, and configuring an audit rule to route
+`SCMP_ACT_LOG` records anywhere requires privilege an unprivileged container does not have; opening
+the audit netlink socket succeeds, but no record ever arrives, confirmed by actually triggering a
+logged syscall and watching the socket rather than stopping at "the socket opened." The working,
+fully self-contained alternative: `SCMP_ACT_KILL_PROCESS` instead of `SCMP_ACT_ERRNO` on a denied
+syscall kills the child with `SIGSYS`, which Python's own `subprocess.run()` already surfaces as a
+negative return code (`-31`) — no kernel-audit access, no new privilege, observable entirely from
+the parent process that invoked the sandboxed binary in the first place.
+
+That return code is the trigger for a new `tap.flaws` function, following the exact shape of
+`report_readonly_write_blocked` / `report_db_permission_denied` (an OS-level backstop already fired
+silently; the Flaw is the layer that makes it loud) — `report_sandbox_violation`, always `AppFlaw`
+(the violator is structurally the invoked binary, not our own code, so no callsite-blame heuristic
+is needed the way the existing bypass-detection functions require one), always `security`-tagged,
+`HANDLING_ABORT_OPERATION`.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -809,6 +829,7 @@ understanding anything about TAP itself.
 | req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under logging-mode Landlock + seccomp and fails if observed access exceeds the declaration. A coverage-limited regression signal, not a completeness proof — it cannot see access outside what the suite exercises. | Mirrors `req-github-core-app-permissions-drift`. AI-review finding (tap#860, Codex seat): the original wording overclaimed this as independent verification; narrowed here and in the prose above. |
 | req-tap-plugin-manifest-capability-declaration-6 | Enforcement Is Plural, None Load-Bearing | Backlog | Our own internal enforcement and any reference external-proxy generator are both documented as optional consumers of the declaration; neither is presented as the security boundary itself. | |
 | req-tap-plugin-manifest-capability-declaration-7 | Manifest Independently Fetchable | Backlog | The capability declaration lives at a fixed, versioned location consumable by generic tooling, without executing or trusting any TAP code. | |
+| req-tap-plugin-manifest-capability-declaration-8 | Breakout Attempts Raise A Flaw | Backlog | A denied syscall (network or filesystem) kills the sandboxed subprocess with `SIGSYS` via `SCMP_ACT_KILL_PROCESS`; the parent detects the negative return code and reports `tap.flaws.report_sandbox_violation` (`AppFlaw`, `security`-tagged, `abort_operation`) — not merely blocked, but alerted on. | Verified 2026-09-27: kernel audit-log detection (`SCMP_ACT_LOG`) does not work in this deployment's unprivileged posture (no `auditd`, no permission to route audit records); `SCMP_ACT_KILL_PROCESS` + observing the child's return code does, tested end to end (`returncode == -31`, `SIGSYS`). |
 
 #### Future
 A reference "manifest → firewall/proxy config" generator, explicitly documented as operator-run
