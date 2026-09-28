@@ -9,6 +9,15 @@ version half of the body is a design constraint (a record carries no version of 
 satisfied by absence; the plugin's hatch-vcs version is the pointer), so this module is the
 requirement's buildable floor in one place.
 
+COPIED OUTSIDE THIS REPOSITORY. org-bots vendors this file, byte for byte, at
+``renovate/boot-records/tap/boot_records.py`` (pinned commit and sha256 in
+``renovate/boot-records/tap-vendor.json``). Renovate runs that copy after it bumps a plugin
+pin in an in-package boot record, to rewrite the record's digest in ``tap-plugin.toml``.
+If you change how a digest is derived or declared here, update the org-bots copy in the same
+change of intent: ``python3 renovate/boot-records/vendor.py --update <tap sha>`` in org-bots,
+reviewed as its own PR. Until it is updated, Renovate writes digests the old way and every
+plugin's CI rejects them. org-bots' scheduled check flags the drift, but only after the fact.
+
 A shippable boot record lives *inside* its plugin package at
 ``tap_plugin/<slug>/boot/<name>.boot.json`` (``req-boot-bootstrap-records-in-package``)
 and rides the wheel/git artifact. Its integrity is a content ``sha256`` declared **one
