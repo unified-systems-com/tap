@@ -1187,6 +1187,7 @@ dependencies = [
 ci-tooling = [
     { name = "jsonschema" },
     { name = "packaging" },
+    { name = "pyyaml" },
 ]
 dev = [
     { name = "black" },
@@ -1224,6 +1225,7 @@ requires-dist = [
 ci-tooling = [
     { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "packaging", specifier = ">=26,<27" },
+    { name = "pyyaml", specifier = ">=6,<7" },
 ]
 dev = [
     { name = "black", specifier = ">=24.0,<27" },

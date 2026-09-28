@@ -108,7 +108,9 @@ dependencies = [
 # Bare-runner CI tooling: `uv sync --frozen --no-install-project --only-group ci-tooling`
 # gives a job exactly these, locked in uv.lock (versions AND hashes), without the core's
 # venv. Consumers — keep every one working when this group changes:
-#   - .github/workflows/plugin-ci.yml: the harness resolver + `validate_plugin --strict`;
+#   - .github/workflows/plugin-ci.yml: the harness resolver + `validate_plugin --strict`,
+#     and `validate_plugin --repo` (`repo-scope` job — PyYAML: without a parser the pin and
+#     nightly-shape checks fail as inconclusive, req-tap-plugin-validate-repo-6);
 #   - .github/workflows/publish-images.yml (`sbom` job) + plugin-release-sbom.yml
 #     (`release-sbom` job): scripts/sbom/* (jsonschema + referencing) — never
 #     `pip install` a second copy of the version (tap#507).
@@ -116,6 +118,7 @@ dependencies = [
 ci-tooling = [
     "jsonschema>=4.26,<5",
     "packaging>=26,<27",
+    "pyyaml>=6,<7",
 ]
 dev = [
     # Code Formatting
