@@ -17,7 +17,15 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from tap_grid.history import _get_history_user
-from tap_grid.natural_key import KEYLESS, AmbiguousIdentity, Keyless
+from tap_grid.natural_key import (
+    KEYLESS,
+    AmbiguousIdentity,
+    Keyless,
+    declaration_problems,
+    index_expressions,
+    is_path,
+    search,
+)
 
 
 def dangerously_ignore_validator(fn: Any) -> Any:
@@ -547,25 +555,44 @@ def _install_natural_key_index(cls: type[BaseModel]) -> None:
 
     One declaration, one access path (req-grid-entity-natural-key-12): a composite
     index over exactly the declared fields, named ``nk_<table>``. A single declared
-    field that is already ``unique`` or ``db_index`` needs nothing more. Registered
+    column that is already ``unique`` or ``db_index`` needs nothing more. Registered
     in ``_meta.original_attrs`` as well as ``_meta.indexes`` because the migration
     autodetector only reads indexes the Meta *declared* — without that, the index
     would exist on the class and never in the database.
+
+    A declaration naming a path into a JSON field (``"location.route"``,
+    ``req-grid-entity-natural-key-14``) gets an *expression* index, since
+    ``Index(fields=...)`` takes columns only: the same ``tap_grid.natural_key`` expressions
+    the search filters on, so PostgreSQL can match one to the other. A column-only
+    declaration keeps its ``fields=`` index unchanged, so no existing type's migration moves.
+    A declaration that cannot be built (an unknown column, a path under a column that is not a
+    JSONField) is refused here, at startup, naming the entry — not left to fail as an opaque
+    error at the first write or first ``makemigrations``.
     """
     declared = getattr(cls, "NATURAL_KEY", None)
     if declared is None or isinstance(declared, Keyless):
         return
-    fields = list(declared)
-    if len(fields) == 1:
-        field = cls._meta.get_field(fields[0])
+    entries = list(declared)
+    # Only the new syntax is policed here; a column-only declaration behaves exactly as before.
+    # The schema-properties check is the guard's (it is a lint on the declaration, not a reason
+    # to refuse to boot).
+    bad_paths = declaration_problems(cls, [e for e in entries if is_path(e)], check_schema=False)
+    if bad_paths:
+        raise ImproperlyConfigured(f"{cls.__name__}.NATURAL_KEY cannot be indexed: " + "; ".join(bad_paths))
+    if len(entries) == 1 and not is_path(entries[0]):
+        field = cls._meta.get_field(entries[0])
         if getattr(field, "unique", False) or getattr(field, "db_index", False):
             return
     name = natural_key_index_name(cls._meta.db_table)
     if any(index.name == name for index in cls._meta.indexes):
         return
+    if any(is_path(entry) for entry in entries):
+        index = models.Index(*index_expressions(entries), name=name)
+    else:
+        index = models.Index(fields=entries, name=name)
     # A new list rather than append: Options.indexes may be a tuple, and original_attrs
     # must point at the same object the autodetector will read.
-    cls._meta.indexes = [*cls._meta.indexes, models.Index(fields=fields, name=name)]
+    cls._meta.indexes = [*cls._meta.indexes, index]
     cls._meta.original_attrs["indexes"] = cls._meta.indexes
 
 
@@ -639,6 +666,11 @@ class BaseModel(models.Model):
     # exists: a repository keyed on its source-assigned numeric id survives rename
     # and transfer as one row. A name is constitutive only where the source offers
     # nothing better, and there a rename is honestly a new object.
+    #
+    # An entry names a column — or, where the source's identity lives inside a JSON
+    # document, a path into a JSONField: "location.route" (req-grid-entity-natural-key-14).
+    # The path form is read by one parser (tap_grid.natural_key) for the payload, the search,
+    # the index and the lock.
     NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
     # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
     NATURAL_KEY_REASON: ClassVar[str] = ""
@@ -779,7 +811,12 @@ class BaseModel(models.Model):
         Returns the row on exactly one match and ``None`` on zero. An absent
         constituting value — ``None``, the grid's own unobserved marker — is ``None``
         without a query: a source that offered no stable id genuinely cannot be found
-        again, and the honest answer is "not found", not a match on a hole. ``""`` is
+        again, and the honest answer is "not found", not a match on a hole. A declared entry
+        may be a path into a JSON field (``"location.route"``,
+        ``req-grid-entity-natural-key-14``) — pass it as ``**{"location.route": value}`` — and
+        for one the value is compared typed (``123`` is not ``"123"``); the caller reads the
+        payload through :func:`tap_grid.natural_key.constituting_properties`, which maps a missing
+        key and a JSON ``null`` to ``None`` too. ``""`` is
         NOT treated as absent: it is the grid's observed-empty marker
         (``grid-null-unobserved`` convention), and a natural key can legitimately
         contain one — an organisation-scoped `actions_secret` has no `full_name` by
@@ -813,7 +850,7 @@ class BaseModel(models.Model):
         if any(properties[name] is None for name in declared):
             return None
         # One query, capped: the message names candidates, it does not enumerate a grid.
-        rows: list[BaseModel] = list(cls.objects.live().filter(**properties)[:11])
+        rows: list[BaseModel] = list(search(cls.objects.live(), properties)[:11])
         if not rows:
             return None
         if len(rows) > 1:

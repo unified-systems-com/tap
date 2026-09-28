@@ -359,4 +359,7 @@ def test_the_lock_key_is_a_function_of_the_declaration() -> None:
     assert identity_lock_key("panel", props) == identity_lock_key("panel", {"name": "N", "slug": "s"})
     assert identity_lock_key("panel", props) != identity_lock_key("page", props)
     assert identity_lock_key("panel", constituting_properties(("slug",), {})) is None
-    assert identity_lock_key("panel", {"slug": ""}) is None
+    # Only None is a hole. "" is observed-empty and find_existing searches it (Issue# 866 - tap),
+    # so it is locked too: the search and the lock must not disagree about what an identity is.
+    assert identity_lock_key("panel", {"slug": None}) is None
+    assert identity_lock_key("panel", {"slug": ""}) is not None
