@@ -63,7 +63,7 @@ repository rather than handing the repository the means to act for itself.
 | req-cicd-fleet-bot-discovery-core-pinned | [Core Stays Explicitly Pinned](#core-stays-explicitly-pinned) | Proposed | `tap` is a singleton, not part of a growing list — no drift risk in naming it directly |
 | req-cicd-fleet-bot-release-phase1 | [Release-PR Creation Stays Centralized, Discovers By The Same Topic](#release-pr-creation-stays-centralized-discovers-by-the-same-topic) | Proposed | Same `release-please release-pr --fork` mechanism, same credential, already run today from `org-bots` — only `RELEASE_REPOS` is replaced, by the identical topic discovery `req-cicd-fleet-bot-discovery` uses for Renovate |
 | req-cicd-fleet-bot-release-phase2 | [Release Cutting Stays Manual And Unchanged](#release-cutting-stays-manual-and-unchanged) | Proposed | `scripts/cut-release.sh` is untouched by this spec |
-| req-cicd-fleet-bot-no-app-key-distribution | [An Org-Wide App Key Is Never Copied Per-Repo](#an-org-wide-app-key-is-never-copied-per-repo) | Proposed | Named because an earlier draft of this design got it wrong |
+| req-cicd-fleet-bot-no-app-key-distribution | [No Org GitHub App Holds Write](#no-org-github-app-holds-write) | Proposed | End state: `tap-renovate` and `tap-release-please` are uninstalled org-wide once nothing needs them, not merely kept un-copied |
 | req-cicd-fleet-bot-shared-credential-bound | [A Fleet-Shared Credential Holds No Role Anywhere](#a-fleet-shared-credential-holds-no-role-anywhere) | Proposed | The general rule `req-cicd-fleet-bot-no-app-key-distribution` is the specific instance of |
 
 ### Renovate Discovers By Topic
@@ -167,7 +167,7 @@ all**, so there is no separate enrollment gap to close for release-please the wa
 Renovate: coverage is inherited from the same topic tag, automatically.
 
 **The credential is unchanged from what `org-bots` already holds today** — see
-[`req-cicd-fleet-bot-no-app-key-distribution`](#an-org-wide-app-key-is-never-copied-per-repo) for
+[`req-cicd-fleet-bot-no-app-key-distribution`](#no-org-github-app-holds-write) for
 why a GitHub App's private key was the wrong direction, and
 [`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)
 for why this credential is safe to *use* fleet-wide precisely because it is never *distributed*
@@ -222,35 +222,54 @@ deliberate; see [`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-c
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-release-phase2-1 | Cut-Release Is Unchanged | Proposed | `scripts/cut-release.sh`'s behavior, invocation, and credential model are identical before and after this spec lands. | |
 
-### An Org-Wide App Key Is Never Copied Per-Repo
+### No Org GitHub App Holds Write
 
 ----
 RID: `req-cicd-fleet-bot-no-app-key-distribution`
 
 Status: `Proposed`
 
-`tap` core's own `.github/workflows/release-please.yml` mints an installation token from the
-`tap-release-please` GitHub App, using a private key held as a `tap`-repo-level secret. That
-works for `tap` because `tap` holds its own copy of a credential it alone trusts itself with. It
-does **not** generalize to "give every plugin repository the same pattern": the App is installed
-**org-wide** (`repository_selection: all`), so its private key can mint a token for *any*
-repository in the org, not just the one holding it. Copying that key into twenty-plus plugin
-repositories' own secret stores would turn each one into an independent leak surface for a single
-credential with organization-wide write reach — a real regression, not a neutral architectural
-choice.
+**A per-repo copy of an org-wide-installed App's private key was the first thing this section
+ruled out** — `tap` core's own `.github/workflows/release-please.yml` mints an installation token
+from the `tap-release-please` GitHub App, using a private key held as a `tap`-repo-level secret.
+That works for `tap` alone. It does not generalize to giving every plugin repository the same
+pattern: the App is installed **org-wide** (`repository_selection: all`), so its private key can
+mint a token for *any* repository in the org, and copying that key into twenty-plus repositories'
+secret stores would turn each into an independent leak surface for one organization-wide-write
+credential.
 
-**This requirement is named because an earlier draft of `req-cicd-fleet-bot-release-phase1` got
-it wrong** — it proposed exactly that per-repo App-token pattern before the private key's actual
-scope (`tap`-repo-level secret, not org-level) was checked. `req-cicd-fleet-bot-release-phase1`'s
-fork-mode design is the fix; this requirement exists so the mistake is not repeated by a later
-change that reaches for "just mint an App token per repo" without re-deriving why that was
-rejected.
+**The stronger fix, not just the narrower one: neither org GitHub App needs to hold write at
+all, once the fork-bot path covers what they were doing.** `req-cicd-fleet-bot-release-phase1`
+already moves release-PR creation onto the no-role fork bot; Renovate already runs that way.
+Release *cutting* already uses the maintainer's own token (`scripts/cut-release.sh`), never an
+App. Once that is true everywhere the Apps are used today, neither `tap-renovate` nor
+`tap-release-please` has a job left that requires org-wide write — so the end state is that both
+Apps are **uninstalled from the organization and their private keys deleted**, not merely kept
+un-copied. A capability nothing needs is a capability worth removing, not one worth guarding
+forever.
+
+**Sequencing — the Apps exist today for a real reason, and removing them is a later step, not
+this one.** `tap`'s own `renovate.yml` and `release-please.yml` still use them. The Apps are
+removed only after those two workflows are retired and the fork-bot path is proven working on
+`tap` itself; until then, `req-cicd-fleet-bot-no-app-key-distribution-1`'s check is *expected* to
+fail, because the Apps are still legitimately installed with write. This requirement documents
+the end state and its enforcement; it does not claim the end state holds today.
+
+**The known secrets these Apps back are deleted in the same step, and that check is cheap because
+the names are known, not inventoried:** `tap`'s own `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY`,
+`TAP_RELEASE_PLEASE_APP_PRIVATE_KEY`, and `org-bots`' `TAP_RENOVATE_PRIVATE_KEY`,
+`TAP_RELEASE_PLEASE_PRIVATE_KEY` — five specific, named secrets, checked for absence by name,
+which is a different (and stronger, because it is exhaustive over a known list rather than
+detective over an unbounded one) kind of check than the org-wide App-installation guard below.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-no-app-key-distribution-1 | No Unexpected Repository Secrets, Not Just No Matching Name | Proposed | A periodic inventory of every plugin repository's secret *names* (the secrets API exposes names only, never values) is diffed against an explicit allowlist per repository, and fails loudly on anything not on it — catching a copied key stored under a different name, not only the canonical one. | A name-only check for the canonical secret's name alone cannot prove a *renamed* copy wasn't made; the allowlist form is a detective, name-based check, not a proof over values — the actual backstop is that the App is installed only where needed and a suspected leak is answered by rotating the key, which invalidates every copy regardless of name |
+| req-cicd-fleet-bot-no-app-key-distribution-1 | No Org App Holds Write, Enforced | Proposed | A periodic check queries `GET /orgs/unified-systems-com/installations` and fails if any installed GitHub App holds a write permission (`contents`, `pull_requests`, `workflows`, or `actions`), except an explicit, named allowlist — empty today, or naming whatever is deliberately kept. | Enforcement moved from a per-repo secret scan (which the API's name-only responses can't make airtight) to the org's own installation list, which the API states authoritatively |
+| req-cicd-fleet-bot-no-app-key-distribution-2 | Removal Is Sequenced, Not Assumed | Proposed | The Apps are uninstalled and their keys deleted only after `tap`'s own `renovate.yml` and `release-please.yml` are retired and the fork-bot path is proven on `tap`; until then `-1`'s check is expected to fail rather than being treated as broken. | Names the precondition so a later reader doesn't read a failing `-1` as a regression |
+| req-cicd-fleet-bot-no-app-key-distribution-3 | The Five Known Secrets Are Deleted Together | Proposed | `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_APP_PRIVATE_KEY` (in `tap`) and `TAP_RENOVATE_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_PRIVATE_KEY` (in `org-bots`) are all absent once removal completes, checked by the known name of each — not an inventory. | Five specific names, not a scan |
+| req-cicd-fleet-bot-no-app-key-distribution-4 | Secret-Name Inventory Stays Supplementary | Proposed | A periodic allowlist-based inventory of plugin repositories' secret names (catching an unexpected name, not just a missing canonical one) remains as a *supplementary* detective check, not the primary enforcement — `-1` is. | Downgraded from primary enforcement once `-1` gave the fleet a check the API can actually make authoritative |
 
 ### A Fleet-Shared Credential Holds No Role Anywhere
 
@@ -327,9 +346,11 @@ is itself audited, not assumed to hold just because nobody granted a role on pur
   decision from structured API fields only and already excludes new-workflow-file additions;
   this spec does not change it, only names the bound on what an auto-approved run can reach
   (`req-cicd-fleet-bot-shared-credential-bound`).
-- **Migrating `tap` core's own release-please mechanism.** `tap` already runs the App-token
-  pattern for itself and that continues to work; whether to migrate core onto the same shape as
-  the plugin fleet is a separate decision, made explicitly, not swept in here.
+- **The mechanics of migrating `tap` core's own `renovate.yml` and `release-please.yml` off the
+  App-token pattern.** `req-cicd-fleet-bot-no-app-key-distribution-2` states that this migration
+  is a *precondition* for uninstalling the Apps, because `tap` is the one remaining consumer of
+  them today — but *how* that migration happens (whether core moves onto the same fork-bot shape
+  as the fleet, or something else that also drops its need for the App) is not decided here.
 - **Deciding the exact topic string, or the shape of the small script/workflow inside `org-bots`
   that queries the topic and iterates `release-please release-pr --fork` over the result.** Those
   are implementation details for the PR that builds this, not spec-level facts.
