@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 from django.db import models as django_models
 
-from tap_grid.natural_key import KEYLESS, Keyless
+from tap_grid.natural_key import KEYLESS, Keyless, declaration_problems, is_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -90,18 +90,27 @@ class TestEveryCoreTypeHasDeclared:
 
     def test_keyed_properties_exist_on_the_model(self) -> None:
         """A constituting property that does not exist is a citation that does not
-        resolve — it would read as a declaration while finding nothing."""
+        resolve — it would read as a declaration while finding nothing. An entry may also be a
+        path into a JSON field (``req-grid-entity-natural-key-17``): its root must be a JSONField,
+        and its keys must be ones the field's declared schema names."""
         broken: list[str] = []
         for entity_type, model in self._core_models():
             declared = model.NATURAL_KEY
             # Undeclared (None) is its own failure, reported by the declaration test above.
             if declared is None or isinstance(declared, Keyless):
                 continue
-            field_names = {f.name for f in model._meta.get_fields() if getattr(f, "concrete", False)}
-            for prop in declared:
-                if prop not in field_names:
-                    broken.append(f"{entity_type}.{prop}")
-        assert broken == [], f"Declared constituting properties that are not model fields: {broken}"
+            broken.extend(f"{entity_type}: {problem}" for problem in declaration_problems(model, declared))
+        assert broken == [], f"Declared constituting properties that do not resolve: {broken}"
+
+    def test_no_core_type_declares_a_json_path(self) -> None:
+        """Confirms Issue# 874 - tap is plugin-facing: every core type is keyed on columns (or is
+        KEYLESS), so the expression-index branch never runs for core and no core migration moves."""
+        pathed = [
+            t
+            for t, m in self._core_models()
+            if isinstance(m.NATURAL_KEY, tuple) and any(is_path(entry) for entry in m.NATURAL_KEY)
+        ]
+        assert pathed == [], f"Core types declaring a JSON path: {pathed}. Add a migration test for them deliberately."
 
     def test_keyed_types_are_the_expected_two(self) -> None:
         """Core is almost entirely keyless, and that is the finding, not an accident:
