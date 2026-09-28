@@ -74,15 +74,36 @@ RID: `req-cicd-fleet-bot-discovery`
 Status: `Proposed`
 
 Renovate's self-hosted run (`org-bots/.github/workflows/renovate.yml`, `renovate/global.js`)
-reads a hardcoded `FLEET` array of ~24 repository names. Replace it with Renovate's own native
-`autodiscover: true` + `autodiscoverTopics: ["tap-plugin"]`, which processes every repository
-carrying that GitHub topic and nothing else.
+reads a hardcoded `FLEET` array of ~24 repository names. Replace it with topic discovery: a
+deterministic step in `org-bots` (`scripts/discover_fleet.py`) lists
+`GET /orgs/unified-systems-com/repos`, keeps each repository whose owner is `unified-systems-com`
+and whose topics include `tap-plugin`, drops archived and disabled repositories, and hands the
+result to Renovate's global configuration as an explicit `repositories` list (`autodiscover`
+stays off). Every repository carrying that GitHub topic is processed, and nothing else.
 
-**Why a topic filter, not blanket `autodiscover`.** Renovate's fork-mode credential holds no
-role on any repository — it forks the target and opens a PR from there, so it needs no write
-grant on anything it touches ([`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)).
-That already bounds the worst case of a mis-scoped discovery. `autodiscoverTopics` narrows scope
-further than "everything the token can see" for a separate reason: hygiene, not safety — a
+**Why not Renovate's own `autodiscover` + `autodiscoverTopics`.** On GitHub, Renovate
+autodiscovers from `GET /user/repos` (or `GET /installation/repositories` for an App): the
+repositories the token's *user* owns, collaborates on, or reaches through org membership
+(`fetchRepositories`/`getRepos` in `modules/platform/github/index.js`, read from the Renovate
+44.115.10 image `org-bots` pins).
+The fork-mode credential holds no role on any repository, so that list is the bot's own forks —
+which carry no topics — and `autodiscoverTopics` filters it to nothing. `autodiscoverNamespaces`
+is not applied by the GitHub platform at all. Autodiscovery therefore cannot see the fleet with
+the one credential this spec allows, and discovery is done from the org's own repository list
+instead, which is public and needs no credential beyond a workflow's read-only `GITHUB_TOKEN`.
+The search API is not used either: right after the topic was first applied its index briefly
+returned 22 of the 24 tagged repositories, while the org repository list returned all 24.
+
+**Discovery refuses rather than guesses.** No repository carrying the topic, a tagged repository
+whose name is not a plain repository name, or `org-bots` itself carrying the topic each stop
+discovery with an error — never an empty or partial run. `org-bots` is refused by name: the
+repository that runs the automation is never one of its targets.
+
+**Why a topic filter, not every repository in the organization.** Renovate's fork-mode
+credential holds no role on any repository — it forks the target and opens a PR from there, so
+it needs no write grant on anything it touches ([`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)).
+That already bounds the worst case of a mis-scoped discovery. The topic narrows scope further
+than "every repository in the organization" for a separate reason: hygiene, not safety — a
 repository that was never meant to be part of the fleet (an archived experiment, a private
 customer repo with no plugin in it) should not get dependency-bump PRs it did not ask for. The
 topic is a repository declaring "I am a TAP plugin" about itself, which is the same bar setting
@@ -105,19 +126,20 @@ today; it must never be a second path into scope for a repository discovery itse
 **A GitHub topic is a global, public string — nothing about it is scoped to this organization on
 its own.** Any repository anywhere on GitHub could carry a `tap-plugin` topic for reasons that
 have nothing to do with this fleet, and a discovery query that matches on the topic alone would
-include it. Discovery must therefore be qualified by ownership, not topic alone — Renovate's own
-`repositories`/platform configuration already operates within a token's accessible scope, but
-that scope boundary must be an explicit, checked fact in this requirement's own terms, not an
-inherited side effect of how the token happens to be configured today.
+include it. Discovery must therefore be qualified by ownership, not topic alone — listing
+`GET /orgs/unified-systems-com/repos` already confines the answer to this organization, but
+that boundary must be an explicit, checked fact in this requirement's own terms (each entry's
+owner compared with `unified-systems-com`), not an inherited side effect of which endpoint
+happened to be called.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from `autodiscoverTopics`. | |
+| req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from topic discovery (`org-bots/scripts/discover_fleet.py`), handed to Renovate as its `repositories` list. | Renovate's native `autodiscoverTopics` cannot see the fleet with a no-role credential; see the section text |
 | req-cicd-fleet-bot-discovery-2 | New Plugins Self-Register | Proposed | `new-plugin`'s scaffold applies the topic to a repository it creates, with no separate registration step. | Pairs with `Issue# 203 - tap` |
 | req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Narrows, Never Widens Scope | Proposed | `only=<name>` restricts a manual run to one named repository, but that repository must still pass the same `unified-systems-com`-ownership and `tap-plugin`-topic checks discovery itself applies — a name failing either is refused, the same property `global.js` already has for a name not on its list today. | `only` narrows within scope; it is not a second, unqualified path into scope |
-| req-cicd-fleet-bot-discovery-4 | Discovery Is Owner-Qualified, Not Topic-Alone | Proposed | The topic match is explicitly restricted to `unified-systems-com`-owned repositories (an `org:` qualifier on the query, or the equivalent scoping in Renovate's own configuration), verified as a stated requirement rather than assumed from the token's incidental reach. | The topic string alone is global and public; anything outside this org sharing it must never be discovered |
+| req-cicd-fleet-bot-discovery-4 | Discovery Is Owner-Qualified, Not Topic-Alone | Proposed | The topic match is explicitly restricted to `unified-systems-com`-owned repositories (listing the organization's own repositories and checking each entry's owner), verified as a stated requirement rather than assumed from the token's incidental reach. | The topic string alone is global and public; anything outside this org sharing it must never be discovered |
 
 ### Core Stays Explicitly Pinned
 
@@ -159,12 +181,18 @@ from `org-bots`, using the same `FORK_BOT_TOKEN` Renovate already uses — this 
 What changes is only how `org-bots` decides *which repositories* to run it against: replace the
 hardcoded `RELEASE_REPOS` string with the identical topic discovery
 [`req-cicd-fleet-bot-discovery`](#renovate-discovers-by-topic) already uses for Renovate (the
-same `tap-plugin` topic, queried via the GitHub API from within `org-bots`, then iterated). One
+same `tap-plugin` topic, found by the same `org-bots/scripts/discover_fleet.py`, then iterated). One
 discovery mechanism serves both tools; a repository tagged once gets both Renovate and
 release-please coverage, with nothing new for `new-plugin` to scaffold beyond the topic itself —
 unlike the reverted per-repo design, **this shape needs no reusable per-repo workflow file at
 all**, so there is no separate enrollment gap to close for release-please the way there is for
-Renovate: coverage is inherited from the same topic tag, automatically.
+Renovate: coverage is inherited from the same topic tag, automatically. A discovered repository
+that does not yet carry release-please's own `release-please-config.json` and
+`.release-please-manifest.json` has nothing to release and is skipped with a visible notice, not
+a failure; those two files are the release definition itself, not a registration step. `tap` is
+named alongside the discovered repositories exactly as for Renovate
+([`req-cicd-fleet-bot-discovery-core-pinned`](#core-stays-explicitly-pinned)), and is skipped
+while it still runs its own `release-please.yml`.
 
 **The credential is unchanged from what `org-bots` already holds today** — see
 [`req-cicd-fleet-bot-no-app-key-distribution`](#no-org-github-app-holds-write) for
