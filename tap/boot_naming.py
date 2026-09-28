@@ -3,6 +3,11 @@
 The one spelling of ``<profile_id>.boot.json``, and the one home of profile facts
 every runtime floor's raw reader must agree on (``step_enabled``).
 
+COPIED OUTSIDE THIS REPOSITORY. org-bots vendors this file, byte for byte, at
+``renovate/boot-records/tap/boot_naming.py``, because ``tap/boot_records.py`` imports it (see
+the note there). If you change it, update the org-bots copy the same way:
+``python3 renovate/boot-records/vendor.py --update <tap sha>`` in org-bots.
+
 Stdlib-only leaf (the ``tap/secret_naming.py`` shape): the path grammar for boot
 profiles is derived here once and consumed on every runtime floor — the
 host-runnable stage-0 tools (``tap/boot_pointer.py``, ``tap/dev_workspace.py``),
