@@ -153,7 +153,7 @@ them rather than invent.
 | req-boot-bootstrap-default-record | [Default Record Is Explicit](#default-record-is-explicit) | Proposed | No `#` → `boot/default.boot.json` if present, else loud error naming available records; never "first"/"latest" |
 | req-boot-bootstrap-ci-record | [The CI Record](#the-ci-record) | In Development | **`ci` is the second reserved record name.** A plugin's test stack is a record it SHIPS (`boot/ci.boot.json`, hashed + wheel-borne), not a repo-root file outside the integrity guard; contractually closed over `depends_on` + self, offline, credential-free; the consumer flips self to editable |
 | req-boot-bootstrap-record-version | [Record Integrity + Version](#record-integrity--version) | Proposed | **Near-term build.** Record carries **no version of its own** (version = the plugin's, single-sourced — dissolves the stamp-circularity); integrity = a content `sha256` in the **referrer** (`tap-plugin.toml`), never in the record; non-circular guard; install entries pin *or* float; `targets_major` compat + monotonic counter explicitly reserved/rejected |
-| req-boot-bootstrap-install-commit-pin | [Commit-Pinned Install Entries](#commit-pinned-install-entries) | Partially Implemented | Git install entries pin `rev` (tag) + `commit` (40-hex); pre-boot **installs the commit**, so a re-pointed tag (the tj-actions attack shape) cannot change what boots, and reports tag drift / an unpinned entry as security Flaws without blocking boot (tap#512, epic tap#493). Remaining: adopt tooling writes the pair (tap#513), plugin in-package records (per-repo sub-issues), `commit` required (tap#514) |
+| req-boot-bootstrap-install-commit-pin | [Commit-Pinned Install Entries](#commit-pinned-install-entries) | Partially Implemented | Git install entries pin `rev` (tag) + `commit` (40-hex); pre-boot **installs the commit**, so a re-pointed tag (the tj-actions attack shape) cannot change what boots, and reports tag drift / an unpinned entry as security Flaws without blocking boot (tap#512, epic tap#493). An in-package record's **self** entry is exempt from carrying `commit` (never from its shape): a record in tag vX cannot contain the commit vX will name (Q62, tap#199). Remaining: adopt tooling writes the pair (tap#513), plugin in-package records (per-repo sub-issues), `commit` required (tap#514) |
 | req-boot-bootstrap-stage0 | [Stage-0 Fetch Without Import](#stage-0-fetch-without-import) | Proposed | Extract only `boot/<record>.boot.json` from the artifact without installing/importing the package; the record self-references its own plugin (app-of-apps) |
 | req-boot-bootstrap-discovery | [Record Discovery](#record-discovery) | Proposed | `tap-plugin.toml` enumerates records (name + description + content `sha256`; no per-record version); `tap boot --list <pointer>` and spawn tab-completion read it; a CI guard reconciles the toml against `boot/*.boot.json` |
 | req-boot-bootstrap-signing | [Supply-Chain Integrity Ladder](#supply-chain-integrity-ladder) | Proposed | **Backlog, surfaced sooner-than-usual.** Hash (near-term) → Sigstore keyless attestation → TUF channel security; verify primitives are a `tap/`-level helper (`sigstore` uv-installed), NOT the `sigstore_core` plugin; trigger = first non-George user |
@@ -433,7 +433,10 @@ them; the author declares by shipping the file — declare-vs-decide, as in the 
    asserted table sets that only existed on a stack carrying `compliance_core`, a plugin it does not
    depend on (fixed 2026-08-27 by deriving the roster from the registry instead of freezing it).
 2. **Self is flipped to editable by the CONSUMER, not baked in.** The record pins itself like any
-   app-of-apps record; the lane (and a developer's `--dev-plugins`) applies the existing
+   app-of-apps record, by its own release tag: the self entry need not carry a `commit`, since the
+   record cannot know the commit of the tag it ships in, and should not once release tooling writes
+   its `rev`, because a `commit` left behind would name the previous release (see
+   [Commit-Pinned Install Entries](#commit-pinned-install-entries)); the lane (and a developer's `--dev-plugins`) applies the existing
    `tap.dev_workspace` derivation to swap that entry for the checkout under test. Baking a path in
    would couple the record to one consumer's directory layout and break local reproduction.
 3. **Offline and credential-free.** No `credential` on any install source, no `required_secrets`,
@@ -580,6 +583,31 @@ never matched, so every boot re-resolved the tag (tap#493).
 - **Adopt tooling** writes the resolved pair (tap#513). Plugin in-package records gain `commit`
   at each plugin's next release. **Mandatory** (`commit` required; pre-#514 records keep booting
   with the Flaw until their plugin's next release) is tap#514.
+- **The self entry is exempt from `commit`, not from its shape** (George, Q62, 2026-09-27). An
+  in-package record names its own plugin (`req-boot-bootstrap-stage0-3`), and the record shipped in
+  tag `vX` must name `vX` for itself (tap#199). It cannot also name the commit `vX` points at:
+  that commit is the one that contains the record, so writing its id into the record changes it.
+  The self entry is the install entry whose `slug` is the manifest slug of the package the record
+  ships in. For it:
+  - **author time** (`validate_plugin`, `ci-record` check): no `commit` is reported as `info`, not
+    a failure, **when `rev` is a release tag** (`vMAJOR.MINOR.PATCH`, optional pre-release/build).
+    A branch, a bare version or any other ref without `commit` still fails: only the record's own
+    release tag has the chicken-and-egg that excuses it. A `commit` that IS present must still be a
+    full 40-hex sha, because pre-boot installs by it. Every other entry is exactly as strict as
+    before.
+  - **the self `rev` is the release tool's job**, not Renovate's: org-bots' Renovate boot-record
+    manager matches only entries that carry a `commit`, so a self entry without one is never
+    bumped by Renovate. Release tooling writes `rev` = the tag being cut.
+  - **boot is unchanged.** Pre-boot has no record of which package a staged record came from, so it
+    cannot tell self from any other entry, and an unpinned self entry booted from a pointer really
+    does install a mutable tag: it still raises the `git_source_pins_commit` `InstanceFlaw`. The
+    consumers that matter most never see it: plugin CI and `--dev-plugins` flip self to the
+    checkout under test (`req-boot-bootstrap-ci-record-4`), so there is no git source left to check.
+    Closing it at boot would mean stage-0 handing the commit it fetched the record from to the self
+    entry. That is not built.
+  - `python3 -m tap.git_pin --check` is unchanged. It runs on tap's own `boot/` deployment
+    profiles, which ship in no plugin and so have no self entry. An exemption there would only
+    ever be a hole.
 - This is rung 1.5 of the [Supply-Chain Integrity Ladder](#supply-chain-integrity-ladder):
   above the record's own content hash, below Sigstore attestation (which additionally
   proves *who built* the artifact; the commit pin only proves *which content*).
@@ -594,6 +622,10 @@ never matched, so every boot re-resolved the tag (tap#493).
   **Implemented** (tap#512).
 - Adopt tooling emits `commit` on every git install entry it writes. **Open** (tap#513).
 - `commit` required. **Open** (tap#514).
+- An in-package record's self entry without `commit` passes `validate_plugin` when its `rev` is a
+  release tag, reported as `info`; a self entry on any other ref without `commit` fails; a self
+  `commit` that is not 40-hex still fails; any other entry without `commit` still fails.
+  **Implemented** (Q62, `tap_plugins/tests/test_validate_ci_record.py`).
 
 ### Stage-0 Fetch Without Import
 ----
@@ -652,7 +684,7 @@ and it governs exactly one thing — *validation depth* — not the credential m
 | --- | --- | :---: | --- | --- |
 | req-boot-bootstrap-stage0-1 | Extract Not Install | Proposed | Stage-0 reads `boot/<record>.boot.json` out of the artifact without installing/importing the package. | |
 | req-boot-bootstrap-stage0-2 | Settings-Free + Abort-Safe | Proposed | Stage-0 stays Django-free and runs before `migrate`; a bad pointer aborts with the DB untouched. | Extends `req-boot-preboot-4` |
-| req-boot-bootstrap-stage0-3 | Self-Reference | Proposed | The staged record names its own plugin in `install`, so the bootstrap plugin is properly installed in the normal stage (app-of-apps). | |
+| req-boot-bootstrap-stage0-3 | Self-Reference | Proposed | The staged record names its own plugin in `install`, so the bootstrap plugin is properly installed in the normal stage (app-of-apps). | The self entry names the record's own release tag in `rev` and is exempt from `commit` (`req-boot-bootstrap-install-commit-pin`, Q62). |
 | req-boot-bootstrap-stage0-4 | Shared Credential Mechanism | Implemented | The `GIT_ASKPASS` handoff and git runner come from the stdlib-only `tap/git_invocation.py` leaf, shared with the install system — never a second copy. The leaf's stdlib-only property is asserted by test (host tools run under bare `python3`). | Closes code-clone sweep S1. |
 | req-boot-bootstrap-stage0-5 | Kind Checked Before Token Use | Implemented | Stage-0 refuses an envelope whose `kind` is not `github_pat` before reading `data.token`, so a credential for another service is never transmitted to the git host. | No jsonschema needed; the boundary is no excuse. |
 | req-boot-bootstrap-stage0-6 | Schema Validation Deferred, Named | Implemented | Stage-0 does not validate the `data` block against the source schema (jsonschema is venv-only); the clone failing loud plus the in-container install path's full validation are the named downstream backstops. | `req-sec-honest-risk` — bounded, documented. |

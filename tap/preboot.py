@@ -458,7 +458,7 @@ def _installed_git_rev(dist: importlib.metadata.Distribution) -> str | None:
 def _git_install_ref(source: dict[str, Any]) -> str:
     """The ref a git source installs from: its pinned ``commit``, else (unpinned, tap#514) its ``rev``.
 
-    TAP-IMPLEMENTS: req-boot-bootstrap-install-commit-pin@cfb8cc36cf21/bb913a237c33 (enforcement) — the
+    TAP-IMPLEMENTS: req-boot-bootstrap-install-commit-pin@0c1125c2cd68/bb913a237c33 (enforcement) — the
         commit, not the mutable tag, is what pre-boot installs and what the reboot no-op compares.
 
     The one derivation both the install argv and the idempotency check read, so "what we

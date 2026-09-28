@@ -179,3 +179,54 @@ def check_edge_declarations_resolve(app_configs: Any, **kwargs: Any) -> list[Err
         )
         for d in problems
     ]
+
+
+def grid_models_not_defaulting_to_live(models: Any) -> list[str]:
+    """Describe every grid model whose default manager, or ``objects``, is not ``LiveManager``.
+
+    ``LiveManager`` is declared once, on ``BaseModel``, and inherited. Django lets a subclass
+    replace it — ``objects = models.Manager()``, or ``Meta.default_manager_name`` pointing at
+    ``all_objects`` — and nothing else would notice: every read through that model's default
+    manager would silently include tombstones. The exact type is required, not a subclass, so a
+    manager cannot change what "live" means by overriding ``get_queryset``.
+    """
+    from tap_grid.models import LiveManager
+
+    problems: list[str] = []
+    for model in models:
+        label = f"{model.__module__}.{model.__qualname__}"
+        default = type(model._default_manager)
+        if default is not LiveManager:
+            problems.append(f"{label}: default manager is {default.__name__}, not LiveManager")
+        objects = getattr(model, "objects", None)
+        if objects is not None and type(objects) is not LiveManager:
+            problems.append(f"{label}: `objects` is {type(objects).__name__}, not LiveManager")
+    return problems
+
+
+def registered_grid_models() -> list[Any]:
+    """Every registered TAP-managed model (the entity-type registry), in slug order."""
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    return [get_model_class(entity_type) for entity_type in sorted(list_entity_types())]
+
+
+@register(Tags.models)
+def check_grid_models_default_to_live_manager(app_configs: Any, **kwargs: Any) -> list[Error]:
+    """Every registered grid model's default manager is ``LiveManager`` (req-grid-traversal-exec-read-scope-14).
+
+    Gryphon no longer relies on it — the read scope applies liveness itself — but every other
+    application read does (`req-grid-entity-tombstone-managers`), and a model that overrode it
+    would return tombstoned rows with no error and a plausible count. Fail-closed: an Error.
+    """
+    return [
+        Error(
+            problem,
+            hint=(
+                "Remove the manager override. Grid models inherit `objects = LiveManager()` from BaseModel; "
+                "use `all_objects` explicitly where tombstoned rows are wanted."
+            ),
+            id="tap_grid.E005",
+        )
+        for problem in grid_models_not_defaulting_to_live(registered_grid_models())
+    ]

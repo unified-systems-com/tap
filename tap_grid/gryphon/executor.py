@@ -52,6 +52,7 @@ from tap_grid.grift.subgraph import (
     serialize_node_full,
     serialize_node_lite,
 )
+from tap_grid.gryphon import read_scope
 from tap_grid.gryphon.ast_nodes import (
     AggregateCall,
     AggregateReturnItem,
@@ -79,6 +80,7 @@ from tap_grid.gryphon.ast_nodes import (
 )
 from tap_grid.gryphon.capture import capture_sql, gryphon_stage
 from tap_grid.gryphon.parser import GryphonParseError, parse_gryphon
+from tap_grid.gryphon.read_scope import DEFAULT_SCOPE, ReadScope
 
 if TYPE_CHECKING:
     from tap_grid.models import Search
@@ -127,6 +129,7 @@ def execute_gryphon_raw(
     *,
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
+    scope: ReadScope = DEFAULT_SCOPE,
 ) -> dict[str, Any]:
     """Execute a raw gryphon query string and return the canonical graph envelope.
 
@@ -151,6 +154,8 @@ def execute_gryphon_raw(
         db_alias: Database alias for all queries. Defaults to the read-only search alias
             (`READONLY_DB_ALIAS`); pass a writable alias only for a deliberate, reviewed reason.
         layer: GRIFT subgraph return layer (lite, full, extended).
+        scope: What the read may see (req-grid-traversal-exec-read-scope). Defaults to
+            ``LiveNow``; only the caller chooses it — no query text can widen it.
 
     Returns:
         ``{"nodes": [...], "edges": [...]}`` canonical envelope.
@@ -158,7 +163,7 @@ def execute_gryphon_raw(
     Raises:
         SearchExecutionError: If the query is malformed, unsupported, or execution fails.
     """
-    return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer)
+    return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope)
 
 
 def _execute_gryphon_raw_impl(
@@ -167,6 +172,7 @@ def _execute_gryphon_raw_impl(
     *,
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
+    scope: ReadScope = DEFAULT_SCOPE,
 ) -> dict[str, Any]:
     """Raw-query execution body, without the read gate.
 
@@ -177,6 +183,11 @@ def _execute_gryphon_raw_impl(
     caller goes through ``execute_gryphon_raw`` (gated) or ``explain_gryphon_raw``
     (gated).
     """
+    # The scope is settled first, above parsing and every dispatch fork: a scope this
+    # build cannot execute is refused before anything else can happen
+    # (req-grid-traversal-exec-read-scope-8).
+    scope = read_scope.require_scope(scope)
+
     if not query:
         raise SearchExecutionError("Gryphon query string is empty.")
 
@@ -263,13 +274,13 @@ def _execute_gryphon_raw_impl(
 
     if ast.optional_match_clauses:
         with gryphon_stage("optional-match"):
-            return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer)
+            return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
 
     if _has_advanced_features(ast):
         with gryphon_stage("advanced"):
-            return _execute_advanced(ast, inputs, db_alias=db_alias, layer=layer)
+            return _execute_advanced(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
 
-    return _execute_ast(ast, inputs, db_alias=db_alias, layer=layer)
+    return _execute_ast(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
 
 
 @requires_capability(READ_CAPABILITY, operation="explain_gryphon_raw")
@@ -279,10 +290,11 @@ def explain_gryphon_raw(
     *,
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
+    scope: ReadScope = DEFAULT_SCOPE,
 ) -> dict[str, Any]:
     """Execute a raw gryphon query and return both the envelope and the SQL it ran.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@6f701679bd50/5dd1f41684bd (surface) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@6f701679bd50/cd5080a5afef (surface) — the
         read-only seam that records issued SQL; snapshot tests and `gryphon explain` read it.
 
     Returns ``{"envelope": <canonical envelope>, "sql": <SqlCapture>}``. The
@@ -302,6 +314,7 @@ def explain_gryphon_raw(
         inputs: Runtime $var values; must supply all required params.
         db_alias: Database alias for all queries.
         layer: GRIFT subgraph return layer (lite, full, extended).
+        scope: What the read may see; see ``execute_gryphon_raw``.
 
     Returns:
         ``{"envelope": {...}, "sql": SqlCapture}``.
@@ -324,7 +337,7 @@ def explain_gryphon_raw(
     # directly — routing through the gated execute_gryphon_raw would record a
     # second, redundant authz query inside the capture.
     with capture_sql() as capture:
-        envelope = _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer)
+        envelope = _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope)
     return {"envelope": envelope, "sql": capture}
 
 
@@ -534,6 +547,7 @@ def _execute_ast(
     *,
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Dispatch to the appropriate execution strategy based on AST shape.
 
@@ -582,6 +596,7 @@ def _execute_ast(
             inputs=inputs,
             db_alias=db_alias,
             layer=layer,
+            scope=scope,
         )
 
         for node in result.get("nodes", []):
@@ -615,6 +630,7 @@ def _dispatch_pattern(
     inputs: dict[str, Any] | None = None,
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Route a single MATCH pattern to the appropriate execution mode."""
     # Type scan: node-only pattern (no edges). A labelless node is the bare
@@ -632,6 +648,7 @@ def _dispatch_pattern(
                     inputs=inputs or {},
                     db_alias=db_alias,
                     layer=layer,
+                    scope=scope,
                 )
         with gryphon_stage("type-scan"):
             return _execute_type_scan(
@@ -643,6 +660,7 @@ def _dispatch_pattern(
                 inputs=inputs or {},
                 db_alias=db_alias,
                 layer=layer,
+                scope=scope,
             )
 
     if len(pattern.edges) != 1:
@@ -676,6 +694,7 @@ def _dispatch_pattern(
             inputs=inputs or {},
             db_alias=db_alias,
             layer=layer,
+            scope=scope,
         )
 
 
@@ -705,6 +724,7 @@ def _execute_single_hop_envelope(
     inputs: dict[str, Any],
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Execute a single-hop graph-traversal pattern as a graph envelope.
 
@@ -731,6 +751,7 @@ def _execute_single_hop_envelope(
             inputs=inputs,
             db_alias=db_alias,
             layer=layer,
+            scope=scope,
         )
 
     # Undirected: union the outbound and inbound arms. Each arm is a directed
@@ -743,6 +764,7 @@ def _execute_single_hop_envelope(
         inputs=inputs,
         db_alias=db_alias,
         layer=layer,
+        scope=scope,
     )
     in_env = _single_hop_directed(
         _redirect_single_hop(pattern, "in"),
@@ -751,6 +773,7 @@ def _execute_single_hop_envelope(
         inputs=inputs,
         db_alias=db_alias,
         layer=layer,
+        scope=scope,
     )
     return _merge_envelopes(out_env, in_env, layer)
 
@@ -763,16 +786,17 @@ def _single_hop_directed(
     inputs: dict[str, Any],
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Run one directed single-hop pattern through the WHERE-applying chain path."""
     bindings = _build_var_bindings(pattern)
-    qs = _build_chain_queryset(pattern, db_alias, inputs)
+    qs = _build_chain_queryset(pattern, db_alias, inputs, scope=scope)
     applicable_pred = _filter_predicate_for_bindings(
         where_clause.predicate if where_clause else None,
         bindings,
     )
     qs = _apply_predicate_to_qs(qs, applicable_pred, bindings, inputs)
-    return _collect_graph_envelope(qs, pattern, return_clause, bindings, layer=layer, db_alias=db_alias)
+    return _collect_graph_envelope(qs, pattern, return_clause, bindings, layer=layer, db_alias=db_alias, scope=scope)
 
 
 def _redirect_single_hop(pattern: PathPattern, direction: str) -> PathPattern:
@@ -871,10 +895,11 @@ def _execute_type_scan(
     inputs: dict[str, Any] | None = None,
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Execute a node-only MATCH pattern — scan all entities of the given type.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@34302e62ead9/318b3ea609f3 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@34302e62ead9/2546f268cace (derivation) — the
         labelled node/edge pattern shape executes here.
 
     Applies a global WHERE clause filtered to predicates that reference the
@@ -890,6 +915,7 @@ def _execute_type_scan(
         inputs: Runtime parameter values for ``$param`` references in WHERE.
         db_alias: Database alias to query against.
         layer: GRIFT subgraph return layer.
+        scope: The read scope every relation is built under.
 
     Returns:
         Canonical envelope with ``nodes`` list and empty ``edges`` list.
@@ -921,7 +947,7 @@ def _execute_type_scan(
     except KeyError:
         raise SearchExecutionError(f"Unsupported gryphon pattern: unknown entity type '{node.label}'.") from None
 
-    qs = model_cls.objects.using(db_alias).select_related("entity").order_by("entity__name")
+    qs = read_scope.node_relation(scope, model_cls, db_alias=db_alias).select_related("entity").order_by("entity__name")
 
     var = node.variable or node.label
     inputs = inputs or {}
@@ -1420,6 +1446,7 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
     Ruled by George on 2026-09-23; see `Issue# 784 - tap` for the spec change. The rival
     — reinterpreting the dot-run as one key — was considered and declined.
     """
+
     def _spelling(step: Any) -> str:
         if isinstance(step, DotStep):
             return step.name
@@ -1511,10 +1538,11 @@ def _execute_bare_type_scan(
     inputs: dict[str, Any] | None = None,
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Execute a labelless ``MATCH (n)`` — scan every registered node type, union.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/8f20ed6ab421 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/366a516d4f14 (derivation) —
         the labelless MATCH (n) all-types union scan executes here.
 
     A labelless node pattern is a wildcard over node entity types: it returns
@@ -1549,7 +1577,6 @@ def _execute_bare_type_scan(
 
           MATCH (n) WHERE n.data.tags.Project = "samsite"
     """
-    from tap_grid.models import Entity
     from tap_grid.registry import get_model_class, list_entity_types
 
     inputs = inputs or {}
@@ -1609,15 +1636,12 @@ def _execute_bare_type_scan(
         # Spine-only (or absent) WHERE — one Entity-spine scan, scoped to the
         # registered node types so edges and unregistered rows are excluded.
         #
-        # `.live()` is load-bearing (`Issue# 802 - tap`). `Entity.objects` is
-        # `EntityManager`: it OFFERS `.live()` but is not live by default, so this
-        # scan returned tombstoned rows while the labelled path — which goes through
-        # `model_cls.objects`, a `LiveManager` — did not. The two spellings of the
-        # same question disagreed, and the labelless one was wrong with no error and
-        # a plausible row count. The bug did not depend on the WHERE: this queryset
-        # is built before the predicate is applied, so a bare `MATCH (n)` carried it
-        # too.
-        qs = Entity.objects.using(db_alias).live().filter(entity_type__in=[et for et, _ in registered])
+        # The spine relation comes from the read scope, not from a manager: the spine's
+        # default manager is not live by default, which is how this scan once returned
+        # tombstoned rows while the labelled spelling did not (`Issue# 802 - tap`).
+        qs = read_scope.node_relation(scope, None, db_alias=db_alias).filter(
+            entity_type__in=[et for et, _ in registered]
+        )
         if scoped_pred is not None:
             qs = qs.filter(_predicate_to_q(scoped_pred, inputs, _bare_spine_orm_path))
         entities = list(qs)
@@ -1635,7 +1659,7 @@ def _execute_bare_type_scan(
             model_fields = {f.name for f in model_cls._meta.get_fields()}
             if not data_lane_fields.issubset(model_fields):
                 continue  # this type lacks a referenced data field — matches nothing
-            model_qs = model_cls.objects.using(db_alias).filter(
+            model_qs = read_scope.node_relation(scope, model_cls, db_alias=db_alias).filter(
                 _predicate_to_q(
                     scoped_pred,
                     inputs,
@@ -1644,22 +1668,10 @@ def _execute_bare_type_scan(
                 )
             )
             matched_ids.update(model_qs.values_list("entity_id", flat=True))
-        # No `.live()` needed here, and adding one would be cargo-culting the fix
-        # above: `matched_ids` came from `model_cls.objects`, a `LiveManager`, so the
-        # set holds only live ids and a re-fetch by pk cannot resurrect anything. Safe
-        # BY CONSTRUCTION rather than by its own filter — which is worth saying, because
-        # it rests on an invariant maintained elsewhere (`Issue# 802 - tap`).
-        #
-        # The invariant, named so a reader can check it rather than trust it:
-        # `objects = LiveManager()` is declared exactly ONCE, on `BaseModel`
-        # (`tap_grid/models.py`), and `get_model_class` only ever returns a registered
-        # TAP-managed model — i.e. a `BaseModel` subclass. Django inherits managers, so
-        # a subclass COULD override `objects` and silently make this branch wrong; no
-        # guard forbids that today. Verified empirically 2026-09-25: across core, the
-        # editable plugin checkouts and every installed `tap_plugin` wheel, the only
-        # other `objects =` on a model is `Entity.objects = EntityManager()` — the
-        # spine, which is precisely the not-live manager this issue was about.
-        entities = list(Entity.objects.using(db_alias).filter(pk__in=sorted(matched_ids))) if matched_ids else []
+        # The re-fetch applies the scope itself rather than relying on `matched_ids`
+        # having come from a scoped relation: a re-hydration must never be able to
+        # widen an answer (req-grid-traversal-exec-read-scope-6).
+        entities = read_scope.refetch_nodes(scope, (str(pk) for pk in matched_ids), db_alias=db_alias)
 
     return {"nodes": _serialize_entity_nodes(entities, layer, db_alias), "edges": []}
 
@@ -1823,11 +1835,11 @@ def _compute_hop_paths(pattern: PathPattern) -> list[dict[str, str]]:
             shared = prev["from_path"]
 
         if cur_dir == "out":
-            edge_path = f"{shared}__edges_out"
+            edge_path = read_scope.reverse_edge_path(shared, "out")
             from_path = shared
             to_path = f"{edge_path}__to_entity"
         else:  # "in"
-            edge_path = f"{shared}__edges_in"
+            edge_path = read_scope.reverse_edge_path(shared, "in")
             to_path = shared
             from_path = f"{edge_path}__from_entity"
 
@@ -2217,15 +2229,17 @@ def _build_chain_queryset(
     db_alias: str,
     inputs: dict[str, Any] | None = None,
     *,
+    scope: ReadScope,
     predicate: Predicate | None = None,
     bindings: dict[str, dict[str, Any]] | None = None,
+    correlation: dict[str, Any] | None = None,
 ):
     """Build an Edge queryset that joins all hops of a (potentially multi-hop) pattern.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/50cf99cf3e3c (derivation) — the
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/326fb4559f4a (derivation) — the
         multi-hop chain join is built here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/50cf99cf3e3c (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/326fb4559f4a (derivation) —
         the multi-hop graph-envelope return rides the same chain build.
 
     The queryset is rooted at hop 0's Edge and each subsequent hop is reached
@@ -2246,9 +2260,14 @@ def _build_chain_queryset(
     none of the structural edge-type / label filters — which the projection then
     bound to, silently returning far nodes reached by the wrong edge type (and
     inflating COUNT). Folding it into the one call reuses the structural join, so
-    the predicate constrains exactly the chain's far node. Callers that cannot
-    fold (the ``NOT EXISTS`` inner, whose correlation layers on afterward) apply
-    it via :func:`_apply_predicate_to_qs` instead.
+    the predicate constrains exactly the chain's far node.
+
+    The read scope rides the same call (req-grid-traversal-exec-read-scope-7): the
+    root edge and its endpoints come scoped from ``read_scope.edge_relation``, and
+    every later hop adds its edge's and far endpoint's scope predicates to the one
+    ``filter()``, so they bind to the hop's own JOIN. ``correlation`` (the NOT
+    EXISTS ``OuterRef`` equalities) is folded in for the same reason: applied
+    separately on a far node it bound to a second JOIN of ANY edge onto that node.
 
     Variable-length edges and undirected edges are rejected up front.
 
@@ -2268,8 +2287,6 @@ def _build_chain_queryset(
           MATCH (a:grid_fixtures__node)-[e1:PG_LINKS__grid_fixtures]->(b:grid_fixtures__node)-[e2:PG_LINKS__grid_fixtures]->(c:grid_fixtures__node)
           WHERE a.entity_id = $root_id
     """
-    from tap_grid.models import Edge
-
     for edge in pattern.edges:
         if edge.min_hops != 1 or edge.max_hops != 1:
             raise SearchExecutionError(
@@ -2282,7 +2299,7 @@ def _build_chain_queryset(
             )
 
     hop_paths = _compute_hop_paths(pattern)
-    qs = Edge.objects.using(db_alias)
+    qs = read_scope.edge_relation(scope, db_alias=db_alias)
 
     filters: dict[str, Any] = {}
 
@@ -2314,6 +2331,15 @@ def _build_chain_queryset(
         if right.label:
             filters[f"{right_path}__entity_type"] = right.label
 
+        # Hops past the root: this hop's edge and its NEW endpoint are reached through a
+        # multi-valued join, so their scope goes into the same `filter()` as the hop's
+        # structure. (The shared endpoint is the previous hop's, already scoped; hop 0's
+        # edge and endpoints are scoped by `edge_relation`.)
+        if ep:
+            new_endpoint = hp["to_path"] if edge.direction == "out" else hp["from_path"]
+            filters.update(read_scope.edge_scope_filters(scope, ep))
+            filters.update(read_scope.node_scope_filters(scope, new_endpoint))
+
         # Inline node-property maps on chain nodes — same resolver as a WHERE
         # `var.data.k` reference at this position (#196). A middle node visits
         # twice (right of hop N, left of hop N+1); identical keys make the
@@ -2333,6 +2359,8 @@ def _build_chain_queryset(
             )
 
     filters.update(_repeated_variable_equality_filters(pattern, hop_paths))
+    if correlation:
+        filters.update(correlation)
 
     from django.db.models import Q
 
@@ -2361,7 +2389,7 @@ def _binding_is_multivalued_hop(binding: dict[str, Any]) -> bool:
     multi-valued reverse relation (``edges_out`` / ``edges_in``).
     """
     path = binding.get("entity_path") or binding.get("edge_path") or ""
-    return "edges_out" in path or "edges_in" in path
+    return read_scope.is_reverse_edge_path(path)
 
 
 def _guard_negated_far_predicate(
@@ -2485,10 +2513,10 @@ def _apply_predicate_to_qs(
     TAP-IMPLEMENTS: req-grid-traversal-lang-combinators@0e5170677022/7b84984d6834 (derivation) —
         AND / OR / NOT predicate combination lowers here.
 
-    Thin wrapper over :func:`_chain_predicate_q` used where the predicate cannot
-    be folded into the structural filter — the ``NOT EXISTS`` inner queryset
-    (which the outer correlation is layered onto separately). The multi-hop /
-    single-clause chain path instead passes the predicate straight to
+    Thin wrapper over :func:`_chain_predicate_q`, used by the single-hop envelope
+    path, where every path is a root-edge FK (single-valued), so a separate
+    ``.filter()`` cannot add a join. Every multi-hop chain — the advanced path and
+    the ``NOT EXISTS`` inner — instead passes the predicate straight to
     :func:`_build_chain_queryset` so it lands in one ``.filter()`` (no duplicate
     join on far-node predicates).
 
@@ -2576,10 +2604,12 @@ def _apply_not_exists(
     outer_bindings: dict[str, dict[str, Any]],
     inputs: dict[str, Any],
     db_alias: str,
+    *,
+    scope: ReadScope,
 ):
     """Apply a NOT EXISTS clause to the outer queryset via a correlated Exists subquery.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-not-exists@3b83b2e9236b/68b3daf8df2a (derivation) — the
+    TAP-IMPLEMENTS: req-grid-gryphon-not-exists@3b83b2e9236b/966dca46d5df (derivation) — the
         correlated NOT EXISTS anti-join is applied here.
 
     .. tap:capability:: Gryphon NOT EXISTS anti-join
@@ -2607,7 +2637,6 @@ def _apply_not_exists(
         raise SearchExecutionError("NOT EXISTS subqueries require at least one edge in the inner pattern.")
 
     inner_bindings = _build_var_bindings(inner_pattern)
-    inner_qs = _build_chain_queryset(inner_pattern, db_alias, inputs)
 
     # Correlation: for every variable shared between outer and inner bindings,
     # constrain the inner's ORM path to equal OuterRef of the outer's path.
@@ -2632,17 +2661,23 @@ def _apply_not_exists(
     if outer_annotations:
         outer_qs = outer_qs.annotate(**outer_annotations)
 
-    for var in shared:
-        inner_bind = inner_bindings[var]
-        inner_path = _orm_path_for_field(inner_bind, "entity_id")
-        inner_qs = inner_qs.filter(**{inner_path: OuterRef(outer_alias_map[var])})
-
-    # Apply the inner WHERE predicates.
-    inner_qs = _apply_predicate_to_qs(
-        inner_qs,
-        nec.where_clause.predicate if nec.where_clause else None,
-        inner_bindings,
+    # The correlation and the inner WHERE are folded into the inner chain's ONE
+    # `filter()`, with its structure and scope. Applied as separate filters (as they
+    # once were), a correlated or filtered node past the inner root edge resolved
+    # through a SECOND join of any edge onto it — carrying neither the hop's edge
+    # type nor its liveness — so a retired or wrongly-typed edge satisfied the
+    # subquery (`Issue# 811 - tap`, req-grid-traversal-exec-read-scope-5/-7).
+    correlation = {
+        _orm_path_for_field(inner_bindings[var], "entity_id"): OuterRef(outer_alias_map[var]) for var in shared
+    }
+    inner_qs = _build_chain_queryset(
+        inner_pattern,
+        db_alias,
         inputs,
+        scope=scope,
+        predicate=nec.where_clause.predicate if nec.where_clause else None,
+        bindings=inner_bindings,
+        correlation=correlation,
     )
 
     return outer_qs.filter(~Exists(inner_qs))
@@ -2719,6 +2754,7 @@ def _collect_graph_envelope(
     *,
     layer: SubgraphLayer,
     db_alias: str,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Collect a graph envelope (nodes + edges) from a multi-hop chain queryset.
 
@@ -2792,16 +2828,10 @@ def _collect_graph_envelope(
             else:
                 edge_entity_ids.add(pk)
 
-    from tap_grid.models import Edge, Entity
-
-    # Bulk-fetch entities and edges.
-    # sorted() on the PK sets so the IN-list SQL is deterministic (Gridkin snapshots).
-    entities = list(Entity.objects.using(db_alias).filter(pk__in=sorted(node_pks))) if node_pks else []
-    edges = (
-        list(Edge.objects.using(db_alias).filter(entity_id__in=sorted(edge_entity_ids)).select_related("entity"))
-        if edge_entity_ids
-        else []
-    )
+    # Bulk re-fetch under the same scope as the chain, so the envelope can never
+    # re-hydrate an element the rows did not match (req-grid-traversal-exec-read-scope-6).
+    entities = read_scope.refetch_nodes(scope, node_pks, db_alias=db_alias)
+    edges = read_scope.refetch_edges(scope, edge_entity_ids, db_alias=db_alias)
 
     nodes_out = _serialize_entity_nodes(entities, layer, db_alias)
     edges_out = _serialize_edge_list(edges, layer, db_alias)
@@ -2863,6 +2893,8 @@ def _build_clause_queryset(
     ast: GryphonAST,
     inputs: dict[str, Any],
     db_alias: str,
+    *,
+    scope: ReadScope,
 ) -> tuple[Any, PathPattern, dict[str, dict[str, Any]]]:
     """Build a filtered queryset for a single advanced MATCH clause.
 
@@ -2890,10 +2922,10 @@ def _build_clause_queryset(
     # Fold the WHERE into the chain queryset's single `.filter()` (not a separate
     # one) so a far-node predicate reuses the structural join instead of spawning
     # a duplicate — see `_build_chain_queryset`.
-    qs = _build_chain_queryset(pattern, db_alias, inputs, predicate=applicable_pred, bindings=bindings)
+    qs = _build_chain_queryset(pattern, db_alias, inputs, scope=scope, predicate=applicable_pred, bindings=bindings)
 
     for nec in ast.not_exists_clauses:
-        qs = _apply_not_exists(qs, nec, bindings, inputs, db_alias)
+        qs = _apply_not_exists(qs, nec, bindings, inputs, db_alias, scope=scope)
 
     return qs, pattern, bindings
 
@@ -2904,6 +2936,7 @@ def _execute_advanced(
     *,
     db_alias: str,
     layer: SubgraphLayer = "full",
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Route through the v2 aggregation/anti-join/multi-hop path.
 
@@ -2921,13 +2954,11 @@ def _execute_advanced(
 
     # --- Graph envelope with UNION across multiple MATCH clauses ---
     if is_envelope:
-        from tap_grid.models import Edge, Entity
-
         all_node_pks: set[str] = set()
         all_edge_entity_ids: set[str] = set()
 
         for mc in ast.match_clauses:
-            qs, pattern, bindings = _build_clause_queryset(mc, ast, inputs, db_alias)
+            qs, pattern, bindings = _build_clause_queryset(mc, ast, inputs, db_alias, scope=scope)
             envelope = _collect_graph_envelope(
                 qs,
                 pattern,
@@ -2935,6 +2966,7 @@ def _execute_advanced(
                 bindings,
                 layer="lite",
                 db_alias=db_alias,
+                scope=scope,
             )
             # Collect PKs from the lite-layer results for dedup before final serialize.
             for n in envelope["nodes"]:
@@ -2942,16 +2974,9 @@ def _execute_advanced(
             for e in envelope["edges"]:
                 all_edge_entity_ids.add(str(e["entity_id"]))
 
-        # Bulk-fetch and serialize at the requested layer.
-        # sorted() on the PK sets so the IN-list SQL is deterministic (Gridkin snapshots).
-        entities = list(Entity.objects.using(db_alias).filter(pk__in=sorted(all_node_pks))) if all_node_pks else []
-        edges = (
-            list(
-                Edge.objects.using(db_alias).filter(entity_id__in=sorted(all_edge_entity_ids)).select_related("entity")
-            )
-            if all_edge_entity_ids
-            else []
-        )
+        # Bulk-fetch and serialize at the requested layer, under the query's scope.
+        entities = read_scope.refetch_nodes(scope, all_node_pks, db_alias=db_alias)
+        edges = read_scope.refetch_edges(scope, all_edge_entity_ids, db_alias=db_alias)
 
         nodes_out = _serialize_entity_nodes(entities, layer, db_alias)
         edges_out = _serialize_edge_list(edges, layer, db_alias)
@@ -2973,7 +2998,7 @@ def _execute_advanced(
 
     # --- Single-clause row projection / aggregation ---
     mc = ast.match_clauses[0]
-    qs, pattern, bindings = _build_clause_queryset(mc, ast, inputs, db_alias)
+    qs, pattern, bindings = _build_clause_queryset(mc, ast, inputs, db_alias, scope=scope)
 
     rows = _compute_rows(qs, ast.return_clause, bindings, order_by=ast.order_by, limit=ast.limit)
 
@@ -3606,10 +3631,11 @@ def _execute_optional_match(
     *,
     db_alias: str,
     layer: SubgraphLayer,
+    scope: ReadScope,
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/9343c98af6a2 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/531c75205f85 (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -3708,10 +3734,10 @@ def _execute_optional_match(
     # `->` : v is the edge's from_entity, the optional node w is to_entity.
     # `<-` : v is to_entity, w is from_entity.
     if opt_edge.direction == "out":
-        edge_path = "entity__edges_out"
+        edge_path = read_scope.reverse_edge_path("entity", "out")
         w_entity_path = f"{edge_path}__to_entity"
     else:
-        edge_path = "entity__edges_in"
+        edge_path = read_scope.reverse_edge_path("entity", "in")
         w_entity_path = f"{edge_path}__from_entity"
 
     # Bindings for the optional variables, rooted at the mandatory-model qs, so
@@ -3726,8 +3752,11 @@ def _execute_optional_match(
     # The optional pattern's own constraints (edge type, w label, inline edge
     # props) and any WHERE predicate on an optional variable all become part of
     # this Q. Folded into Count(..., filter=Q), they constrain the join — they
-    # never drop a mandatory row.
-    opt_q = Q()
+    # never drop a mandatory row. The read scope is part of the join too: the
+    # optional edge and the optional node must both be live to count, and putting
+    # their predicates in the filter (not the WHERE) keeps a zero a zero
+    # (req-grid-traversal-exec-read-scope-5).
+    opt_q = Q(**read_scope.edge_scope_filters(scope, edge_path), **read_scope.node_scope_filters(scope, w_entity_path))
     if opt_edge.edge_type:
         opt_q &= Q(**{f"{edge_path}__edge_type": opt_edge.edge_type})
     if w_node.label:
@@ -3749,7 +3778,7 @@ def _execute_optional_match(
             opt_q &= Q(**{orm_path: value})
 
     # --- WHERE: v-comps filter the outer scan, opt-comps join the filter Q --
-    qs = model_cls.objects.using(db_alias)
+    qs = read_scope.node_relation(scope, model_cls, db_alias=db_alias)
     # The mandatory anchor is type-scan-shaped, so its inline map filters the
     # outer scan through the type-scan resolver — same as `WHERE v.data.k` (#196).
     if anchor_node.inline_props:
