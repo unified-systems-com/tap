@@ -189,8 +189,10 @@ for the same reason: anyone can write into these surfaces.
    Arm it as a Monitor, not a background write-to-log, which wakes nobody. It emits
    one line per new review, per bot comment and per `mergeStateStatus` transition,
    plus a `CHECKFAIL` line the moment any INDIVIDUAL check goes red — so a Sonar or
-   Codacy red is workable immediately instead of after the whole gate resolves.
-   Every REVIEW/COMMENT line it emits is a triage obligation, not an FYI.
+   Codacy red is workable immediately instead of after the whole gate resolves — and a
+   `CONFLICT` line whenever the PR stops merging into its base, including when it is
+   already conflicting as the watch starts. Every REVIEW/COMMENT/CONFLICT line it emits
+   is a triage obligation, not an FYI; a conflict is worked under *Merge conflicts* below.
 
    It resolves `{owner}/{repo}` from the working directory, so run it from a
    worktree of the **upstream repository at a trusted revision** — never the PR's branch
@@ -284,6 +286,10 @@ for the same reason: anyone can write into these surfaces.
    Query `state` and `mergedAt`, never `mergeStateStatus`: a merged PR returns
    `UNKNOWN`, which reads as pending.
 
+   Before merging, confirm the PR still merges: `gh pr view <n> --json mergeable`
+   must say `MERGEABLE`. Green checks say nothing about it, because checks ran against
+   the base as it was. `CONFLICTING` goes to *Merge conflicts* below.
+
 5. **Stacked PRs**: GitHub refuses `gh pr merge` on a PR it considers stacked, and a
    PR merged into a feature branch closes nothing. Retarget the child to `main`
    BEFORE deleting its parent branch, then use the asynchronous endpoint:
@@ -310,6 +316,31 @@ for the same reason: anyone can write into these surfaces.
 
        gh api -X PUT -H "X-GitHub-Api-Version: 2026-03-10" \
          repos/<owner>/<repo>/pulls/<n>/merge-async -f merge_method=merge
+
+## Merge conflicts
+
+A PR that was clean when it opened goes `CONFLICTING` when its base moves under it, and
+its checks stay green while it does: they ran against the old base. `PR# 872 - tap`
+sat like that while another PR bumped the same boot-profile pin it was editing. The
+watcher's `CONFLICT` line, or `mergeable: CONFLICTING` before a merge, is the signal.
+
+Resolve it on the PR's branch, in the session's own worktree:
+
+1. `git fetch origin && git merge origin/main` (merge, not rebase: the PR's reviewed
+   commits and their AI-review coverage stay addressable).
+2. For each conflicted file, **keep the base's values and re-apply this PR's intent**
+   on top. The base carries work that already merged; the PR's side is only right for
+   the lines this PR set out to change. In a pinned boot profile that means the base's
+   `rev`/`commit` with this PR's change to the entry, never this PR's older pin.
+3. Re-run what is derived from the tree, because the merge brought in other people's
+   changes: `open-a-pr` step 3 (`guards --sync-*`, `scripts/implements-tag --check`),
+   then the lane (step 4).
+4. Commit the merge, push, and re-arm the watcher: a push is a new head, and the AI
+   review of it is new too.
+
+`scripts/promote-to-main.sh` does step 1 before a PR opens and resolves exactly one
+conflict for you (the generated traceability report, by regeneration); everything
+else it stops on and leaves to you, with the same rules.
 
 ## Known false positive: `except A, B:` is valid Python 3.14
 
