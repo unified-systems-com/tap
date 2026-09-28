@@ -11,6 +11,8 @@ provisions the role. A warning would scroll past in boot output, which is exactl
 how the value would reach production.
 """
 
+from typing import Any
+
 import pytest
 from django.conf import settings
 from django.test import override_settings
@@ -198,3 +200,71 @@ class TestEdgeDeclarationsResolve:
         errors = checks.check_edge_declarations_resolve(None)
         assert errors and all(e.id == "tap_grid.E004" and "'CONSTRAINED_LINK__grid_fixtures'" in e.msg for e in errors)
         assert any("grid_fixtures__constrained_source.OUTBOUND_EDGES" in e.msg for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# tap_grid.E005 — every registered grid model defaults to LiveManager
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.spec("req-grid-traversal-exec-read-scope-14")
+class TestGridModelsDefaultToLiveManager:
+    """A grid model that overrode its default manager would return tombstones with no error."""
+
+    def test_this_stack_is_clean(self) -> None:
+        """Positive control on the real registry: every registered model defaults to LiveManager."""
+        from tap_grid.checks import check_grid_models_default_to_live_manager, registered_grid_models
+
+        assert len(registered_grid_models()) > 1, "the check read no models at all"
+        assert check_grid_models_default_to_live_manager(None) == []
+
+    def test_the_check_is_registered(self) -> None:
+        """It runs as a Django system check on every management command, not only here."""
+        from django.core.checks import registry
+
+        from tap_grid.checks import check_grid_models_default_to_live_manager
+
+        assert any(c is check_grid_models_default_to_live_manager for c in registry.registry.get_checks())
+
+    def test_an_overridden_default_manager_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`Meta.default_manager_name = "all_objects"` — or any non-live default — is refused."""
+        from django.core.checks import Error
+
+        from tap_grid.checks import check_grid_models_default_to_live_manager
+        from tap_grid.registry import get_model_class
+
+        model: Any = get_model_class("grid_fixtures__node")
+        monkeypatch.setattr(model._meta, "default_manager", model.all_objects)
+        errors = check_grid_models_default_to_live_manager(None)
+        assert [e.id for e in errors] == ["tap_grid.E005"]
+        assert isinstance(errors[0], Error)
+        assert "default manager is AllObjectsManager" in errors[0].msg
+        assert "PgNode" in errors[0].msg
+
+    def test_an_overridden_objects_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`objects = models.Manager()` on a subclass is refused even if the default is untouched."""
+        from django.db import models
+
+        from tap_grid.checks import check_grid_models_default_to_live_manager
+        from tap_grid.registry import get_model_class
+
+        model = get_model_class("grid_fixtures__node")
+        monkeypatch.setattr(model, "objects", models.Manager())
+        errors = check_grid_models_default_to_live_manager(None)
+        assert [(e.id, "`objects` is Manager" in e.msg) for e in errors] == [("tap_grid.E005", True)]
+
+    def test_a_livemanager_subclass_is_not_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exact type, so a subclass cannot redefine what `live` means by overriding get_queryset."""
+        from tap_grid.checks import grid_models_not_defaulting_to_live
+        from tap_grid.models import LiveManager
+        from tap_grid.registry import get_model_class
+
+        class WiderManager(LiveManager):
+            def get_queryset(self) -> Any:
+                return super(LiveManager, self).get_queryset()  # skips the live filter
+
+        model: Any = get_model_class("grid_fixtures__node")
+        monkeypatch.setattr(model._meta, "default_manager", WiderManager())
+        assert grid_models_not_defaulting_to_live([model]) == [
+            f"{model.__module__}.{model.__qualname__}: default manager is WiderManager, not LiveManager"
+        ]
