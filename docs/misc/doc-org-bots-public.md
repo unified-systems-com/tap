@@ -6,15 +6,23 @@ read-only audit.
 
 ## Decision sought
 
-Flip `org-bots` from private to public, then give it a real second reviewer:
+Make org-bots public and give it a real second reviewer, in an order that never leaves it
+public without an approval requirement (revised after the first review pass):
 
-1. Make the repository public.
-2. Add `criticalsec` as an outside collaborator with write access (free on a public repo; on the
-   private repo this failed: the Team plan's two seats are full).
-3. Change `.github/CODEOWNERS` from `* @notgeorge` to `* @criticalsec`.
-4. Add a repository ruleset on `org-bots` main: 1 approving review, code-owner review, approval of
-   the most recent push, dismiss stale approvals on push. (The org-wide ruleset requires code-owner
-   review but 0 approvals.)
+1. **CODEOWNERS first:** `* @notgeorge` becomes `* @notgeorge @criticalsec`, merged under
+   today's rules. GitHub ignores `@criticalsec` until it has write access. Adding it now matters:
+   if CODEOWNERS named only notgeorge when step 2 lands, the PR fixing it could never merge. Its
+   author would be the sole code owner, and an author can't approve their own PR.
+2. **Ruleset second:** a repository ruleset on `main` with 1 approving review, code-owner review,
+   approval of the most recent push, and stale approvals dismissed on push. From here org-bots
+   merges are frozen until step 5, and that freeze is intended: nothing merges unreviewed.
+3. **Close the unused surfaces:** turn off the wiki (enabled, never used). Once public, turn on
+   secret scanning, push protection and private vulnerability reporting (free on public
+   repositories).
+4. **Flip to public.**
+5. **Add `criticalsec` as an outside collaborator with write access** (free on a public repo). The
+   maintainer accepts the invitation.
+6. **Prove it:** a test PR from notgeorge must be unmergeable until criticalsec approves it.
 
 ## Why
 
@@ -32,13 +40,21 @@ Flip `org-bots` from private to public, then give it a real second reviewer:
 
 ## What becomes visible, and what was checked
 
-| Surface | Check | Result |
+Every surface that becomes public was inventoried and scanned. gitleaks v8.28.0 was used
+throughout; a positive control (a planted `ghp_…` token in a scratch repo) is caught.
+
+| Surface | Inventory | Result |
 | --- | --- | --- |
-| Git history, all refs (10 branches, 9 PR heads, 1 PR merge ref) | `gitleaks git --log-opts=--all` over a `--mirror` clone | 11 non-merge commits scanned, **no leaks**. Positive control: a planted `ghp_…` token in a scratch repo is caught. |
-| Actions run logs (67 runs: 43 renovate, 4 release-please, the rest CodeQL/push/PR) | The one `LOG_LEVEL=debug` Renovate run (36331565961) downloaded and scanned | 10 masked `***` values, 0 token-shaped strings, the one `authorization` header masked, gitleaks **no leaks**. Info-level runs log less. |
-| Secrets | `FORK_BOT_TOKEN` and two App private keys are **environment** secrets in `bots` | Not readable from the repository; public visibility does not expose environment secrets. The `bots` environment deploys from `main` only. |
-| Workflows a stranger could trigger | Triggers on main | `renovate.yml` and `release-please.yml`: `workflow_dispatch` only (needs write). No `pull_request` / `pull_request_target` workflow. A fork PR can trigger only GitHub's CodeQL default setup (read-only). The org requires approval for every run from outside contributors (`all_external_contributors`). |
-| Issues / PR text | Titles, bodies, review comments | Engineering discussion; no credentials (bodies reference secrets by name only). |
+| Git history, all refs | `--mirror` clone: 10 branches, 9 PR heads, 1 PR merge ref, 11 non-merge commits | gitleaks over `--all`: **no leaks** |
+| Actions run logs | 67 runs. All 61 with logs were downloaded; the other 6 are Renovate runs cancelled before starting (no logs exist) | gitleaks over all 61: **no leaks**; 0 token-shaped strings; the debug run's `authorization` header is masked |
+| Artifacts | 2, both CodeQL SARIF (`sarif-artifact-actions`, `sarif-artifact-python`) | 0 results each; gitleaks **no leaks** |
+| Caches | 4 CodeQL overlay databases | Usable by workflows, not downloadable by the public |
+| Issues and PRs | 9 threads (#1-#9: bodies, comments, review comments, review bodies) | gitleaks **no leaks** |
+| Releases, tags, deploy keys | 0, 0, 0 | Nothing to expose |
+| Wiki | Enabled, no wiki repository exists | Turned off in step 3 |
+| Packages | Not checked: the auditing token lacks `read:packages` | org-bots has no workflow that publishes a package |
+| Secrets and variables | Repository: none. Environment `bots`: secrets `FORK_BOT_TOKEN`, `TAP_RELEASE_PLEASE_PRIVATE_KEY`, `TAP_RENOVATE_PRIVATE_KEY`; variables `FORK_BOT_ID`, `FORK_BOT_LOGIN` (public values) | Environment secrets are never readable from the repository; `bots` deploys from `main` only |
+| Workflows a stranger could trigger | On main: `renovate.yml`, `release-please.yml` (`workflow_dispatch` only, needs write) | No `pull_request`/`pull_request_target` workflow. A fork PR can trigger only GitHub's CodeQL default setup (read-only). The org requires approval for every run from outside contributors |
 
 ## What changes for an attacker, and why it's acceptable
 
@@ -56,9 +72,7 @@ Flip `org-bots` from private to public, then give it a real second reviewer:
 
 1. Is there anything in a public org-bots, its history, its run logs, or its issue/PR text,
    that an attacker could use and that the controls above don't cover?
-2. Should the old Actions run logs be deleted before the flip, even though the scan is clean?
-3. Is the sequencing safe: flip first (so the collaborator is free), then CODEOWNERS, then the
-   ruleset? During the window between flip and ruleset, org-bots is public with the old
-   self-review. Should the ruleset go first, with a temporary bypass?
-4. Anything to enable on the flip: secret scanning, push protection, private vulnerability
-   reporting?
+2. With every log scanned clean, is there still a reason to delete old Actions run logs before
+   the flip?
+3. Does the revised order (CODEOWNERS, then ruleset, then flip, then collaborator) leave any
+   window, or any way to lock org-bots that step 1 doesn't prevent?
