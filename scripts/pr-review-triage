@@ -32,7 +32,10 @@
 #       The STANDARD PR watcher (one line per event, made for a Monitor):
 #       emits a line for each detected new review or bot/actions comment
 #       (unified-ai-review, Codacy, Sonar, Copilot land here), every
-#       mergeStateStatus transition, and — the early-warning half — every
+#       mergeStateStatus transition, a CONFLICT line whenever the PR stops
+#       merging cleanly into its base (including when it is already conflicting
+#       as the watch starts, which a silent baseline would otherwise hide), and
+#       — the early-warning half — every
 #       INDIVIDUAL check that reaches a failing conclusion, the moment it
 #       does (CHECKFAIL lines), so a Sonar/Codacy/lane red is workable
 #       immediately instead of after the full gate resolves; exits when the
@@ -57,6 +60,22 @@ PR="${1:-}"
 [[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds]]" >&2; exit 2; }
 shift
 
+# One line for a change in GitHub's `mergeable` (MERGEABLE | CONFLICTING | UNKNOWN), or
+# nothing. A PR goes CONFLICTING after it opens, when its base moves under it: every
+# check can be green while the PR cannot merge, and nothing else in this script says so
+# (tap#872 sat conflicting behind green checks). UNKNOWN is GitHub still computing, and
+# is never reported as a change in either direction.
+#   merge_conflict_line <pr> <previous mergeable, "" at the first snapshot> <current>
+merge_conflict_line() {
+  local pr="$1" prev="$2" cur="$3"
+  if [[ "$cur" == "CONFLICTING" && "$prev" != "CONFLICTING" ]]; then
+    echo "CONFLICT PR #${pr}: the PR no longer merges into its base. Merge the base into the branch, resolve (keep the base's values and re-apply this PR's intent), re-run the derived-artifact sync and the lane, then push — close-out-pr, \"Merge conflicts\""
+  elif [[ "$prev" == "CONFLICTING" && "$cur" == "MERGEABLE" ]]; then
+    echo "CONFLICTRESOLVED PR #${pr}: merges cleanly again"
+  fi
+  return 0
+}
+
 WAIT=0
 if [[ "${1:-}" == "--wait" ]]; then
   WAIT="${2:-180}"
@@ -75,12 +94,12 @@ if [[ "${1:-}" == "--watch" ]]; then
   # comments — inline findings arrive attached to a REVIEW submission, which the
   # review signature catches; at very high comment volumes run the bare one-shot
   # (which paginates fully) rather than trusting the watcher alone.
-  seen_rev_sig=""; seen_bot_sig=""; seen_mstate=""; seen_fails=""
+  seen_rev_sig=""; seen_bot_sig=""; seen_mstate=""; seen_fails=""; seen_mergeable=""
   fetch_fail=0
   first=1
   while true; do
-    snap="$(gh pr view "$PR" --json state,mergeStateStatus,reviews,comments,statusCheckRollup \
-      --jq '{state: .state, mstate: .mergeStateStatus,
+    snap="$(gh pr view "$PR" --json state,mergeable,mergeStateStatus,reviews,comments,statusCheckRollup \
+      --jq '{state: .state, mergeable: .mergeable, mstate: .mergeStateStatus,
              rev_sig: ([.reviews[] | "\(.id):\(.submittedAt):\(.body | length):\((.body | explode | add) // 0)"] | sort | join("|")),
              nrev: (.reviews | length),
              bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.updatedAt // .createdAt)"] | sort | join("|")),
@@ -97,6 +116,7 @@ if [[ "${1:-}" == "--watch" ]]; then
     fetch_fail=0
     state="$(jq -r .state <<<"$snap")"
     mstate="$(jq -r .mstate <<<"$snap")"
+    mergeable="$(jq -r .mergeable <<<"$snap")"
     rev_sig="$(jq -r .rev_sig <<<"$snap")"
     nrev="$(jq -r .nrev <<<"$snap")"
     bot_sig="$(jq -r .bot_sig <<<"$snap")"
@@ -105,6 +125,9 @@ if [[ "${1:-}" == "--watch" ]]; then
       # Baseline silently: pre-existing artifacts were triaged when they landed.
       seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"; first=0
       echo "WATCHING PR #${PR}: state=${state} mergeState=${mstate} reviews=${nrev}${fails:+ preexistingFails=${fails}}"
+      # NOT baselined silently: a conflict that exists when the watch starts is work now.
+      merge_conflict_line "$PR" "" "$mergeable"
+      seen_mergeable="$mergeable"
     else
       if [[ "$rev_sig" != "$seen_rev_sig" ]]; then
         echo "REVIEW PR #${PR}: review set changed — run scripts/pr-review-triage ${PR} and triage"
@@ -124,6 +147,10 @@ if [[ "${1:-}" == "--watch" ]]; then
         while IFS= read -r f; do
           if [[ -n "$f" ]]; then echo "CHECKRECOVERED PR #${PR}: ${f}"; fi
         done < <(comm -23 <(tr '\037' '\n' <<<"$seen_fails" | sort) <(tr '\037' '\n' <<<"$fails" | sort))
+      fi
+      if [[ "$mergeable" != "UNKNOWN" ]]; then
+        merge_conflict_line "$PR" "$seen_mergeable" "$mergeable"
+        seen_mergeable="$mergeable"
       fi
       seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"
     fi
@@ -244,6 +271,14 @@ verdict_coverage() {
     printf '    The findings below describe an EARLIER commit. Do not report them as current; wait and re-run.\n'
   fi
 }
+
+echo "──── Mergeability ────"
+MERGEABLE_NOW="$(gh pr view "$PR" --json mergeable --jq .mergeable 2>/dev/null)" || MERGEABLE_NOW="UNKNOWN"
+if [[ "$MERGEABLE_NOW" == "CONFLICTING" ]]; then
+  merge_conflict_line "$PR" "" "$MERGEABLE_NOW"
+else
+  echo "mergeable=${MERGEABLE_NOW:-UNKNOWN}"
+fi
 
 echo "──── Bot issue comments (the unified AI review lands here — READ THE VERDICTS) ────"
 verdict_coverage

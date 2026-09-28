@@ -59,3 +59,41 @@ def test_a_three_second_gap_still_decides_rather_than_shrugging() -> None:
     """The ambiguous case that cost a round: seconds apart, and it must still rule."""
     assert "STALE" in _coverage("2026-09-21T18:58:15Z", "2026-09-21T18:58:18Z")
     assert "covers" in _coverage("2026-09-21T18:58:21Z", "2026-09-21T18:58:18Z")
+
+
+_CONFLICT_FUNCTION = re.compile(r"^merge_conflict_line\(\) \{.*?^\}$", re.DOTALL | re.MULTILINE)
+
+
+def _conflict(prev: str, cur: str) -> str:
+    """Run the script's `merge_conflict_line` with explicit values, the same way as above."""
+    match = _CONFLICT_FUNCTION.search(SCRIPT.read_text(encoding="utf-8"))
+    assert match, "merge_conflict_line() not found in scripts/pr-review-triage"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fn = Path(tmp) / "merge_conflict_line.sh"
+        fn.write_text(match.group(0) + "\n", encoding="utf-8")
+        return subprocess.run(
+            ["bash", "-c", 'source "$1"; merge_conflict_line 872 "$2" "$3"', "_", str(fn), prev, cur],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+
+def test_a_pr_that_starts_conflicting_is_reported_not_baselined() -> None:
+    """The watcher baselines everything else silently; a conflict present at the first
+    snapshot must still print, or a PR opened behind a moved base looks healthy."""
+    out = _conflict("", "CONFLICTING")
+    assert out.startswith("CONFLICT PR #872:"), out
+    assert "Merge the base into the branch" in out
+
+
+def test_a_pr_that_becomes_conflicting_is_reported_once() -> None:
+    assert _conflict("MERGEABLE", "CONFLICTING").startswith("CONFLICT PR #872:")
+    assert _conflict("CONFLICTING", "CONFLICTING") == ""
+
+
+def test_resolution_is_reported_and_a_clean_pr_prints_nothing() -> None:
+    assert _conflict("CONFLICTING", "MERGEABLE").startswith("CONFLICTRESOLVED PR #872:")
+    assert _conflict("", "MERGEABLE") == ""
+    assert _conflict("MERGEABLE", "MERGEABLE") == ""
