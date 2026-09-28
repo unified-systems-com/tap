@@ -342,6 +342,22 @@ Resolve it on the PR's branch, in the session's own worktree:
 conflict for you (the generated traceability report, by regeneration); everything
 else it stops on and leaves to you, with the same rules.
 
+## Re-running a plugin CI check after a core fix
+
+A `--failed` re-run of a plugin repository's CI cannot pick up a tap change merged since the
+run started. The reusable `plugin-ci.yml` resolves the core harness to a SHA **once**, in
+the `conformance` job, and hands it to `boot-and-test` as a job output. A failed-jobs re-run
+repeats only the failed jobs and reuses the outputs of the ones that passed, so
+`boot-and-test` checks out the **old** core again and fails the same way.
+
+2026-09-28, `PR# 40 - gryphon-playground-tap`: tap#812 merged to fix 53 gridkin failures,
+and a `gh run rerun --failed` came back with the same 53. Its log checked out the tap SHA
+from before #812. A full re-run went green.
+
+After a core fix, use a full re-run (`gh run rerun <id>`, no `--failed`) or push to the
+branch. Either one re-resolves the harness. Keep `--failed` for flakes, where the same core
+is exactly what you want.
+
 ## Known false positive: `except A, B:` is valid Python 3.14
 
 Reviewer models trained before Python 3.14 report unparenthesised
