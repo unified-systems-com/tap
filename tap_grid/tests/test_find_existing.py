@@ -96,6 +96,28 @@ class TestFindExisting:
         with django_assert_num_queries(1):
             assert Panel.find_existing(slug="") is None
 
+    def test_empty_string_constituting_value_finds_its_own_row(self) -> None:
+        """The essential outcome, not just the query count (Codex on PR# 867 - tap): a row whose
+        constituting value genuinely IS `""` must resolve to ITSELF, not read as a second miss.
+
+        `Panel`'s own CRUD schema requires a non-empty slug (a real Panel never has one), so this
+        goes around `create_node` and constructs the row directly — the only way to get a live
+        `""`-keyed row of a declared type onto the grid to prove the search finds it.
+        """
+        from tap_grid.models import Entity
+        from tap_grid.write_guard import unguarded_write
+        from tap_web.models import Panel
+
+        with unguarded_write():
+            entity = Entity.objects.create(entity_type="panel", name="blank-slug")
+            made = Panel.objects.create(
+                entity=entity, slug="", name="Blank Slug", view="tap_web/panels/identity.html"
+            )
+
+        found = Panel.find_existing(slug="")
+        assert found is not None
+        assert found.entity_id == made.entity_id
+
     def test_exactly_the_declared_properties(self) -> None:
         from tap_web.models import Panel
 
