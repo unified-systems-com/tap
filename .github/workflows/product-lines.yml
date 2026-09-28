@@ -236,6 +236,30 @@ jobs:
   # few `git ls-remote` calls, so it is seconds. Exit 2 (forge not observable) fails too: an
   # author-time check that could not look has not passed. Public repos only; the job has no
   # plugin credential, so a private source would report not-observable rather than a verdict.
+  # PR title names its initiating session (req-dev-multisession-push-workflow,
+  # spec-dev-multisession.md "Session attribution in PR titles"). Was prose discipline only
+  # until tap#870: a session opened tap PR#867 with a hand-rolled `gh pr create --title` and
+  # skipped the `[via <session>]` suffix, caught by eye rather than by any gate. The bot
+  # exemption is the SAME allowlisted identity dco/issue-link use, not a string match.
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Check PR title names its session
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: >-
+          scripts/check-pr-title --title "$PR_TITLE" --pr-author-id "$PR_AUTHOR_ID"
+          --pr-author-type "$PR_AUTHOR_TYPE" --pr-author "$PR_AUTHOR"
+
   pins:
     runs-on: ubuntu-latest
     steps:
@@ -330,7 +354,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz]
+    needs: [setup, secret-scan, dco, rids, pins, pr-title, line, cold-boot, lean-boot, api-fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -349,12 +373,13 @@ jobs:
           R_DCO: ${{ needs.dco.result }}
           R_RIDS: ${{ needs.rids.result }}
           R_PINS: ${{ needs.pins.result }}
+          R_PRTITLE: ${{ needs.pr-title.result }}
           R_LINE: ${{ needs.line.result }}
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -369,6 +394,9 @@ jobs:
           [ "$R_RIDS" = "success" ] || die "rids finished '$R_RIDS' (always required)"
           # pins is never tier-gated: a boot/ pin bump is the change it exists to check (tap#512).
           [ "$R_PINS" = "success" ] || die "pins finished '$R_PINS' (always required)"
+          # pr-title is never tier-gated: a title is a property of the PR, not the diff, and
+          # the check is seconds (tap#870).
+          [ "$R_PRTITLE" = "success" ] || die "pr-title finished '$R_PRTITLE' (always required)"
           case "$R_LINE" in
             success) : ;;
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;
