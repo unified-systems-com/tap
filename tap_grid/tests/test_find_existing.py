@@ -93,6 +93,12 @@ class TestFindExisting:
         no live Panel actually has an empty slug."""
         from tap_web.models import Panel
 
+        # Warm the ORM read backstop's permission check (tap_grid.read_guard) outside the
+        # assertion: it queries once per process on the first managed read and is otherwise
+        # indistinguishable from the search this test exists to prove happens (CI caught this
+        # — the two queries are real and both correct, just not both the point of this test).
+        Panel.find_existing(slug="nonexistent-warmup-for-query-count")
+
         with django_assert_num_queries(1):
             assert Panel.find_existing(slug="") is None
 
