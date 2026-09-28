@@ -831,9 +831,16 @@ not sufficient, and neither leg below is a completeness proof — both are named
 actually are, not oversold.
 1. `validate_plugin` schema validation — well-formed, not necessarily accurate.
 2. A **declared-vs-observed drift check**, the same pattern as `req-github-core-app-permissions-drift`
-   one level down: run the plugin's own test/collector suite under Landlock + seccomp in *logging*
-   mode (not enforcing), record what it actually touches, fail CI if observed access exceeds
-   declared access. **This is a coverage-limited regression signal, not a completeness guarantee** —
+   one level down: run the plugin's own test/collector suite under an explicit access-tracing
+   mechanism, record what it actually touches, fail CI if observed access exceeds declared access.
+   **Named precisely, because it's easy to overclaim here**: Landlock and seccomp, as used elsewhere
+   in this section, are enforcement primitives, not general-purpose non-blocking tracers — Landlock
+   has no "observe only" mode, and seccomp's own logging surfaces raw syscall arguments (a bare
+   pointer or file descriptor), not an already-resolved file path or hostname. Turning "a syscall
+   was made" into "this path" / "this destination" for the drift check needs a real tracer —
+   `ptrace`, `fanotify`, or an eBPF program — that resolves those arguments; this AC does not itself
+   specify which, and that choice is open implementation work, not settled by this backlog entry.
+   **This is a coverage-limited regression signal, not a completeness guarantee** —
    it only observes code paths the test suite actually exercises; conditional, environment-specific,
    or deliberately untested access stays invisible to it, the same blind spot any test-suite-driven
    check has. Reading public CI config and logs establishes that the check ran and passed against
@@ -874,7 +881,7 @@ is needed the way the existing bypass-detection functions require one), always `
 | req-tap-plugin-manifest-capability-declaration-2 | Network Destinations Declared | Backlog | A plugin manifest declares network destinations by IP or DNS hostname; URL-path granularity is explicitly a later tier, not v0. | |
 | req-tap-plugin-manifest-capability-declaration-3 | Fail Closed On Omission | Backlog | A binary invocation or network call not covered by the declaration is refused by our own internal enforcement, never silently permitted. | Mirrors `CONTAINMENT_EDGES`'s undeclared-is-not-followed default. |
 | req-tap-plugin-manifest-capability-declaration-4 | Schema Validated | Backlog | `validate_plugin` refuses a malformed capability declaration the same way it refuses other malformed manifest sections. | |
-| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under logging-mode Landlock + seccomp and fails if observed access exceeds the declaration. A coverage-limited regression signal, not a completeness proof — it cannot see access outside what the suite exercises. | Mirrors `req-github-core-app-permissions-drift`. AI-review finding (tap#860, Codex seat): the original wording overclaimed this as independent verification; narrowed here and in the prose above. |
+| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under a real access tracer (`ptrace`/`fanotify`/eBPF — not "Landlock + seccomp in logging mode," which cannot itself resolve syscall arguments into paths/hostnames) and fails if observed access exceeds the declaration. A coverage-limited regression signal, not a completeness proof — it cannot see access outside what the suite exercises. | Mirrors `req-github-core-app-permissions-drift`. Two AI-review findings on tap#860 (Codex seat), both fixed here: (1) the original wording overclaimed this as independent verification, narrowed above; (2) "Landlock + seccomp in logging mode" named a mechanism that doesn't do what was claimed — corrected to name the real, still-open tracer choice. |
 | req-tap-plugin-manifest-capability-declaration-6 | Enforcement Is Plural, None Load-Bearing | Backlog | Our own internal enforcement and any reference external-proxy generator are both documented as optional consumers of the declaration; neither is presented as the security boundary itself. | |
 | req-tap-plugin-manifest-capability-declaration-7 | Manifest Independently Fetchable | Backlog | The capability declaration lives at a fixed, versioned location consumable by generic tooling, without executing or trusting any TAP code. | |
 | req-tap-plugin-manifest-capability-declaration-8 | Breakout Attempts Raise A Flaw | Backlog | A denied syscall (network or filesystem) kills the sandboxed subprocess with `SIGSYS` via `SCMP_ACT_KILL_PROCESS`; the parent detects the negative return code and reports `tap.flaws.report_sandbox_violation` (`AppFlaw`, `security`-tagged, `abort_operation`) — not merely blocked, but alerted on. | Verified 2026-09-27: kernel audit-log detection (`SCMP_ACT_LOG`) does not work in this deployment's unprivileged posture (no `auditd`, no permission to route audit records); `SCMP_ACT_KILL_PROCESS` + observing the child's return code does, tested end to end (`returncode == -31`, `SIGSYS`). |
