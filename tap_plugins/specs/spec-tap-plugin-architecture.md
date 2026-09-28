@@ -722,7 +722,7 @@ privilege) keeps the store honest and lets per-source selection pick between org
   "scope": "tap_plugins.source",
   "key": "github-plugins-ro",
   "kind": "github_pat",
-  "description": "Fine-grained read-only PAT (Contents: Read-only) for the unified-systems-com/tap-plugin-* repos.",
+  "description": "Fine-grained read-only PAT (Contents: Read-only) for the unified-systems-com/*-tap repos.",
   "data": { "token": "github_pat_XXXXXXXX" }
 }
 ```
@@ -730,7 +730,7 @@ privilege) keeps the store honest and lets per-source selection pick between org
 ```jsonc
 // the matching profile install entry (host/username default to github.com / x-access-token)
 { "slug": "fedramp_20x_ksi", "enabled": true,
-  "source": { "type": "git", "url": "https://github.com/unified-systems-com/tap-plugin-fedramp-20x-ksi.git",
+  "source": { "type": "git", "url": "https://github.com/unified-systems-com/fedramp-20x-ksi-tap.git",
               "rev": "v0.1.0", "credential": "github-plugins-ro" } }
 ```
 

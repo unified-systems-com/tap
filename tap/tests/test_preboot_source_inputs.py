@@ -78,7 +78,7 @@ class TestGitUrl:
     @pytest.mark.parametrize(
         "url",
         [
-            pytest.param("https://github.com/unified-systems-com/tap-plugin-aws-core", id="github"),
+            pytest.param("https://github.com/unified-systems-com/aws-core-tap", id="github"),
             pytest.param("https://codeberg.org/someone/tap-plugin-x.git", id="another-forge"),
             pytest.param("https://git.internal.example:8443/group/sub/tap-plugin-x", id="self-hosted-port"),
             pytest.param("ssh://git@gitlab.example.com/group/tap-plugin-x.git", id="ssh-with-user"),

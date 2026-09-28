@@ -98,7 +98,7 @@ class GitRef:
 def parse_pointer(raw: str) -> Pointer:
     """Parse ``<source-ref>#<record>[@<algo>:<hex>]`` (``req-boot-bootstrap-pointer-grammar``).
 
-    TAP-IMPLEMENTS: req-boot-bootstrap-pointer-grammar@a2e4b8a00478/769596b50231 (derivation) — the one
+    TAP-IMPLEMENTS: req-boot-bootstrap-pointer-grammar@e8530556922a/769596b50231 (derivation) — the one
         parser of the pointer grammar; stage-0 and every later reader route through it
         rather than re-splitting the string."""
     raw = raw.strip()

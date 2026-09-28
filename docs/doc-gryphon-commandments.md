@@ -4,8 +4,8 @@ covers:
   - ../tap_grid/specs/spec-grid-traversal-language.md
   - ../tap_grid/specs/spec-grid-traversal-execution.md
   - ../tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md
-  - https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gridkin-v0.md
-  - https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gryphon-playground-v0.md
+  - https://github.com/unified-systems-com/gryphon-playground-tap/blob/main/specs/spec-gridkin-v0.md
+  - https://github.com/unified-systems-com/gryphon-playground-tap/blob/main/specs/spec-gryphon-playground-v0.md
 update-triggers:
   - A commandment is added, retired, or materially reworded (bump its ID's Reason/Enforcement)
   - A "forthcoming" commandment's trigger capability ships (promote it to an active commandment and record the promotion)

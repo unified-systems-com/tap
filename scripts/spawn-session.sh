@@ -286,7 +286,7 @@ workspace base). Mutually exclusive with --boot / the positional boot-profile
 \`--from <pointer> [--credential <ref>]\` boots from a BOOTSTRAP POINTER
 (spec-tap-boot-bootstrap.md): \`<source-ref>#<record>\` names a versioned plugin
 artifact + a boot record shipped inside it, e.g.
-\`git+https://github.com/unified-systems-com/tap-plugin-gryphon-playground@v0.1.0#soak\`.
+\`git+https://github.com/unified-systems-com/gryphon-playground-tap@v0.1.0#soak\`.
 Stage-0 fetches ONLY that record out of the git artifact (a blobless clone, no
 install), verifies it against the artifact's declared sha256, writes it into
 this worktree's boot/, and boots it — the record's own \`install\` section then
@@ -312,16 +312,16 @@ Examples:
   $0 fix-arrangements             # named, plain boot
   $0 fix-arrangements cli         # named + attach Claude, plain boot
   $0 samsite-demo cli --from \\
-     git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite
+     git+https://github.com/unified-systems-com/samsite-tap@v0.2.0#samsite
                                   # the samsite demo: its record ships IN the plugin
                                   # (req-boot-bootstrap-samsite-rehome) and boots by pointer
   $0 gryphon-soak cli --from \\
-     git+https://github.com/unified-systems-com/tap-plugin-gryphon-playground@v0.1.0#soak
+     git+https://github.com/unified-systems-com/gryphon-playground-tap@v0.1.0#soak
                                   # single-command boot from a git bootstrap pointer
   $0 wsdev cli soak --dev-plugins compliance_core
                                   # workspace: compliance_core editable over a repo-local profile
   $0 sam-dev cli --from \\
-     git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite \\
+     git+https://github.com/unified-systems-com/samsite-tap@v0.2.0#samsite \\
      --dev-plugins samsite
                                   # workspace over a POINTER: the samsite record is stage-0
                                   # fetched from the plugin repo, then the samsite plugin is

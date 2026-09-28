@@ -50,7 +50,7 @@ The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best
 - **[`tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md`](../../specs/spec-grid-gryphon-multihop-aggregation.md)** —
   the extension clauses (multi-hop, NOT EXISTS, COUNT, ORDER BY, LIMIT, OPTIONAL
   MATCH). Home for new extension-clause requirements.
-- **[`specs/spec-gridkin-v0.md` in `tap-plugin-gryphon-playground`](https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gridkin-v0.md)** —
+- **[`specs/spec-gridkin-v0.md` in `tap-plugin-gryphon-playground`](https://github.com/unified-systems-com/gryphon-playground-tap/blob/main/specs/spec-gridkin-v0.md)** —
   the Gridkin scenario format, runner contract, and oracle discipline. **Read the
   LOCAL copy** — `_dev-plugins/gryphon_playground/specs/spec-gridkin-v0.md` in the
   editable checkout (`spawn --dev-plugins gryphon_playground`): that is the reviewed

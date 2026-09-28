@@ -71,7 +71,7 @@ work is already in the clone.
    no credentials needed, the right first boot). `core` is the zero-plugin baseline;
    The samsite demo is not a repo-local profile: its record ships inside
    `tap-plugin-samsite` and boots via the pointer form instead of a positional —
-   `spawn-session.sh demo cli --from git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite`.
+   `spawn-session.sh demo cli --from git+https://github.com/unified-systems-com/samsite-tap@v0.2.0#samsite`.
    It needs AWS/GitHub credentials plus per-deployment config — drive
    `/provision-secrets` first (it enumerates the record's declared
    `required_secrets` and walks the minting/placement), and see the samsite plugin
