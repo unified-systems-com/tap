@@ -310,13 +310,16 @@ nothing, and the credential's safety rests on what that capability can reach bei
 on the capability not existing.
 
 **Worked check, done directly rather than assumed** (feeds `req-cicd-fleet-bot-release-phase1-4`):
-what a forged, auto-approved run can reach is bounded by three separate facts, each verified
-against this fleet rather than assumed generically — the resulting workflow run holds no secrets
-(GitHub does not forward repository/organization secrets to a `pull_request`-triggered run
-originating from a fork, and no workflow in this fleet uses `pull_request_target`, the pattern
-that would defeat that protection) and a read-only `GITHUB_TOKEN` (the organization's own
-default). The worst case is unattributed, sandboxed compute — not write access, not secret
-exposure, not a path to merging anything. **All three facts are load-bearing simultaneously**: if
+what a forged, auto-approved run can reach *directly, inside its own job*, is bounded by three
+separate facts, each verified against this fleet rather than assumed generically — the resulting
+workflow run holds no secrets (GitHub does not forward repository/organization secrets to a
+`pull_request`-triggered run originating from a fork, and no workflow in this fleet uses
+`pull_request_target`, the pattern that would defeat that protection) and a read-only
+`GITHUB_TOKEN` (the organization's own default). The worst case *inside that job* is unattributed,
+sandboxed compute — not write access, not secret exposure, not a path to merging anything. **That
+claim is scoped to the fork-triggered job itself, and does not by itself cover a *second* workflow
+that later consumes something the first one produced** — see the `workflow_run` check below,
+which closes that separate path. **All three facts are load-bearing simultaneously**: if
 any one stops holding — a workflow starts using `pull_request_target`, the org default flips to
 write, or a secret gets passed into a fork-triggered job — the credential's safety argument no
 longer holds, which is exactly why `-2` below is an enforced guard and not a documented
@@ -329,6 +332,31 @@ guard, and each guard needs to check more than its narrowest reading — see `-2
 below, and the fourth invariant this section was missing entirely (`-6`): that "no role anywhere"
 is itself audited, not assumed to hold just because nobody granted a role on purpose.
 
+**A fifth path exists that none of the above cover, because it is not about what a fork-triggered
+job can reach directly — it is about a *second*, separately-triggered workflow consuming
+something the first one produced.** `workflow_run` fires a new workflow, in the *base* repository's
+context (which can carry real secrets and write permissions), after an earlier workflow completes
+— and that earlier workflow can be the fork-triggered one this whole section is about. If the
+`workflow_run` consumer downloads an artifact the fork job produced and then *executes* it (runs
+it, installs it as a package, restores it into a cache later builds trust) rather than only
+*reading* it as inert data, a forged/auto-approved fork PR reaches privileged execution
+transitively — exactly the class of bypass the rest of this section works to rule out directly.
+
+**Checked directly against this fleet rather than assumed: exactly one workflow uses
+`workflow_run` today** — `.github/workflows/ai-review.yml`, calling
+`unified-systems-com/unified-ai-review/.github/workflows/review.yml`, pinned by commit SHA. It
+downloads the fork job's artifact and handles it only as **data** — parsed as JSON by inline
+script, never executed, never installed, never sourced into a shell command. The only
+`actions/checkout` in that workflow checks out the trusted prompts repository, never the
+triggering PR's own head. The job holding API-key secrets runs `contents: read`; the separate job
+that writes the review comment holds `pull-requests: write` and `issues: write`, nothing more.
+So: PR-controlled text does reach a secrets-bearing job as **input to a model** — that is
+prompt injection, the surface this whole reviewing system is already built to expect and treat as
+untrusted data — but it is never *executed*, so it does not cross into the write-access or
+secret-exfiltration territory the rest of this section rules out. That distinction — data versus
+execution — is the actual invariant, and it needs to be checked, not assumed to hold for whatever
+`workflow_run` consumer exists next.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -339,6 +367,7 @@ is itself audited, not assumed to hold just because nobody granted a role on pur
 | req-cicd-fleet-bot-shared-credential-bound-4 | Effective Token Permission Is Fleet-Guarded, Not Just The Org Default | Proposed | A guard fails closed if the *effective* permission a fork-triggered job runs with is ever write — covering the organization default, any explicit job- or workflow-level `permissions:` block that widens it, and GitHub's separate "workflows can approve pull requests" / write-back setting for fork PRs — not the org default alone. | The second of the three load-bearing facts; a job-level override or the fork write-token setting can grant write even when the org default stays read-only |
 | req-cicd-fleet-bot-shared-credential-bound-5 | No Credential Path Into Fork-Triggered Jobs Is Fleet-Guarded | Proposed | A guard fails closed if any fleet workflow's `pull_request`-triggered job gains a credential through *any* path — a direct `secrets.*` reference, a reusable-workflow call that inherits or is passed secrets, `id-token: write` (OIDC-minted cloud credentials, which exist outside GitHub's own secret-withholding guarantee), or a self-hosted runner (which does not carry GitHub-hosted runners' isolation guarantees at all). `pull_request_target` and direct `secrets.*` references are the sharpest versions of this failure, not the only ones. | The third of the three load-bearing facts |
 | req-cicd-fleet-bot-shared-credential-bound-6 | The Fork Bot's Own Standing Is Audited, Not Assumed | Proposed | A periodic check queries the GitHub API for the fork bot account's (id 334543231) actual organization membership, base permission level, collaborator grants, and team memberships across the fleet, and fails loudly if any of them is ever non-empty. "No role anywhere" is a claim about the account's current standing, and standing can drift (a mistaken invite, a team add) independently of anything this spec's other guards would catch — `approve_bot_runs.py` does not check this today, and neither did any earlier draft of this section. | The fourth invariant, distinct from `-2`/`-4`/`-5`: those bound what a *forged run* can reach; this bounds what the *account itself* can reach if its standing ever silently changes |
+| req-cicd-fleet-bot-shared-credential-bound-7 | `workflow_run` Consumers Are Allowlisted And Data-Only, Enforced | Proposed | A guard fails closed on any fleet workflow triggered by `workflow_run` unless it is on an explicit allowlist of reusable workflows pinned by commit SHA — today, `unified-ai-review`'s `review.yml` only. Every allowlisted consumer must never check out the triggering run's PR head ref or sha, never execute, install, or shell-source content the fork-triggered run produced (no `run:` sourcing it, no package install from it, no cache restore keyed on it), and keep every secrets-bearing job in it read-only. Feeding PR-controlled content to a model as input (prompt injection) is accepted and named explicitly; feeding it to an interpreter or installer is not. | The fifth path: not what a fork-triggered job reaches directly, but what a *second*, base-context workflow does with what the first one produced |
 
 ## Non-Goals
 
