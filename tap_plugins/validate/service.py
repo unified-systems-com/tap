@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/13d7f49a0cd5 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/dca9076edc32 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1180,9 +1180,29 @@ def _check_ci_record_content(
         # security Flaw, but it handles it `observe_continue` — it reports after the fact, which is
         # the weakest of derive/verify/detect. This refuses it at AUTHORING time, where the author
         # is present and the fix is one command.
-        if source.get("type") == "git" and not is_commit_sha(source.get("commit")):
+        #
+        # The self entry is exempt from PRESENCE, never from shape (Q62, tap#199): a record
+        # shipped in the tag v<X> names v<X> for itself, and cannot also carry the commit that tag
+        # will point at, because that commit is the one containing the record. Every consumer
+        # of a `ci` record flips self to the checkout under test (-4), so the pin is not what
+        # CI installs. A self `commit` that IS present must still be 40-hex.
+        is_self = entry_slug == slug
+        if source.get("type") == "git" and is_self and "commit" not in source:
+            check.info(
+                f"{record_path.name}: self entry {entry_slug!r} pins `rev` {str(source.get('rev'))!r} without "
+                f"`commit` — exempt: a record cannot carry the commit of the tag it ships in "
+                f"(req-boot-bootstrap-install-commit-pin); consumers flip self to the checkout under test"
+            )
+        elif source.get("type") == "git" and not is_commit_sha(source.get("commit")):
             has = source.get("commit")
-            detail = "no `commit`" if has is None else f"`commit` is not a 40-hex sha: {has!r}"
+            detail = "no `commit`" if "commit" not in source else f"`commit` is not a 40-hex sha: {has!r}"
+            if is_self:
+                check.fail(
+                    f"{record_path.name}: self entry {entry_slug!r} has {detail} — self is exempt from carrying a "
+                    f"commit, not from carrying a well-formed one: delete the key, then scripts/boot-record-hash "
+                    f"--refresh (req-boot-bootstrap-install-commit-pin)"
+                )
+                continue
             # entry_slug and rev are record-controlled. Every display of them is repr() (control
             # characters escaped, so a newline cannot start a counterfeit line), and the command
             # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is.
