@@ -457,7 +457,9 @@ def assert_query_scoped(query: Any, using: str, scope: ReadScope) -> None:
     require_scope(scope)
     compiled = query.chain()
     try:
-        compiled.get_compiler(using=using).as_sql()
+        # Compiled only so Django adds its compile-time joins for the walk below;
+        # the SQL string is discarded, never executed, and holds no caller text.
+        compiled.get_compiler(using=using).as_sql()  # nosemgrep
     except EmptyResultSet:
         return
     pending = [compiled]
