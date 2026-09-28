@@ -3,8 +3,8 @@
 ``find_existing`` is generated from a type's ``NATURAL_KEY`` declaration: a composite
 filter on the typed table over exactly the declared fields, live rows only, no
 dimension participating; nothing on zero, the row on one, and a raise on more — never a
-silent selection. Nothing on the write path calls it yet; that is the gate in front of
-identity phase 3, and a scan here keeps it that way until the gate is built on purpose.
+silent selection. Called by ``tap_grid.services.resolve_identity`` inside the importer's
+per-batch transaction (Issue# 594 - tap) — the scan below keeps that the only caller.
 
 ``panel`` is the fixture: keyed on ``slug``, and its slug is deliberately not unique
 (``tap_web/models.py``), so two live rows sharing declared values are legal at the
@@ -80,12 +80,49 @@ class TestFindExisting:
         assert found is not None
         assert found.entity_id == made.entity_id
 
-    def test_absent_constituting_value_is_none_without_a_query(self, django_assert_num_queries: Any) -> None:
+    def test_none_constituting_value_is_absent_without_a_query(self, django_assert_num_queries: Any) -> None:
         from tap_web.models import Panel
 
         with django_assert_num_queries(0):
             assert Panel.find_existing(slug=None) is None
+
+    def test_empty_string_constituting_value_is_searched_not_absent(self, django_assert_num_queries: Any) -> None:
+        """"" is the grid's observed-empty marker, not its unobserved one (Issue# 866 - tap):
+        a natural key can legitimately contain one (github_core's org-scoped `actions_secret`
+        has no `full_name` by design), so it must be searched like any other value even though
+        no live Panel actually has an empty slug."""
+        from tap_web.models import Panel
+
+        # Warm the ORM read backstop's permission check (tap_grid.read_guard) outside the
+        # assertion: it queries once per process on the first managed read and is otherwise
+        # indistinguishable from the search this test exists to prove happens (CI caught this
+        # — the two queries are real and both correct, just not both the point of this test).
+        Panel.find_existing(slug="nonexistent-warmup-for-query-count")
+
+        with django_assert_num_queries(1):
             assert Panel.find_existing(slug="") is None
+
+    def test_empty_string_constituting_value_finds_its_own_row(self) -> None:
+        """The essential outcome, not just the query count (Codex on PR# 867 - tap): a row whose
+        constituting value genuinely IS `""` must resolve to ITSELF, not read as a second miss.
+
+        `Panel`'s own CRUD schema requires a non-empty slug (a real Panel never has one), so this
+        goes around `create_node` and constructs the row directly — the only way to get a live
+        `""`-keyed row of a declared type onto the grid to prove the search finds it.
+        """
+        from tap_grid.models import Entity
+        from tap_grid.write_guard import unguarded_write
+        from tap_web.models import Panel
+
+        with unguarded_write():
+            entity = Entity.objects.create(entity_type="panel", name="blank-slug")
+            made = Panel.objects.create(
+                entity=entity, slug="", name="Blank Slug", view="tap_web/panels/identity.html"
+            )
+
+        found = Panel.find_existing(slug="")
+        assert found is not None
+        assert found.entity_id == made.entity_id
 
     def test_exactly_the_declared_properties(self) -> None:
         from tap_web.models import Panel

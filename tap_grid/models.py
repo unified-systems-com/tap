@@ -777,14 +777,20 @@ class BaseModel(models.Model):
         filter would fail to find a row's own previous write.
 
         Returns the row on exactly one match and ``None`` on zero. An absent
-        constituting value (``None`` or ``""``) is ``None`` without a query: a source
-        that offered no stable id genuinely cannot be found again, and the honest
-        answer is "not found", not a match on a hole. More than one live match raises
+        constituting value — ``None``, the grid's own unobserved marker — is ``None``
+        without a query: a source that offered no stable id genuinely cannot be found
+        again, and the honest answer is "not found", not a match on a hole. ``""`` is
+        NOT treated as absent: it is the grid's observed-empty marker
+        (``grid-null-unobserved`` convention), and a natural key can legitimately
+        contain one — an organisation-scoped `actions_secret` has no `full_name` by
+        design, not because it went unobserved. Conflating the two here meant every
+        such row failed to resolve against its own prior write and gained a fresh
+        duplicate on every import (Issue# 866 - tap). More than one live match raises
         :class:`~tap_grid.natural_key.AmbiguousIdentity` — the search never selects.
 
-        Called by nothing on the write path today; that is the gate in front of
-        identity phase 3 (``req-grid-entity-natural-key-9``). Built now because it is
-        cheap and its correctness is testable in isolation.
+        Called by :func:`tap_grid.services.resolve_identity` inside the importer's
+        per-batch transaction (Issue# 594 - tap); this is the gate identity phase 3
+        actually reads (``req-grid-entity-natural-key-9``).
         """
         declared = getattr(cls, "NATURAL_KEY", None)
         if declared is None:
@@ -804,7 +810,7 @@ class BaseModel(models.Model):
                 f"properties {tuple(declared)}: missing={sorted(expected - given)}, "
                 f"unexpected={sorted(given - expected)}"
             )
-        if any(properties[name] is None or properties[name] == "" for name in declared):
+        if any(properties[name] is None for name in declared):
             return None
         # One query, capped: the message names candidates, it does not enumerate a grid.
         rows: list[BaseModel] = list(cls.objects.live().filter(**properties)[:11])
