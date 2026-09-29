@@ -35,7 +35,7 @@ unfiled defect in FLIP itself, which in turn reopened why GRIFT only ever replac
 patches. This doc captures the whole chain, in the order it was actually reasoned through, so
 nothing has to be re-derived.
 
-# Part 1 — Q129, ruled
+# Part 1 — Q129, relayed (see Handoff at the end — not treated as ruled)
 
 **The question, as demo-dev framed it (draft-r56):** how should "observed, unchanged" be recorded?
 Three options — (a) a `BatchEventType.OBSERVE` value, drop the 09-02 ruling's spine stamp and
