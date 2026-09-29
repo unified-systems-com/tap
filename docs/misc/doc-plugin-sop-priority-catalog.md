@@ -38,7 +38,7 @@ P0 = establish the minimum trustworthy baseline first. P1 = complete artifact an
 | SOP-17 / P1 | Standardize releases and vulnerability handling by artifact class. | All publishing repositories. | [release conventions](../../specs/spec-cicd-hardening.md#release-artifact-conventions), [release-plugin](../../scripts/release-plugin.sh), [SECURITY](../../SECURITY.md). Policy belongs in org `.github`; machinery in TAP. [tap#334](https://github.com/unified-systems-com/tap/issues/334) tracks local/shared-harness skew. | Version, dist identity, release tag and artifacts agree; the tested artifact is the delivered artifact. Verify supported-version and private-reporting policy, including org fallback. A plugin release must pass against the intended consumer harness, not an accidental different version. |
 | SOP-18 / P2 | Sustain independent review with visible failures and calibrated authority. | Repositories adopting the shared AI review lane. | [AI review spec](../../specs/spec-cicd-ai-review.md), [review shim](../../.github/workflows/ai-review.yml). Machinery and prompts are SHA-pinned. AI findings are advisory by design; Sonar/Codacy's required statuses are distinct controls. | Verify fork-PR coverage, missing-seat failures, immutable prompt/tool refs and malicious-change review. Record review outcomes against revision. Any promotion to blocking requires the specified calibration and fail-closed verdict contract. |
 | SOP-19 / P2 | Recheck fleet compatibility, exceptions, scanner freshness and root-of-trust changes. | Fleet/operator layer, not a duplicated daemon in every plugin. | [per-repo plugin nightlies](../../.github/workflows/plugin-nightly.yml), [FIPS currency tool](../../scripts/verify-openssl-release), [root-of-trust draft](../../specs/spec-cicd-root-of-trust.md), [tap#231](https://github.com/unified-systems-com/tap/issues/231). Root ceremonies and monitoring in the draft must not be labeled implemented. | Core changes trigger plugin checks without plugin commits. Missing/stale runs and changed permissions produce actionable observations. **Re-graded 2026-09-29.** The fleet layer now exists in two halves: each plugin repository calls the shared `plugin-nightly.yml` against core `main` on its own clock (24 of 24), and `org-bots`' `fleet-conformance` sweep runs the repository-scope checks against every plugin repository daily, discovering them through tap's own identity rule rather than a list. Every waiver has rationale and a review trigger; historical passes expire for current-posture purposes. |
-| SOP-20 / P2 | Add deeper runtime verification where the plugin exposes attack surfaces. | APIs, collectors, external-input parsers, custom native/container artifacts. | [API fuzz workflow](../../.github/workflows/api-fuzz.yml), [validation spec](../../specs/spec-dev-validation.md), [after-action reports](../aar/). Core has deterministic gating and exploratory nightly fuzz lanes; that does not imply every plugin API is covered. | Show the plugin's own endpoints/parsers are exercised, preserve minimized regression cases, and test authorization differences. Record incidents with detection signals and safe remediation for Paladin. |
+| SOP-20 / P2 | Add deeper runtime verification where the plugin exposes attack surfaces. | APIs, collectors, external-input parsers, custom native/container artifacts. | [API fuzz workflow](../../.github/workflows/api-fuzz.yml), [validation spec](../../specs/spec-dev-validation.md), [postmortems](../postmortems/). Core has deterministic gating and exploratory nightly fuzz lanes; that does not imply every plugin API is covered. | Show the plugin's own endpoints/parsers are exercised, preserve minimized regression cases, and test authorization differences. Record incidents with detection signals and safe remediation for Paladin. |
 
 ## Re-grade, 2026-09-29
 
@@ -59,8 +59,17 @@ workflows only — the repository-scope checks now read plugin repositories dire
 fleet-wide, so the gap is filled by a different mechanism rather than by the guard. SOP-08's updater
 is now central and topic-discovered rather than per-repository.
 
-**Two evidence links had gone dead** and are repointed: core's own Renovate workflow, retired
-2026-09-28, and a `postmortems/` directory that is `aar/`.
+**One evidence link had gone dead** and is repointed: core's own Renovate workflow, retired
+2026-09-28.
+
+**And one was reported dead in error, which is worth recording because the tool was at fault, not the
+catalog.** An earlier pass of this re-grade changed SOP-20's `postmortems/` link to `aar/`, on a
+link-checker that enumerated `git ls-tree -r`. That lists files and never directories, so every
+directory link reads as dangling. `docs/postmortems/` exists, and it is not interchangeable with
+`docs/aar/`: the two corpora answer different questions — `aar/` is "did we work well?" and
+`postmortems/` is "did the system behave well?", the latter feeding Paladin. SOP-20 is about runtime
+attack surfaces and recording incidents for Paladin, so `postmortems/` was the correct target all
+along. Restored.
 
 ### What is now measured, and what is still only asserted
 
