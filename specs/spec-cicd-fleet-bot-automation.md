@@ -65,6 +65,7 @@ repository rather than handing the repository the means to act for itself.
 | req-cicd-fleet-bot-release-phase2 | [Release Cutting Stays Manual And Unchanged](#release-cutting-stays-manual-and-unchanged) | Proposed | `scripts/cut-release.sh` is untouched by this spec |
 | req-cicd-fleet-bot-no-app-key-distribution | [No Org GitHub App Holds Write](#no-org-github-app-holds-write) | Proposed | End state: `tap-renovate` and `tap-release-please` are uninstalled org-wide once nothing needs them, not merely kept un-copied |
 | req-cicd-fleet-bot-shared-credential-bound | [A Fleet-Shared Credential Holds No Role Anywhere](#a-fleet-shared-credential-holds-no-role-anywhere) | Proposed | The general rule `req-cicd-fleet-bot-no-app-key-distribution` is the specific instance of |
+| req-cicd-fleet-bot-paced | [Fleet-Wide Actions Are Paced And Randomized](#fleet-wide-actions-are-paced-and-randomized) | Proposed | Added 2026-09-29 after GitHub flagged the fork bot on its first fleet-wide burst |
 
 ### Renovate Discovers By Topic
 
@@ -249,6 +250,43 @@ deliberate; see [`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-c
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-release-phase2-1 | Cut-Release Is Unchanged | Proposed | `scripts/cut-release.sh`'s behavior, invocation, and credential model are identical before and after this spec lands. | |
+
+### Fleet-Wide Actions Are Paced And Randomized
+
+----
+RID: `req-cicd-fleet-bot-paced`
+
+Status: `Proposed`
+
+On 2026-09-28 the fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
+twenty minutes, and GitHub's anti-abuse flagged the two-day-old account: the account and
+everything it had created went invisible to everyone else, and the pipeline stopped until an
+appeal. The single-repository pilots before it never came close. A burst of cross-repository
+activity from one account is the spam shape, whichever account it is. So every fleet-wide action
+is paced, and the pacing is randomized so that no two runs share a rhythm (George, 2026-09-29:
+"make sure that the randomized / delayed processing is baked into the documentation and the
+process going forward").
+
+This binds the bots and people alike. A maintainer's own account doing a fleet-wide change by
+hand (a pin bump, a rename pass, a config sweep) is the same burst from GitHub's side, and losing
+the maintainer's account would be worse than losing the bot's.
+
+- **The bots** (`org-bots`): Renovate covers one slice of the fleet per run, rotated by run number,
+  and starts each run after a random delay; release-please opens a capped number of new release
+  PRs per run with a random pause after each and defers the rest. `org-bots` README, "The ramp".
+- **By hand**: one repository at a time; a pilot repository first, and the batch stops if the
+  pilot is not green or a PR fails to open; PRs opened minutes apart at random, merges spaced at
+  random. The 2026-09-28 fleet pin bump (24 repositories, bom-bom Q74) is the worked example.
+- **"Succeeded" is checked, not assumed**: after a bot run, one of its PRs must resolve for someone
+  other than the bot. The flagged run reported success while every PR it opened was hidden.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-paced-1 | Bot Runs Are Sliced And Randomly Paced | Proposed | Renovate touches at most one slice of the fleet per run and starts after a random delay; release-please caps new release PRs per run and pauses a random interval after each. | `org-bots` PR "pace the fork bot (the ramp)" |
+| req-cicd-fleet-bot-paced-2 | Hand-Run Fleet Changes Follow The Same Rule | Proposed | A fleet-wide change made from a person's account is piloted on one repository, stops on the first failure, and opens and merges one repository at a time with random gaps. | Documented in `org-bots` README, "The ramp" |
+| req-cicd-fleet-bot-paced-3 | A Run's PRs Are Checked To Exist | Proposed | After a bot run, at least one of the PRs it reports opening resolves for an account other than the bot. | A green run is not evidence its PRs are visible |
 
 ### No Org GitHub App Holds Write
 
