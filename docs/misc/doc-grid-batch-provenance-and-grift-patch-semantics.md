@@ -1,7 +1,10 @@
 ---
 title: Batch provenance (tap#322/#323/Q129) and GRIFT patch/replace/upsert semantics
 date: 2026-09-29
-status: ruled
+status: pending — Q129 relayed to demo-dev, NOT treated by it as ruled pending George's own word
+  (correctly, per demo-dev: a relay is not sufficient authorization for a code path that can
+  tombstone live rows); the GRIFT patch-by-default flip additionally has an amended safety case
+  below (2026-09-29, later the same day) after demo-dev found a real gap in the original audit
 audience:
   - developer
   - llm
@@ -173,7 +176,7 @@ shared pipeline.
 
 ## The decision: flip the default, not add a parallel option
 
-**Ruled:** `nodes`/`edges` will come to mean patch by default — accept the breaking-change risk
+**Direction taken, safety case amended below — see "The JSON-merge gap" before treating this as settled:** `nodes`/`edges` will come to mean patch by default — accept the breaking-change risk
 rather than keep replace as the default and add patch alongside it. The stated reasoning: TAP's
 actual dominant write pattern (an AWS collector re-confirming an instance is still there, zizmor
 re-confirming a finding persists) is a database receiving repeated confirmations from many
@@ -217,6 +220,84 @@ since there's nothing left over to either reset or leave alone. The risk the fli
 theoretical against today's fleet, real against a future collector that doesn't hold to the same
 discipline.
 
+## The JSON-merge gap (found by demo-dev, 2026-09-29, after this doc's first version shipped)
+
+**The audit above answered the wrong-but-adjacent question for JSON fields, and the safety case is
+incomplete without this.** "No collector conditionally omits a top-level field" does not imply "no
+collector's JSON documents lose inner keys" — those are different claims, and only the first was
+checked.
+
+The mechanism, verified directly (`services/_impl.py:75-83`): `_apply_patch` special-cases
+`JSONField` and calls `_deep_merge(existing, value)` — `result = dict(base)` (every key from the
+**persisted** document), then only overwrites keys present in `value`. Any key the persisted
+document already has, that the new payload doesn't mention, survives untouched, forever.
+`_apply_replace` sets the field wholesale — no merge, no survival. So the flip changes JSON-field
+semantics for **every** collector, including every collector the audit above called clean, because
+the failure isn't about which top-level fields are present — it's about what happens to keys
+*inside* an always-present one.
+
+Concretely: a collector emits a complete, correct `location` document every pass. Under today's
+replace, the source removing a key makes it disappear from the grid, correctly. Under patch, the
+new document merges *over* the stored one and the removed key survives forever — the grid reports a
+field the source no longer has, indistinguishable to every consumer from a field that's still
+genuinely observed. The exact false-presence class this whole investigation has been chasing,
+reintroduced by the fix meant to prevent it.
+
+**Measured, not assumed:** demo-dev loaded the model registry and intersected each entity type's
+`patch` schema properties against its JSONFields — 58 registered entity types have at least one
+JSONField in their patch schema. `github_core__code_scanning_alert` alone has five
+(`rule_tags`, `location`, `classifications`, `configuration`, `tags`), and github-core is the
+largest real collector in the org — the one the audit above called structurally clean by
+construction on omission. Clean on omission does not protect it here.
+
+**This compounds with the diff-before-write work in the worst possible direction.** After a merge
+that silently preserves a stale key, the persisted value equals the resulting document, so
+diff-before-write correctly sees no change and skips the write entirely — no version, no history
+row, no `BatchEvent`. The wrong answer becomes both permanent and untraceable; two individually
+correct pieces of work compose into a silent, unfalsifiable failure.
+
+**The escape hatch that exists today doesn't fix this.** `req-grid-service-write-observation-4`
+lets an explicit `null` clear a whole JSONField, but that clears the entire document, not one key —
+so a collector's only way to drop a single key under patch would be clear-then-rewrite: two writes,
+the first of which is a real, versioned change, with the field reading as unobserved in between.
+Not a workable per-key delete.
+
+**The fix is genuinely open, not a small detail — an earlier draft of this section proposed
+"JSONFields never merge under patch, always set wholesale" as the likely direction, and that
+proposal was wrong as stated, caught before it was acted on.** Two things make it wrong:
+
+1. Deep-merge-on-patch for JSONFields isn't an implementation detail sitting quietly inside
+   `_apply_patch` — it's a **ratified, Implemented, tested requirement**
+   (`req-grid-service-write-patch-1`, "JSONField Deep Merge, Scalars Replace" —
+   `spec-grid-service-write.md:346,360`; asserted by name in
+   `test_services.py::test_json_field_deep_merge`). Removing it retires a specified contract, not a
+   bugfix.
+2. **There is a live, real dependant on the current behavior: the panel editor.**
+   `tap_web/views.py::_form_to_patch_payload` (~line 605) builds its patch payload only from the
+   edit form's own fields — `{k: v for k, v in cleaned.items() if k not in _STANDARD_PANEL_FIELDS}`
+   — and relies on deep-merge to preserve every config key the form doesn't render. Setting
+   JSONFields wholesale under patch, globally, would silently wipe every config key an edit form
+   doesn't expose on the next ordinary save through the UI. That's real data loss, in a shipped
+   feature, worse than the problem being solved.
+
+**The actual shape of the fix:** a collector's GRIFT document is a *complete observation* — wholesale-set
+is correct for it, a key the source stopped sending should disappear. An interactive editor's
+payload is a *partial edit* — deep-merge is correct for it, keys the form never showed must
+survive. Both callers are right, for different and legitimate reasons, which means the semantics
+can't be keyed on field type alone inside `_apply_patch` — they have to be keyed on **caller
+intent**: either a distinct internal verb for the GRIFT import path, or an explicit flag on the
+write operation that `_apply_patch` reads. Which of those two is cleaner is not yet decided.
+
+This is now filed as **Q131**, a spec question about revoking part of a ratified requirement for
+one caller only — George's call, not either session's to resolve unilaterally. Neither this
+document nor either session treats a fix as chosen.
+
+None of this says the patch-by-default direction is wrong — the SQL/Mongo upsert reasoning above
+still holds, and per-collector diffing would still multiply the same defect N ways. It says the
+safety case needed this second, orthogonal check before the flip is actually committed, this doc's
+first version didn't have it, and the first proposed fix didn't survive contact with a real
+consumer either.
+
 ## The GRIFT shape this implies
 
 Current batch structure, verified against `tap_grid/schemas/grift-document.schema.json`:
@@ -241,6 +322,12 @@ entity. Leaning strict (`error`) by default, matching `deletes`/`purges`' own po
 row can be found again by its natural key — a patch payload has no such guarantee) — but this is a
 real call for whoever builds it, not something the precedent forces.
 
+**Open, not yet ruled — Q131 (demo-dev, 2026-09-29):** how to key JSONField apply-semantics on
+caller intent (GRIFT import vs. an interactive service-layer patch) without breaking
+`req-grid-service-write-patch-1` for the panel editor. See "The JSON-merge gap" above. A distinct
+internal verb for the GRIFT import path and an explicit flag on the write operation are both live
+options; neither is chosen.
+
 # Part 3 — adjacent, explicitly not in scope for tap#322/#323
 
 Two things surfaced in this session that are real and worth tracking, but are NOT part of
@@ -252,7 +339,10 @@ entirely, a different problem. This one has no issue number yet: `spec-grid-flip
 FLIP value as "the batch that last **set** the current canonical value" — but for every replace
 (and GRIFT, today, only ever replaces), `_flip_touched_for_verb` returns `None`, meaning every
 service-writeable field gets stamped with the same batch id on every write regardless of whether
-its value changed. For the dominant, collector-driven write pattern, this makes `flip_map` today
+its value changed. Confirmed two independent ways: reading `update_flip_map`/`_flip_touched_for_verb`
+directly (this session), and separately, at runtime — demo-dev's own premise probe on two identical
+no-op `replace_node` calls showed `flip_map` growing from one entry to seven, observed rather than
+inferred. For the dominant, collector-driven write pattern, this makes `flip_map` today
 carry **zero more information than a single row-level last-batch stamp** — the diff-before-write
 work above fixes this as a side effect (a no-op write touches nothing), but genuinely accurate
 per-field tracking under patch specifically (not just "skip on no-op") is a separate, bigger
@@ -272,13 +362,31 @@ shared convention (probably alongside where the existing null/empty-string conve
 `spec-grid-node.md`) the next time either shadow nodes or a permission-gated collector comes up for
 real — not urgent, but real, and currently reinvented rather than reused.
 
-# Handoff
+# Handoff — updated after demo-dev's review, 2026-09-29 (same day)
 
-demo-dev has been holding Q129 open (draft-r56 through the end of its register) and does not yet
-know about anything in Part 2 or Part 3 — this session's investigation started from its own
-tap#322 analysis but grew well past what it asked. It should be told: Q129 is ruled (this doc's
-Part 1), the scope of the surrounding work is larger than tap#322/#323 alone (Part 2, a real GRIFT
-schema change), and two adjacent items are tracked but explicitly deferred (Part 3). The collector
-build skill (`build-collector`) should be updated to document the `patches`/`put` choice for future
-collector authors — but only once GRIFT's schema change and the diff-before-write mechanism have
-actually shipped; documenting it earlier would describe a capability that doesn't exist yet.
+demo-dev has read this document against the code directly and confirms Part 1 (the batch-provenance
+half) matches its own independent read. Two things came out of that review that change this
+document's status from what its first version claimed:
+
+**Q129 is relayed, not ruled — correctly, per demo-dev, and this document should not be read
+otherwise.** A relay through a support session is not sufficient authorization to start a four-PR
+build that reaches a code path capable of tombstoning live rows. demo-dev has put Q129 to George
+directly, alongside Q131 below, and will not begin building until it has George's own word. Anyone
+reading this document as license to start P1–P4 is reading it wrong.
+
+**Q131 is new, and it's the more consequential of the two open items.** demo-dev found that the
+JSON-merge gap's first proposed fix ("JSONFields never merge under patch") would have retired a
+ratified, tested requirement (`req-grid-service-write-patch-1`) and broken a live consumer (the
+panel editor, `tap_web/views.py::_form_to_patch_payload`) on every ordinary save. That fix is
+withdrawn; the problem it was trying to solve stands, and the actual fix needs to key JSONField
+apply-semantics on caller intent, not field type alone. See "The JSON-merge gap" and Q131 above.
+
+**Work already done that does not depend on either ruling:** the batch-provenance design (Part 1),
+the shared diff-before-write mechanism and its four consumers, the collector audit (five collectors,
+confirmed clean on the omission question specifically), and the two Part 3 items remain as
+described and are not in question.
+
+**Still true regardless of how Q129/Q131 land:** the collector build skill (`build-collector`)
+should be updated once GRIFT's schema change and the diff-before-write mechanism actually ship —
+documenting it earlier would describe a capability that doesn't exist yet, and now additionally
+depends on however Q131 resolves for the patch/JSON-merge story specifically.
