@@ -19,7 +19,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-cicd-branch-protection` | external |  | GitHub repository rulesets (protect-default-branches, main-required-checks) |
 | `req-cicd-build-once-artifact` | non-python | ⚠ | .github/workflows/publish-images.yml |
 | `req-cicd-dep-automation` | non-python | ⚠ | renovate.json5 |
-| `req-cicd-product-releases` | non-python |  | .github/workflows/release-please.yml |
+| `req-cicd-product-releases` | non-python |  | release-please-config.json |
 | `req-cicd-release-artifacts` | process |  | org release convention; the mechanical tag parsing is |
 | `req-cicd-supply-chain-provenance` | non-python |  | .github/workflows/publish-images.yml |
 

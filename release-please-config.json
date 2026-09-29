@@ -4,6 +4,7 @@
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
+  "pull-request-title-pattern": "chore${scope}: release${component} ${version} [via maintainer-run]",
   "packages": {
     ".": {
       "package-name": "tap",
