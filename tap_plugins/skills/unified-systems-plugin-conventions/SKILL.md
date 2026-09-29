@@ -46,7 +46,7 @@ every new repo). Record the source commit in the PR body.
 | --- | --- | --- |
 | `.github/workflows/ai-review-capture.yml` | tap `.github/workflows/ai-review-capture.yml` | Stage 1 of the Unified AI Review: unprivileged capture of the PR diff (`specs/spec-cicd-ai-review.md`). |
 | `.github/workflows/ai-review.yml` | tap `.github/workflows/ai-review.yml` | Stage 2: the privileged review with the vendor keys; posts the Codex / Grok verdicts. Runs the **default-branch** definition, so both files must be on `main` before any PR in the repo gets a seat — a repo without them fails silently. |
-| `.github/workflows/ci.yml` | `_dev-plugins/zizmor/.github/workflows/ci.yml` shape | Thin caller of tap's reusable `plugin-ci.yml` (`req-tap-plugin-extdev-repo-ci`), pinned to a tap `main` SHA, `plugin_slug: <slug>`, `secrets.harness_pat: ${{ secrets.TAP_CORE_RO_PAT }}`, and on the calling job `permissions: {contents: read, security-events: write}` — without the second the whole run is `startup_failure` (tap#772); never `contents: write`. Boots the plugin's in-package `ci` record, runs `pytest --pyargs tap_plugin.<slug>` on every PR, and gates on a Trivy scan of the plugin's own dependency closure (waivers: a root `.trivyignore`, every entry under a reason comment). The same grant goes on `nightly.yml`'s calling job. |
+| `.github/workflows/ci.yml` | `_dev-plugins/zizmor/.github/workflows/ci.yml` shape | Thin caller of tap's reusable `plugin-ci.yml` (`req-tap-plugin-extdev-repo-ci`), pinned to a tap `main` SHA, `plugin_slug: <slug>` (no secrets: tap is public, and `harness_pat` was retired on 2026-09-29), and on the calling job `permissions: {contents: read, security-events: write}` — without the second the whole run is `startup_failure` (tap#772); never `contents: write`. Boots the plugin's in-package `ci` record, runs `pytest --pyargs tap_plugin.<slug>` on every PR, and gates on a Trivy scan of the plugin's own dependency closure (waivers: a root `.trivyignore`, every entry under a reason comment). The same grant goes on `nightly.yml`'s calling job. |
 | `.codacy.yaml` | any sibling plugin repo | Bandit B101 excluded from tests only; committed engine config, never UI state. |
 | `.sonarcloud.properties` | any sibling plugin repo | Migrations excluded from duplication; committed, never UI state. |
 | `LICENSE` | any sibling | Apache-2.0. |
@@ -57,9 +57,9 @@ tap's copy; the pins must not.
 
 ## Things only an org admin can do (ask George; do not guess they are done)
 
-- **Org secrets visibility.** `OPENAI_API_KEY`, `XAI_API_KEY` (AI review) and `TAP_CORE_RO_PAT` (plugin-ci)
+- **Org secrets visibility.** `OPENAI_API_KEY` and `XAI_API_KEY` (AI review)
   are org secrets. Whether a NEW repo sees them depends on their visibility setting, which an agent token
-  cannot read. If the review stage or the ci lane fails on a missing secret, this is the cause.
+  cannot read. If the review stage fails on a missing secret, this is the cause.
 - **SonarCloud and Codacy project onboarding** — the repo must be added in each tool's UI before the
   committed config does anything.
 - **Renovate** tracks only tap core (`RENOVATE_REPOSITORIES`, tap#446); plugin repos get no bot PRs until
