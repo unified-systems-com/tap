@@ -1,0 +1,136 @@
+# Product health — v1 of req-cicd-product-health (tap#888, child of the tap#887 epic).
+#
+# Boots a PRODUCT's own real, committed, multi-plugin profile
+# (tap_plugin/<slug>/boot/<slug>.boot.json — the actual deployed composition, distinct
+# from the narrower per-plugin `ci.boot.json` req-boot-bootstrap-ci-record already
+# proves) against tap core's currently-published image, and checks it comes up
+# healthy. Nothing has ever verified this: per-plugin CI only proves a plugin against
+# the dependencies IT declares, never the composition a product actually runs.
+#
+# v1 is deliberately boot-only — a bare pass/fail, no baseline diffing (tap#887's
+# prior-art sweep: Crater/revdepcheck-style baseline diffing is a cheap follow-on once
+# this exists, not a blocker). It is also deliberately scoped to tap `main` only: it
+# does NOT float the product's own pinned plugin dependencies to their own `main`
+# branches. Floating all of a product's dependencies at once on one run would
+# reproduce the multi-moving-parts blame problem the union / `bom-boot` was retired
+# for (tap#638, tap#847) — a red with no way to isolate which dependency moved. That
+# harder axis is tap#889, deferred behind a reverse-dependency index that does not
+# exist yet.
+#
+# WHY THIS PULLS RATHER THAN BUILDS: `publish-images.yml` publishes `tap-web`/`tap-db`
+# to GHCR on every push to `main`, `:latest` always tracking tip. This check asks
+# "does the product boot against what core has already shipped," not "does this PR's
+# Dockerfile still work" — there is nothing to build. That is also why this workflow
+# needs no `contents: write`, no image-build permissions, and no PAT: the harness
+# checkout is for `docker-compose.yml` / `.env` only, and the image is already public.
+#
+# `manage.py health --set readiness` is the same readiness gate `core_ci`'s own gate
+# (`scripts/gate`) and `plugin-ci.yml`'s boot-and-test job already poll — reused here,
+# not reinvented.
+name: product-health
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        description: "The product's plugin slug. tap_plugin/<slug>/boot/<slug>.boot.json is the real profile this boots."
+        required: true
+        type: string
+      product_repo:
+        description: "owner/repo of the product; defaults to the calling repository."
+        required: false
+        type: string
+      harness_repo:
+        description: "Core repo providing docker-compose.yml / .env."
+        required: false
+        type: string
+        default: unified-systems-com/tap
+      harness_ref:
+        description: "Core ref to check out for compose files. The booted IMAGE is always :latest, published from this ref's tip by publish-images.yml — not built here."
+        required: false
+        type: string
+        default: main
+      boot_timeout_minutes:
+        description: "Job timeout. The health-check loop itself polls for up to 900s (90 x 10s) before failing the step."
+        required: false
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+jobs:
+  boot-and-check:
+    name: boot the real profile, check readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.boot_timeout_minutes }}
+    steps:
+      - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          persist-credentials: false
+
+      - name: Checkout the product (${{ inputs.product_repo || github.repository }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.product_repo || github.repository }}
+          persist-credentials: false
+          path: _product
+
+      # No dev-workspace derivation, no editable flip: this boots the profile exactly
+      # as the product committed it, self included — the question is whether the
+      # REAL, PINNED composition still boots against current core, not whether an
+      # in-flight product checkout does (that is the product's own ordinary CI).
+      - name: Stage the product's own real profile
+        env:
+          SLUG: ${{ inputs.product_slug }}
+        run: |
+          set -euo pipefail
+          src="_product/tap_plugin/$SLUG/boot/$SLUG.boot.json"
+          [ -f "$src" ] || { echo "::error::no committed profile at $src — expected tap_plugin/<slug>/boot/<slug>.boot.json in the product repo"; exit 1; }
+          mkdir -p boot
+          cp "$src" "boot/$SLUG.boot.json"
+          echo "staged $src as the boot profile '$SLUG'"
+
+      # The published image runs as USER nonroot (req-tap-serving-unprivileged) and
+      # writes into the .:/app bind mount; on Linux that needs the container uid to
+      # own the path. Same alignment plugin-ci.yml's boot-and-test job does.
+      - name: Align the container uid with the runner
+        run: |
+          uid="$(id -u)"
+          if [ "$uid" -eq 0 ]; then
+            echo "::error::Runner is uid 0; TAP_USER=0:0 would defeat the non-root image. Refusing."
+            exit 1
+          fi
+          echo "TAP_USER=$uid:0" >> "$GITHUB_ENV"
+
+      - name: Boot the product's profile against the currently-published image
+        env:
+          TAP_WEB_IMAGE: ghcr.io/unified-systems-com/tap-web:latest
+          TAP_DB_IMAGE: ghcr.io/unified-systems-com/tap-db:latest
+          TAP_BOOT_PROFILE: ${{ inputs.product_slug }}
+          TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+        run: |
+          docker compose --env-file .env up -d
+          ok=0
+          for i in $(seq 1 90); do
+            if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
+              echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
+              docker compose --env-file .env logs web; exit 1
+            fi
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+              echo "web healthy after ~$((i * 10))s"; ok=1; break
+            fi
+            sleep 10
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::product '$TAP_BOOT_PROFILE' did not become healthy within the timeout, booting ghcr.io/unified-systems-com/tap-web:latest"
+            docker compose --env-file .env logs web | tail -150
+            exit 1
+          fi
+          {
+            echo "### product-health — ${{ inputs.product_slug }}"
+            echo "Booted \`${{ inputs.product_slug }}\` (${{ inputs.product_repo || github.repository }}) against \`ghcr.io/unified-systems-com/tap-web:latest\` (core @ ${{ inputs.harness_ref }}): healthy."
+          } >> "$GITHUB_STEP_SUMMARY"
