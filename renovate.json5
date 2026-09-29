@@ -1,6 +1,8 @@
 // Renovate config (req-cicd-base-image-lifecycle-1 / req-cicd-dep-automation).
-// Runs SELF-HOSTED via .github/workflows/renovate.yml (GHA cron + an org-owned
-// GitHub App token) — not the Mend-hosted app; repo-write stays in-house.
+// Runs BY HAND since 2026-09-29 (George, bom-bom Q75a): org-bots
+// `scripts/run-as-maintainer.sh tap renovate --yes`, with the maintainer's own gh login and the
+// pinned Renovate image. The tap-renovate App and .github/workflows/renovate.yml are retired;
+// org-bots' fork-bot Renovate takes tap over later (tap#879).
 //
 // PR-ONLY MODE: automerge is globally off. The flip to auto-merge-on-green is a
 // deliberate later step, now unblocked server-side by the `main-required-checks`
