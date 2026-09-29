@@ -112,6 +112,11 @@ jobs:
           TAP_DB_IMAGE: ghcr.io/unified-systems-com/tap-db:latest
           TAP_BOOT_PROFILE: ${{ inputs.product_slug }}
           TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+          # Caller-supplied values reach the shell as env, never spliced into the script
+          # (the ${{ }} form inside `run:` is expanded before the shell parses it, which
+          # is a command-injection footgun for anything but a hardcoded literal).
+          PRODUCT_REPO: ${{ inputs.product_repo || github.repository }}
+          HARNESS_REF: ${{ inputs.harness_ref }}
         run: |
           docker compose --env-file .env up -d
           ok=0
@@ -131,6 +136,7 @@ jobs:
             exit 1
           fi
           {
-            echo "### product-health — ${{ inputs.product_slug }}"
-            echo "Booted \`${{ inputs.product_slug }}\` (${{ inputs.product_repo || github.repository }}) against \`ghcr.io/unified-systems-com/tap-web:latest\` (core @ ${{ inputs.harness_ref }}): healthy."
+            printf '### product-health — %s\n' "$TAP_BOOT_PROFILE"
+            printf 'Booted `%s` (%s) against `ghcr.io/unified-systems-com/tap-web:latest` (core @ %s): healthy.\n' \
+              "$TAP_BOOT_PROFILE" "$PRODUCT_REPO" "$HARNESS_REF"
           } >> "$GITHUB_STEP_SUMMARY"
