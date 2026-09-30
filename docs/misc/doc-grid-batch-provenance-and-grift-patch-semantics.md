@@ -65,6 +65,61 @@ mechanism, and the collector audit all stand. The findings sharpen Phase 1's acc
 correct two places (Part 2, Part 3) where the plan was about to build something that either
 duplicates ratified canon or conflicts with it.
 
+# Update 2026-09-30, round 2 — github_core replaces zizmor as the proving ground; Phase 1 in three slices; a deeper canon gap
+
+**Correction: zizmor is not Phase 1's proving case, and the round-1 update above overstated that it
+was.** A second review pass (Codex) fetched zizmor-tap's actual collector source and found that
+`observed_at` (`collector.py:449,625`) is set from `state.started_at` — this collection run's own
+start time — and written into every finding's payload on every pass, whether or not anything else
+about the finding changed. **George's ruling, direct: this is not a defect to suppress.** A field
+that genuinely differs every pass should cause exactly one history bump per pass, FLIP updated for
+that field — "working as expected," not a special case the diff needs to route around. What that
+means concretely is that zizmor's own re-scan churn will **not** visibly quiet down under Phase 1
+alone, because that field really does change every time, by zizmor's own design — Phase 1 fixes the
+class of bug tap#322 actually describes (identical repeated observations wrongly recorded as
+changes), it does not and should not make a genuinely-changing field look unchanged.
+
+**George: focus-fire Phase 1's proving ground on github_core instead — "we know there's plenty of
+non-moving entities in there."** github_core's config-layer nodes (workflows, rulesets, etc. — the
+same set tap#322's own 1,612-node/144-pass measurement came from) have no equivalent per-pass
+timestamp baked into their domain payload, which makes them the clean test of the actual mechanism:
+two idle passes should produce zero new typed-row versions, not "fewer than before." Every reference
+to zizmor as the Phase-1 validation target above and in the companion document is superseded by this.
+
+**Also separately filed:** `unified-systems-com/zizmor-tap#57` — a backlogged idea (walk a flagged
+file's git history to find the commit that actually introduced the condition, giving zizmor a real
+event-time it doesn't have today). Not part of Phase 1, not scheduled.
+
+**Phase 1, broken into delivery slices with their own done-tests (Codex, tap#896, adjusted for the
+github_core proving ground):**
+
+- **Slice A — correct write classification.** The diff-before-write mechanism itself, the
+  three-row first-assertion table above, `BatchEventType.OBSERVE`, atomic evidence recording (see
+  "Evidence durability" below), and all four consumer sites, landed together — they're one coupled
+  change, not separable, per the original tombstoning-risk reasoning.
+- **Slice B — provenance placement.** The two spine pointers (`last_changed_batch_id`,
+  `last_observed_batch_id`/`_at`), the historical-batch-association check against
+  django-simple-history before dropping `BaseModel.batch_id` (see "Evidence durability" below),
+  serializer/envelope compatibility, and the typed-column drop **only once that check is verified** —
+  the drop must not become an accidental prerequisite for landing the no-op fix itself. A and B may
+  share one PR if the implementation is tightly coupled; the sequencing above is what matters, not
+  the PR boundary.
+- **Slice C — observation proof on github_core.** Two idle collection passes over github_core's
+  config-layer nodes produce zero new typed-row versions, one `BatchEventType.OBSERVE` per entity per
+  pass, `last_changed_batch_id` unchanged and `last_observed_batch_id` moved. This is the actual
+  done-test for the initiating incident — the running-instance validation should be its own issue,
+  closed separately from the build issues per the repo's own "issues close when tested code merges"
+  rule, not folded into Slice A/B's build issues.
+
+**A deeper, related gap, caught doing the self-audit George asked for after this round:** this whole
+temporal/observation design — spanning this document and its companion — never checked
+`tap_grid/specs/spec-grid-history.md`'s `req-grid-history-time` (`Proposed`) or
+`tap_grid/specs/spec-grid-perspective-BACKLOG.md`'s `req-grid-perspective-record` (`Proposed`)
+before proposing new mechanisms. Both already speak directly to this problem space, and zizmor's own
+`observed_at` field name is not a coincidence — see the companion document's own "Update 2026-09-30,
+round 2" section for the full reconciliation; it belongs there since it's about the time model, not
+this document's batch-provenance half.
+
 # Why this doc exists
 
 demo-dev's tap#322 investigation (spec plan captured in `handoff` memory
@@ -181,33 +236,38 @@ right on the first pass:
   own, not that one).
 - Compare foreign keys by id (`old.entity_id != new.entity_id`), never by object — avoids a
   needless fetch and identity-vs-equality surprises.
-- JSON fields need no library — Python's native `==` on already-deserialized dicts/lists is
-  recursive and order-independent, which is already correct for this domain. Keep the comparison
-  **strict/structural, never semantic** — `{}` and `{"k": null}` are a real, countable change
-  (ruled earlier this week, git-serious concurring independently): a consumer reading a nested path
-  sees the same absent value either way, but a consumer reading the parent object sees a different
-  object, and FLIP keys are field paths. Any "these are basically equivalent" judgment belongs to
-  identity/resolution, never to the write-path diff.
-- **Don't compare with bare Python `==` and stop there — it is not JSON-type-sensitive** (tap#896,
-  verified: `{"flag": True} == {"flag": 1}` and `[False] == [0]` both return `True` in Python, since
-  `bool` is an `int` subclass). A collector or editor writing `1` where the stored value is `true`
-  is a real, distinct value in JSON even though Python's native equality says otherwise. The diff
-  needs a type check alongside the value comparison for exactly the fields where this can occur, not
-  a wholesale replacement of `==` (it's still the right operator for everything else).
-- **A value-unchanged diff is not the same claim as knowledge-unchanged, and the diff must not
-  conflate them** (tap#896, finding 1). Concretely: a node is created with a nullable field omitted
-  (stored `null`, no FLIP entry for that field — an *unknown unknown* per
-  `req-grid-node-observation-3`), then a later batch explicitly writes `null` to that same field (an
-  *asserted* unknown — a known unknown). The stored value doesn't change (`null` → `null`), but a
-  real transition happened: nobody had looked, and now someone has looked and confirmed there's
-  nothing there. This case is **already handled correctly today** by the existing FLIP write-intent
-  boundary (`req-grid-node-observation-4`/`-7`, Implemented) — an explicit null is a touched field
-  and gets FLIP-stamped regardless of whether the stored value moved. The risk is narrower than it
-  first looks: it's that the *new* diff-before-write classifier, built to decide `OBSERVE` vs.
-  `UPDATE` for `BatchEvent`, must key its decision off the same touched-field set FLIP already uses
-  (payload-presence for the null case, not just old-value-vs-new-value), or it will regress a
-  mechanism that already works. This needs one explicit test case (create-omitted, then
-  explicit-null) in whatever test suite lands with the diff function, not new design.
+- JSON fields need no library: Python's native `==` on already-deserialized dicts/lists is
+  recursive, order-independent, and structural rather than semantic — `{}` and `{"k": null}` are a
+  real, countable change (ruled earlier this week, git-serious concurring independently), which is
+  the behavior this domain wants. **But native `==` alone is not JSON-type-sensitive and the diff
+  must not stop there** (tap#896, verified directly: `{"flag": True} == {"flag": 1}` and
+  `[False] == [0]` both return `True` in Python, since `bool` is an `int` subclass). A collector or
+  editor writing `1` where the stored value is `true` is a real, distinct value in JSON even though
+  Python's native equality says otherwise. **The one instruction this collapses to:** use `==` for
+  structural comparison, paired with an explicit `type(old) is type(new)` check (or equivalent) for
+  any field where a bool/int/float mixup is possible — not a wholesale replacement of `==`, which
+  stays correct for everything else, and not two separate, competing claims about whether `==` is
+  trustworthy.
+- **A value-unchanged diff is not the same claim as knowledge-unchanged — three cases, not two**
+  (tap#896, finding 1, and George's ruling 2026-09-30 on the case Codex's table left open):
+
+  | Write | Prior state | Classification |
+  | --- | --- | --- |
+  | Create with a nullable field omitted | No FLIP entry for that field | No assertion — unknown unknown, no history impact. |
+  | First explicit `null` on that field | No FLIP entry yet | **New knowledge. Version bump.** Something material changed in what the grid knows, and that must be identified the same as any other change — not treated as a no-op just because the stored value stayed `null`. |
+  | A later explicit `null` on the same field | FLIP entry already present for it | Repeat observation. Zero new version — `BatchEventType.OBSERVE`, same as any other unchanged re-confirmation. |
+
+  The middle row is **already handled correctly today at the FLIP level** by the existing write-intent
+  boundary (`req-grid-node-observation-4`/`-7`, Implemented) — an explicit null is always a touched
+  field and always gets FLIP-stamped, whether or not the stored value moved. What the *new*
+  diff-before-write classifier must do, to avoid regressing that and to satisfy George's ruling, is
+  key its `OBSERVE`-vs-`UPDATE`/version-bump decision off **whether a FLIP entry existed for that
+  field path before this write**, not off payload-presence alone and not off the stored value alone —
+  payload-presence tells you a field was touched; prior FLIP-presence tells you whether touching it is
+  the first time or a repeat, which is the actual distinction that determines version/history impact.
+  This needs three explicit test cases in whatever test suite lands with the diff function (create-
+  omitted; first explicit-null; second explicit-null), not further design — the classification rule
+  above is settled.
 
 A genuinely Postgres-native alternative exists (`UPDATE ... WHERE (cols) IS DISTINCT FROM (vals)`,
 or a trigger with `WHEN (OLD.* IS DISTINCT FROM NEW.*)`) — real, and `jsonb` equality in Postgres is
