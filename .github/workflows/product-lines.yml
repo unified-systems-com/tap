@@ -405,12 +405,20 @@ jobs:
           # pr-title is never tier-gated: a title is a property of the PR, not the diff, and
           # the check is seconds (tap#870). It is also event-scoped (tap#899): the job itself
           # only runs `if: github.event_name == 'pull_request'`, since a schedule/dispatch/
-          # merge_group run has no PR to title. So a skip is acceptable ONLY off a
-          # pull_request event — on a pull_request it stays unconditionally required, same as
-          # every other row here.
+          # merge_group run has no PR to title. The carve-out is a positive allowlist of
+          # exactly those three, not a negative test against 'pull_request' — an AI review
+          # caught that a negative test fails OPEN for any future event this workflow doesn't
+          # trigger on yet (pull_request_target still carries PR metadata and must stay
+          # required). An allowlist fails CLOSED instead: an event nobody has reasoned about
+          # yet dies here rather than silently skipping the check.
           case "$R_PRTITLE" in
             success) : ;;
-            skipped) [ "$EVENT_NAME" != "pull_request" ] || die "pr-title skipped on a pull_request event" ;;
+            skipped)
+              case "$EVENT_NAME" in
+                schedule | workflow_dispatch | merge_group) : ;;
+                *) die "pr-title skipped on an unrecognized event '$EVENT_NAME' — add it to this allowlist only after confirming it has no PR to title" ;;
+              esac
+              ;;
             *) die "pr-title finished '$R_PRTITLE'" ;;
           esac
           case "$R_LINE" in
