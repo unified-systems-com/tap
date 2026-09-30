@@ -20,7 +20,6 @@
 #         harness_ref: v0.2.0          # pin the core harness — reproducible, known-good
 #         boot_profile: ci/my.boot.json  # optional: boot + run the plugin's tests
 #       secrets:
-#         harness_pat:    ${{ secrets.TAP_CORE_RO_PAT }}      # read core (private)
 #         plugins_ro_pat: ${{ secrets.TAP_PLUGINS_RO_PAT }}   # git-install private siblings
 #
 # No job here holds `contents: write`, and a caller should grant it to none of them (the Q20
@@ -141,9 +140,6 @@ on:
         type: number
         default: 25
     secrets:
-      harness_pat:
-        description: "Token with read access to the (private) core repo. Defaults to the caller's GITHUB_TOKEN."
-        required: false
       plugins_ro_pat:
         description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
         required: false
@@ -195,7 +191,6 @@ jobs:
         with:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ job.workflow_sha }}
-          token: ${{ secrets.harness_pat || github.token }}
           persist-credentials: false
           path: _tooling
 
@@ -226,7 +221,6 @@ jobs:
         with:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ steps.harness.outputs.ref }}
-          token: ${{ secrets.harness_pat || github.token }}
           # The token is needed to FETCH and for nothing after. Left persisted it is
           # written into .git/config, and this workflow's whole point is to then build
           # and execute PR-controlled plugin code — build hooks and tests — which could
@@ -356,7 +350,6 @@ jobs:
         with:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ job.workflow_sha }}
-          token: ${{ secrets.harness_pat || github.token }}
           persist-credentials: false
           path: _tooling
 
@@ -437,7 +430,6 @@ jobs:
           # The SHA conformance resolved from the plugin's floor (or the override) — the
           # same core in both jobs, by construction (req-tap-plugin-extdev-repo-ci-7).
           ref: ${{ needs.conformance.outputs.harness_sha }}
-          token: ${{ secrets.harness_pat || github.token }}
           # See the conformance job: the credential must not survive into a job that
           # executes plugin code. This job is the one that actually runs it.
           persist-credentials: false
@@ -688,7 +680,6 @@ jobs:
         with:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ job.workflow_sha }}
-          token: ${{ secrets.harness_pat || github.token }}
           persist-credentials: false
           # Inside the harness tree, which the web container mounts at /app.
           path: .tap-ci-tooling
@@ -920,7 +911,6 @@ jobs:
         with:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ job.workflow_sha }}
-          token: ${{ secrets.harness_pat || github.token }}
           persist-credentials: false
           path: _tooling
 
