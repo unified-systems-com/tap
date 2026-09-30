@@ -28,9 +28,9 @@ watermark, no cutoff, and no conditional check anywhere. *(observed, github-core
 sibling investigation, 2026-09-29 — see that issue for the corpus counts this is sized against:
 roughly 130 artifacts, 110 analyses and 240 caches per repository on average across 46 repositories
 in one dev stack, none of it currently incrementalized.)* The same plugin's own reliability spec
-independently named half of this gap and correctly declined to solve it there:
-`req-github-core-reliability-conditional` (`spec-github-core-reliability.md`) backlogged ETag/
-conditional requests as "an efficiency edge, not a reliability one." That call was right — this is
+independently named half of this gap and correctly declined to solve it there: its
+conditional-request requirement (`spec-github-core-reliability.md`, the entry backlogging ETag/
+conditional requests as "an efficiency edge, not a reliability one") got the call right — this is
 the spec that edge belongs to, and it belongs at the `tap_cares` layer because every future
 collector will meet this same shape, not only GitHub's.
 
@@ -354,7 +354,7 @@ safeguards against *our own* collection history, both required:
 
 1. **A completeness precondition.** Cutoff for a surface is permitted only when that surface's
    most recent walk (for this repository/scope) is recorded as `complete` in the sense
-   `spec-github-core-reliability.md`'s `req-github-core-reliability-absence` already defines for
+   `spec-github-core-reliability.md`'s completeness/absence requirement already defines for
    this exact reason — no degradation, no page cap, nothing skipped. A surface with no recorded
    complete walk, or whose last complete walk predates a gap-introducing event (a failed run, a
    cap reduction), falls back to a full walk until a complete walk re-establishes the precondition.
@@ -370,9 +370,9 @@ safeguards against *our own* collection history, both required:
 2. Refuse cutoff outright for any surface not declared both `SORT_KEY_MONOTONIC=True` and
    `APPEND_ONLY_VISIBILITY=True`. This check precedes and is independent of step 3 below.
 3. Before applying cutoff at all, check the surface's last recorded walk completeness
-   (`req-github-core-reliability-absence`'s `complete` flag, or the equivalent this spec's
-   `req-tap-cares-progressive-instrumentation` records for a non-GitHub collector). If it is not
-   `complete`, cutoff is refused for this run; the walk proceeds in full and, on completing
+   (`spec-github-core-reliability.md`'s completeness/absence requirement's `complete` flag, or the
+   equivalent this spec's `req-tap-cares-progressive-instrumentation` records for a non-GitHub
+   collector). If it is not `complete`, cutoff is refused for this run; the walk proceeds in full and, on completing
    without degradation, records itself as the new complete baseline cutoff can trust next time.
 4. With both preconditions satisfied: after decoding each page, count consecutive items already on
    the grid whose declared class confirms they are frozen — terminal state reached for
@@ -572,7 +572,7 @@ A structured run record (alongside `record_info`/`record_warn`, or as a field on
 `description_json`) carrying, per surface: calls made, calls that hit a cutoff or watermark skip,
 calls that hit a secondary-call skip, and — once `req-tap-cares-progressive-touch` is unblocked —
 presence-touches issued versus full writes issued. `spec-github-core-reliability.md`'s
-`RUN_BUDGET`/`RETRY` record shape (`req-github-core-reliability-observability`) is the precedent
+`RUN_BUDGET`/`RETRY` record shape (its observability requirement) is the precedent
 to extend rather than a second logging convention to invent, for any collector that has already
 adopted that spec's Gather/Confirm/Process layering.
 
