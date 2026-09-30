@@ -241,7 +241,14 @@ jobs:
   # until tap#870: a session opened tap PR#867 with a hand-rolled `gh pr create --title` and
   # skipped the `[via <session>]` suffix, caught by eye rather than by any gate. The bot
   # exemption is the SAME allowlisted identity dco/issue-link use, not a string match.
+  # Scoped to `pull_request` (tap#899): the title check reads
+  # `github.event.pull_request.*`, which is empty on `schedule`/`workflow_dispatch`/
+  # `merge_group` runs — there is no PR to title on those. Unscoped, the job failed
+  # `check-pr-title`'s own `--title is required` on every nightly run against main,
+  # reading as a defect in main's content when it was a gap in this job's own event
+  # coverage. `gate`'s required-check carries the matching carve-out below.
   pr-title:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -368,6 +375,7 @@ jobs:
       - name: Required jobs succeeded, or skipped only where the tier permits
         env:
           TIER: ${{ needs.setup.outputs.tier }}
+          EVENT_NAME: ${{ github.event_name }}
           R_SETUP: ${{ needs.setup.result }}
           R_SECRET: ${{ needs.secret-scan.result }}
           R_DCO: ${{ needs.dco.result }}
@@ -379,7 +387,7 @@ jobs:
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER event=$EVENT_NAME setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -395,8 +403,16 @@ jobs:
           # pins is never tier-gated: a boot/ pin bump is the change it exists to check (tap#512).
           [ "$R_PINS" = "success" ] || die "pins finished '$R_PINS' (always required)"
           # pr-title is never tier-gated: a title is a property of the PR, not the diff, and
-          # the check is seconds (tap#870).
-          [ "$R_PRTITLE" = "success" ] || die "pr-title finished '$R_PRTITLE' (always required)"
+          # the check is seconds (tap#870). It is also event-scoped (tap#899): the job itself
+          # only runs `if: github.event_name == 'pull_request'`, since a schedule/dispatch/
+          # merge_group run has no PR to title. So a skip is acceptable ONLY off a
+          # pull_request event — on a pull_request it stays unconditionally required, same as
+          # every other row here.
+          case "$R_PRTITLE" in
+            success) : ;;
+            skipped) [ "$EVENT_NAME" != "pull_request" ] || die "pr-title skipped on a pull_request event" ;;
+            *) die "pr-title finished '$R_PRTITLE'" ;;
+          esac
           case "$R_LINE" in
             success) : ;;
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;
