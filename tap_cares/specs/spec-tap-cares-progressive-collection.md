@@ -125,7 +125,7 @@ runtime.
 | `FROZEN_AT_TERMINAL` | Mutable while in flight; once a declared terminal state is reached, every field is permanent | `github_actions_run` (`status="completed"`), `github_actions_job` / `workflow_job` |
 | `FROZEN_CONTENT_REVOCABLE` | Content is permanent once created, but the object can be deleted or expire on the source independent of anything a collector did | `actions_artifact`, `actions_cache` |
 | `VERSIONED_CONTENT` | Content can change via an explicit edit, but the source hands back a content fingerprint (a hash, an ETag, a blob sha) cheaply, separate from a full fetch of the content | `github_workflow`'s YAML body (GitHub's Contents API returns a blob `sha`) |
-| `MUTABLE` | Fields can change at any time with no terminal marker the collector can rely on; a freshness field such as `updated_at`, when the source provides one, still bounds re-checking (`req-tap-cares-progressive-cutoff`) without making the object skippable | `pull_request` (open), `code_scanning_alert`, `github_ruleset`, `github_environment`, `github_runner`, `actions_secret` |
+| `MUTABLE` | Fields can change at any time with no terminal marker the collector can rely on; never skippable by any mechanism this spec defines, even when the source provides a freshness field such as `updated_at` (see `req-tap-cares-progressive-cutoff`'s development note on why that ordering is a distinct, unspecified future mechanism, not cutoff) | `pull_request` (open), `code_scanning_alert`, `github_ruleset`, `github_environment`, `github_runner`, `actions_secret` |
 
 **"Frozen" describes fields, not the row's continued existence — and that boundary is
 deliberate, not an oversight.** `FROZEN` and `FROZEN_AT_TERMINAL` promise that an object's *data*
@@ -155,16 +155,31 @@ A `MUTABILITY_CLASS: ClassVar[str]` on the model (or, for a manifest-driven coll
 
 - `FROZEN_AT_TERMINAL` — `TERMINAL_STATUS_FIELD` and `TERMINAL_STATUS_VALUES`, naming the field and
   values that mean "will never change again."
-- `FROZEN_CONTENT_REVOCABLE` — `EXISTENCE_RECHECK_INTERVAL`, so a collector knows how often to
-  reconfirm an item it is not re-fetching the content of, and, if the type is also a
-  `req-tap-cares-progressive-cutoff` candidate, both `SORT_KEY_MONOTONIC: bool` (`False` for
-  anything ordered by an access-time-like field) and `APPEND_ONLY_VISIBILITY: bool` (`False` unless
-  the collector author can positively justify that the source never surfaces a new item behind an
-  already-confirmed frontier — ordering alone does not establish this; see
-  `req-tap-cares-progressive-cutoff`'s development note).
 - `VERSIONED_CONTENT` — `FINGERPRINT_FIELD`, the model field that stores the last-seen content
   fingerprint, and a declared function for cheaply fetching the current fingerprint without the
   full content.
+
+Two further properties are declared **per surface, independent of mutability class** — neither is
+tied to one class name, because both were found conflated with a specific class in earlier drafts
+of this spec and that conflation was itself the defect:
+
+- **`EXISTENCE_RECHECK_INTERVAL`** — mandatory for `FROZEN_CONTENT_REVOCABLE` (that class exists
+  specifically to require it), and *available to any other class* whose collector author wants
+  deletion-awareness for that type. Declaring it on a `FROZEN` or `FROZEN_AT_TERMINAL` type is
+  exactly how a collector opts into checking whether an otherwise-content-frozen object has been
+  removed from the source (a purged completed run, a deleted rule suite) — nothing about those
+  classes forbids it, and nothing requires it either. Its absence on any class is a stated choice
+  a reviewer can see, never an inferred "not applicable here."
+- **`APPEND_ONLY_VISIBILITY: bool`** (default `False`) — required, in addition to whatever else a
+  mechanism needs, by **both** `req-tap-cares-progressive-watermark` and `req-tap-cares-progressive-
+  cutoff` before either may treat "already at or past the current frontier" as proof that nothing
+  older remains to be found. `False` unless the collector author can positively justify — from the
+  source's own documentation or contract, not from watching it behave well so far — that it never
+  surfaces a new item whose key value sorts behind an item already confirmed known. Paired with
+  `SORT_KEY_MONOTONIC: bool` (also default `False`, `req-tap-cares-progressive-cutoff`'s own
+  concern: whether a listing's order is even reliable, e.g. `False` for anything ordered by an
+  access-time-like field) only where cutoff additionally needs ordering, not just visibility —
+  watermark filtering needs `APPEND_ONLY_VISIBILITY` alone, since it does not paginate a listing.
 
 A type with no declaration defaults to `MUTABLE` — today's behavior, unconditionally safe.
 
@@ -184,7 +199,7 @@ correctly every time.
 | req-tap-cares-progressive-classification-1 | Declared, Not Inferred | Proposed | A guard test fails any model whose `MUTABILITY_CLASS` is read anywhere except from the class declaration itself. | Mirrors `tap_grid/tests/test_natural_key.py`'s shape |
 | req-tap-cares-progressive-classification-2 | Undeclared Defaults Safe | Proposed | A model with no `MUTABILITY_CLASS` behaves identically to `MUTABLE` — full re-collection, no skip of any kind. | |
 | req-tap-cares-progressive-classification-3 | Terminal Fields Required Together | Proposed | A model declaring `FROZEN_AT_TERMINAL` without both `TERMINAL_STATUS_FIELD` and `TERMINAL_STATUS_VALUES` fails the guard at load. | |
-| req-tap-cares-progressive-classification-4 | Monotonicity And Visibility Are Explicit For Cutoff Candidates | Proposed | A model declaring itself cutoff-eligible without explicit `SORT_KEY_MONOTONIC` and `APPEND_ONLY_VISIBILITY` booleans, both, fails the guard — silence is never read as `True` for either. | Split into two independent flags after review found them conflated |
+| req-tap-cares-progressive-classification-4 | Visibility Is Explicit For Watermark Or Cutoff; Monotonicity Only For Cutoff | Proposed | A model adopting watermark filtering without an explicit `APPEND_ONLY_VISIBILITY` boolean fails the guard; one adopting cutoff without both `APPEND_ONLY_VISIBILITY` and `SORT_KEY_MONOTONIC` fails it. Silence is never read as `True` for either. | Two review rounds found the same backfill gap in both mechanisms before this was made a shared, class-independent requirement |
 | req-tap-cares-progressive-classification-5 | No Class Implies Deletion Detection Except The One That Declares It | Proposed | Documentation and code review for a collector adopting this spec treats `FROZEN`/`FROZEN_AT_TERMINAL`/`VERSIONED_CONTENT`/`MUTABLE` as carrying no claim about the object's continued existence on the source; only `EXISTENCE_RECHECK_INTERVAL`'s presence is that claim, and its absence is never read as "not needed here." | Regression for the existence-revocation scope finding — this spec does not solve `build-collector`'s pre-existing additive-only gap |
 
 #### Future
@@ -217,7 +232,16 @@ once and is not recognized as reusable.
 2. The watermark value is read from the grid before the fetch (an aggregate query against already-
    collected rows, as `github_actions_run` does today), not from a side-channel cursor store —
    the grid is already the source of truth for what has been seen.
-3. **The boundary is inclusive, with dedup, never a bare strict `>` on the raw field.** A scalar
+3. **Watermark filtering requires `APPEND_ONLY_VISIBILITY=True`, the same declared property
+   `req-tap-cares-progressive-cutoff` needs, and for the identical reason.** An inclusive `>=`
+   boundary (point 4) only protects a record sharing the watermark's *exact* value; it does
+   nothing for a genuinely older record — one keyed strictly below the current watermark — that
+   the source exposes only after the watermark has already advanced past it. No comparison
+   operator closes that gap; only a declared guarantee that the source itself never does this can.
+   Without `APPEND_ONLY_VISIBILITY=True` for the surface, watermark filtering is not adopted at
+   all and the surface falls back to a full walk, with whatever residual risk remains bounded only
+   by `req-tap-cares-progressive-audit`'s cadence — stated, not assumed away.
+4. **The boundary is inclusive, with dedup, never a bare strict `>` on the raw field.** A scalar
    timestamp is not a unique cursor: two records can share the same value at the field's
    resolution, and a strict `created > watermark` filter can drop one of them forever if it is
    persisted after the watermark has already advanced past its timestamp. The filter is
@@ -226,15 +250,16 @@ once and is not recognized as reusable.
    shrink the fetch, not to be the only thing standing between the collector and a duplicate.
    Where the source offers a true monotonic cursor (an opaque token, a strictly-increasing id) in
    place of a bare timestamp, prefer it; the inclusive-with-dedup rule exists for the common case
-   where only a timestamp is available.
-4. The filtered fetch's result is the *complement* set: only what changed. It is unioned with, not
+   where only a timestamp is available. **This point protects only the equal-value case; point 3
+   is what protects the strictly-older case, and neither substitutes for the other.**
+5. The filtered fetch's result is the *complement* set: only what changed. It is unioned with, not
    substituted for, whatever `req-tap-cares-progressive-cutoff` or the existing full-listing path
    would otherwise produce for the same surface.
-5. Where the type is `FROZEN_AT_TERMINAL`, a second, independent query re-polls only rows still
+6. Where the type is `FROZEN_AT_TERMINAL`, a second, independent query re-polls only rows still
    short of their terminal state (`github_actions_run`'s non-terminal-refresh, `collector.py:6905-
    6952` *observed*) — the watermark filter alone would never re-check an in-flight object whose
    `created` timestamp has fallen behind the filter's boundary.
-6. **A bounded first population is a declared scope decision, not a silent cap.** The watermark's
+7. **A bounded first population is a declared scope decision, not a silent cap.** The watermark's
    whole mechanism only ever asks the source for things at or after the highest value it has
    already collected — nothing pulls it backward. So whatever the *first* population run leaves
    uncollected is uncollected forever, by construction, unless something outside the watermark
@@ -275,7 +300,8 @@ named, not assumed away.
 | req-tap-cares-progressive-watermark-2 | Non-Terminal Rows Always Re-Checked | Proposed | For a `FROZEN_AT_TERMINAL` type, every on-grid row not yet in a terminal state is re-fetched every run regardless of the watermark. | Regression for the gap named above |
 | req-tap-cares-progressive-watermark-5 | First Population's Bound Is Declared, Not Silent | Proposed | A first-population fetch narrower than the source's full available history requires an explicit `COLLECTION_SCOPE_LOWER_BOUND` declaration with a stated reason; with none declared, first population walks the full history regardless of how many pages that takes. | Regression for the permanent-below-the-bound-gap finding |
 | req-tap-cares-progressive-watermark-3 | First Run Has No Watermark | Proposed | With no prior rows, the collector runs a first-population fetch rather than requesting a `>=`/`created` filter with no watermark value to filter by. | Matches `github_actions_run`'s existing first-population branch; whether that fetch is bounded is `req-tap-cares-progressive-watermark-5`'s question, not this one's |
-| req-tap-cares-progressive-watermark-4 | Boundary Is Inclusive And Deduplicated | Proposed | Against a fake source where two records share the watermark field's value and only one is stored before the watermark advances, the next fetch uses `>=` and returns both; the second is a no-op write against its existing natural-key row, not a duplicate and not a permanent omission. | Regression for the strict-`>` gap found in review |
+| req-tap-cares-progressive-watermark-4 | Boundary Is Inclusive And Deduplicated | Proposed | Against a fake source where two records share the watermark field's value and only one is stored before the watermark advances, the next fetch uses `>=` and returns both; the second is a no-op write against its existing natural-key row, not a duplicate and not a permanent omission. | Regression for the strict-`>` gap found in review; protects only the equal-value case |
+| req-tap-cares-progressive-watermark-6 | Strictly-Older Records Are Never Assumed Unreachable | Proposed | Against a fake source with watermark `100` and a run exposing a new record keyed `90` (strictly below the current watermark, not equal to it), the collector walks in full — not filtered — unless `APPEND_ONLY_VISIBILITY=True` is declared for that surface; where declared, the test cites the source-side justification, not merely the flag. | Regression for the strictly-older-record finding — distinct from and not fixed by watermark-4's dedup |
 
 ### Ordered-Listing Early Cutoff
 ----
@@ -293,10 +319,7 @@ append-only visibility**, a separate claim from ordering that the mechanism does
 Proposed. `actions_artifact` and `code_scanning_analysis` are both returned newest-first by
 creation *(observed, github_core's own truncation-warning comments at `collector.py:5606` and
 `:4766`)* and are candidates once declared `FROZEN` / `FROZEN_CONTENT_REVOCABLE` with
-`SORT_KEY_MONOTONIC=True` and `APPEND_ONLY_VISIBILITY=True`. `pull_request`'s existing GraphQL
-query already orders by `UPDATED_AT DESC` (`graphql_client.py:233` *observed*) — the single
-cleanest case, because `updated_at` encodes "did anything change" directly rather than merely
-"when was it made," but the mechanism is not wired to any watermark or cutoff today. `actions_cache`
+`SORT_KEY_MONOTONIC=True` and `APPEND_ONLY_VISIBILITY=True`. `actions_cache`
 is the declared counter-example for `SORT_KEY_MONOTONIC`: it is returned ordered by **most recently
 accessed** (`collector.py:5369` *observed*), so a cache re-accessed today can resurface above a
 genuinely new, never-before-seen cache lower in a stale ordering. This is exactly why
@@ -382,6 +405,18 @@ independently rather than one implying the other. `req-tap-cares-progressive-aud
 remains the deliberate, periodic *full* re-walk that bounds whatever residual risk survives all
 three safeguards — cutoff reduces cost, it does not claim to eliminate the need for an eventual
 full check.
+
+**`MUTABLE` types, including `pull_request`'s own `UPDATED_AT DESC` ordering
+(`graphql_client.py:233` *observed*), are not a cutoff example, and an earlier draft naming
+`pull_request` here was inconsistent with this section's own eligible-class rule** — a `MUTABLE`
+object can never be "confirmed frozen," so it can never contribute to the overlap-window streak,
+and cutoff as defined here never fully skips one. That `updated_at` ordering is real, and is a
+plausible foundation for a *different*, smaller mechanism this spec does not define: bounding how
+much of a `MUTABLE` corpus needs re-verifying on a given run by its own freshness field, without
+ever treating any item as skippable outright. Naming it here would have quietly widened cutoff's
+own eligible-class rule by example rather than by declaration — exactly the failure mode this
+spec's "declared, not inferred" discipline exists to prevent elsewhere. It is left as a named,
+unspecified future opportunity rather than folded into a mechanism it does not fit.
 
 #### Acceptance Criteria
 
