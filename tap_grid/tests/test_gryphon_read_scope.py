@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -448,6 +449,19 @@ class TestStaticGuard:
         from tap_grid.guards.gryphon_read_scope import read_scope_offenders
 
         assert len(read_scope_offenders(line + "\n", "probe.py")) == 1
+
+    def test_only_the_package_scope_module_is_exempt(self, tmp_path: Path) -> None:
+        from tap_grid.guards.gryphon_read_scope import package_offenders
+
+        (tmp_path / "read_scope.py").write_text("qs = Entity.objects.all()\n", encoding="utf-8")
+        nested = tmp_path / "probe"
+        nested.mkdir()
+        (nested / "read_scope.py").write_text("qs = Entity.objects.all()\n", encoding="utf-8")
+
+        offenders = package_offenders(tmp_path)
+
+        assert len(offenders) == 1
+        assert "probe" in offenders[0]
 
     def test_docstrings_are_prose_not_lookups(self) -> None:
         from tap_grid.guards.gryphon_read_scope import read_scope_offenders

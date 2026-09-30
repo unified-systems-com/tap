@@ -35,6 +35,25 @@ _MANAGER_ATTRIBUTES = frozenset({"objects", "all_objects", "_base_manager", "_de
 _REVERSE_EDGE_NAMES = ("edges_out", "edges_in")
 
 
+def package_offenders(gryphon_dir: Path) -> list[str]:
+    """Every unscoped spelling under ``gryphon_dir``, exempting only its own top-level scope module.
+
+    The exemption is the one path ``gryphon_dir / "read_scope.py"``, not any file of that name: a
+    nested ``read_scope.py`` elsewhere in the package is checked like every other module.
+    """
+    scope_module = gryphon_dir / _SCOPE_MODULE
+    offenders: list[str] = []
+    for path in sorted(gryphon_dir.rglob("*.py")):
+        if path == scope_module:
+            continue
+        try:
+            label = str(path.relative_to(REPO_ROOT))
+        except ValueError:
+            label = str(path.relative_to(gryphon_dir))
+        offenders.extend(read_scope_offenders(path.read_text(encoding="utf-8"), label))
+    return offenders
+
+
 def _docstring_nodes(tree: ast.AST) -> set[int]:
     """ids of the string constants that are docstrings (or other bare string statements)."""
     exempt: set[int] = set()
@@ -85,12 +104,7 @@ class GryphonReadScopeGuard(Guard):
     )
 
     def check(self) -> None:
-        offenders: list[str] = []
-        for path in sorted(_GRYPHON_DIR.rglob("*.py")):
-            if path.name == _SCOPE_MODULE:
-                continue
-            label = str(path.relative_to(REPO_ROOT))
-            offenders.extend(read_scope_offenders(Path(path).read_text(encoding="utf-8"), label))
+        offenders = package_offenders(_GRYPHON_DIR)
         assert not offenders, (  # nosec B101
             "Gryphon code outside tap_grid/gryphon/read_scope.py reaches the grid without the read "
             "scope (req-grid-traversal-exec-read-scope-12):\n  " + "\n  ".join(offenders)
