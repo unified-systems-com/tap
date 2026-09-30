@@ -127,6 +127,22 @@ runtime.
 | `VERSIONED_CONTENT` | Content can change via an explicit edit, but the source hands back a content fingerprint (a hash, an ETag, a blob sha) cheaply, separate from a full fetch of the content | `github_workflow`'s YAML body (GitHub's Contents API returns a blob `sha`) |
 | `MUTABLE` | Fields can change at any time with no terminal marker the collector can rely on; a freshness field such as `updated_at`, when the source provides one, still bounds re-checking (`req-tap-cares-progressive-cutoff`) without making the object skippable | `pull_request` (open), `code_scanning_alert`, `github_ruleset`, `github_environment`, `github_runner`, `actions_secret` |
 
+**"Frozen" describes fields, not the row's continued existence — and that boundary is
+deliberate, not an oversight.** `FROZEN` and `FROZEN_AT_TERMINAL` promise that an object's *data*
+will never change again; neither promises the object can never be *removed* from the source (a
+completed workflow run purged after its retention window, a rule suite pruned, a ruleset deleted).
+`FROZEN_CONTENT_REVOCABLE` is named for exactly this distinction and carries the one mechanism
+this spec defines for it, `EXISTENCE_RECHECK_INTERVAL` — but that mechanism is not extended to
+every other class here, and this spec does not attempt to. Detecting a deleted object in general is
+`build-collector`'s own already-named, larger gap ("Additive-only is a defect, not a phase" — both
+committed cloud collectors upsert and never tombstone today). Adopting any mechanism in this spec
+does not change that: a `FROZEN_AT_TERMINAL` run skipped by watermark or cutoff is exactly as
+undetectable-if-deleted after adopting these mechanisms as it was before, because nothing in
+`github_core` detects that deletion today either way. **What this spec requires is that no
+mechanism here be read as having solved that problem for a class that does not declare
+`EXISTENCE_RECHECK_INTERVAL`** — a real efficiency win must not be quietly mistaken for a
+deletion-detection story it never provided.
+
 #### Status Details
 Proposed. Not implemented in any collector today. `github_core`'s own model files carry the
 information this classification needs in prose (docstrings noting "an occurrence, not a change,"
@@ -169,6 +185,7 @@ correctly every time.
 | req-tap-cares-progressive-classification-2 | Undeclared Defaults Safe | Proposed | A model with no `MUTABILITY_CLASS` behaves identically to `MUTABLE` — full re-collection, no skip of any kind. | |
 | req-tap-cares-progressive-classification-3 | Terminal Fields Required Together | Proposed | A model declaring `FROZEN_AT_TERMINAL` without both `TERMINAL_STATUS_FIELD` and `TERMINAL_STATUS_VALUES` fails the guard at load. | |
 | req-tap-cares-progressive-classification-4 | Monotonicity And Visibility Are Explicit For Cutoff Candidates | Proposed | A model declaring itself cutoff-eligible without explicit `SORT_KEY_MONOTONIC` and `APPEND_ONLY_VISIBILITY` booleans, both, fails the guard — silence is never read as `True` for either. | Split into two independent flags after review found them conflated |
+| req-tap-cares-progressive-classification-5 | No Class Implies Deletion Detection Except The One That Declares It | Proposed | Documentation and code review for a collector adopting this spec treats `FROZEN`/`FROZEN_AT_TERMINAL`/`VERSIONED_CONTENT`/`MUTABLE` as carrying no claim about the object's continued existence on the source; only `EXISTENCE_RECHECK_INTERVAL`'s presence is that claim, and its absence is never read as "not needed here." | Regression for the existence-revocation scope finding — this spec does not solve `build-collector`'s pre-existing additive-only gap |
 
 #### Future
 If a sixth shape turns up in a source this taxonomy does not fit (a append-only-but-redactable
@@ -217,6 +234,17 @@ once and is not recognized as reusable.
    short of their terminal state (`github_actions_run`'s non-terminal-refresh, `collector.py:6905-
    6952` *observed*) — the watermark filter alone would never re-check an in-flight object whose
    `created` timestamp has fallen behind the filter's boundary.
+6. **A bounded first population is a declared scope decision, not a silent cap.** The watermark's
+   whole mechanism only ever asks the source for things at or after the highest value it has
+   already collected — nothing pulls it backward. So whatever the *first* population run leaves
+   uncollected is uncollected forever, by construction, unless something outside the watermark
+   mechanism reaches back for it. A first population that is deliberately narrower than "collect
+   everything the source has" (`github_actions_run`'s literal first-population branch, `collector.
+   py:6878-6888`, is exactly this: one bounded page of the newest runs, not the repository's whole
+   run history) must declare that narrowing explicitly — a stated `COLLECTION_SCOPE_LOWER_BOUND`
+   per surface, with a reason — rather than leaving "how much history did we actually agree to
+   collect" implicit in whatever a first page happened to return. Absent an explicit bound, first
+   population fetches the full available history, however many pages that takes.
 
 #### Development
 The two-part shape (watermark filter + separate non-terminal re-poll) looks like two mechanisms
@@ -231,13 +259,22 @@ wrong for run timestamps at GitHub's actual resolution, but the *general* requir
 inherit a narrower assumption than it states — a future adopter with coarser timestamps or
 batched writes must not be quietly exposed to the same gap this rule closes.
 
+Point 6 was added after a second review round found that a "bounded first-population fetch"
+(named, without qualification, in this draft's first acceptance criterion) creates a permanent,
+un-backfillable hole below whatever the bound happened to be — the watermark mechanism has no
+way to ever revisit it, by design. Making the bound an explicit, reasoned declaration does not
+close that hole; it turns a silent one into a stated, reviewable scope decision, with
+`req-tap-cares-progressive-audit` (Backlog) as the only mechanism that could ever backfill it —
+named, not assumed away.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-progressive-watermark-1 | Watermark Read From The Grid | Proposed | The watermark value used to filter a fetch is computed from already-collected rows, never a separately persisted cursor. | |
 | req-tap-cares-progressive-watermark-2 | Non-Terminal Rows Always Re-Checked | Proposed | For a `FROZEN_AT_TERMINAL` type, every on-grid row not yet in a terminal state is re-fetched every run regardless of the watermark. | Regression for the gap named above |
-| req-tap-cares-progressive-watermark-3 | First Run Has No Watermark | Proposed | With no prior rows, the collector falls back to a bounded first-population fetch rather than requesting an unbounded "since the beginning of time" filter. | Matches `github_actions_run`'s existing first-population branch |
+| req-tap-cares-progressive-watermark-5 | First Population's Bound Is Declared, Not Silent | Proposed | A first-population fetch narrower than the source's full available history requires an explicit `COLLECTION_SCOPE_LOWER_BOUND` declaration with a stated reason; with none declared, first population walks the full history regardless of how many pages that takes. | Regression for the permanent-below-the-bound-gap finding |
+| req-tap-cares-progressive-watermark-3 | First Run Has No Watermark | Proposed | With no prior rows, the collector runs a first-population fetch rather than requesting a `>=`/`created` filter with no watermark value to filter by. | Matches `github_actions_run`'s existing first-population branch; whether that fetch is bounded is `req-tap-cares-progressive-watermark-5`'s question, not this one's |
 | req-tap-cares-progressive-watermark-4 | Boundary Is Inclusive And Deduplicated | Proposed | Against a fake source where two records share the watermark field's value and only one is stored before the watermark advances, the next fetch uses `>=` and returns both; the second is a no-op write against its existing natural-key row, not a duplicate and not a permanent omission. | Regression for the strict-`>` gap found in review |
 
 ### Ordered-Listing Early Cutoff
