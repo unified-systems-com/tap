@@ -9,6 +9,8 @@ audience:
 related:
   - tap#322
   - tap#323
+  - tap#886
+  - tap#896
   - docs/misc/doc-grid-batch-provenance-and-grift-patch-semantics.md
   - docs/misc/doc-grid-reconcile-design.md
   - docs/misc/doc-grid-reobservation-prior-art.md
@@ -17,6 +19,7 @@ related:
   - tap_grid/specs/spec-grid-node.md
   - tap_grid/specs/spec-grid-flip.md
   - tap_grid/specs/spec-grid-service-write.md
+  - tap_grid/specs/spec-grid-dimension.md
 ---
 
 > Captured from a support-thread session with George, 2026-09-29, continuing directly from
@@ -26,6 +29,33 @@ related:
 > what came after: a general time/observation model for the grid, and the complete execution order
 > for everything decided across both documents. Written to be picked up cold, by a session with no
 > memory of the conversation that produced it.
+
+# Update 2026-09-30 — phasing, a gap on non-observed entities, and review corrections
+
+**Everything in this document is Phase 2 or Phase 3 under epic tap#886 — it does not start until
+Phase 1 ships.** Phase 1 is the companion document's Part 1 (the tap#322/#323 core fix) alone,
+driven by an actual initiating incident: unblocking zizmor's updates and the vulnerability-
+management pathway, which needs the multiple-history-bumps-per-write problem fixed and nothing else
+this document proposes. George: "this won't be implemented as one big push." See tap#886 and Part 7
+below for the phase split and updated execution order.
+
+**A real gap George raised: this document, as first written, assumed every entity is eventually
+"observed" at some point in real time — that's false for a whole class of entities TAP already
+supports.** A planned network layout in a design dimension — a topology that doesn't exist yet, or
+may never be built — was never observed by anything, ever, and may legitimately never acquire a
+phenomenon time at all. Separately, a *planned* rollout that has a real target date is not this
+case at all — that's a normal, real phenomenon time with a future bound, already covered (Part 1's
+SOSA citation on forecasts already supports this; see also tap#896 finding 2). See the new section
+under Part 1 below, "Operating outside time," for both.
+
+**An independent review (tap#896) also checked this document against the code and against the
+companion document's citations.** Two corrections landed here as a direct result, at the point each
+applies: Part 5's proposed adoption of RFC 7396's null-deletes-a-key rule is withdrawn (conflicts
+with `spec-grid-node.md`'s own ratified anti-pattern ruling); Part 6's known-unknown convention is
+already ratified and partly Implemented elsewhere, so "formalize" becomes "adopt" in the execution
+order. See the companion document's own "Update 2026-09-30" section for the full finding list —
+several apply to code this document doesn't cite directly (evidence atomicity, a second write path
+invisible to any diff) but constrain Phase 1's acceptance criteria, not this document's design.
 
 # Why this document exists
 
@@ -100,6 +130,41 @@ hop away, on `BatchEvent`, not duplicated onto the entity.
 `collection_time_end`, both nullable — see Part 3), populated only when the collector actually
 knows them.
 
+## Operating outside time — entities with no phenomenon time, and entities in the future
+
+This design started from a collector's-eye view — a source observed a real thing at some real
+moment — and that view doesn't cover everything the grid already holds. Two distinct cases, only
+one of which the design as first written actually handled:
+
+**A future-dated phenomenon time is not a null case — it's an ordinary interval with a future
+bound, and nothing here needs to change for it.** A scheduled decommission, a planned cutover, a
+rollout with a committed date: the fact will be true at a known or bounded future time. SOSA already
+supports this directly (`sosa:phenomenonTime` after `sosa:resultTime`, its own documented forecast
+case — see Part 1's citation). The invariant guarded in Part 3 (phenomenon time ≤ collection time ≤
+grid-write time) is about *when a value was recorded relative to when it became true*, not about
+whether the value itself points at the future — a forecast's phenomenon time is expected to be later
+than its collection time, and the guard already treats that as the normal, non-exceptional case for
+this kind of fact, not the clock-skew exception.
+
+**A design-dimension entity — a planned network layout that doesn't exist yet, or may never be
+built — was never observed at all, and phenomenon time may legitimately stay null forever, not just
+"for now."** This is a different thing from an unknown value: it's not that nobody has looked yet
+and might later; it's that there is nothing in the world for anyone to have looked at. Mechanically,
+the null-means-unasserted convention from Part 3 already covers this with no new schema — null
+already means "no time asserted," and "will stay unasserted forever because this was designed, not
+observed" is a legitimate, permanent instance of that same null. The thing this document didn't
+originally say, and needs to: **don't build any consumer (a freshness check, a staleness dashboard,
+a reconciliation sweep) that treats a null phenomenon time as universally "missing, go investigate."**
+For an entity that only carries a plan/design-type dimension membership (using the existing
+dimensions mechanism, `spec-grid-dimension.md` — which specific dimension marks an entity as planned
+rather than observed is a naming decision for whoever builds this, not a call this document makes),
+a persistently null phenomenon time is correct and expected. For an entity carrying an
+observed/live-collection dimension, the same null is a real signal worth flagging. The scoping rule
+is: **key the expectation off dimension membership, not off the presence of the column** — the
+column's null state is identical in both cases by design; only the surrounding context says which
+meaning applies. This is one more reason (alongside tap#896 finding 2's caution) not to treat
+phenomenon time as a blanket expectation for every Entity once the spine columns exist.
+
 # Part 2 — Representing uncertain time: intervals, not error bars
 
 Don't store a point plus an uncertainty magnitude (`timestamp ± N`). Store an **interval** —
@@ -166,15 +231,20 @@ not in this execution plan), use **JSON Pointer (RFC 6901)** for path notation �
 invent (RFC 6901 already defines the escaping for a literal `~` or `/` in a key). **JSON Patch
 (RFC 6902)** is the fuller sibling if a structured diff (not just a path) is ever wanted.
 
-**The connection worth acting on now, not deferring:** `_apply_patch`'s `_deep_merge`
-(`services/_impl.py:75-83`) is, structurally, an unnamed partial implementation of **JSON Merge
-Patch (RFC 7396)** — recursive merge, update wins per key. It's missing the RFC's other rule:
-**explicit `null` on a key should delete that key**, not set it to `None`. Verified directly:
-today, `_deep_merge` sets a nulled key's value to `None` and leaves the key present. Adopting the
-missing half of the standard would give a genuine, standards-based per-key delete to whichever
-caller(s) end up wanting it under Q131's eventual resolution — additive to that resolution, not an
-alternative to it, since it doesn't touch the top-level merge-vs-set question Q131 is actually
-about.
+**Correction (2026-09-30, tap#896 finding 4): the missing half of RFC 7396 is not adoptable here,
+and the earlier framing below was wrong.** `_apply_patch`'s `_deep_merge` (`services/_impl.py:75-83`)
+is, structurally, an unnamed partial implementation of **JSON Merge Patch (RFC 7396)** — recursive
+merge, update wins per key — and it is missing the RFC's other rule: explicit `null` on a key should
+delete that key, not set it to `None`. That part of the observation stands. What doesn't stand is
+the conclusion that follows it: **`spec-grid-node.md:396` already, explicitly, ratifies "JSON Merge
+Patch's 'null = delete' is the anti-pattern"** as part of the grid's null-means-unobserved
+convention (`req-grid-node-observation`) — a field's explicit `null` is a load-bearing assertion
+("a source looked and found nothing"), not a deletion signal, and RFC 7396 would silently override
+that for every JSON field the moment it's adopted wholesale. If a genuine per-key delete primitive is
+ever needed under Q131's eventual resolution, it needs its own explicit, non-null marker — consistent
+with the existing convention — not RFC 7396's null-based one. **RFC 6901 (JSON Pointer) is unaffected
+by this correction** and still stands as the right path-addressing notation below and in Part 6, if
+per-key addressing is ever built; only the null-deletes-a-key rule from RFC 7396 is withdrawn.
 
 # Part 6 — The field-level known-unknown convention
 
@@ -189,78 +259,90 @@ default. Distinct from two things already in this design:
 - **Patch's omission semantics** (the companion doc, Part 2) mean "didn't check this pass." This
   means "checked, and got a structured 'not allowed to tell you,' with a reason."
 
-**Not yet named or spec'd as a general convention** — invented once, for one case, not documented
-anywhere for the next collector author to find. Formalizing it (probably in `spec-grid-node.md`,
-alongside the existing null/empty-string rule) is its own step below, ahead of the collector-adoption
-pass, since nothing can adopt a convention that doesn't have a name yet.
+**Correction (2026-09-30, tap#896 finding 9): this already exists, ratified and mostly Implemented —
+the step below is adoption, not formalization.** `spec-grid-node.md`'s `req-grid-node-observation`
+(decided 2026-06-30) is this convention: the `x-tap-absence` field-schema annotation plus the
+FLIP-presence hinge, with `req-grid-node-observation-3/4/6/7` already `Implemented`. github_core's
+shape predates it and reinvents the same idea with different vocabulary. Nothing needs to be named or
+spec'd — it already is; what's needed is migrating github_core (and any future permission-gated
+collector) onto `x-tap-absence` instead of its own bespoke shape.
 
-# Part 7 — Execution order
+# Part 7 — Execution order, now split into phases (2026-09-30)
 
-Ordered by actual dependency, not by which conversation surfaced each piece. Steps without a
-listed dependency can proceed in parallel with anything else that also has none.
+**Restructured per George: this is explicitly not a single push.** The original numbered list below
+mixed one urgent, independently-motivated fix in with a much larger, still-partly-undecided design.
+The phase boundary is deliberate pacing, not just dependency order — Phase 2 does not start merely
+because Phase 1's dependencies are satisfied; it starts once Phase 1 has *shipped and been observed*
+against real collector traffic (zizmor's actual re-scan cadence, specifically, since that's the
+initiating incident). Within each phase, steps without a listed dependency can still proceed in
+parallel.
 
-1. **Get George's own direct ruling on Q129** (and Q131, put to him at the same time — see the
-   companion document's Handoff section). Not an engineering step — the actual bottleneck. demo-dev
-   holds both and has correctly declined to start building from a relay.
-   *Depends on: nothing. Blocks: step 2.*
+## Phase 1 — the immediate target (entirely in the companion document, nothing here)
 
-2. **Build the tap#322 core fix**: diff-before-write in `_execute_write_pipeline` (pre-image before
-   apply, post-image after — `_apply_replace` resets payload-absent fields to defaults, which is
-   itself a real change the diff must catch), `BatchEventType.OBSERVE` for an empty-diff update,
-   the four consumer sites widened in the *same* change (`candidates.py:106`, `reconcile.py:436`
-   and `:325`, `cascade_corpus/timing.py:187` — not separable, this is the coupling that protects
-   against tombstoning live rows), the two spine fields (`last_changed_batch_id`,
-   `last_observed_batch_id`/`_at`), drop `BaseModel.batch_id` after the plugin-envelope grep (see
-   issue #323's own trap list). Fully independent of everything else in this document — the
-   original ask, unblocked once step 1 lands.
-   *Depends on: step 1. Blocks: nothing else here.*
+George's own ruling on Q129, then the tap#322 core fix (diff-before-write, `BatchEventType.OBSERVE`,
+the two spine fields, the four consumer sites, dropping `BaseModel.batch_id`), now with the
+evidence-atomicity, first-assertion, spine-sync-bypass, and historical-batch_id acceptance criteria
+tap#896 added. Fully specified in the companion document's Part 1 and its new "Evidence durability"
+section — see that document, not this one. **This is the only phase gated on the initiating
+incident** (unblocking zizmor and the vulnerability-management pathway); everything below waits on
+it shipping, not just being designed.
 
-3. **Resolve Q131**: caller-intent-keyed JSON apply-semantics (GRIFT import wants wholesale-set,
-   the panel editor wants deep-merge — key on caller intent, not field type), plus the RFC 7396
-   null-deletes-a-key refinement from Part 5 above. Independent of step 2. Low urgency until step
-   7, but the design is done — no reason to defer deciding it.
-   *Depends on: step 1 (needs George's ruling, same as Q129). Blocks: step 7.*
+## Phase 2 — the time/observation model and GRIFT patch semantics (this document + companion Part 2)
 
-4. **Phenomenon time range on the Entity spine** (Part 1/2 above): two columns, a
-   `SPINE_FIELD_NAMES` update, the drift-guard test (`test_entity_spine.py`) will catch any
-   mismatch by construction. Fully independent additive schema change.
-   *Depends on: nothing. Blocks: nothing else here (step 10 benefits from it but doesn't strictly
-   need it to start).*
+Gated on Phase 1 shipped and validated, not merely landed. Ordered by dependency within the phase:
 
-5. **Decide the collector-time input shape (Part 4), then build the `BatchEvent` columns it
-   feeds.** The shape decision has to precede the column design.
-   *Depends on: nothing. Blocks: step 10's fuller value (a collector can't assert collection time
-   until this exists).*
+1. **Resolve Q131**, corrected per tap#896 finding 4 above: caller-intent-keyed JSON apply-semantics
+   (GRIFT import wants wholesale-set, the panel editor wants deep-merge — key on caller intent, not
+   field type). The RFC 7396 null-deletes-a-key idea is withdrawn, not part of this step anymore —
+   if a per-key delete primitive is wanted, it needs its own non-null marker, a separate design
+   question this step does not have to answer to close Q131.
+   *Depends on: Phase 1 shipped. Blocks: the patch-default flip, below.*
 
-6. **Build the `put`/`replace` GRIFT section** (schema-only; the companion doc's collector audit
+2. **Phenomenon time range on the Entity spine**, including the "Operating outside time" scoping
+   above (null is a legitimate permanent state for design/plan-dimension entities; consumers must key
+   the "is this actually missing" question off dimension membership, not off the column's null-ness
+   alone). Two columns, a `SPINE_FIELD_NAMES` update, the drift-guard test
+   (`test_entity_spine.py`) catches any mismatch by construction.
+   *Depends on: Phase 1 shipped (schema-independent, but sequenced here per the phase gate).*
+
+3. **Decide the collector-time input shape (Part 4), then build the `BatchEvent` columns it feeds.**
+   The shape decision has to precede the column design.
+   *Depends on: Phase 1 shipped.*
+
+4. **Build the `put`/`replace` GRIFT section** (schema-only; the companion doc's collector audit
    confirmed zero collectors currently need it, so this ships with no collector code changes).
-   *Depends on: nothing. Blocks: step 7.*
+   *Depends on: Phase 1 shipped. Blocks: the patch-default flip, below.*
 
-7. **Flip `nodes`/`edges` to mean patch by default.** Only after step 3 (so the flip doesn't
-   reintroduce the JSON-merge danger Q131 exists to prevent) and step 6 (so an escape hatch already
-   exists for anyone who turns out to need full-replace). Doing this before either exists means a
-   window where the risky change has shipped before either of its safety nets do.
-   *Depends on: steps 3, 6. Blocks: step 11.*
+5. **Flip `nodes`/`edges` to mean patch by default.** Only after step 1 (so the flip doesn't
+   reintroduce the JSON-merge danger Q131 exists to prevent) and step 4 (so an escape hatch already
+   exists for anyone who turns out to need full-replace) — doing this before either exists means a
+   window where the risky change has shipped before either of its safety nets do. Also confirm, per
+   tap#896 finding 5, that "zero collector changes needed" still holds against the full missing/live/
+   tombstoned target matrix, not just the omission audit already done.
+   *Depends on: steps 1, 4.*
 
-8. **Update the `build-collector` skill** to document the patch/put choice for future collector
-   authors. Documenting a capability before it exists would mislead the next person who reads it.
-   *Depends on: steps 6, 7.*
+6. **Update the `build-collector` skill** to document the patch/put choice for future collector
+   authors.
+   *Depends on: steps 4, 5.*
 
-9. **Formalize the field-level known-unknown convention (Part 6)** — name it, define its canonical
-   shape, write it into `spec-grid-node.md` alongside the existing null/empty-string rule.
-   Independent of the time and patch work — a naming and spec exercise, not a schema change — but
-   has to exist before the next step can use it.
-   *Depends on: nothing. Blocks: step 10 (only for the known-unknown half of the adoption).*
+7. **Adopt the field-level known-unknown convention (Part 6, corrected)** — migrate github_core's
+   `_ruleset_bypass_fields` onto the already-ratified `x-tap-absence`/`req-grid-node-observation`
+   instead of its own bespoke shape. Not a spec exercise anymore (it's already specced); an adoption
+   task, independent of the rest of Phase 2, that could in principle run any time after Phase 1 ships
+   if someone wants to pull it forward.
+   *Depends on: Phase 1 shipped (phase gate only — no technical dependency on steps 1-6).*
 
-10. **Pilot the new capabilities on zizmor-tap, then extend to the rest.** zizmor first, and not
-    arbitrarily — it's already hand-rolling the exact thing phenomenon time (step 4) exists to
-    replace (its manual `known_since` preservation), so migrating it both validates the new
-    capability against a concrete, already-understood need and immediately retires known debt,
-    rather than speculatively adding a feature nothing uses yet. Then extend to the other four:
-    github-core (largest, and the one already carrying the known-unknown pattern worth
-    generalizing per step 9), aws-core, samsite, and fedramp-20x-ksi last, since it already does
-    its own client-side diffing and may only need simplifying rather than adopting anything new.
-    *Depends on: steps 4, 5, 9 (and 7/8 if patch adoption is part of a given collector's pass).*
+## Phase 3 — pilot and collector rollout
+
+**Pilot the new capabilities on zizmor-tap, then extend to the rest.** zizmor first, and not
+arbitrarily — it's already hand-rolling the exact thing phenomenon time exists to replace (its manual
+`known_since` preservation; re-verify this against the collector's actual current code before
+migrating it, per tap#896 finding 2 — `known_since` preserves first-sighting, which is not the same
+claim as introduction time, and phenomenon time must not silently change zizmor's meaning). Then
+extend to the other four: github-core (largest, and the one carrying the known-unknown pattern from
+Phase 2 step 7), aws-core, samsite, and fedramp-20x-ksi last, since it already does its own
+client-side diffing and may only need simplifying rather than adopting anything new.
+*Depends on: all of Phase 2 (and Phase 1, transitively).*
 
 # Handoff — picking this up cold
 
@@ -268,15 +350,16 @@ A session starting fresh on this work should, in order:
 
 1. Read `doc-grid-batch-provenance-and-grift-patch-semantics.md` in full — it has the code-level
    evidence for Q129 and Q131 (exact file:line citations for `_apply_replace`, `_apply_patch`,
-   `_deep_merge`, `update_flip_map`, `_flip_touched_for_verb`) that this document doesn't repeat.
-2. Check whether Q129 and Q131 have actually been ruled by George since this was written — this
-   document's step 1 may already be done by the time it's picked up; verify against demo-dev's own
-   register or ask directly rather than assume either way.
-3. Confirm demo-dev's own current state before starting step 2 — it owns the tap#322 build and may
-   have already started once ruled, or moved on to something else entirely (a full session-fleet
-   reset was planned around the time this was written; check whether demo-dev is even the same
-   session it was).
-4. Steps 4, 5, 6, and 9 have no dependency on step 1 or 2 landing — safe to start any of them
-   immediately if step 2's build isn't picked up yet, without waiting on anyone.
-5. Do not start step 7 (the GRIFT default flip) without steps 3 and 6 both actually shipped, not
-   just designed — that ordering is the entire point of sequencing it there.
+   `_deep_merge`, `update_flip_map`, `_flip_touched_for_verb`) that this document doesn't repeat, plus
+   the Phase 1 acceptance criteria tap#896 added.
+2. Check tap#886 for current phase status before assuming Phase 1 is still pending — this document's
+   Phase 2 does not start until Phase 1 has actually shipped and been observed against real traffic,
+   not merely designed or merged.
+3. Check whether Q129 and Q131 have actually been ruled by George since this was written — verify
+   against tap#886/tap#322/tap#323 directly rather than assume either way.
+4. Confirm who currently owns this work before starting anything — demo-dev held Q129/Q131 before
+   tap#886 existed and stood down on this thread; a full session-fleet reset was planned around the
+   time this was written, so don't assume any particular session is still the owner.
+5. Within Phase 2, steps 2, 3, 4, and 7 have no technical dependency on step 1 — the phase gate
+   (Phase 1 shipped) is what actually blocks them, not each other. Do not start step 5 (the GRIFT
+   default flip) without steps 1 and 4 both actually shipped, not just designed.
