@@ -11,10 +11,13 @@ audience:
 related:
   - tap#322
   - tap#323
+  - tap#886
+  - tap#896
   - tap_grid/specs/spec-grid-flip.md
   - tap_grid/specs/spec-grid-history.md
   - tap_grid/specs/spec-grid-import-grift.md
   - tap_grid/specs/spec-grid-entity.md
+  - tap_grid/specs/spec-grid-node.md
   - docs/misc/doc-grid-reobservation-prior-art.md
   - docs/misc/doc-grid-provenance-placement-prior-art.md
   - docs/misc/doc-grid-reconcile-design.md
@@ -24,6 +27,43 @@ related:
 > Q129 (demo-dev's session, parked since r56/r57) and extending well past its original scope into
 > GRIFT's write semantics. Written by the support session, ruled by George in real time as each
 > piece landed. demo-dev has not yet seen this — see the "Handoff" section at the end.
+
+# Update 2026-09-30 — phasing, and corrections from an independent review
+
+**This work is now explicitly phased under epic tap#886, and Part 1 is Phase 1 — the immediate
+target.** The initiating incident is unblocking zizmor's updates and the vulnerability-management
+pathway, which is blocked specifically on tap#322's core symptom (multiple history bumps per
+write), not on anything in Part 2 or the companion time/observation document. George: "this won't
+be implemented as one big push" — Part 1 (this section) ships and is validated against real
+collector traffic (zizmor's actual re-scan cadence in particular) before Part 2 (GRIFT patch
+semantics, Q131) or the companion document's time model start. See tap#886 for the phase tracker.
+
+**An independent review (Codex, filed as tap#896) checked this document and its companion against
+the actual code and found several real gaps, all verified directly against the cited files rather
+than taken on the review's word.** Confirmed and folded in below, at the point each applies:
+
+- The diff-before-write mechanism must not collapse a genuine knowledge change (create with an
+  omitted nullable field, then an explicit `null` write) into "no change" — see the added note under
+  "Implementation notes for the diff itself" in Part 1.
+- Provenance/evidence recording is currently best-effort, not atomic with the write it documents —
+  see the new "Evidence durability, and two write paths a diff doesn't see" section after Part 1.
+- A separate write path (`_sync_spine_for_replaced_nodes`) mutates spine fields outside the model
+  save path entirely, invisible to any diff built on `.save()` — same new section.
+- `BatchEvent` is correlation, not reconstruction, by its own docstring — dropping the typed-row
+  `batch_id` needs an explicit answer for per-version batch attribution, not just a last-writer
+  pointer — same new section.
+- The known-unknown "convention" in Part 3 below is not something to formalize — it already exists,
+  ratified and partly Implemented, as `req-grid-node-observation`/`x-tap-absence` in
+  `spec-grid-node.md`. Corrected in place, below.
+- The Q131 direction in Part 2 needs one addition: whatever it resolves to must not adopt RFC
+  7396's null-deletes-a-key rule, because `spec-grid-node.md` already, explicitly, ratifies null-as-
+  delete as the anti-pattern TAP rejects. Corrected in place, below, and in the companion document's
+  Part 5.
+
+No finding here says Phase 1 is wrong or should wait further — Q129's answer, the shared diff
+mechanism, and the collector audit all stand. The findings sharpen Phase 1's acceptance criteria and
+correct two places (Part 2, Part 3) where the plan was about to build something that either
+duplicates ratified canon or conflicts with it.
 
 # Why this doc exists
 
@@ -148,6 +188,26 @@ right on the first pass:
   sees the same absent value either way, but a consumer reading the parent object sees a different
   object, and FLIP keys are field paths. Any "these are basically equivalent" judgment belongs to
   identity/resolution, never to the write-path diff.
+- **Don't compare with bare Python `==` and stop there — it is not JSON-type-sensitive** (tap#896,
+  verified: `{"flag": True} == {"flag": 1}` and `[False] == [0]` both return `True` in Python, since
+  `bool` is an `int` subclass). A collector or editor writing `1` where the stored value is `true`
+  is a real, distinct value in JSON even though Python's native equality says otherwise. The diff
+  needs a type check alongside the value comparison for exactly the fields where this can occur, not
+  a wholesale replacement of `==` (it's still the right operator for everything else).
+- **A value-unchanged diff is not the same claim as knowledge-unchanged, and the diff must not
+  conflate them** (tap#896, finding 1). Concretely: a node is created with a nullable field omitted
+  (stored `null`, no FLIP entry for that field — an *unknown unknown* per
+  `req-grid-node-observation-3`), then a later batch explicitly writes `null` to that same field (an
+  *asserted* unknown — a known unknown). The stored value doesn't change (`null` → `null`), but a
+  real transition happened: nobody had looked, and now someone has looked and confirmed there's
+  nothing there. This case is **already handled correctly today** by the existing FLIP write-intent
+  boundary (`req-grid-node-observation-4`/`-7`, Implemented) — an explicit null is a touched field
+  and gets FLIP-stamped regardless of whether the stored value moved. The risk is narrower than it
+  first looks: it's that the *new* diff-before-write classifier, built to decide `OBSERVE` vs.
+  `UPDATE` for `BatchEvent`, must key its decision off the same touched-field set FLIP already uses
+  (payload-presence for the null case, not just old-value-vs-new-value), or it will regress a
+  mechanism that already works. This needs one explicit test case (create-omitted, then
+  explicit-null) in whatever test suite lands with the diff function, not new design.
 
 A genuinely Postgres-native alternative exists (`UPDATE ... WHERE (cols) IS DISTINCT FROM (vals)`,
 or a trigger with `WHEN (OLD.* IS DISTINCT FROM NEW.*)`) — real, and `jsonb` equality in Postgres is
@@ -157,6 +217,41 @@ calls `.save()`, and moving the check into SQL would mean restructuring every ca
 conditional `.update()` calls instead. Worth keeping in mind as a **backstop** — a trigger that
 protects the invariant even from a write that bypasses the service layer entirely (a management
 command, a future direct-DB integration) — not as a replacement for the application-level diff.
+
+## Evidence durability, and two write paths a diff doesn't see (tap#896, findings 3 and 5)
+
+**Provenance recording is best-effort today, and Phase 1 needs to make it atomic with the write it
+documents.** `_execute_write_pipeline` (`_impl.py:963-967`, read directly) wraps `_record_provenance`
+in `try/except Exception: logger.exception(...)` and continues — the write can succeed while its
+provenance record silently doesn't exist. `record_batch_event` (`batch.py:186-217`, read directly)
+returns `None` with no error if there's no batch context or the batch row can't be found. This is
+fine for logging; it's not fine once `BatchEvent` is the ledger reconciliation trusts as evidence a
+batch actually touched or confirmed an entity (`candidates.py:106`, `reconcile.py:325,436` already
+consume it this way). Phase 1's acceptance criteria needs a case for this directly: inject a failure
+in evidence recording and confirm the whole write rolls back, not just the typed-row half of it.
+
+**A separate write path already bypasses the model-level save entirely, and it needs an explicit
+answer once spine pointers exist.** `_sync_spine_for_replaced_nodes` (`grift/importer.py:3517-3548`,
+read directly) propagates envelope `name`/`dimensions` onto `Entity` rows via a queryset `.update()`
+— deliberately, so a pure spine sync doesn't bump `version` — because `replace_node` leaves spine
+fields untouched by design. This pass predates everything in this document and isn't itself a defect,
+but it's a second, currently invisible mutation path: it doesn't call `_record_provenance`, doesn't
+touch `flip_map`, and won't touch `last_changed_batch_id`/`last_observed_batch_id` either, once those
+exist, unless this pass is explicitly updated to set them. Decide, when Phase 1 lands the two spine
+fields: does a spine-only rename count as "changed" for `last_changed_batch_id`'s purposes? Silence
+here means a renamed entity's spine pointer goes stale relative to its actual last-touched batch.
+
+**`BatchEvent` is correlation, not reconstruction, by its own docstring — dropping the typed-row
+`batch_id` needs to account for that before it happens, not after.** `models.py:1495-1503`: *"
+BatchEvent's job is correlation (what batch), not reconstruction (what changed)."* `last_changed_
+batch_id` on the spine answers "who changed the *current* state" — it is a last-writer pointer, not a
+per-version history. If anything downstream ever needs "which batch produced version N of this
+field" (not just "which batch is responsible for the value right now"), that has to come from
+django-simple-history's own per-version rows, which already carry a timestamp but were not audited
+in this document for whether they retain batch attribution after `BaseModel.batch_id` is dropped.
+Check that before the drop, not as a follow-up — the entire point of #323's "no second copy of a
+fact" reasoning was that nothing else was thought to depend on the typed-row column; this is a real
+candidate for "something else depends on it."
 
 # Part 2 — GRIFT's write semantics: why replace, and why that's changing
 
@@ -292,6 +387,20 @@ This is now filed as **Q131**, a spec question about revoking part of a ratified
 one caller only — George's call, not either session's to resolve unilaterally. Neither this
 document nor either session treats a fix as chosen.
 
+**Correction (2026-09-30, tap#896 finding 4): whatever Q131 resolves to, it must not adopt RFC
+7396's null-deletes-a-key rule as a per-key delete primitive.** The companion time/observation
+document's Part 5 proposed exactly that — "adopting the missing half of the standard" — without
+checking it against `spec-grid-node.md:396`, which already, explicitly, ratifies *"JSON Merge
+Patch's 'null = delete' is the anti-pattern"* as part of the null-means-unobserved convention this
+whole investigation depends on. TAP's null already carries a load-bearing meaning (explicit unobserved
+assertion, FLIP-stamped) that RFC 7396's delete-on-null rule would silently override for any JSON
+field. If a per-key JSON delete primitive is ever actually needed, it needs its own explicit,
+non-null marker (a reserved sentinel key, a structured tombstone token — the mechanism is an open
+design question, not this correction's job to pick), consistent with the existing convention rather
+than borrowing the one part of RFC 7396 that convention already rejects. RFC 6901 (JSON Pointer) for
+*addressing* a key is unaffected by this and still stands as the right notation if per-key
+addressing is ever built.
+
 None of this says the patch-by-default direction is wrong — the SQL/Mongo upsert reasoning above
 still holds, and per-collector diffing would still multiply the same defect N ways. It says the
 safety case needed this second, orthogonal check before the flip is actually committed, this doc's
@@ -349,18 +458,22 @@ per-field tracking under patch specifically (not just "skip on no-op") is a sepa
 guarantee worth its own issue and its own test coverage, not something to assume falls out for
 free.
 
-**A reusable "field-level known-unknown" convention, worth extracting from `_ruleset_bypass_fields`.**
-github_core's `{"state": "observed"|"unobservable", "reason": ..., ...}` shape (collector.py
-~3140) is bespoke — invented for one specific case (ruleset bypass actors, permission-gated), not
-documented as a general convention. It's a genuinely different granularity from shadow nodes
-(RULED 2026-09-15, DEFERRED in `doc-grid-reconcile-design.md`) — shadows are node-level ("I don't
-have the object at all, just evidence it exists"); this is field-level ("the node is real and
-known, but this one field came back as an explicit refusal, not silence and not a real value").
-Distinct from patch's omission semantics too — omission means "didn't check this pass," this shape
-means "checked, and got a structured 'not allowed to tell you.'" Worth formalizing as a named,
-shared convention (probably alongside where the existing null/empty-string convention lives in
-`spec-grid-node.md`) the next time either shadow nodes or a permission-gated collector comes up for
-real — not urgent, but real, and currently reinvented rather than reused.
+**Correction (2026-09-30, tap#896 finding 9): this is not a convention to formalize — it already
+exists, ratified and mostly Implemented, and github_core should be pointed at it rather than have it
+re-derived.** `spec-grid-node.md`'s `req-grid-node-observation` (decided 2026-06-30, dynamic half
+closed 2026-06-30) is exactly this: the `x-tap-absence` field-schema annotation plus the FLIP-presence
+hinge (`null` + FLIP-present = known unknown, a source explicitly asserted absence; `null` +
+FLIP-absent = unknown unknown, nobody has looked) — `req-grid-node-observation-3/4/6/7` are all
+already `Implemented`. It's field-level, exactly as this section originally argued for, and it's
+already distinct from shadow nodes (node-level) for the same reason given above. The only real gap
+is **adoption**, not design: github_core's `_ruleset_bypass_fields`
+(`{"state": "observed"|"unobservable", "reason": ..., ...}`, collector.py ~3140) is a bespoke,
+undocumented shape that predates the ratified convention and does the same job with a different
+vocabulary. The work here is migrating github_core (and any future permission-gated collector) onto
+`x-tap-absence` instead of its own invented shape — a rollout/adoption task for Phase 2's collector
+pass, not a new spec to write. This document's earlier framing of this as an unnamed convention
+worth naming was wrong; the earlier research pass should have found `req-grid-node-observation`
+before proposing to reinvent it.
 
 # Handoff — updated after demo-dev's review, 2026-09-29 (same day)
 
@@ -390,3 +503,11 @@ described and are not in question.
 should be updated once GRIFT's schema change and the diff-before-write mechanism actually ship —
 documenting it earlier would describe a capability that doesn't exist yet, and now additionally
 depends on however Q131 resolves for the patch/JSON-merge story specifically.
+
+**Update 2026-09-30:** this work now lives under epic tap#886, explicitly phased — see the "Update
+2026-09-30" section at the top of this document. Phase 1 is Part 1 plus the new "Evidence
+durability" section above; it is the immediate target, driven by unblocking zizmor's vulnerability-
+management pathway, and ships and is validated on its own before Phase 2 (Part 2 / Q131, and the
+companion time/observation document) starts. An independent review filed as tap#896 checked both
+documents against the code directly; its confirmed findings are folded in above at the point each
+applies, and tap#896 itself stays open as the traceability record.
