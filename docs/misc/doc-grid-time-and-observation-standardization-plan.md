@@ -20,6 +20,8 @@ related:
   - tap_grid/specs/spec-grid-flip.md
   - tap_grid/specs/spec-grid-service-write.md
   - tap_grid/specs/spec-grid-dimension.md
+  - tap_grid/specs/spec-grid-history.md
+  - tap_grid/specs/spec-grid-perspective-BACKLOG.md
 ---
 
 > Captured from a support-thread session with George, 2026-09-29, continuing directly from
@@ -33,11 +35,12 @@ related:
 # Update 2026-09-30 — phasing, a gap on non-observed entities, and review corrections
 
 **Everything in this document is Phase 2 or Phase 3 under epic tap#886 — it does not start until
-Phase 1 ships.** Phase 1 is the companion document's Part 1 (the tap#322/#323 core fix) alone,
-driven by an actual initiating incident: unblocking zizmor's updates and the vulnerability-
-management pathway, which needs the multiple-history-bumps-per-write problem fixed and nothing else
-this document proposes. George: "this won't be implemented as one big push." See tap#886 and Part 7
-below for the phase split and updated execution order.
+Phase 1 ships.** Phase 1 is the companion document's Part 1 (the tap#322/#323 core fix) alone. The
+initiating incident behind the whole epic is unblocking zizmor's updates and the vulnerability-
+management pathway — but see "Update 2026-09-30, round 2" below: the actual Phase 1 proving ground is
+github_core, not zizmor, once a genuine complication in zizmor's own data was found. George: "this
+won't be implemented as one big push." See tap#886 and Part 7 below for the phase split and updated
+execution order.
 
 **A real gap George raised: this document, as first written, assumed every entity is eventually
 "observed" at some point in real time — that's false for a whole class of entities TAP already
@@ -56,6 +59,61 @@ already ratified and partly Implemented elsewhere, so "formalize" becomes "adopt
 order. See the companion document's own "Update 2026-09-30" section for the full finding list —
 several apply to code this document doesn't cite directly (evidence atomicity, a second write path
 invisible to any diff) but constrain Phase 1's acceptance criteria, not this document's design.
+
+# Update 2026-09-30, round 2 — github_core not zizmor, and two existing specs this design never checked
+
+**zizmor is not Phase 1's proving case.** A second review pass fetched zizmor-tap's actual collector
+source and found `observed_at` (`collector.py:449,625`) is set from `state.started_at` — the
+collection run's own start time — and written into every finding's payload every pass, regardless of
+whether the finding itself changed. George's ruling: that's not a bug to suppress — a field that
+genuinely differs every pass should cause exactly one history bump per pass, working as designed. It
+does mean zizmor's own churn won't visibly quiet down under Phase 1 alone, so George redirected the
+proving ground to **github_core**, which has "plenty of non-moving entities" with no equivalent
+per-pass timestamp baked into the domain payload — a clean test of the actual mechanism. Every
+zizmor-as-proving-ground reference below and in Part 7 is superseded by this. Separately filed as
+backlog, not part of Phase 1: `unified-systems-com/zizmor-tap#57` (walk git history to find a
+finding's real introduction commit — the only way zizmor could ever get genuine event/phenomenon
+time, since it has no other source for it).
+
+**A deeper gap, found doing the self-audit George asked for: this document never checked two specs
+that already speak directly to the problem it's solving, and should have from the start.**
+
+- **`tap_grid/specs/spec-grid-history.md`'s `req-grid-history-time` (Status: `Proposed`)** already
+  distinguishes exactly the two outermost times this document names: `recorded_at` ("TAP-generated
+  record time," never client-supplied — this document's grid-write time) and `observed_at` ("source/
+  world time supplied by the write path when available" — this document's phenomenon time). Its own
+  text: *"transaction time may live on history rows and batch metadata, while observation time may
+  live on perspective records or write payloads — the capability contract matters more than where the
+  columns initially reside."* That's a real, if not-yet-built, prior ruling on the exact placement
+  question Part 1 above treats as decided from scratch (two spine columns) — this document's
+  three-way split (splitting what `req-grid-history-time` treats as one "transaction time" bucket
+  into collection-time and grid-write-time) is a legitimate, motivated refinement, not a competing
+  invention, but it needs to say so and reconcile field names, not present phenomenon time as a new
+  concept when `observed_at` already names it.
+- **`tap_grid/specs/spec-grid-perspective-BACKLOG.md`'s `req-grid-perspective-record` (Status:
+  `Proposed`)** — "one perspective record per subject + perspective + `observed_at`," a partial
+  overlay payload distinct from a full shadow copy or a canonical overwrite — is structurally the same
+  shape as Part 4's "collector-time input shape, keyed by entity id" proposal below. Phase 2's
+  collector-time design needs to reconcile with this existing backlog spec, not invent a parallel
+  structure that does the same job under a different name.
+- **The naming collision is not a coincidence.** zizmor's own `observed_at` field reuses the exact
+  name `req-grid-history-time` already reserves for source/world time — populated instead with a
+  receipt-time value (the run's start). That's a real, if minor (the canonical field isn't built yet),
+  mismatch between an aspirational name already claimed in canon and a collector's current usage.
+  Whatever Phase 2 settles on for field names needs to either adopt `observed_at` as the canonical
+  name for this document's phenomenon time (reconciling with the existing spec) or explicitly
+  supersede it with a documented reason — not add a third, differently-named field alongside two
+  specs that already use `observed_at` for related but not identical things.
+
+**Given this, Phase 2's status changes from "settled" to "design questions identified."** Not because
+anything here is wrong, but because a design that hasn't reconciled with two directly-relevant
+existing specs cannot honestly claim to be settled. Phase 2 also splits into independent tracks that
+do not all need to complete before a pilot: GRIFT write semantics (Q131, put/replace, the
+patch-default flip) is one track; the temporal model (this document's Parts 1-4, now pending
+reconciliation above) is a second; known-unknown adoption (Part 6) is a third, already independent in
+Part 7's own dependency graph. George has also flagged that the whole epic, Phase 1 included, may end
+up backlogged in favor of shipping the vulnerability/exception system some other way — see tap#886 for
+current status before assuming any of this is scheduled.
 
 # Why this document exists
 
@@ -158,12 +216,21 @@ a reconciliation sweep) that treats a null phenomenon time as universally "missi
 For an entity that only carries a plan/design-type dimension membership (using the existing
 dimensions mechanism, `spec-grid-dimension.md` — which specific dimension marks an entity as planned
 rather than observed is a naming decision for whoever builds this, not a call this document makes),
-a persistently null phenomenon time is correct and expected. For an entity carrying an
-observed/live-collection dimension, the same null is a real signal worth flagging. The scoping rule
-is: **key the expectation off dimension membership, not off the presence of the column** — the
-column's null state is identical in both cases by design; only the surrounding context says which
-meaning applies. This is one more reason (alongside tap#896 finding 2's caution) not to treat
-phenomenon time as a blanket expectation for every Entity once the spine columns exist.
+a persistently null phenomenon time is correct and expected.
+
+**Dimension membership alone is not a sufficient discriminator, though (tap#896, point 6) — a source
+can also legitimately never supply phenomenon time for an entity that** ***is*** **genuinely observed.**
+An observed/live entity from a source that simply doesn't report timing at all is a third case,
+distinct from "designed, not observed": the object is real and was actually seen, but nothing says
+when it became true. Treating that null the same as an observed-live entity's "investigate, this looks
+stale" signal would be a false alarm. The actual discriminator has to be a **declared per-source/
+per-collector contract** — does this source ever supply phenomenon time for this field, at all —
+checked independently of which dimension the entity happens to carry. Dimension membership is a
+useful, cheap first filter (a design-dimension entity is *never* expected to have one), but it doesn't
+settle the harder case of an observed entity from a source that structurally can't provide the time.
+Whatever mechanism ends up declaring this (a per-collector manifest flag, a schema-level annotation in
+the spirit of `x-tap-absence` but at the source-capability level rather than the per-write level) is
+Phase 2 design work, not resolved by this section.
 
 # Part 2 — Representing uncertain time: intervals, not error bars
 
@@ -201,11 +268,18 @@ the batch's `started_at`/`closed_at`." Baking a fallback into the write path wou
 destroy the distinction between real and defaulted data; computing it at read time preserves the
 distinction for anyone who cares while still giving a usable number to anyone who doesn't.
 
-**A natural invariant worth stating and guarding, with one named exception:** phenomenon time (its
-end bound, if a range) should be ≤ collection time ≤ grid-write time. The exception: clock skew on
-the source side could make a *reported* phenomenon time look later than collection time — that
-should be flagged as a signal, never silently coerced into looking consistent, the same spirit as
-the reconciliation design doc's "an unknown selection must never read as a shrunken one."
+**A natural invariant worth stating and guarding, with two named exceptions:** for a fact already
+true at collection time, phenomenon time (its end bound, if a range) should be ≤ collection time ≤
+grid-write time. Two cases are not violations and must not be rejected by the guard:
+
+1. **A forward-dated phenomenon time** (a forecast, a planned/scheduled fact — see "Operating outside
+   time" above) is expected to be *later* than collection time; the guard only applies to facts
+   asserted as already-true, not to facts asserted as scheduled-or-planned. A write needs to say which
+   kind of fact it's asserting for the guard to know whether to check it at all.
+2. **Clock skew** on the source side could make a *reported* phenomenon time (for an already-true
+   fact) look later than collection time — that should be flagged as a signal, never silently coerced
+   into looking consistent, the same spirit as the reconciliation design doc's "an unknown selection
+   must never read as a shrunken one."
 
 **On the guard itself:** ship it as a hard stop for now. There will eventually be a real case that
 needs to violate it — build the bypass then, against an actual use case, not speculatively now.
@@ -273,23 +347,32 @@ collector) onto `x-tap-absence` instead of its own bespoke shape.
 mixed one urgent, independently-motivated fix in with a much larger, still-partly-undecided design.
 The phase boundary is deliberate pacing, not just dependency order — Phase 2 does not start merely
 because Phase 1's dependencies are satisfied; it starts once Phase 1 has *shipped and been observed*
-against real collector traffic (zizmor's actual re-scan cadence, specifically, since that's the
-initiating incident). Within each phase, steps without a listed dependency can still proceed in
-parallel.
+against real collector traffic. That traffic is **github_core's** config-layer nodes, not zizmor's
+(see "Update 2026-09-30, round 2" above) — github_core has the stable, non-per-pass-timestamped
+entities that actually let two idle passes prove zero new versions. Within each phase, steps without
+a listed dependency can still proceed in parallel.
 
 ## Phase 1 — the immediate target (entirely in the companion document, nothing here)
 
-George's own ruling on Q129, then the tap#322 core fix (diff-before-write, `BatchEventType.OBSERVE`,
-the two spine fields, the four consumer sites, dropping `BaseModel.batch_id`), now with the
-evidence-atomicity, first-assertion, spine-sync-bypass, and historical-batch_id acceptance criteria
-tap#896 added. Fully specified in the companion document's Part 1 and its new "Evidence durability"
-section — see that document, not this one. **This is the only phase gated on the initiating
-incident** (unblocking zizmor and the vulnerability-management pathway); everything below waits on
-it shipping, not just being designed.
+George's own ruling on Q129, then the tap#322 core fix, broken into Slices A (write classification) /
+B (provenance placement) / C (observation proof — on **github_core**, not zizmor) — see the companion
+document's Parts 1 and its "Evidence durability" and "Update 2026-09-30, round 2" sections. **This is
+the only phase gated on the initiating incident** (unblocking the vulnerability-management pathway);
+everything below waits on it shipping, not just being designed. Note zizmor's own re-scan churn is
+*not* expected to visibly quiet under Phase 1 alone (its `observed_at` field genuinely changes every
+pass, by design) — that's a separate, deferred question, not this phase's done-test.
 
-## Phase 2 — the time/observation model and GRIFT patch semantics (this document + companion Part 2)
+## Phase 2 — design questions identified, not settled (this document + companion Part 2)
 
-Gated on Phase 1 shipped and validated, not merely landed. Ordered by dependency within the phase:
+**Status downgraded 2026-09-30, round 2: not "settled design," pending reconciliation with two
+existing specs this document never checked before proposing new mechanisms** (`req-grid-history-time`,
+`req-grid-perspective-record` — see "Update 2026-09-30, round 2" above). Gated on Phase 1 shipped and
+validated, not merely landed, and possibly gated further on George's ruling of whether this phase
+proceeds at all versus the whole epic backlogging behind the vulnerability/exception system shipping
+some other way. **Three independent tracks, not one sequence that all must finish before anything
+ships:** GRIFT write semantics (steps 1, 4, 5 below), the temporal model (steps 2, 3), and
+known-unknown adoption (step 7) — a pilot does not need all three complete. Ordered by dependency
+within the phase where dependencies actually exist:
 
 1. **Resolve Q131**, corrected per tap#896 finding 4 above: caller-intent-keyed JSON apply-semantics
    (GRIFT import wants wholesale-set, the panel editor wants deep-merge — key on caller intent, not
@@ -298,11 +381,16 @@ Gated on Phase 1 shipped and validated, not merely landed. Ordered by dependency
    question this step does not have to answer to close Q131.
    *Depends on: Phase 1 shipped. Blocks: the patch-default flip, below.*
 
-2. **Phenomenon time range on the Entity spine**, including the "Operating outside time" scoping
-   above (null is a legitimate permanent state for design/plan-dimension entities; consumers must key
-   the "is this actually missing" question off dimension membership, not off the column's null-ness
-   alone). Two columns, a `SPINE_FIELD_NAMES` update, the drift-guard test
-   (`test_entity_spine.py`) catches any mismatch by construction.
+2. **Prototype phenomenon time against 2-3 real cases before committing spine columns** — first-seen
+   vs. uncertain-introduction vs. a forward-dated/planned fact (tap#896's explicit recommendation, not
+   yet reflected in a concrete build step before this correction) — and reconcile naming and placement
+   against `req-grid-history-time`'s existing `observed_at`/`recorded_at` split and
+   `req-grid-perspective-record` before writing any migration. Only once that prototype and
+   reconciliation hold up does the spine-column step happen: two columns, a `SPINE_FIELD_NAMES`
+   update, the drift-guard test (`test_entity_spine.py`) catching any mismatch by construction. Include
+   the "Operating outside time" scoping (null is legitimate and permanent for design/plan-dimension
+   entities; a declared per-source contract, not dimension membership alone, decides whether an
+   observed entity's null is a real gap) in the prototype's test cases, not just the column design.
    *Depends on: Phase 1 shipped (schema-independent, but sequenced here per the phase gate).*
 
 3. **Decide the collector-time input shape (Part 4), then build the `BatchEvent` columns it feeds.**
@@ -334,14 +422,17 @@ Gated on Phase 1 shipped and validated, not merely landed. Ordered by dependency
 
 ## Phase 3 — pilot and collector rollout
 
-**Pilot the new capabilities on zizmor-tap, then extend to the rest.** zizmor first, and not
-arbitrarily — it's already hand-rolling the exact thing phenomenon time exists to replace (its manual
-`known_since` preservation; re-verify this against the collector's actual current code before
-migrating it, per tap#896 finding 2 — `known_since` preserves first-sighting, which is not the same
-claim as introduction time, and phenomenon time must not silently change zizmor's meaning). Then
-extend to the other four: github-core (largest, and the one carrying the known-unknown pattern from
-Phase 2 step 7), aws-core, samsite, and fedramp-20x-ksi last, since it already does its own
-client-side diffing and may only need simplifying rather than adopting anything new.
+**Pilot on github_core first, not zizmor** — it's already Phase 1's proving ground (Slice C), it's
+the largest real collector, and it already carries the known-unknown pattern Phase 2 step 7 migrates.
+Then aws-core and samsite. **zizmor last, and only once its `observed_at` question has an actual
+answer**, not as part of a routine rollout: `known_since` and `observed_at` are both receipt-time-
+shaped bookkeeping zizmor hand-rolled for itself (first-sighting and this-pass-timestamp,
+respectively) — neither is phenomenon/event time, since zizmor has no source for when a vulnerability
+was actually introduced (that's `zizmor-tap#57`, backlogged, not assumed available here). Migrating
+zizmor onto this design means deciding what `observed_at` becomes once a canonical field of that name
+exists (see "Update 2026-09-30, round 2" above), not simply pointing zizmor at new columns. fedramp-
+20x-ksi last regardless, since it already does its own client-side diffing and may only need
+simplifying rather than adopting anything new.
 *Depends on: all of Phase 2 (and Phase 1, transitively).*
 
 # Handoff — picking this up cold
@@ -363,3 +454,10 @@ A session starting fresh on this work should, in order:
 5. Within Phase 2, steps 2, 3, 4, and 7 have no technical dependency on step 1 — the phase gate
    (Phase 1 shipped) is what actually blocks them, not each other. Do not start step 5 (the GRIFT
    default flip) without steps 1 and 4 both actually shipped, not just designed.
+6. Before doing any Phase 2 temporal-model work, read `spec-grid-history.md`'s `req-grid-history-time`
+   and `spec-grid-perspective-BACKLOG.md`'s `req-grid-perspective-record` in full — both are Proposed,
+   both predate this document, and this document was written without checking either. Reconcile field
+   naming (`observed_at` already means something specific in `req-grid-history-time`) before adding
+   new spine columns under a different name.
+7. github_core, not zizmor, is Phase 1's proving ground and Phase 3's first pilot — see "Update
+   2026-09-30, round 2" above before doing anything zizmor-specific.
