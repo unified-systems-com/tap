@@ -196,10 +196,20 @@ once and is not recognized as reusable.
 2. The watermark value is read from the grid before the fetch (an aggregate query against already-
    collected rows, as `github_actions_run` does today), not from a side-channel cursor store —
    the grid is already the source of truth for what has been seen.
-3. The filtered fetch's result is the *complement* set: only what changed. It is unioned with, not
+3. **The boundary is inclusive, with dedup, never a bare strict `>` on the raw field.** A scalar
+   timestamp is not a unique cursor: two records can share the same value at the field's
+   resolution, and a strict `created > watermark` filter can drop one of them forever if it is
+   persisted after the watermark has already advanced past its timestamp. The filter is
+   `field >= watermark`, and the natural key's existing dedup (`find_existing`) is what makes
+   re-returning an already-stored row safe rather than duplicating it — the filter's job is to
+   shrink the fetch, not to be the only thing standing between the collector and a duplicate.
+   Where the source offers a true monotonic cursor (an opaque token, a strictly-increasing id) in
+   place of a bare timestamp, prefer it; the inclusive-with-dedup rule exists for the common case
+   where only a timestamp is available.
+4. The filtered fetch's result is the *complement* set: only what changed. It is unioned with, not
    substituted for, whatever `req-tap-cares-progressive-cutoff` or the existing full-listing path
    would otherwise produce for the same surface.
-4. Where the type is `FROZEN_AT_TERMINAL`, a second, independent query re-polls only rows still
+5. Where the type is `FROZEN_AT_TERMINAL`, a second, independent query re-polls only rows still
    short of their terminal state (`github_actions_run`'s non-terminal-refresh, `collector.py:6905-
    6952` *observed*) — the watermark filter alone would never re-check an in-flight object whose
    `created` timestamp has fallen behind the filter's boundary.
@@ -211,6 +221,12 @@ because an object that started before the watermark and is still in flight will 
 a "created after" filter. Any collector adopting this for a `FROZEN_AT_TERMINAL` type must adopt
 both halves or neither.
 
+The inclusive-boundary rule (point 3) was tightened after review of this spec's first draft, which
+specified a strict `>` filter matching `github_actions_run`'s literal code today. That code is not
+wrong for run timestamps at GitHub's actual resolution, but the *general* requirement must not
+inherit a narrower assumption than it states — a future adopter with coarser timestamps or
+batched writes must not be quietly exposed to the same gap this rule closes.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -218,6 +234,7 @@ both halves or neither.
 | req-tap-cares-progressive-watermark-1 | Watermark Read From The Grid | Proposed | The watermark value used to filter a fetch is computed from already-collected rows, never a separately persisted cursor. | |
 | req-tap-cares-progressive-watermark-2 | Non-Terminal Rows Always Re-Checked | Proposed | For a `FROZEN_AT_TERMINAL` type, every on-grid row not yet in a terminal state is re-fetched every run regardless of the watermark. | Regression for the gap named above |
 | req-tap-cares-progressive-watermark-3 | First Run Has No Watermark | Proposed | With no prior rows, the collector falls back to a bounded first-population fetch rather than requesting an unbounded "since the beginning of time" filter. | Matches `github_actions_run`'s existing first-population branch |
+| req-tap-cares-progressive-watermark-4 | Boundary Is Inclusive And Deduplicated | Proposed | Against a fake source where two records share the watermark field's value and only one is stored before the watermark advances, the next fetch uses `>=` and returns both; the second is a no-op write against its existing natural-key row, not a duplicate and not a permanent omission. | Regression for the strict-`>` gap found in review |
 
 ### Ordered-Listing Early Cutoff
 ----
@@ -246,15 +263,44 @@ merely re-fetch known ones for nothing. This is exactly why `SORT_KEY_MONOTONIC`
 explicit declaration (`req-tap-cares-progressive-classification`) rather than an assumption a
 collector author makes once and forgets.
 
+**Cutoff proves nothing about a surface whose own collection history has a hole in it.**
+Monotonic ordering only tells you that older items sort after newer ones — it says nothing about
+whether *every* older item was ever actually collected. A prior run that was bounded, capped,
+partially failed, or filtered can leave an isolated gap below an item that legitimately is on the
+grid; naive "stop at the first known item" treats that known item as proof of everything older,
+which is false exactly at the gap. So cutoff carries two independent safeguards, both required,
+neither a substitute for the other:
+
+1. **A completeness precondition.** Cutoff for a surface is permitted only when that surface's
+   most recent walk (for this repository/scope) is recorded as `complete` in the sense
+   `spec-github-core-reliability.md`'s `req-github-core-reliability-absence` already defines for
+   this exact reason — no degradation, no page cap, nothing skipped. A surface with no recorded
+   complete walk, or whose last complete walk predates a gap-introducing event (a failed run, a
+   cap reduction), falls back to a full walk until a complete walk re-establishes the precondition.
+2. **An overlap window, not a single item.** Even with the precondition satisfied, pagination
+   does not stop at the *first* known-frozen item — it continues until it has seen `N` consecutive
+   known-frozen items in a row (`N` a per-surface constant, default 3), then stops. A single known
+   item proves nothing about a run that itself might have written that one row out of order; a
+   run of several does, cheaply, at the cost of a few extra rows fetched per page boundary rather
+   than a whole extra page.
+
 #### Implementation
 1. Paginate the listing as today.
-2. After decoding each page, check each item's id against the grid. The first time an item is
-   found already on the grid **and** its declared class confirms it is frozen (terminal state
-   reached, or unconditionally `FROZEN`), stop requesting further pages.
-3. This saves page-fetch cost on large, mostly-old corpora; it does not remove the first page's
+2. Before applying cutoff at all, check the surface's last recorded walk completeness
+   (`req-github-core-reliability-absence`'s `complete` flag, or the equivalent this spec's
+   `req-tap-cares-progressive-instrumentation` records for a non-GitHub collector). If it is not
+   `complete`, cutoff is refused for this run; the walk proceeds in full and, on completing
+   without degradation, records itself as the new complete baseline cutoff can trust next time.
+3. With the precondition satisfied: after decoding each page, count consecutive items already on
+   the grid whose declared class confirms they are frozen (terminal state reached, or
+   unconditionally `FROZEN`). Stop requesting further pages only once that streak reaches the
+   surface's overlap-window constant; a single known item, or a known/unknown/known sequence that
+   breaks the streak, does not stop the walk.
+4. This saves page-fetch cost on large, mostly-old corpora; it does not remove the first page's
    cost, which is unavoidable — the source must always be asked at least once per run whether
    anything new exists.
-4. Never applied when `SORT_KEY_MONOTONIC` is `False` or undeclared for the surface.
+5. Never applied when `SORT_KEY_MONOTONIC` is `False` or undeclared for the surface, regardless of
+   how the completeness and overlap conditions above resolve.
 
 #### Development
 The saving here scales with corpus age, not corpus size: a steady-state repository with hundreds
@@ -262,13 +308,21 @@ of old artifacts and a handful of new ones per run pays for one or two pages ins
 capped listing. A repository still growing quickly sees little benefit, which is the correct and
 expected shape — there is nothing to cut off yet.
 
+The completeness precondition and overlap window were added after review of this spec's first
+draft, which stopped at the first known-frozen item with no guard against a prior incomplete walk
+— provably wrong, since a capped or degraded earlier pass could leave an older item genuinely
+uncollected below a newer one the collector does recognize. `req-tap-cares-progressive-audit`
+(Backlog) remains the deliberate, periodic *full* re-walk that catches a wrong assumption neither
+of these two safeguards happened to cover; it is not a substitute for either.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-progressive-cutoff-1 | Cutoff Requires Declared Monotonicity | Proposed | A collector never applies early cutoff to a surface without an explicit `SORT_KEY_MONOTONIC=True`. | Regression for the cache case |
-| req-tap-cares-progressive-cutoff-2 | Stops At First Known Frozen Item | Proposed | Against a fake listing seeded with known-then-unknown-then-known items in monotonic order, pagination stops at the first known item and does not fetch subsequent pages. | Proof harness, mirroring `spec-github-core-reliability.md`'s fake-GitHub pattern |
-| req-tap-cares-progressive-cutoff-3 | Access-Ordered Listings Refuse Cutoff | Proposed | A collector configured with `SORT_KEY_MONOTONIC=False` (or undeclared) walks the full listing every run, and a test asserts this explicitly for `actions_cache`'s shape. | |
+| req-tap-cares-progressive-cutoff-2 | Refused Without A Complete Prior Walk | Proposed | A surface with no recorded complete walk, or a degraded/capped last walk, is walked in full this run regardless of any known-frozen items encountered; a complete walk this run is recorded as the new baseline. | Regression for the silent-gap finding |
+| req-tap-cares-progressive-cutoff-3 | Overlap Window, Not A Single Item | Proposed | Against a fake listing seeded `known, known, unknown, known, known, known, known` in monotonic order, with a complete prior walk recorded and an overlap window of 3, pagination does not stop at either early `known` run and does reach and collect the `unknown` item; it stops only after the later run of (at least) 3 consecutive known items. | Replaces the single-item stop criterion found unsafe in review |
+| req-tap-cares-progressive-cutoff-4 | Access-Ordered Listings Refuse Cutoff | Proposed | A collector configured with `SORT_KEY_MONOTONIC=False` (or undeclared) walks the full listing every run regardless of completeness or overlap state, and a test asserts this explicitly for `actions_cache`'s shape. | |
 
 ### Secondary-Call Skip
 ----
@@ -326,32 +380,65 @@ Confirming that an already-on-grid, frozen object is still present on the source
 a full `replace_node`/`patch` write, a new history version, or a rewritten `flip_map` entry. It
 bumps a last-confirmed-observed marker and nothing else.
 
+**A touch requires the object to have actually appeared in this run's response.** This is the
+one rule in this section that is not blocked on `tap#886` and must hold regardless of when that
+epic lands: a presence touch is only ever issued for an object that this run's fetch genuinely
+returned — as a full record, as a listing entry a secondary call was then skipped for
+(`req-tap-cares-progressive-secondary-skip`), or as the subject of a `FROZEN_CONTENT_REVOCABLE`
+type's dedicated existence recheck. **An object that `req-tap-cares-progressive-watermark`'s
+filter or `req-tap-cares-progressive-cutoff`'s early stop caused to be excluded from the request
+entirely receives no touch and no signal of any kind this run** — it is simply not observed,
+exactly as `spec-github-core-reliability.md`'s absence contract already requires for a degraded
+surface, and for exactly the same reason: asserting continued existence for something never
+asked about is the reassuring-and-wrong shape that contract exists to forbid. This matters most
+for `FROZEN_CONTENT_REVOCABLE` types, whose whole point is that the object *can* disappear
+independent of anything the collector did — an old artifact excluded from a cutoff-shortened walk
+must fall to its own `EXISTENCE_RECHECK_INTERVAL`, never to an inferred touch from the walk that
+never looked at it.
+
 #### Status Details
-Blocked on `tap#886` ("Epic: time and observation standardization"), which owns the actual
-mechanism — the Entity-spine last-observed stamp and GRIFT patch-by-default write — and grew out
-of `tap#322` ("re-observation is not change") and `tap#323` (the row-level batch pointer moving to
-the Entity spine). Two design docs exist on unmerged branches (`docs/tap322-batch-provenance-and-
-grift-patch`, `docs/grid-time-observation-standardization`); step one of that epic's own execution
-order is George's ruling on Q129/Q131, not engineering. This requirement does not restate that
-design and must not be implemented ahead of it — a second, competing "unchanged" write path is
-exactly the outcome `req-tap-cares-progressive-classification`'s single-declaration discipline
-exists to prevent one layer up.
+Blocked (the write-primitive half only — see the rule above, which is not blocked) on `tap#886`
+("Epic: time and observation standardization"), which owns the actual mechanism — the Entity-spine
+last-observed stamp and GRIFT patch-by-default write — and grew out of `tap#322` ("re-observation
+is not change") and `tap#323` (the row-level batch pointer moving to the Entity spine). Two design
+docs exist on unmerged branches (`docs/tap322-batch-provenance-and-grift-patch`, `docs/grid-time-
+observation-standardization`); step one of that epic's own execution order is George's ruling on
+Q129/Q131, not engineering. This requirement does not restate that design and must not be
+implemented ahead of it — a second, competing "unchanged" write path is exactly the outcome
+`req-tap-cares-progressive-classification`'s single-declaration discipline exists to prevent one
+layer up.
 
 #### Implementation
-Once `tap#886` lands: every mechanism above (`req-tap-cares-progressive-watermark`, `-cutoff`,
-`-secondary-skip`) that confirms an already-known frozen object is still present calls the
-Entity-spine presence-touch primitive instead of constructing a full node envelope for that
-object. Until then, a collector adopting the read-side mechanisms above still constructs and
-submits a full envelope on confirmation — real savings on fetch volume, none yet on write/version
-churn, which is the acknowledged interim state `build-collector`'s own "Re-observation is not
-change" section already documents.
+Once `tap#886` lands: every mechanism above that confirms an already-known frozen object was
+actually seen this run (full fetch, secondary-skip's parent sighting, or an existence recheck)
+calls the Entity-spine presence-touch primitive instead of constructing a full node envelope for
+that object. An object watermark or cutoff excluded from the request is never a candidate for this
+at all, regardless of when `tap#886` lands — that half of the rule is in force from this spec's
+adoption, not deferred. Until `tap#886` lands, a collector adopting the read-side mechanisms above
+still constructs and submits a full envelope on confirmation — real savings on fetch volume, none
+yet on write/version churn, which is the acknowledged interim state `build-collector`'s own
+"Re-observation is not change" section already documents.
 
 #### Development
-This is deliberately the one requirement in this spec with no acceptance criteria of its own: its
-acceptance criteria are `tap#886`'s. Listing it here at all is the point — a reader of this spec
-should not conclude that watermark, cutoff and secondary-skip alone finish the job, when the
-biggest remaining cost (a full write per confirmed-unchanged object) is sitting behind a named,
-tracked dependency rather than quietly unaddressed.
+This section originally read as if every mechanism above converged on the same "confirmed, so
+touch it" outcome — true for secondary-skip, false for watermark and cutoff, which by design mean
+an old, unchanged object is not asked about at all. Blurring those together would have made
+presence-touch assert existence for objects the run had no actual evidence for, exactly the defect
+class `spec-github-core-reliability.md` was written to close. The observed-this-run rule above was
+tightened after review of this spec's first draft for that reason and is deliberately not blocked
+on `tap#886` — it constrains what a *future* touch primitive may be called for, and that
+constraint is true today regardless of when the primitive itself ships.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-progressive-touch-1 | No Touch Without Observation | Proposed | A collector never issues (or, pre-`tap#886`, never *would* issue) a presence-touch call for an object excluded from a run's request by watermark filtering or early cutoff; only objects the run's response actually returned or explicitly rechecked are eligible. | Regression for the false-presence finding; testable independent of `tap#886` |
+| req-tap-cares-progressive-touch-2 | Revocable Content Rechecks On Its Own Cadence | Proposed | A `FROZEN_CONTENT_REVOCABLE` object excluded from the main listing by cutoff still receives an existence check within its declared `EXISTENCE_RECHECK_INTERVAL`, sourced from a dedicated check, never inferred from the listing walk that skipped it. | |
+
+The remaining acceptance criteria for the write primitive itself — what a touch actually writes,
+and how it interacts with `flip_map`/history — are `tap#886`'s, not this spec's; they are not
+restated here.
 
 #### Future
 When `tap#886` lands, this section's status moves to `Proposed` and gains acceptance criteria
