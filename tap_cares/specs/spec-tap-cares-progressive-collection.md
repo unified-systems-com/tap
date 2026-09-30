@@ -140,8 +140,12 @@ A `MUTABILITY_CLASS: ClassVar[str]` on the model (or, for a manifest-driven coll
 - `FROZEN_AT_TERMINAL` — `TERMINAL_STATUS_FIELD` and `TERMINAL_STATUS_VALUES`, naming the field and
   values that mean "will never change again."
 - `FROZEN_CONTENT_REVOCABLE` — `EXISTENCE_RECHECK_INTERVAL`, so a collector knows how often to
-  reconfirm an item it is not re-fetching the content of, and `SORT_KEY_MONOTONIC: bool` (see
-  `req-tap-cares-progressive-cutoff`) — `False` for anything ordered by an access-time-like field.
+  reconfirm an item it is not re-fetching the content of, and, if the type is also a
+  `req-tap-cares-progressive-cutoff` candidate, both `SORT_KEY_MONOTONIC: bool` (`False` for
+  anything ordered by an access-time-like field) and `APPEND_ONLY_VISIBILITY: bool` (`False` unless
+  the collector author can positively justify that the source never surfaces a new item behind an
+  already-confirmed frontier — ordering alone does not establish this; see
+  `req-tap-cares-progressive-cutoff`'s development note).
 - `VERSIONED_CONTENT` — `FINGERPRINT_FIELD`, the model field that stores the last-seen content
   fingerprint, and a declared function for cheaply fetching the current fingerprint without the
   full content.
@@ -164,7 +168,7 @@ correctly every time.
 | req-tap-cares-progressive-classification-1 | Declared, Not Inferred | Proposed | A guard test fails any model whose `MUTABILITY_CLASS` is read anywhere except from the class declaration itself. | Mirrors `tap_grid/tests/test_natural_key.py`'s shape |
 | req-tap-cares-progressive-classification-2 | Undeclared Defaults Safe | Proposed | A model with no `MUTABILITY_CLASS` behaves identically to `MUTABLE` — full re-collection, no skip of any kind. | |
 | req-tap-cares-progressive-classification-3 | Terminal Fields Required Together | Proposed | A model declaring `FROZEN_AT_TERMINAL` without both `TERMINAL_STATUS_FIELD` and `TERMINAL_STATUS_VALUES` fails the guard at load. | |
-| req-tap-cares-progressive-classification-4 | Monotonicity Is Explicit For Revocable Content | Proposed | A model declaring `FROZEN_CONTENT_REVOCABLE` without an explicit `SORT_KEY_MONOTONIC` boolean fails the guard — silence is never read as `True`. | |
+| req-tap-cares-progressive-classification-4 | Monotonicity And Visibility Are Explicit For Cutoff Candidates | Proposed | A model declaring itself cutoff-eligible without explicit `SORT_KEY_MONOTONIC` and `APPEND_ONLY_VISIBILITY` booleans, both, fails the guard — silence is never read as `True` for either. | Split into two independent flags after review found them conflated |
 
 #### Future
 If a sixth shape turns up in a source this taxonomy does not fit (a append-only-but-redactable
@@ -243,33 +247,50 @@ RID: `req-tap-cares-progressive-cutoff`
 Status: `Proposed`
 
 When a source's listing has no native filter argument but is returned in an order keyed by an
-immutable, monotonic property (creation time — never access time, never a mutable "last touched"
-field), a collector may stop paginating the moment it reaches an item already on the grid whose
-class is `FROZEN` or `FROZEN_AT_TERMINAL` in its terminal state: every subsequent (older, by the
-monotonic key) item is guaranteed already collected too.
+immutable property (creation time — never access time, never a mutable "last touched" field), a
+collector may stop paginating the moment it reaches a run of items already on the grid whose class
+confirms they are frozen — **provided the source is also declared to present that surface with
+append-only visibility**, a separate claim from ordering that the mechanism does not get for free.
 
 #### Status Details
 Proposed. `actions_artifact` and `code_scanning_analysis` are both returned newest-first by
 creation *(observed, github_core's own truncation-warning comments at `collector.py:5606` and
-`:4766`)* and are both eligible once declared `FROZEN` / `FROZEN_CONTENT_REVOCABLE` with
-`SORT_KEY_MONOTONIC=True`. `pull_request`'s existing GraphQL query already orders by
-`UPDATED_AT DESC` (`graphql_client.py:233` *observed*) — the single cleanest case, because
-`updated_at` encodes "did anything change" directly rather than merely "when was it made," but the
-mechanism is not wired to any watermark or cutoff today. `actions_cache` is the declared
-counter-example: it is returned ordered by **most recently accessed** (`collector.py:5369`
-*observed*), so a cache re-accessed today can resurface above a genuinely new, never-before-seen
-cache lower in a stale ordering — cutoff on this listing would silently skip real new items, not
-merely re-fetch known ones for nothing. This is exactly why `SORT_KEY_MONOTONIC` is a required,
-explicit declaration (`req-tap-cares-progressive-classification`) rather than an assumption a
-collector author makes once and forgets.
+`:4766`)* and are candidates once declared `FROZEN` / `FROZEN_CONTENT_REVOCABLE` with
+`SORT_KEY_MONOTONIC=True` and `APPEND_ONLY_VISIBILITY=True`. `pull_request`'s existing GraphQL
+query already orders by `UPDATED_AT DESC` (`graphql_client.py:233` *observed*) — the single
+cleanest case, because `updated_at` encodes "did anything change" directly rather than merely
+"when was it made," but the mechanism is not wired to any watermark or cutoff today. `actions_cache`
+is the declared counter-example for `SORT_KEY_MONOTONIC`: it is returned ordered by **most recently
+accessed** (`collector.py:5369` *observed*), so a cache re-accessed today can resurface above a
+genuinely new, never-before-seen cache lower in a stale ordering. This is exactly why
+`SORT_KEY_MONOTONIC` is a required, explicit declaration (`req-tap-cares-progressive-
+classification`) rather than an assumption a collector author makes once and forgets.
 
-**Cutoff proves nothing about a surface whose own collection history has a hole in it.**
-Monotonic ordering only tells you that older items sort after newer ones — it says nothing about
-whether *every* older item was ever actually collected. A prior run that was bounded, capped,
-partially failed, or filtered can leave an isolated gap below an item that legitimately is on the
-grid; naive "stop at the first known item" treats that known item as proof of everything older,
-which is false exactly at the gap. So cutoff carries two independent safeguards, both required,
-neither a substitute for the other:
+**Ordering and visibility are two different claims, and conflating them was this section's own
+gap in an earlier draft.** `SORT_KEY_MONOTONIC` says items within one response sort by an
+immutable key. It says nothing about whether the *source itself* can later surface an item whose
+key value is *older* than items already confirmed frozen and known — a backfilled record, a
+delayed-indexing artifact, anything the source itself did not consider fully settled at the time
+of an earlier walk. Neither the completeness precondition nor the overlap window below protects
+against this, because both operate on *our* collection history, not on whether the *source* ever
+inserts something behind its own frontier. So cutoff requires a second, independently declared
+property, `APPEND_ONLY_VISIBILITY: bool` (default `False`, per the same "declared, not inferred,
+safe-by-default" rule as every other flag in this spec): the collector author's affirmative claim,
+verified against the source's own documentation or behavior — never assumed from monotonic
+ordering alone — that a newly visible item never sorts behind an item already confirmed known.
+Where this cannot be positively verified, it stays `False` and cutoff is refused for that surface
+regardless of `SORT_KEY_MONOTONIC`; the surface instead relies on `req-tap-cares-progressive-audit`
+(Backlog) for its risk to be bounded by cadence rather than eliminated by a single insufficient
+mechanism.
+
+**Cutoff proves nothing about a surface whose own collection history has a hole in it**, which is
+the separate, orthogonal risk the completeness precondition and overlap window below exist for —
+distinct from source-side backfill above, and not a substitute for `APPEND_ONLY_VISIBILITY` any
+more than the reverse. A prior run that was bounded, capped, partially failed, or filtered can
+leave an isolated gap below an item that legitimately is on the grid; naive "stop at the first
+known item" treats that known item as proof of everything older, which is false exactly at the
+gap. So, on top of the append-only-visibility declaration above, cutoff carries two further
+safeguards against *our own* collection history, both required:
 
 1. **A completeness precondition.** Cutoff for a surface is permitted only when that surface's
    most recent walk (for this repository/scope) is recorded as `complete` in the sense
@@ -286,21 +307,24 @@ neither a substitute for the other:
 
 #### Implementation
 1. Paginate the listing as today.
-2. Before applying cutoff at all, check the surface's last recorded walk completeness
+2. Refuse cutoff outright for any surface not declared both `SORT_KEY_MONOTONIC=True` and
+   `APPEND_ONLY_VISIBILITY=True`. This check precedes and is independent of step 3 below.
+3. Before applying cutoff at all, check the surface's last recorded walk completeness
    (`req-github-core-reliability-absence`'s `complete` flag, or the equivalent this spec's
    `req-tap-cares-progressive-instrumentation` records for a non-GitHub collector). If it is not
    `complete`, cutoff is refused for this run; the walk proceeds in full and, on completing
    without degradation, records itself as the new complete baseline cutoff can trust next time.
-3. With the precondition satisfied: after decoding each page, count consecutive items already on
-   the grid whose declared class confirms they are frozen (terminal state reached, or
-   unconditionally `FROZEN`). Stop requesting further pages only once that streak reaches the
-   surface's overlap-window constant; a single known item, or a known/unknown/known sequence that
-   breaks the streak, does not stop the walk.
-4. This saves page-fetch cost on large, mostly-old corpora; it does not remove the first page's
+4. With both preconditions satisfied: after decoding each page, count consecutive items already on
+   the grid whose declared class confirms they are frozen — terminal state reached for
+   `FROZEN_AT_TERMINAL`, unconditionally for `FROZEN`, or content-frozen for
+   `FROZEN_CONTENT_REVOCABLE` (a cutoff-skipped `FROZEN_CONTENT_REVOCABLE` item still owes its own
+   `EXISTENCE_RECHECK_INTERVAL` check independent of the listing walk, per
+   `req-tap-cares-progressive-touch`). Stop requesting further pages only once that streak reaches
+   the surface's overlap-window constant; a single known item, or a known/unknown/known sequence
+   that breaks the streak, does not stop the walk.
+5. This saves page-fetch cost on large, mostly-old corpora; it does not remove the first page's
    cost, which is unavoidable — the source must always be asked at least once per run whether
    anything new exists.
-5. Never applied when `SORT_KEY_MONOTONIC` is `False` or undeclared for the surface, regardless of
-   how the completeness and overlap conditions above resolve.
 
 #### Development
 The saving here scales with corpus age, not corpus size: a steady-state repository with hundreds
@@ -309,20 +333,29 @@ capped listing. A repository still growing quickly sees little benefit, which is
 expected shape — there is nothing to cut off yet.
 
 The completeness precondition and overlap window were added after review of this spec's first
-draft, which stopped at the first known-frozen item with no guard against a prior incomplete walk
-— provably wrong, since a capped or degraded earlier pass could leave an older item genuinely
-uncollected below a newer one the collector does recognize. `req-tap-cares-progressive-audit`
-(Backlog) remains the deliberate, periodic *full* re-walk that catches a wrong assumption neither
-of these two safeguards happened to cover; it is not a substitute for either.
+draft, which stopped at the first known-frozen item with no guard against a prior incomplete
+*collection* walk — provably wrong, since a capped or degraded earlier pass could leave an older
+item genuinely uncollected below a newer one the collector does recognize. A second review round
+then separated that concern from a sharper one this draft had conflated with it: even a perfectly
+complete collection history says nothing about whether the *source* can later surface an item
+older than its own prior frontier (a backfilled or delayed-indexing record) — ordering
+(`SORT_KEY_MONOTONIC`) and append-only source behavior (`APPEND_ONLY_VISIBILITY`) are different
+claims, and only the second one bounds that risk, which is why both are now required
+independently rather than one implying the other. `req-tap-cares-progressive-audit` (Backlog)
+remains the deliberate, periodic *full* re-walk that bounds whatever residual risk survives all
+three safeguards — cutoff reduces cost, it does not claim to eliminate the need for an eventual
+full check.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-progressive-cutoff-1 | Cutoff Requires Declared Monotonicity | Proposed | A collector never applies early cutoff to a surface without an explicit `SORT_KEY_MONOTONIC=True`. | Regression for the cache case |
-| req-tap-cares-progressive-cutoff-2 | Refused Without A Complete Prior Walk | Proposed | A surface with no recorded complete walk, or a degraded/capped last walk, is walked in full this run regardless of any known-frozen items encountered; a complete walk this run is recorded as the new baseline. | Regression for the silent-gap finding |
+| req-tap-cares-progressive-cutoff-1 | Cutoff Requires Both Declared Properties | Proposed | A collector never applies early cutoff to a surface without explicit `SORT_KEY_MONOTONIC=True` **and** `APPEND_ONLY_VISIBILITY=True`; either alone is insufficient. | Regression for the cache case (monotonicity) and the backfill case (visibility) |
+| req-tap-cares-progressive-cutoff-2 | Refused Without A Complete Prior Walk | Proposed | A surface with no recorded complete walk, or a degraded/capped last walk, is walked in full this run regardless of any known-frozen items encountered; a complete walk this run is recorded as the new baseline. | Regression for the silent-gap-in-our-own-history finding |
 | req-tap-cares-progressive-cutoff-3 | Overlap Window, Not A Single Item | Proposed | Against a fake listing seeded `known, known, unknown, known, known, known, known` in monotonic order, with a complete prior walk recorded and an overlap window of 3, pagination does not stop at either early `known` run and does reach and collect the `unknown` item; it stops only after the later run of (at least) 3 consecutive known items. | Replaces the single-item stop criterion found unsafe in review |
 | req-tap-cares-progressive-cutoff-4 | Access-Ordered Listings Refuse Cutoff | Proposed | A collector configured with `SORT_KEY_MONOTONIC=False` (or undeclared) walks the full listing every run regardless of completeness or overlap state, and a test asserts this explicitly for `actions_cache`'s shape. | |
+| req-tap-cares-progressive-cutoff-5 | Backfill Is Never Assumed Away | Proposed | Against a fake source with a recorded-complete prior walk `[100, 90, 80]` (all known-frozen) and `SORT_KEY_MONOTONIC=True`, a run exposing a new record keyed `70` is walked in full — not cut off — unless `APPEND_ONLY_VISIBILITY=True` is also declared for that surface; where it is declared, the collector's test for that surface must independently justify the claim (source documentation or contract, cited in the test), not merely set the flag to make the test pass. | Regression for the backfill finding |
+| req-tap-cares-progressive-cutoff-6 | Revocable Content Is Cutoff-Eligible | Proposed | A `FROZEN_CONTENT_REVOCABLE` surface with both properties declared is cutoff-eligible on the same terms as `FROZEN`/`FROZEN_AT_TERMINAL`; a cutoff-skipped item of this class still receives its own existence recheck per `req-tap-cares-progressive-touch-2`, independent of the listing walk. | Regression for the internal-consistency finding — `actions_artifact` is the named example this class exists to cover |
 
 ### Secondary-Call Skip
 ----
@@ -498,16 +531,30 @@ made possible only once `req-tap-cares-progressive-instrumentation` exists to pr
 In the proof harness (a fake source scripted per `spec-github-core-reliability.md`'s pattern, or
 equivalent for a non-GitHub collector): run the collector once against a seeded corpus, then again
 with no change to the fake's data. Assert the second run's per-surface call count for every
-mechanism-adopting surface is strictly lower than the first's, and that its emitted node/edge
-counts are identical (a progressive collector must still be a correct one — this test does not
-replace the existing duplicate-natural-key check, it runs alongside it).
+mechanism-adopting surface is strictly lower than the first's, and that the **resulting grid
+state** — the live rows for that surface, their natural keys and their current field values — is
+identical after both runs. **This is deliberately not a claim about the second run's *emitted*
+envelope count.** A working watermark or cutoff is supposed to emit fewer envelopes on the second
+pass than the first — that reduction is the entire point of this spec, and a correctness check
+that required identical per-run emission counts would fail every collector that correctly adopted
+these mechanisms, which is the opposite of what this requirement is for. What must not change is
+where the data ends up, not how many envelopes the second run bothered to construct to get there.
+
+#### Development
+The first draft of this requirement asked for identical *emitted* node/edge counts across both
+passes, which review correctly identified as self-defeating: an effective watermark or cutoff
+necessarily emits a subset on the unchanged second pass, so that criterion would reject every
+implementation this spec asks for. The fix compares final grid state instead, which is what
+`build-collector`'s own existing duplicate-natural-key check (Step 9's second pass) already
+verifies for a non-progressive collector — this requirement extends that same check to also
+assert a call-count reduction, rather than inventing a second, conflicting notion of "correct."
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-progressive-proof-1 | Second Pass Costs Less | Proposed | For each surface with an adopted mechanism, the second pass's call count is strictly lower than the first's against unchanged fake data. | |
-| req-tap-cares-progressive-proof-2 | Second Pass Is Still Correct | Proposed | The second pass's emitted node/edge counts and identities are identical to the first's — a progressive win must not be a correctness regression. | Runs alongside the existing duplicate-key check from `build-collector` Step 9's second pass |
+| req-tap-cares-progressive-proof-2 | Grid State Converges, Emission Count Is Not The Check | Proposed | After both passes, the live rows for each mechanism-adopting surface — natural keys and field values — are identical to running the collector once without any progressive mechanism adopted; the second pass's *emitted* envelope count is explicitly allowed, and expected, to be lower than the first's. | Rewritten after review found the original wording self-defeating; runs alongside the existing duplicate-key check from `build-collector` Step 9's second pass |
 
 ### Full-Corpus Reconciliation Pass
 ----
