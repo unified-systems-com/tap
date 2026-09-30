@@ -41,7 +41,7 @@ that `tap#886` ("Epic: time and observation standardization") is already designi
 grew out of `tap#322` ("re-observation is not change") and `tap#323` (the row-level batch pointer
 moving to the Entity spine). This spec defines *when a collector is allowed to reach for that
 primitive* and *what it must declare to do so safely*; it explicitly does not define the primitive
-itself, and every requirement below that touches the write path is `Blocked` on `tap#886` rather
+itself, and every requirement below that touches the write path is gated on `tap#886` rather
 than re-deriving a competing mechanism. Until `tap#886` lands, a collector that adopts everything
 else in this spec (watermark, cutoff, secondary-call skip) still pays a full write on a confirmed-
 unchanged object — real progress, with the last mile explicitly deferred rather than faked.
@@ -89,7 +89,7 @@ in this spec is *designed*.
 | req-tap-cares-progressive-watermark | [Server-Side Watermark Filtering](#server-side-watermark-filtering) | Proposed | Generalizes `github_actions_run`'s existing pattern: persist a per-surface watermark, ask the source to filter by it |
 | req-tap-cares-progressive-cutoff | [Ordered-Listing Early Cutoff](#ordered-listing-early-cutoff) | Proposed | Stop paginating a monotonically-ordered listing once known, frozen territory is reached — gated on a declared sort-key monotonicity, never assumed |
 | req-tap-cares-progressive-secondary-skip | [Secondary-Call Skip](#secondary-call-skip) | Proposed | Skip a per-item enrichment fetch once the parent record and, where declared, a content fingerprint show no change |
-| req-tap-cares-progressive-touch | [Presence Touch](#presence-touch) | Blocked | Confirming an unchanged object bumps a last-observed marker instead of a full write; the mechanism is `tap#886`'s, not this spec's |
+| req-tap-cares-progressive-touch | [Presence Touch](#presence-touch) | Proposed | Confirming an unchanged object bumps a last-observed marker instead of a full write; the write mechanism is `tap#886`'s, not this spec's, so this stays Proposed until that epic lands |
 | req-tap-cares-progressive-instrumentation | [Per-Run Call Instrumentation](#per-run-call-instrumentation) | Proposed | A collector records how many source-system calls each run made, per surface, so a progressive win is a number, not an impression |
 | req-tap-cares-progressive-proof | [Two-Pass Proof](#two-pass-proof) | Proposed | An unchanged second pass over the same source data must make measurably fewer calls than the first, checked in the collector's own test suite |
 | req-tap-cares-progressive-audit | [Full-Corpus Reconciliation Pass](#full-corpus-reconciliation-pass) | Backlog | A periodic, deliberately non-progressive full walk, so an incremental path's own bugs — a wrong watermark, a broken cutoff assumption — cannot silently drift the grid away from the source forever |
@@ -479,7 +479,7 @@ unconditional skip is the fallback, not a workaround.
 ----
 RID: `req-tap-cares-progressive-touch`
 
-Status: `Blocked`
+Status: `Proposed`
 
 Confirming that an already-on-grid, frozen object is still present on the source must not produce
 a full `replace_node`/`patch` write, a new history version, or a rewritten `flip_map` entry. It
@@ -502,7 +502,7 @@ must fall to its own `EXISTENCE_RECHECK_INTERVAL`, never to an inferred touch fr
 never looked at it.
 
 #### Status Details
-Blocked (the write-primitive half only — see the rule above, which is not blocked) on `tap#886`
+Gated (the write-primitive half only — see the rule above, which is not gated) on `tap#886`
 ("Epic: time and observation standardization"), which owns the actual mechanism — the Entity-spine
 last-observed stamp and GRIFT patch-by-default write — and grew out of `tap#322` ("re-observation
 is not change") and `tap#323` (the row-level batch pointer moving to the Entity spine). Two design
