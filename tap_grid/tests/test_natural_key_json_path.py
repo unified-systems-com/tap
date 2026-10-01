@@ -285,14 +285,32 @@ class TestTheIndexAnswersTheSearch:
             cursor.execute("SELECT indexdef FROM pg_indexes WHERE indexname = %s", ["nk_web_panel_json_probe"])
             (definition,) = cursor.fetchone()
 
-        # The operator is the whole question: `->` yields jsonb and can answer a jsonb index;
-        # `->>` yields text and silently cannot. Compare what each side spells on `config`.
+        # Two things have to agree, and an earlier draft of this test checked only the first.
+        #
+        # 1. The OPERATOR. `->` yields jsonb and can answer a jsonb index; `->>` yields text
+        #    and silently cannot, so a drift from one to the other is exactly the defect.
         operator = re.compile(r"config\"?\s*(#>>|#>|->>|->)")
         in_search = operator.findall(sql.replace('"', ""))
         in_index = operator.findall(definition)
         assert in_search, sql
         assert in_index, definition
         assert set(in_search) == set(in_index) == {"->"}, (in_search, in_index, sql, definition)
+
+        # 2. The KEY. Codex's review of PR# 901 - tap caught that operator equality alone is
+        #    satisfied by an index on a DIFFERENT key — `config -> 'other'` passes a check that
+        #    only compares `->`, so the test's name would have over-claimed. Verified by probe:
+        #    rebuilding the index as `config -> 'OTHER'` left the first assertion green.
+        #    The declaration is the single source both sides must match, so compare against it
+        #    rather than against each other.
+        for name in keyed_on_a_path:
+            column, keys = split_path(name)
+            if not keys:
+                continue
+            leaf = keys[-1]
+            # The index stores the key inline (`-> 'tenant'::text`); the search binds it as a
+            # parameter, which is why the SQL text alone cannot be compared here.
+            assert f"-> '{leaf}'" in definition, (name, definition)
+            assert leaf in [p for p in _params if isinstance(p, str)], (name, _params)
 
     @SPEC_15
     def test_the_index_is_typed_jsonb_not_text(self, keyed_on_a_path: tuple[str, ...]) -> None:
