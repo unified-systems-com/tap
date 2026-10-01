@@ -126,6 +126,15 @@ identity is an assigned UUIDv7 plus a derived natural key; retirement records
 containment. Falsifiers, evidence completeness and shadow nodes for known unknowns belong to the same
 model.
 
+**Absence is declared, never invented as a value** (`tap_grid/specs/spec-grid-node.md`,
+`req-grid-node-observation`, decided 2026-06-30). `null` means unobserved, concrete-empty
+(`""`/`[]`/`{}`) means a source looked and found nothing, and FLIP's presence-or-absence for a
+field distinguishes a known unknown (explicitly asserted) from an unknown unknown (untouched) —
+three states, never collapsed into a sentinel value or invented in-band. This governs every
+plugin and every interchange format the grid accepts: a per-key delete primitive, a new absence
+reason, or a merge/patch semantic must be built as an extension of this convention, never as a
+competing shape that reads the same null differently.
+
 **Dimensions become nodes** (ruled 2026-09-20, epic `tap#708`). Dimensions gain assigned identity as
 nodes that nothing points at — no inbound edges — rather than remaining only a flat JSON object on the
 spine. The concept keeps its role; its representation changes.
