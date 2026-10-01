@@ -59,6 +59,21 @@ CI_WORKFLOW = ".github/workflows/ci.yml"
 #: core `main` — C2's instrument, not its gate.
 NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml"
 
+#: The release lane: a thin caller of core's reusable `plugin-release-sbom.yml`, triggered by the
+#: release tag push. It is what turns a published wheel into one a stranger can verify — the
+#: reusable half builds the wheel AT the tag, derives the SBOM from that wheel, and signs SLSA
+#: provenance plus both SBOM predicates into GitHub's attestation store.
+RELEASE_WORKFLOW = ".github/workflows/release-sbom.yml"
+
+#: The reusable RELEASE lane core publishes. `repo-ci-caller-pin` already covers the whole
+#: `REUSABLE_PREFIX`, so this constant is about PRESENCE, which nothing asked before.
+REUSABLE_RELEASE = REUSABLE_PREFIX + "plugin-release-sbom.yml"
+
+#: release-please's two files. Carrying either is a repository SAYING it intends to cut releases
+#: from its own history — which is the condition that makes an absent release lane a defect rather
+#: than a choice. The manifest alone is enough: a repository mid-onboarding is still declaring.
+RELEASE_PLEASE_FILES = ("release-please-config.json", ".release-please-manifest.json")
+
 _WORKFLOW_DIR = ".github/workflows"
 #: A ``uses`` KEY at the start of its line, quoted or bare, plain or as a list item. Anchored on
 #: purpose: a pattern that matches ``uses:`` anywhere on the line also matches inside a `run:`
@@ -78,7 +93,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@cafd0a49a37b/1d18780864fb (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@9b5fa547c101/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -87,6 +102,7 @@ def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     _check_caller_pin(repo_root, result)
     _check_caller_permissions(repo_root, result)
     _check_nightly_shape(repo_root, result)
+    _check_release_lane(repo_root, result)
     _check_waiver_ledger(repo_root, result)
 
 
@@ -327,6 +343,28 @@ def _job_uses_from_yaml(text: str) -> list[tuple[int, str]] | None:
     return found
 
 
+def _workflow_permissions(text: str) -> dict[str, str] | None:
+    """The WORKFLOW-level ``permissions:`` mapping, which a job with no block of its own inherits.
+
+    Needed because the two states are genuinely different and the difference is what broke eight
+    repositories: a job that declares NO block inherits this, while a job that declares one
+    REPLACES it entirely. A checker that models only the job block reads an inheriting job as
+    granting nothing, and a replacing job as granting whatever it happens to list.
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - shares the fallback path's test
+        return None
+    try:
+        doc = yaml.safe_load(text)
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    perms = doc.get("permissions")
+    return {str(k): str(v) for k, v in perms.items()} if isinstance(perms, dict) else None
+
+
 def _job_permissions(text: str, lineno: int) -> dict[str, str] | None:
     """The job-level ``permissions:`` mapping of the job whose ``uses:`` sits at *lineno*.
 
@@ -564,9 +602,21 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
 # The caller's grant
 # ---------------------------------------------------------------------------
 
-#: The single permission a caller of the reusable lane needs, once core's scanning job uploads
-#: SARIF instead of writing to the dependency graph.
-REQUIRED_CALLER_GRANT = ("security-events", "write")
+#: What a caller of the reusable lane must grant ON THE CALLING JOB, as `{scope: level}`.
+#:
+#: **Two scopes, not one, and the comment here used to say "the single permission".** That was
+#: false and it was load-bearing: on 2026-09-29 eight plugin repositories dropped to
+#: `{security-events: write}` alone, following this very check's over-grant warning, and every CI
+#: run in all eight died at startup with zero jobs and no log. A job-level `permissions:` block
+#: REPLACES the workflow-level grant rather than merging with it, so a job block naming only
+#: `security-events` grants no `contents` at all — and `plugin-ci.yml` has two jobs that declare
+#: `contents: read` (`boot-and-test`, `scan-dependencies`). GitHub validates every job of a called
+#: workflow against the caller's grant before creating any of them.
+#:
+#: The empirical form of the same statement, measured across the whole fleet that day: 8 callers at
+#: `{security-events: write}` → `startup_failure`; 16 at `{contents: read, security-events: write}`
+#: → success. Both directions, 24 of 24 accounted for.
+REQUIRED_CALLER_GRANT: dict[str, str] = {"contents": "read", "security-events": "write"}
 
 #: What a caller of the reusable NIGHTLY must grant. It nests `plugin-ci.yml`, and GitHub checks
 #: the whole called TREE against the caller's grant before creating any job — so a caller granting
@@ -576,7 +626,7 @@ REQUIRED_NIGHTLY_GRANTS = {"contents": "read", "security-events": "write", "issu
 
 
 def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None:
-    """Does the job that calls the reusable lane grant the one permission that lane needs?
+    """Does the job that calls the reusable lane grant every permission that lane needs?
 
     A called workflow cannot hold more permission than its caller granted, so a job whose grant is
     short of what the lane declares does not fail a step — the whole run is refused before any job
@@ -585,11 +635,23 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
     job, no log and no plugin named. This check exists so the missing grant is reported where it
     can be read, against the repository that has to fix it.
 
-    The grant is ``security-events: write``, at JOB level, on the job that calls the lane —
-    deliberately narrow: core's scanning job uploads SARIF to the Security tab and needs nothing
-    else. `contents: write` is NOT wanted anywhere for scanning; an earlier arrangement had the
-    lane write to the dependency graph, which forced every caller to grant repository write for a
-    reporting side effect.
+    The grant is ``REQUIRED_CALLER_GRANT`` — ``contents: read`` AND ``security-events: write`` — at
+    JOB level, on the job that calls the lane. `contents: write` is NOT wanted anywhere for
+    scanning; an earlier arrangement had the lane write to the dependency graph, which forced every
+    caller to grant repository write for a reporting side effect.
+
+    **This check caused an eight-repository outage on 2026-09-29 and the fix is in that history.**
+    It modelled ONE required scope, `security-events: write`, and its over-grant warning said to
+    remove `contents: write` "in the same change that adds `security-events: write`". Followed
+    literally — which is the only way to read it — that produces a job block of
+    `{security-events: write}` alone. Because a job-level block REPLACES the workflow grant instead
+    of merging with it, those callers granted no `contents` at all, and `plugin-ci.yml` has two jobs
+    declaring `contents: read`. Every run in all eight repositories died at startup: zero jobs, no
+    log, and `gh pr checks` showing the absent checks as simply missing rather than failed. A
+    session followed this check's instruction correctly and the instruction was wrong. So: the
+    requirement is a SET, the over-grant message says NARROW rather than REMOVE, and a caller
+    missing `contents` FAILS rather than warns, because unlike the SARIF ratchet it is not a future
+    requirement — it is a guaranteed refusal today.
 
     A WARNING while core's SARIF job is not yet live, because a grant for a requirement that does
     not exist yet is noise. **A ratchet, like the nightly lane:** it becomes a failure once the
@@ -613,7 +675,9 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
         result.checks.append(check)
         return
 
-    key, value = REQUIRED_CALLER_GRANT
+    required = dict(REQUIRED_CALLER_GRANT)
+    #: The scope whose absence is a guaranteed startup refusal today, not a ratchet.
+    hard = "contents"
     checked: list[dict[str, object]] = []
     for path in sorted(workflow_dir.glob("*.y*ml")):
         rel = path.relative_to(repo_root).as_posix()
@@ -624,45 +688,75 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
             if target != REUSABLE_CALLER:
                 continue
             perms = _job_permissions(text, lineno)
-            granted = perms is not None and perms.get(key) == value
+            # A job-level block REPLACES the workflow grant; it does not merge with it. An ABSENT
+            # block inherits the workflow one, which is a different state from granting nothing —
+            # collapsing the two is how a checker comes to bless a shape that cannot start.
+            effective = perms if perms is not None else (_workflow_permissions(text) or {})
+            missing_scopes = {k: v for k, v in required.items() if effective.get(k) != v}
             legacy_write = perms is not None and perms.get("contents") == "write"
-            checked.append({"file": rel, "line": lineno, "granted": granted, "contents_write": legacy_write})
             if legacy_write:
-                # Required TODAY — core's snapshot job still writes the dependency graph, and
-                # removing it now breaks the lane. It becomes an over-grant the moment that job
-                # is replaced by the SARIF upload, and it is the thing to delete in the same
-                # change that adds the narrow grant. Reported even when the narrow grant is
-                # present, because otherwise a caller holding both reads as fully conformant and
-                # the broad legacy grant survives the migration by being invisible.
+                missing_scopes.pop("contents", None)  # present, just too broad — reported below
+            checked.append(
+                {
+                    "file": rel,
+                    "line": lineno,
+                    "granted": not missing_scopes,
+                    "contents_write": legacy_write,
+                    "missing": sorted(missing_scopes),
+                }
+            )
+            if legacy_write:
+                # `contents: write` is repository write for what is now a reporting side effect.
+                # NARROW it — do not delete the scope. Deleting it is what broke eight repositories
+                # on 2026-09-29, because the callee needs `contents: read` and a job block that
+                # names neither grants none.
                 check.warn(
                     f"{rel}:{lineno} grants `contents: write` on the job calling the reusable lane. "
                     "That is repository write, and it is needed only while core's scanning job "
                     "writes the dependency graph; once that job uploads SARIF instead it is an "
-                    f"over-grant. Remove it in the same change that adds `{key}: {value}` — do not "
-                    "leave both",
+                    "over-grant. NARROW it to `contents: read` — do not remove the scope. A job "
+                    "block naming only `security-events: write` grants no `contents` at all, "
+                    "because a job-level block replaces the workflow grant rather than merging "
+                    "with it, and the lane's own jobs declare `contents: read`",
                     path=rel,
                 )
-            if granted:
+            if not missing_scopes:
                 continue
-            missing = (
+            shape = (
                 "declares no job-level `permissions:` block, so it inherits the workflow default"
                 if perms is None
-                else f"grants {sorted(perms.items())} at job level"
+                else f"grants {sorted(effective.items())} at job level and nothing else"
             )
-            check.warn(
-                f"{rel}:{lineno} calls the reusable lane and {missing} — it needs "
-                f"`{key}: {value}` on THAT job so the lane can upload its scan results. Without it "
-                "the run is refused before any job exists, which shows up as startup_failure "
-                "naming nothing, not as a failed step. A warning until core's uploading job ships; "
-                "a failure after",
-                path=rel,
-            )
+            wanted = ", ".join(f"`{k}: {v}`" for k, v in sorted(required.items()))
+            if hard in missing_scopes:
+                # Not a ratchet: the callee declares `contents: read` today, so this run is
+                # refused now rather than once some future job ships.
+                check.fail(
+                    f"{rel}:{lineno} calls the reusable lane and {shape} — it is missing "
+                    f"`{hard}: {required[hard]}`, which the lane's own jobs declare. The run is "
+                    "refused before any job exists: startup_failure, zero jobs, no log, and a "
+                    "check set that reads as absent rather than failed. Grant " + wanted + " on "
+                    "THAT job. A job-level block replaces the workflow grant rather than merging "
+                    "with it, so listing one scope silently drops the others",
+                    path=rel,
+                )
+            else:
+                check.warn(
+                    f"{rel}:{lineno} calls the reusable lane and {shape} — it is missing "
+                    f"{', '.join(f'`{k}: {required[k]}`' for k in sorted(missing_scopes))} on THAT "
+                    "job, so the lane cannot upload its scan results. When it does become "
+                    "required the run is refused before any job exists, which shows up as "
+                    "startup_failure naming nothing, not as a failed step. A warning until core's "
+                    "uploading job ships; a failure after",
+                    path=rel,
+                )
 
     check.details = {"callers": checked}
     if not checked:
         check.info("no caller of the reusable lane in this repository")
     elif all(c["granted"] for c in checked) and not any(c["contents_write"] for c in checked):
-        check.info(f"{len(checked)} caller(s), each granting {key}: {value} at job level and nothing broader")
+        wanted = ", ".join(f"{k}: {v}" for k, v in sorted(required.items()))
+        check.info(f"{len(checked)} caller(s), each granting {wanted} at job level and nothing broader")
     result.checks.append(check)
 
 
@@ -1200,6 +1294,108 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
 
     if check.status == "pass":
         check.info(f"{len(reporters)} reporter job(s), each identifying its issue safely")
+    result.checks.append(check)
+
+
+# ---------------------------------------------------------------------------
+# The release lane
+# ---------------------------------------------------------------------------
+
+
+def _declares_releases(repo_root: Path) -> list[str]:
+    """The release-please files this repository carries — its declaration that it cuts releases."""
+    return [rel for rel in RELEASE_PLEASE_FILES if (repo_root / rel).is_file()]
+
+
+def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
+    """A repository that says it cuts releases must carry the lane that attests them.
+
+    **The condition is the declaration, not the existence of a release.** A plugin that will never
+    publish is not a finding, and a repository with neither release-please config nor a release
+    lane is silent here on purpose — some plugins are consumed only from a boot pin and never cut
+    a tag. What this check refuses is the INCONSISTENT pair: a repository configured to produce
+    release tags, with nothing configured to attest what those tags publish.
+
+    **Why the declaration is the right trigger, and a release is not.** Waiting for a release to
+    exist makes the first release the detector, and the first release is exactly the run nobody is
+    watching, because it succeeds: the tag lands, the wheel publishes, and the only thing missing
+    is evidence nobody asked for yet. Measured 2026-09-29, eleven of the twenty-four plugin
+    repositories carried no release lane and not one of them had ever released — invisible, and one
+    release-please run away from shipping an unattested wheel (`tap#892`).
+
+    **This is the presence half of a rule whose pinning half already exists.** `repo-ci-caller-pin`
+    covers every workflow under ``REUSABLE_PREFIX``, and its own docstring records that its first
+    version checked only the CI caller and missed ``plugin-release-sbom.yml`` sitting beside it.
+    That was fixed for pinning. A repository with no release lane at all still passes it trivially,
+    because there is no unpinned reference to find — absence is not a bad pin. So the same lane has
+    now been overlooked twice by the same check set, in two different ways, and this closes the
+    second.
+
+    **What it does not assert.** Not that the lane has ever run: that is a runtime observation and
+    these checks read files by design. Not that the pin is a SHA: that belongs to the pin check and
+    duplicating it here would be a second place to fix the same rule. Only that a repository
+    declaring releases carries a caller of core's reusable release lane.
+    """
+    check = CheckResult(id="repo-release-lane", name="A repository that cuts releases attests them")
+    declared = _declares_releases(repo_root)
+    path = repo_root / RELEASE_WORKFLOW
+    present = path.is_file()
+
+    check.details = {"release_please": declared, "release_lane": RELEASE_WORKFLOW if present else None}
+
+    if not declared:
+        if present:
+            check.info(
+                f"{RELEASE_WORKFLOW} present with no release-please configuration — a hand-cut tag "
+                "still reaches the lane, which is a coherent choice"
+            )
+        else:
+            check.info(
+                "no release-please configuration and no release lane — this repository declares no "
+                "releases, and a plugin consumed only from a boot pin never needs to cut one"
+            )
+        result.checks.append(check)
+        return
+
+    if not present:
+        check.fail(
+            f"carries {', '.join(declared)} but no {RELEASE_WORKFLOW} — this repository is "
+            "configured to cut release tags and nothing is configured to attest what they publish. "
+            "The reusable lane builds the wheel at the tag, derives its SBOM from that wheel, and "
+            "signs provenance plus both SBOM predicates into GitHub's attestation store; without a "
+            "caller, the release still succeeds and produces a wheel nobody downstream can verify. "
+            "The failure is silent by construction — the first release is the one that would reveal "
+            "it, and it is also the one nobody is watching (`tap#892`)",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
+
+    text = path.read_text(encoding="utf-8", errors="replace")
+    entries, complete = _job_uses(text)
+    calls = [ref for _, ref in entries if ref.startswith(REUSABLE_RELEASE)]
+
+    if not calls:
+        if not complete:
+            check.fail(
+                f"{RELEASE_WORKFLOW} could not be parsed as YAML, so whether it calls "
+                f"`{REUSABLE_RELEASE}` is unknown. An unknown shape is not a conformant one: "
+                "install the parser (core's ci-tooling group carries it) and re-run rather than "
+                "reading this as a pass",
+                path=RELEASE_WORKFLOW,
+            )
+        else:
+            check.fail(
+                f"{RELEASE_WORKFLOW} exists but no job calls `{REUSABLE_RELEASE}` — a file with the "
+                "right name is not the property being asserted. A hand-rolled release lane is the "
+                "drift the reusable workflow exists to remove, and it will not produce the "
+                "attestations a consumer verifies against",
+                path=RELEASE_WORKFLOW,
+            )
+        result.checks.append(check)
+        return
+
+    check.info(f"{RELEASE_WORKFLOW} calls the shared release lane; {', '.join(declared)} present")
     result.checks.append(check)
 
 

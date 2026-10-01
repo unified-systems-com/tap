@@ -78,6 +78,17 @@ tap's copy; the pins must not.
   itself at a commit.
 - **Release** with `scripts/release-plugin.sh` from a `--dev-plugins` workspace: strict validation + the
   plugin's tests, PR-based landing, immutable `v<x.y.z>` tag. A release advances no consumer's pin.
+- **A release lane is part of the bootstrap, not part of releasing.** `.github/workflows/release-sbom.yml`
+  is a thin caller of core's `plugin-release-sbom.yml`, pinned by SHA, triggered by the release tag push —
+  the same shape as the `plugin-ci.yml` caller. It builds the wheel at the tag, derives the SBOM from that
+  wheel, and signs provenance plus both SBOM predicates into GitHub's attestation store, which is what lets
+  a consumer run `gh attestation verify <wheel> --owner unified-systems-com`. **Ship it on bootstrap day,
+  before the repository ever releases.** Omitting it is invisible until the first release, and the first
+  release is the run nobody watches, because it succeeds: the tag lands, the wheel publishes, and the only
+  thing missing is evidence nobody has asked for yet. This bullet exists because it was absent — eleven of
+  twenty-four repositories were bootstrapped correctly against this skill and still had no release lane
+  (`tap#892`, measured 2026-09-29); `repo-release-lane` now fails a repository that declares releases and
+  carries no lane.
 - **Never `ruff format` / `black` a plugin's existing file** (no formatter config in plugin repos; it
   reformats the world). Never `git add -A` in a shared worktree.
 - **AI-review triage:** after opening any PR, `scripts/pr-review-triage <pr> --wait` from the tap checkout;
