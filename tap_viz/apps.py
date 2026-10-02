@@ -24,11 +24,14 @@ class TapVizConfig(AppConfig):
     # checked by tap_grid.E004); USES_PROJECTION is written by bundles and read by
     # the graph panel. None declares a property_schema: a hotlink edge carries only
     # the system-owned `hotlink` payload, which per-type schemas may not redeclare
-    # (req-grid-edge-schema-required-5).
+    # (req-grid-edge-schema-required-5). Each declares its identity
+    # (req-grid-edge-identity-declaration) as a plain key: a hotlink edge's (source, target) is
+    # fully determined by the field it mirrors, so nothing beside the pair tells two apart.
     edge_types: list[dict[str, Any]] = [
         {
             "slug": "USES_ARRANGEMENT",
             "name": "Uses Arrangement",
+            "identity": {"discriminators": []},
             "description": (
                 "The source layout applies the target arrangement. Mirrors the layout's "
                 "definition.arrangements list (hotlink layout-arrangements, exact)."
@@ -39,6 +42,7 @@ class TapVizConfig(AppConfig):
         {
             "slug": "USES_LAYOUT",
             "name": "Uses Layout",
+            "identity": {"discriminators": []},
             "description": (
                 "The source composes the target layout. From an elevation it mirrors the elevation's "
                 "definition.layouts list (hotlink elevation-layouts, exact); from a panel it is the legacy "
@@ -50,6 +54,7 @@ class TapVizConfig(AppConfig):
         {
             "slug": "USES_ELEVATION",
             "name": "Uses Elevation",
+            "identity": {"discriminators": []},
             "description": (
                 "The source projection includes the target elevation as one of its zoom stages. Mirrors the "
                 "projection's definition.elevations list (hotlink projection-elevations, exact)."
@@ -60,6 +65,7 @@ class TapVizConfig(AppConfig):
         {
             "slug": "USES_DEFAULT_ELEVATION",
             "name": "Uses Default Elevation",
+            "identity": {"discriminators": []},
             "description": (
                 "The target elevation is the one the source projection opens at. Mirrors the projection's "
                 "definition.default_elevation_id (hotlink projection-default-elevation, exact)."
@@ -70,6 +76,7 @@ class TapVizConfig(AppConfig):
         {
             "slug": "NAVIGATES_TO",
             "name": "Navigates To",
+            "identity": {"discriminators": []},
             "description": (
                 "A double-tap on a node in the source elevation navigates to the target elevation. Mirrors the "
                 "elevation's definition.double_tap_targets[].target_elevation_id (hotlink "
@@ -81,6 +88,7 @@ class TapVizConfig(AppConfig):
         {
             "slug": "USES_PROJECTION",
             "name": "Uses Projection",
+            "identity": {"discriminators": []},
             "description": (
                 "The source graph panel renders through the target projection. The panel reads its "
                 "earliest-created USES_PROJECTION edge; with none it falls back to USES_LAYOUT."
