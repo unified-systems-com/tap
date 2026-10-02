@@ -27,6 +27,9 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-schema-exposure | [Edge Property Schema Exposure](#edge-property-schema-exposure) | Proposed | **Backlog (2026-08-10).** The registry's per-type `property_schema` is enforced but invisible at the API boundary: `EdgeIn.properties` reads as free-form in OpenAPI and no edge-type discovery endpoint exists. Surface the schemas so machine callers can see what the service layer will enforce |
 | req-grid-edge-schema-required | [Properties Require A Schema](#properties-require-a-schema) | Proposed | **Corrected semantics (2026-08-10).** Properties are optional; carrying them is not: writing non-empty `properties` to an edge type with no registered schema becomes a fail-closed error. Narrows the exception in `req-grid-edge-properties-6/-7`, which inadvertently allowed schema-less payloads. Transition: burn down the 9 known offenders, then flip — the write-path check needs no ratchet |
 | req-grid-edge-produced-batch | [PRODUCED_BATCH Standard Edge](#produced_batch-standard-edge) | Implemented | Canonical edge from any batch producer to a `Batch` entity; replaces embedded batch-ID lists |
+| req-grid-edge-identity-declaration | [Edge Identity Declaration](#edge-identity-declaration) | Proposed | Every edge type declares, on its edge definition, how a relationship of that type is found again: declared discriminators (objects with a path and a description) or keyless with a reason |
+| req-grid-edge-identity | [Edge Identity](#edge-identity) | Proposed | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
+| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Proposed | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
 
 
 ## Explanation
@@ -511,6 +514,147 @@ Edges are created through the canonical `create_edge()` service path (`req-grid-
 #### Future
 
 Richer per-batch properties (counts, importer diagnostics) are additive `properties` on the same edge type; they do not require a new edge type.
+
+
+### Edge Identity Declaration
+----
+RID: `req-grid-edge-identity-declaration`
+
+Status: `Proposed`
+
+An edge's `id` is an assigned UUIDv7, exactly as a node's is (`req-grid-entity-natural-key`). How a relationship is *found again* is a separate, declared thing: every edge type states it on its **edge definition**, in one optional field, `identity`. This is the edge half of the 2026-09-15 ruling in `docs/misc/doc-grid-reconcile-design.md` ("Edges — RULED": assigned ids, optional natural keys, declared discriminators); the epic is Issue# 911 - tap.
+
+#### Status Details
+Proposed (Issue# 912 - tap, the specification slice of Issue# 911 - tap). Nothing reads the field yet: `tap_grid/schemas/edge-definition.schema.json` is unchanged and still rejects it, and it will gain the field in the same change as the code that honours it (`req-grid-edge-identity`), so no definition can carry a declaration the system silently ignores. The field name `identity` is this specification's proposal.
+
+#### Implementation
+**Shape.** `identity` is an object with exactly one of two members:
+
+```json
+"identity": {
+  "discriminators": [
+    {
+      "path": "scope",
+      "description": "The dependency scope exactly as the source declares it (runtime, build, test). Set by the collector from the manifest section the dependency appears in. In the key because one package can depend on another at two scopes at once."
+    }
+  ]
+}
+```
+
+```json
+"identity": {
+  "keyless": { "reason": "A scheduled fire is something this grid recorded, never something it re-observes." }
+}
+```
+
+`discriminators` is an array and **may be empty**: an empty array is the *plain key*, an edge identified by (type, source, target) alone, which is what 196 of the 220 edge types in the census taken for Issue# 911 - tap already are. Plain is therefore a declaration, not an absence. `keyless` says the type observes no source relationship, with a reason for a reader who is deciding whether the declaration is still right.
+
+**A discriminator is an object, never a bare string.** `path` locates a value inside the edge's `properties`; `description` says, for a human and for a robot, what the value is, how it is set and why it is in the key. A discriminator that cannot be described that way is usually not one.
+
+**The test for a discriminator** (2026-09-15 ruling): a property is in the key only if two edges that differ in it can be true at the same time. a dependency `scope` qualifies, because one package can depend on another at runtime and at test time at once; a state that replaces its predecessor (a permission level) does not, because `admin` and `write` cannot coexist on one pair. A discriminator changing is one fact ending and another beginning (end and mint), never a rename. The test is a judgement; it is the reason `description` is mandatory, and the reviewer of a declaration is its enforcement.
+
+**Declare the unit of meaning first.** Two steps of one job can both use one action at one ref. A key of `{source, target, ref}` deliberately collapses them, which is right if the edge asserts "this job uses this action at this ref" and wrong if it asserts "this step invokes this action". Decide which relationship the type asserts, then choose the discriminators that separate every occurrence that assertion intends to keep apart.
+
+**One home, no merge.** The declaration lives wherever the edge type's definition does: an `.edge.json` file for a plugin (`req-tap-plugin-manifest-v0-edge-identity`) and the registration entry for a core-registered type. It is held in an in-memory registry patterned on the property-schema registry (`req-grid-edge-properties-2`). Edge-type constraints union across plugins; an identity declaration must not, because two plugins disagreeing about what makes an edge the same edge would be silent drift. A second declaration for one type is a configuration error.
+
+**Undeclared is not plain.** Three states, never two: plain (`discriminators: []`), keyless, and undeclared. An undeclared type is treated as neither. An edge addressed by an explicit id behaves exactly as today whatever the type declares; an edge addressed by a batch-local ref (which is how a collector stops deriving ids) needs a declaration, and a ref-addressed edge of an undeclared type fails the batch (`req-grid-edge-identity-6`). Core-registered types must all declare (`-7`); plugin types may be undeclared only until the rollout of the declarations is complete, and making the declaration mandatory for them is a later decision that this requirement does not make.
+
+#### Development
+The key an edge declares is the edge's *own* identity. It does not say which endpoint life or which perspective the edge belongs to; that binding is `req-grid-edge-identity-1`. A key is a correlation handle and carries no uniqueness constraint, as for nodes (`req-grid-entity-natural-key-3`); the corner case of a type with no key at all is `req-grid-edge-identity-5`.
+
+Prior art converges on declaring, never inferring: TigerGraph's `DISCRIMINATOR`, Kubernetes' `list-map-keys`, Datomic's `tupleAttrs` and PG-Keys all name the discriminating properties per type, while Neo4j's `MERGE` treats whatever is in the pattern as identity, so a volatile property there mints a new edge every run.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-identity-declaration-1 | Declared On The Edge Definition | Proposed | `identity` is an optional object on an edge definition with exactly one of `discriminators` (array, empty meaning the plain key) and `keyless` (an object with a non-empty `reason`). Both, neither, or any other member is invalid. | Added to `edge-definition.schema.json` with the loader that honours it. |
+| req-grid-edge-identity-declaration-2 | Discriminators Are Objects | Proposed | Each discriminator is an object with a `path` into the edge's `properties` and a non-empty `description`; a bare string is invalid, and no two discriminators of one declaration share a path. | The path grammar is the node natural key's (`req-grid-entity-natural-key-14`), read by the one parser, so edge and node paths cannot drift. |
+| req-grid-edge-identity-declaration-3 | A Discriminator Exists In The Property Schema | Proposed | Every discriminator path resolves through the type's `property_schema` (the check of `req-grid-entity-natural-key-17`, applied to edges). A type that declares discriminators without a `property_schema` is a configuration error. | A path that points nowhere is a guard failure, as for nodes. |
+| req-grid-edge-identity-declaration-4 | One Declaration Per Type | Proposed | Registering a second identity declaration for an edge type raises a configuration error; declarations are not merged. | Patterned on `req-grid-edge-properties-3`. |
+| req-grid-edge-identity-declaration-5 | A Declaration Change Is A Migration | Proposed | Changing the discriminators of an edge type that has live rows lands with a data migration; no separate version field exists. | As for nodes (`req-grid-entity-natural-key-8`). Declaring identity for a type with no rows is free. |
+| req-grid-edge-identity-declaration-6 | Keyless Says Why | Proposed | A `keyless` declaration carries a non-empty `reason`. | As `req-grid-entity-natural-key-5`. |
+| req-grid-edge-identity-declaration-7 | One Registered Value | Proposed | The declaration is readable through the edge-type registry by every consumer of identity (the importer, the removal path, validators), from the one registered value. | Derive once; no second copy. |
+
+
+### Edge Identity
+----
+RID: `req-grid-edge-identity`
+
+Status: `Proposed`
+
+A live edge is **found** by the same mechanism a node is: a declared set of properties, a generated search over live rows, an advisory lock, and an ambiguity error. No unique index.
+
+#### Status Details
+Proposed (Issue# 912 - tap). The build is Issue# 913 - tap (the importer's edge step), Issue# 914 - tap (endpoints by natural key) and Issue# 915 - tap (removal by identity). Today an edge is found only by an explicit id: a collector that wants re-runs to update in place derives a UUIDv5 and supplies it, and a derived id cannot coexist with a terminal tombstone (the dead end `req-grid-entity-natural-key` describes for nodes).
+
+#### Implementation
+**Identity.** The identity of a live edge is `(edge_type, from_entity_id, to_entity_id, the value at each declared discriminator path)`. It binds to the endpoints' **entity ids**: lookup first resolves each endpoint to a live entity, then searches among live edges attached to *those* ids. An edge attached to a different live row that happens to share the endpoint's natural key is never returned.
+
+**Lookup.** Among live edges of the type between the resolved endpoints, filtered by the declared discriminator values. Zero matches: the edge is new and takes its provisional id (an assigned UUIDv7). One: that row is found and the batch's edge replaces it. More than one: the whole batch fails with nothing written, and the error names every candidate id. A tombstoned edge is never found. A relationship that returns after its edge was retired is a **new edge with a new id**; no verb restores an id (`req-grid-reconcile-terminology-2`), and the lookup being limited to live rows is what makes that safe. The existing compound indexes on `(from_entity, edge_type)` and `(to_entity, edge_type)` (`req-grid-edge-model-5`) serve the search.
+
+**Lock.** Before it reads the grid for an edge, the importer takes `pg_advisory_xact_lock` keyed by the identity (type, endpoint ids, discriminator values), through the same helper that keys the node lock, so two writers resolving one relationship serialise and the second finds the first's row. A keyless type is locked too, on (type, source, target): it has no search, but its duplicate check reads the grid all the same, and without the lock two writers would each see no duplicate and both insert.
+
+**An incomplete key is rejected.** A declared discriminator that is absent, `null` or empty (an empty string, object or array) makes the edge's key incomplete. The edge is **rejected**, never matched as "not found", so a thin edge cannot mint a duplicate on every run. This is deliberately **not** the node convention, where an empty string is observed-empty and is searched (`req-grid-entity-natural-key-16`): for a node the empty value is a fact about the source object; for an edge discriminator it distinguishes nothing, and the 2026-10-02 ruling is to reject it.
+
+**Plain and keyless.** A plain type (`discriminators: []`) is found by (type, source, target); a re-sent edge finds and replaces its row. A **keyless** type has no search at all: nothing says a second submission is the same edge, so a submission whose (type, source, target) equals another edge of that type, in the same batch or already live on the grid, fails the whole batch. The check runs inside the batch first, then against the grid. An edge addressed by an id that already names itself is a replace of itself and is not a duplicate. Allowing a type to hold several identical edges on purpose, and deleting one of N duplicates, are parked until a real case exists.
+
+**One relationship, one edge, per batch.** Two ref-addressed edges of one batch that carry the same identity fail the batch, whether or not a row exists yet: lookup runs before the batch writes, so the search alone cannot see the first of the pair. This is the edge counterpart of `req-grid-entity-natural-key-13`'s rule for nodes.
+
+**Found edges are updates, and updates have one classification.** A found edge is written through the same write classification a found node is, so a re-observation of an unchanged edge is recorded as a re-observation and not as a change. This requirement defines no classification of its own and must not grow one: until the time-and-observation work (Issue# 886 - tap, Phase 1) ships its classification, a found edge is replaced exactly as a found node is (`replace_edge` beside `replace_node`), and when that work lands edges adopt it with nodes. The interface is one: *the write path a found row takes*.
+
+**A lookup is a read.** Finding an edge searches the live grid on the submitter's behalf and tells it what was found (the found id, or every candidate on ambiguity). Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it looks up any edge, and refuses the batch otherwise with nothing written and nothing disclosed. The same rule for node refs, which already search the grid, is Issue# 924 - tap.
+
+**Dimensions do not participate.** As for nodes (`req-grid-entity-natural-key-10`), lookup ignores dimensions. Two perspectives sharing one edge row is the known limitation; dimension-scoped identity waits on per-run collector configuration (Issue# 907 - tap).
+
+#### Development
+Why a lookup and not a unique index: a natural key is a correlation handle (`req-grid-entity-natural-key-3`), and a database constraint on a key that perspectives will later need to share would have to be removed again. The cost is the lock and the extra lookups per edge, one of each inside the batch's transaction; the build measures it on a representative import before deciding whether a bulk path is needed.
+
+Cut-over: edges collectors wrote under derived ids are live today. Identity lookup is therefore a search that must find them by (type, source, target, discriminators), not an id derivation, and an audit for duplicate (type, source, target) groups on each grid precedes enabling it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-identity-1 | Bound To Endpoint Entity Ids | Proposed | Lookup resolves both endpoints to live entities first and searches live edges attached to those ids; an edge attached to a different live row sharing an endpoint's natural key is not returned. | The binding invariant of the 2026-09-15 ruling. |
+| req-grid-edge-identity-2 | Zero, One, Many | Proposed | No live match creates a new edge with its provisional id; one match is found and replaced; more than one fails the whole batch with nothing written and every candidate id named. | As `req-grid-entity-natural-key-9` and `-13`. |
+| req-grid-edge-identity-3 | Live Rows Only | Proposed | A tombstoned edge is never found; a returning relationship is a new edge with a new id; no verb restores a tombstoned id. | `req-grid-reconcile-terminology-2`. |
+| req-grid-edge-identity-4 | Lock Before Reading The Grid | Proposed | Before any read of the grid for an edge (the identity search, or a keyless type's duplicate check), the importer takes an advisory transaction lock keyed by the identity, or by (type, source, target) for a keyless type; it refuses to run outside a transaction. Two concurrent writers of one edge key produce one edge, and two concurrent writers of one keyless relationship produce one edge and one failed batch. | Two-connection tests for both, as `test_grift_identity.py::TestTwoWriters` does for nodes. |
+| req-grid-edge-identity-5 | Keyless Duplicates Fail The Batch | Proposed | An edge of a keyless type whose (type, source, target) equals another in the same batch, or a live edge on the grid, fails the whole batch; the in-batch check runs first, and the grid check runs under the lock of `-4`. An edge addressed by its own existing id is not a duplicate of itself. | Batch first, then grid. |
+| req-grid-edge-identity-6 | Ref-Addressed Edges Need A Declaration | Proposed | A ref-addressed edge of a type with no identity declaration fails the batch as `identity_undeclared`; an id-addressed edge is unaffected by the declaration. | As nodes (`req-grid-entity-natural-key-9`). |
+| req-grid-edge-identity-7 | Core Types Declare | Proposed | Every edge type registered by tap core carries an identity declaration, and a guard fails an undeclared one. | As `req-grid-entity-natural-key-5`'s guard for core node types. |
+| req-grid-edge-identity-8 | Incomplete Key Rejected | Proposed | An edge whose declared discriminator is absent, `null` or empty is rejected with a code naming the path (`incomplete_edge_key`); it is never matched as "not found" and never written. | Differs from node `-16` on the empty string; ruled 2026-10-02. |
+| req-grid-edge-identity-9 | One Edge Per Key Per Batch | Proposed | Two ref-addressed edges of one batch with the same identity fail the batch as `duplicate_edge`, whether or not a row exists. | Counterpart of `req-grid-entity-natural-key-13`. |
+| req-grid-edge-identity-10 | Found Edges Take The Node Write Path | Proposed | A found edge is written through the same write classification as a found node and no other; this requirement defines none. | The one interface with Issue# 886 - tap. |
+| req-grid-edge-identity-11 | Dimensions Ignored By Lookup | Proposed | Edge lookup matches on identity alone; no dimension participates. | As `req-grid-entity-natural-key-10`. |
+| req-grid-edge-identity-12 | Lookup Is Index-Backed | Proposed | The edge search is served by the existing endpoint-and-type indexes; the build records the per-edge lookup and lock cost on a representative import. | No new index is added without a measurement showing the need. |
+| req-grid-edge-identity-13 | A Lookup Is A Read | Proposed | The importer authorises `grid.read` in the import's scope before looking up any edge; an actor without it is refused with nothing written and no id disclosed. | Node refs: Issue# 924 - tap. |
+
+
+### PRODUCED_BATCH Claims
+----
+RID: `req-grid-edge-produced-batch-claims`
+
+Status: `Proposed`
+
+Refines `req-grid-edge-produced-batch` (ruled 2026-10-02) and leaves its text as it stands. A batch is produced by one job, so the job-to-batch relationship is singular, but a *job* may mention a batch it did not produce.
+
+#### Status Details
+Proposed (Issue# 912 - tap). The build is Issue# 918 - tap. Today the edges are created after the job's results are persisted, by a step that only logs, and a document submitted twice within one run can yield two entries for one (job, batch) pair.
+
+#### Implementation
+`PRODUCED_BATCH` is a **plain key** (`discriminators: []`): its identity is (job, batch). It is not keyless. `disposition` is a defined and consumed property (`req-grid-edge-produced-batch-3`; the batch read helpers and the cold-boot gate read it), so a later job holding a `skipped` edge to a batch it did not produce is designed behaviour and not an error: `skipped` means "submitted, and the importer found it already present", so it claims no creation.
+
+A repeat submission of one batch within one job collapses to one edge, and `imported` beats `skipped`. The one invariant is that **at most one job holds an `imported` edge to a given batch**. A second `imported` claim is a loud error, **recorded on the job** (persisted, not merely logged); the job's status does not change, because its data has already committed.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-produced-batch-claims-1 | A Plain Key | Proposed | `PRODUCED_BATCH` declares `discriminators: []`, so its identity is (job, batch). | `req-grid-edge-identity-declaration`. |
+| req-grid-edge-produced-batch-claims-2 | A Repeat Collapses | Proposed | A batch submitted more than once within one job yields one edge, and `imported` wins over `skipped`. | |
+| req-grid-edge-produced-batch-claims-3 | A Later Job May Skip | Proposed | A job may hold a `skipped` edge to a batch it did not produce without error. | The disposition semantics already in force. |
+| req-grid-edge-produced-batch-claims-4 | At Most One Imported Claim | Proposed | At most one job holds an `imported` edge to one batch. A conflicting claim is checked and written atomically, with the batch row locked, and is a loud error recorded on the job; the job's status is unchanged. | The persistence step is new: today the edges are linked after the results are saved and only logged. |
 
 
 ## Status Vocabulary
