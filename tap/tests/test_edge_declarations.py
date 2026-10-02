@@ -37,6 +37,18 @@ class TestEdgeTypesIn:
         assert edge_types_in("OUTBOUND_EDGES", None) == []
         assert edge_types_in("INBOUND_EDGES", [{"edges": "not-a-list"}, "junk"]) == []
 
+    @pytest.mark.spec("req-grid-hotlink-model-5")
+    def test_hotlinks_yield_each_entrys_edge_type_once(self) -> None:
+        value = [
+            {"name": "a", "edge_type": "USES_X__p"},
+            {"name": "b", "edge_type": "USES_Y__p"},
+            {"name": "c", "edge_type": "USES_X__p"},
+            "junk",
+            {"name": "d"},
+        ]
+        assert edge_types_in("HOTLINKS", value) == ["USES_X__p", "USES_Y__p"]
+        assert edge_types_in("HOTLINKS", None) == []
+
 
 @pytest.mark.spec("req-grid-service-delete-cascade-17")
 class TestUnresolved:
@@ -99,6 +111,32 @@ class TestReadDeclarations:
             ("p__thing", "CONTAINMENT_EDGES", "NESTS__p"),
         ]
         assert found[0].where == "models/thing.py:4"  # the dedented body starts with a blank line
+
+    @pytest.mark.spec("req-grid-hotlink-model-5")
+    def test_reads_a_hotlinks_edge_type(self, tmp_path: Path) -> None:
+        root = _package(
+            tmp_path,
+            {
+                "models.py": """
+                    class Doc(BaseModel):
+                        ENTITY_TYPE: ClassVar[str] = "p__doc"
+                        HOTLINKS: ClassVar[list[dict]] = [
+                            {
+                                "name": "doc-refs",
+                                "field": "body",
+                                "selector_type": "simple_path",
+                                "selector": "refs.*",
+                                "edge_direction": "outbound",
+                                "edge_type": "REFERS_TO__p",
+                                "mode": "exact",
+                            },
+                        ]
+                """,
+            },
+        )
+        found, unreadable = read_declarations(root)
+        assert unreadable == []
+        assert [(d.owner, d.attribute, d.edge_type) for d in found] == [("p__doc", "HOTLINKS", "REFERS_TO__p")]
 
     def test_a_non_literal_is_reported_not_guessed(self, tmp_path: Path) -> None:
         root = _package(
