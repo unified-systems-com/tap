@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0077d0d45c7b (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d565edce4fa3 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -3563,7 +3563,7 @@ def _resolve_edge_identities(
     switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
     a read of the grid, so the import authorises ``grid.read`` first (``-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/1b8229436218 (enforcement) — the importer
+    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/185c91e3f9f1 (enforcement) — the importer
         step that applies edge identity to a batch: which edges are looked up, the in-batch and
         keyless duplicate rules, the read authorisation, and the warn-mode switch for
         undeclared types (acceptance -5, -6, -9, -13).
@@ -3661,7 +3661,10 @@ def _resolve_edge_identities(
         who = f"ref {ref_of[envelope_id]!r}" if is_ref else f"entity_id {envelope_id}"
 
         if identity is not None and identity.keyless:
-            pair = (edge_type, str(from_id), str(to_id))
+            # One spelling per endpoint, as the lock key and the verb read it (preflight already
+            # canonicalises GRIFT ids, req-grid-import-grift-identity-4; this keeps the guard right
+            # whoever fills the payload).
+            pair = (edge_type, str(uuid.UUID(str(from_id))), str(uuid.UUID(str(to_id))))
             if pair in keyless_pairs:
                 raise fail(
                     "duplicate_edge",

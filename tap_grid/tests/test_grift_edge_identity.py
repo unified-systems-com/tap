@@ -223,6 +223,13 @@ class TestAKeylessType:
         assert _live(KEYLESS, a, b) == []
 
     @SPEC[5]
+    def test_another_spelling_of_the_same_endpoints_is_still_a_duplicate(self, pair: tuple[str, str]) -> None:
+        a, b = pair
+        result = _import(_edge(a, b, KEYLESS, ref="k1"), _edge(a.upper(), b.upper(), KEYLESS, ref="k2"))
+        assert "duplicate_edge" in _codes(result)
+        assert _live(KEYLESS, a, b) == []
+
+    @SPEC[5]
     def test_an_edge_addressed_by_its_own_id_is_not_a_duplicate_of_itself(self, pair: tuple[str, str]) -> None:
         a, b = pair
         edge_id = str(uuid.uuid4())
