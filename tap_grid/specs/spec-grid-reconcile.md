@@ -33,6 +33,7 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | req-grid-reconcile-hysteresis | [No Time-Based Hysteresis](#no-time-based-hysteresis) | Proposed | The completeness gate is the hysteresis; corroboration is a second *independent* observation, not a clock |
 | req-grid-reconcile-breaker | [Bulk-Absence Circuit Breaker](#bulk-absence-circuit-breaker) | Backlog | A run that would retire an implausible share of what it observed stops before writing, defers rather than discards, and quarantines for an operator |
 | req-grid-reconcile-absence-states | [Absence Has Three States On Every Surface](#absence-has-three-states-on-every-surface) | Backlog | Retired, not-seen-this-run and not-observable are distinct wherever absence is rendered; a credential that could not look never reads as gone |
+| req-grid-reconcile-edge-authority | [Edge Authority](#edge-authority) | Proposed | A batch may state that, for an edge type at an anchor in one direction, it is the total allowed set; the first form is a dry-run that proposes removals under a distinct event type and removes nothing |
 
 ---
 
@@ -438,6 +439,63 @@ Proposed. The verdict vocabulary in `req-grid-reconcile-falsifier` already disti
 | req-grid-reconcile-absence-states-3 | Counts are labelled | Backlog | No surface reports a single "absent" total; retirements and unobserved rows are counted separately. | |
 
 ---
+
+### Edge Authority
+----
+RID: `req-grid-reconcile-edge-authority`
+
+Status: `Proposed`
+
+An edge whose source relationship has gone is not found absent by anything today: node reconciliation (`req-grid-reconcile-verb`) retires nodes, and re-deriving a derived edge from its source content (`req-grid-reconcile-falsifier-5`, Proposed) covers only edges derived from declared content. A collector that reads *every* relationship of one kind at one node, and finds fewer than the grid holds, has no way to say "the rest are gone". This requirement lets it **state completeness for a scope**, and starts by only *proposing* what that statement would remove. The build is Issue# 919 - tap (the statement and the dry-run) and Issue# 920 - tap (the later flip to apply); the epic is Issue# 911 - tap.
+
+#### Status Details
+Proposed (Issue# 912 - tap). The first slice is a **dry-run**: no edge is removed on an authority statement. Applying one is a separate, later change (Issue# 920 - tap) that waits on a hand-verified dry-run output, and it needs the run's operator-armed authority (`-9`). Dimension-scoped statements wait on per-run collector configuration (Issue# 907 - tap); the field is reserved so the statement does not change shape when they arrive.
+
+#### Implementation
+**The statement.** A batch carries an optional `edge-cases` section whose one defined member here is `authority`, an array of claims. One claim is:
+
+```json
+{
+  "edge_type": "DEPENDS_ON",
+  "anchor": { "entity_type": "package", "key": { "ecosystem": "npm", "name": "left-pad" } },
+  "direction": "outbound",
+  "read": "complete"
+}
+```
+
+`anchor` names a node in the id or key form of `req-grid-import-grift-edge-endpoints`. `direction` is `outbound` or `inbound`: the edges leaving or arriving at the anchor. `read` is the producer's own statement of how it read the scope: `complete`, `partial` or `failed`. A field `dimensions` is reserved and refused while it is present.
+
+**The claim and its scope.** "For this edge type, at this anchor, in this direction, the batch's edges are the TOTAL allowed set." The scope is **dominant**: it is every live edge of that type at that anchor in that direction, whoever wrote it, not only the claimant's own. Collectors state their own authority; how two collectors' claims over one scope are settled is not defined here (Issue# 907 - tap), and until it is, a claim may remove an edge another collector wrote. That is accepted and stated.
+
+**The asserted set is derived, never listed.** It is the batch's own edges of that type attached to the anchor in that direction: the ones the importer created, the ones it found, and the ones it **skipped because an endpoint did not resolve** (an unresolved target counts as asserted, so a relationship the batch said exists but could not be wired is never proposed for removal on that account). Every other live edge in scope is a proposed removal.
+
+**One claim per scope; all rules together.** A batch carries at most one claim per (edge type, anchor, direction). Where several rules of the producer emit one edge type at one anchor, all of them contribute to the batch before the one claim is made; a claim made after only some rules ran would propose removing what the others assert.
+
+**Read status per anchor.** Only `read: complete` licenses a proposal. `partial` and `failed` are recorded as `not_claimed` with their status and propose nothing. A claim with no `read` is invalid, never defaulted to complete. The obligation sits with the producer: a sub-call that failed for an anchor must never be reported as a complete read that found nothing, because "found nothing" and "could not look" are different facts and only the first licenses removal (`req-grid-reconcile-absence-states`).
+
+**Dry-run.** For each `complete` claim the importer computes the proposed removals and records each as a `BatchEvent` of a **distinct type** (`authority_proposed`), never `unlink`: an `unlink` event means the removal happened. Each proposal carries the edge id, its identity, the claim's scope and the claim's read status. The job result counts the proposals. No edge is removed, ended or changed. A later change that applies a proposal records `unlink` with reason `authority` and the scope.
+
+**The fence.** A proposal is judged against the edge's row, locked, as reconcile's verdicts are (`req-grid-reconcile-verb-4`): if a committed batch outside this run created, updated or linked the edge after the claiming batch opened, the proposal is recorded `rejected_stale` and stands for nothing: that batch saw the edge more recently than the claim's read began. The same fence is applied again when a proposal is applied.
+
+**A claim is not a licence.** A batch states a claim; it does not arm itself. As reconciliation authority is the run's operator-armed configuration and no collector code can set it (`req-grid-reconcile-verb`), applying a proposal needs that same armed authority. The dry-run needs none, because it changes nothing.
+
+#### Development
+This requirement is deliberately *dominant*: an edge between two nodes has no owner other than whoever last asserted it, so removal is decided by what the complete read of the scope found, not by who wrote the edge. The cost is that a false "complete" deletes real edges, which is why `read` is mandatory per anchor and why the first form removes nothing. The cautionary tales are the ones `req-grid-reconcile-breaker` already records (Terraform's refresh warning, DataHub's stale-entity breaker), and that Backlog requirement is the guard that would sit beside an apply mode.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-reconcile-edge-authority-1 | The Statement Shape | Proposed | A batch's `edge-cases.authority` claims carry `edge_type`, `anchor`, `direction` and `read`; a claim with no `read`, an unknown `direction`, or a `dimensions` field is refused with nothing written. | `dimensions` reserved for Issue# 907 - tap. |
+| req-grid-reconcile-edge-authority-2 | Dominant Scope | Proposed | The scope is every live edge of the type at the anchor in the direction, whoever wrote it; proposals are not limited to the claimant's edges. | |
+| req-grid-reconcile-edge-authority-3 | Asserted Is Derived | Proposed | The asserted set is the batch's own edges of the type at the anchor in the direction, including found edges and edges skipped for an unresolved endpoint; everything else live in scope is proposed. | An unresolved target counts as asserted. |
+| req-grid-reconcile-edge-authority-4 | One Claim Per Scope | Proposed | Two claims for one (edge type, anchor, direction) in a batch fail the batch as `duplicate_authority_claim`. | All of a producer's rules contribute before the claim. |
+| req-grid-reconcile-edge-authority-5 | Only A Complete Read Licenses | Proposed | A `partial` or `failed` claim proposes nothing and is recorded `not_claimed` with its status; only `complete` proposes. | A failed sub-call is never a complete read that found nothing. |
+| req-grid-reconcile-edge-authority-6 | Dry-Run Removes Nothing | Proposed | A claim produces `authority_proposed` events, a distinct type, and changes no edge; no `unlink` event is written on an authority claim in this slice. | `unlink` means the removal happened. |
+| req-grid-reconcile-edge-authority-7 | Proposals Are Recorded Whole | Proposed | Each proposal records the edge id, its identity, the claim's scope and read status, and the job result counts them. | A reader can hand-check the set before any flip. |
+| req-grid-reconcile-edge-authority-8 | Stale Claims Fenced | Proposed | A proposal is evaluated against the locked edge row; an edge created, updated or linked by a committed batch outside this run after the claiming batch opened is `rejected_stale`, and the fence is applied again at apply. | As `req-grid-reconcile-verb-4`. |
+| req-grid-reconcile-edge-authority-9 | A Claim Is Not A Licence | Proposed | Applying a proposal needs the run's operator-armed reconciliation authority; a batch cannot arm itself, and the dry-run needs no authority because it changes nothing. | Keeps `req-grid-reconcile-verb-1`'s separation of deciding and collecting. |
+
 
 ## Cross-References
 
