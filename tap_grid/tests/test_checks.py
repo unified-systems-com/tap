@@ -235,15 +235,14 @@ class TestHotlinkEdgeTypesResolve:
         assert {edge_type for _, edge_type in hotlinks} <= defined
 
     def test_the_viz_edge_types_are_registered_with_sources_and_targets(self) -> None:
-        from django.apps import apps
-
         from tap_grid.constraints import get_edge_type_constraints
+        from tap_viz.apps import TapVizConfig
 
         for slug, (sources, targets) in _VIZ_EDGE_TYPES.items():
             constraints = get_edge_type_constraints(slug)
             assert constraints is not None, slug
             assert (constraints.sources, constraints.targets) == (sources, targets), slug
-        declared = {et["slug"]: et for et in apps.get_app_config("tap_viz").edge_types}
+        declared = {et["slug"]: et for et in TapVizConfig.edge_types}
         assert set(declared) == set(_VIZ_EDGE_TYPES)
         assert all(et["description"] and et["name"] for et in declared.values())
 
@@ -254,8 +253,11 @@ class TestHotlinkEdgeTypesResolve:
         from tap_grid.checks import check_edge_declarations_resolve
         from tap_grid.registry import get_model_class
 
+        from tap_viz.models import Layout
+
         model = get_model_class("layout")
-        planted = [{**model.HOTLINKS[0], "edge_type": "UNDEFINED_HOTLINK_EDGE"}]
+        assert model is Layout
+        planted = [{**Layout.HOTLINKS[0], "edge_type": "UNDEFINED_HOTLINK_EDGE"}]
         monkeypatch.setattr(model, "HOTLINKS", planted)
         [error] = check_edge_declarations_resolve(None)
         assert isinstance(error, Error) and error.id == "tap_grid.E004"
