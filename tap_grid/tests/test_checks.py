@@ -203,6 +203,77 @@ class TestEdgeDeclarationsResolve:
 
 
 # ---------------------------------------------------------------------------
+# tap_grid.E004 for hotlinks — a hotlink's edge_type is a defined edge (Issue# 910 - tap)
+# ---------------------------------------------------------------------------
+
+_VIZ_EDGE_TYPES = {
+    "USES_ARRANGEMENT": ({"layout"}, {"arrangement"}),
+    "USES_LAYOUT": ({"elevation", "panel"}, {"layout"}),
+    "USES_ELEVATION": ({"projection"}, {"elevation"}),
+    "USES_DEFAULT_ELEVATION": ({"projection"}, {"elevation"}),
+    "NAVIGATES_TO": ({"elevation"}, {"elevation"}),
+    "USES_PROJECTION": ({"panel"}, {"projection"}),
+}
+
+
+@pytest.mark.spec("req-grid-hotlink-model-5")
+class TestHotlinkEdgeTypesResolve:
+    def test_every_hotlink_on_this_stack_is_read_and_resolves(self) -> None:
+        """Positive control: the scan reads every real hotlink, and each names a defined edge."""
+        from tap_grid.checks import declared_edge_types, defined_edge_types
+
+        hotlinks = {(d.owner, d.edge_type) for d in declared_edge_types() if d.attribute == "HOTLINKS"}
+        assert {
+            ("page", "USES_PANEL"),
+            ("layout", "USES_ARRANGEMENT"),
+            ("elevation", "USES_LAYOUT"),
+            ("elevation", "NAVIGATES_TO"),
+            ("projection", "USES_ELEVATION"),
+            ("projection", "USES_DEFAULT_ELEVATION"),
+        } <= hotlinks
+        defined = defined_edge_types()
+        assert {edge_type for _, edge_type in hotlinks} <= defined
+
+    def test_the_viz_edge_types_are_registered_with_sources_and_targets(self) -> None:
+        from tap_grid.constraints import get_edge_type_constraints
+        from tap_viz.apps import TapVizConfig
+
+        for slug, (sources, targets) in _VIZ_EDGE_TYPES.items():
+            constraints = get_edge_type_constraints(slug)
+            assert constraints is not None, slug
+            assert (constraints.sources, constraints.targets) == (sources, targets), slug
+        declared = {et["slug"]: et for et in TapVizConfig.edge_types}
+        assert set(declared) == set(_VIZ_EDGE_TYPES)
+        assert all(et["description"] and et["name"] for et in declared.values())
+
+    def test_a_hotlink_naming_an_undefined_edge_type_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Plant a hotlink whose edge_type nothing defines: the boot-time check fails closed."""
+        from django.core.checks import Error
+
+        from tap_grid.checks import check_edge_declarations_resolve
+        from tap_grid.registry import get_model_class
+
+        from tap_viz.models import Layout
+
+        model = get_model_class("layout")
+        assert model is Layout
+        planted = [{**Layout.HOTLINKS[0], "edge_type": "UNDEFINED_HOTLINK_EDGE"}]
+        monkeypatch.setattr(model, "HOTLINKS", planted)
+        [error] = check_edge_declarations_resolve(None)
+        assert isinstance(error, Error) and error.id == "tap_grid.E004"
+        assert "layout.HOTLINKS" in error.msg and "'UNDEFINED_HOTLINK_EDGE'" in error.msg
+
+    def test_unregistering_a_viz_definition_is_caught(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The pre-#910 state: the hotlink is declared, the edge type is not defined."""
+        from tap_grid import checks
+
+        original = checks.defined_edge_types
+        monkeypatch.setattr(checks, "defined_edge_types", lambda: original() - {"NAVIGATES_TO"})
+        [error] = checks.check_edge_declarations_resolve(None)
+        assert "elevation.HOTLINKS" in error.msg and "'NAVIGATES_TO'" in error.msg
+
+
+# ---------------------------------------------------------------------------
 # tap_grid.E005 — every registered grid model defaults to LiveManager
 # ---------------------------------------------------------------------------
 

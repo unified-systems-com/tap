@@ -506,7 +506,7 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
     """Parse and structurally validate the manifest. Returns PluginManifest or None.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@a9d9438fb31f/c6bb1155c694 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@3155497a896f/c6bb1155c694 (derivation) —
         the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
         same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
         validator and the boot path cannot drift apart on what a valid manifest is.

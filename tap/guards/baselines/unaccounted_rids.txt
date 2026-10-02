@@ -56,7 +56,6 @@ req-grid-gryphon-compat
 req-grid-history-version
 req-grid-hotlink-deferred
 req-grid-hotlink-edge-data
-req-grid-hotlink-model
 req-grid-hotlink-selector
 req-grid-hotlink-validation
 req-grid-icon-format

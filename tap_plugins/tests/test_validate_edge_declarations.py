@@ -131,6 +131,19 @@ class TestEdgeDeclarationsCheck:
         result = _run(_plugin(tmp_path, MODEL % ("PG_LINKS__grid_fixtures", "LINKS__test_plugin"), depends_on=deps))
         assert _named_check(result, "edge-declarations").status == "pass"
 
+    @pytest.mark.spec("req-grid-hotlink-model-5")
+    def test_a_hotlink_naming_an_undefined_edge_fails(self, tmp_path: Path) -> None:
+        """A hotlink's edge_type is a declaration like any other (Issue# 910 - tap)."""
+        body = 'class Doc:\n    ENTITY_TYPE = "test_plugin__doc"\n    HOTLINKS = [{"name": "refs", "edge_type": "%s"}]\n'
+        ok, bad = tmp_path / "ok", tmp_path / "bad"
+        ok.mkdir()
+        bad.mkdir()
+        assert _named_check(_run(_plugin(ok, body % "LINKS__test_plugin")), "edge-declarations").status == "pass"
+        check = _named_check(_run(_plugin(bad, body % "UNDEFINED_HOTLINK__test_plugin")), "edge-declarations")
+        assert check.status == "fail"
+        [text] = [line.text for line in check.messages if line.severity == "error"]
+        assert "test_plugin__doc.HOTLINKS" in text and "'UNDEFINED_HOTLINK__test_plugin'" in text
+
     def test_a_non_literal_declaration_warns_instead_of_passing_silently(self, tmp_path: Path) -> None:
         body = 'class T:\n    ENTITY_TYPE = "test_plugin__t"\n    OUTBOUND_EDGES = build()\n'
         check = _named_check(_run(_plugin(tmp_path, body)), "edge-declarations")
