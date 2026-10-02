@@ -1480,6 +1480,7 @@ def resolve_identity(
 
 
 @requires_capability(WRITE_CAPABILITY, operation="resolve_edge_identity")
+@requires_capability(READ_CAPABILITY, operation="resolve_edge_identity")
 def resolve_edge_identity(
     edge_type: str,
     from_id: str | uuid.UUID,
@@ -1504,8 +1505,11 @@ def resolve_edge_identity(
     (``ENFORCE_EDGE_IDENTITY_DECLARED``, warn mode until Issue# 928 - tap).
 
     Must run inside the caller's transaction, so resolution and the write commit together.
+    Gated on ``grid.read`` as well as ``grid.write``: it reads the grid and tells the caller what
+    it found (an id, or every candidate), so a caller that may write but not read is refused here
+    whoever calls it, not only when the importer remembers to ask (``req-grid-edge-identity-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@c9373f34c7e6/40ca45c00964 (derivation) — the one place
+    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/150846d00521 (derivation) — the one place
         a relationship's declared identity becomes the id written under: incomplete-key refusal,
         the lock before any read, the bound search among live edges and the assignment on a
         miss all happen here, inside the caller's transaction.

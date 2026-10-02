@@ -305,6 +305,49 @@ class TestALookupIsARead:
         assert _live(PLAIN, a, b) == []
 
     @SPEC[13]
+    @SPEC[6]
+    def test_an_undeclared_ref_in_warn_mode_reads_nothing_and_needs_no_read(
+        self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Warn mode leaves the import exactly as it was, authorisation included."""
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        a, b = pair
+        real_authorize = policy.authorize
+
+        def refuse_read(ctx: Any, capability: str, *args: Any, **kwargs: Any) -> Any:
+            if capability == READ_CAPABILITY and kwargs.get("operation") in (
+                "grift_import_edge_identity",
+                "resolve_edge_identity",
+            ):
+                raise PermissionError("grid.read refused for this test")
+            return real_authorize(ctx, capability, *args, **kwargs)
+
+        monkeypatch.setattr(policy, "authorize", refuse_read)
+        result = _import(_edge(a, b, "ALT_LINK__grid_fixtures", ref="u"))
+        assert result.success, result.errors
+        assert len(_live("ALT_LINK__grid_fixtures", a, b)) == 1
+
+    @SPEC[13]
+    def test_the_verb_itself_requires_read(self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Gated at the service boundary, not only by the importer: any caller is refused."""
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        a, b = pair
+        real_authorize = policy.authorize
+
+        def refuse_read(ctx: Any, capability: str, *args: Any, **kwargs: Any) -> Any:
+            if capability == READ_CAPABILITY and kwargs.get("operation") == "resolve_edge_identity":
+                raise PermissionError("grid.read refused for this test")
+            return real_authorize(ctx, capability, *args, **kwargs)
+
+        monkeypatch.setattr(policy, "authorize", refuse_read)
+        with transaction.atomic(), pytest.raises(PermissionError):
+            resolve_edge_identity(PLAIN, a, b, {})
+
+    @SPEC[13]
     def test_an_import_with_no_lookup_does_not_ask_for_read(
         self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:

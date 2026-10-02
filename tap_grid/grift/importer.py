@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f1aa242a2f63 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0077d0d45c7b (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -3563,7 +3563,7 @@ def _resolve_edge_identities(
     switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
     a read of the grid, so the import authorises ``grid.read`` first (``-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@c9373f34c7e6/d6b5e1063396 (enforcement) — the importer
+    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/1b8229436218 (enforcement) — the importer
         step that applies edge identity to a batch: which edges are looked up, the in-batch and
         keyless duplicate rules, the read authorisation, and the warn-mode switch for
         undeclared types (acceptance -5, -6, -9, -13).
@@ -3586,13 +3586,21 @@ def _resolve_edge_identities(
         return {}
     ref_of = {pid: ref for ref, pid in refs.items()}
 
-    def is_keyless(edge_type: str) -> bool:
-        identity = get_edge_identity(edge_type)
-        return identity is not None and identity.keyless
+    def reads_the_grid(edge_obj: dict[str, Any]) -> bool:
+        """A declared type's ref is looked up; a keyless type's edge is checked for a live duplicate.
 
-    # Reading the grid for an edge (a ref's lookup, a keyless edge's duplicate check) tells the
-    # submitter what is there, so it needs read, not only import (req-grid-edge-identity-13).
-    if any(e["entity"]["entity_id"] in ref_of or is_keyless(e["edge"]["edge_type"]) for e in edges):
+        An undeclared type's ref reads nothing in warn mode, so it must not need read either: warn
+        mode leaves the import exactly as it was (req-grid-edge-identity-6).
+        """
+        identity = get_edge_identity(edge_obj["edge"]["edge_type"])
+        if identity is None:
+            return False
+        return identity.keyless or edge_obj["entity"]["entity_id"] in ref_of
+
+    # Reading the grid for an edge tells the submitter what is there, so it needs read, not only
+    # import (req-grid-edge-identity-13). The verb is gated on read too; asking once here fails the
+    # batch before any write with one clear refusal.
+    if any(reads_the_grid(e) for e in edges if e["entity"]["entity_id"] not in dangling_edge_ids):
         policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_edge_identity")
 
     explicit_ids = {
