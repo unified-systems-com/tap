@@ -603,6 +603,8 @@ Proposed (Issue# 912 - tap). The build is Issue# 913 - tap (the importer's edge 
 
 **Found edges are updates, and updates have one classification.** A found edge is written through the same write classification a found node is, so a re-observation of an unchanged edge is recorded as a re-observation and not as a change. This requirement defines no classification of its own and must not grow one: until the time-and-observation work (Issue# 886 - tap, Phase 1) ships its classification, a found edge is replaced exactly as a found node is (`replace_edge` beside `replace_node`), and when that work lands edges adopt it with nodes. The interface is one: *the write path a found row takes*.
 
+**A lookup is a read.** Finding an edge searches the live grid on the submitter's behalf and tells it what was found (the found id, or every candidate on ambiguity). Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it looks up any edge, and refuses the batch otherwise with nothing written and nothing disclosed. The same rule for node refs, which already search the grid, is Issue# 924 - tap.
+
 **Dimensions do not participate.** As for nodes (`req-grid-entity-natural-key-10`), lookup ignores dimensions. Two perspectives sharing one edge row is the known limitation; dimension-scoped identity waits on per-run collector configuration (Issue# 907 - tap).
 
 #### Development
@@ -626,6 +628,7 @@ Cut-over: edges collectors wrote under derived ids are live today. Identity look
 | req-grid-edge-identity-10 | Found Edges Take The Node Write Path | Proposed | A found edge is written through the same write classification as a found node and no other; this requirement defines none. | The one interface with Issue# 886 - tap. |
 | req-grid-edge-identity-11 | Dimensions Ignored By Lookup | Proposed | Edge lookup matches on identity alone; no dimension participates. | As `req-grid-entity-natural-key-10`. |
 | req-grid-edge-identity-12 | Lookup Is Index-Backed | Proposed | The edge search is served by the existing endpoint-and-type indexes; the build records the per-edge lookup and lock cost on a representative import. | No new index is added without a measurement showing the need. |
+| req-grid-edge-identity-13 | A Lookup Is A Read | Proposed | The importer authorises `grid.read` in the import's scope before looking up any edge; an actor without it is refused with nothing written and no id disclosed. | Node refs: Issue# 924 - tap. |
 
 
 ### PRODUCED_BATCH Claims

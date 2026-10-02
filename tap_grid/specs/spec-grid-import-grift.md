@@ -890,6 +890,8 @@ Proposed (Issue# 912 - tap). The document shape below is a *proposal*: `grift-do
 
 **The `skip` event.** `BatchEventType` gains `skip`. It records, in its own transaction, that an edge was not written: the edge type, which endpoint (`from` or `to`), that endpoint's type and key (or ref or id), and the reason. Written in its own transaction so that it is committed whether or not anything later in the batch rolls back. It is a record of what the importer *declined to do*; it never changes the graph. The batch row it belongs to, and the `entity_id` a skip carries (the edge was never persisted, so no entity exists to name), are the build's to settle against `BatchEvent`'s required fields; the constraint is that a skip must be recoverable from the job's result and from the collector's run log without reading free-text logs.
 
+**Resolution is a read.** A key endpoint is resolved by searching the live grid, and the result (a resolved id, or every candidate on ambiguity) reaches the submitter. Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it resolves any key endpoint, and refuses the batch otherwise with nothing written and nothing disclosed.
+
 **Surfaced.** The import result carries the skips (count and list, each with its event id), and a collector's run record references them, so an unresolved endpoint is visible where the run is read. Today a permissive-mode skip is a log line and a warning that `submit_grift` discards.
 
 #### Acceptance Criteria
@@ -904,6 +906,7 @@ Proposed (Issue# 912 - tap). The document shape below is a *proposal*: `grift-do
 | req-grid-import-grift-edge-endpoints-6 | Unresolved Follows The Dangling Mode | Proposed | An unresolved endpoint fails the batch in strict mode and skips only that edge in permissive mode. Key endpoints are analysed at execution; id endpoints naming no entity keep their preflight analysis. | Refines `req-grid-import-grift-dangling-1`. |
 | req-grid-import-grift-edge-endpoints-7 | A Skip Is Recorded | Proposed | Every edge skipped for an unresolved endpoint writes one `skip` `BatchEvent` in its own transaction, carrying the edge type, the endpoint, its type and key (or ref or id), and the reason. | Closes the silent drop: a permissive skip was a log line. |
 | req-grid-import-grift-edge-endpoints-8 | Skips Are Surfaced | Proposed | The import result lists every skip with its event id, and the collector run record references them. | A reader finds a skip without grepping logs. |
+| req-grid-import-grift-edge-endpoints-9 | Resolution Is A Read | Proposed | Before resolving any key endpoint the importer authorises `grid.read` in the import's scope; an actor without it is refused with nothing written and no id disclosed. | Node refs: Issue# 924 - tap. |
 
 
 ## Edge Removal By Identity
@@ -936,6 +939,8 @@ Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and
 
 **Purges stay id-addressed.** Hard deletion names an id; there is no key-addressed purge.
 
+**Resolution is a read.** Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it resolves an identity-addressed target, as for endpoints (`req-grid-import-grift-edge-endpoints-9`); a delete also needs `grid.delete`, which the importer already authorises for a `deletes` section.
+
 **No version.** `entity_expected_version` is not accepted on an identity-addressed target: the sender addresses a relationship, and the row whose version it would name is not known to it until the match is made.
 
 **Duplicates.** Two targets that resolve to one live edge are `duplicate_removal_target`, whichever forms named it. An edge the same document also upserts, by id or by identity, is `entity_id_in_upsert_and_removal`; the check is re-applied to the resolved id, as it is for ref nodes (Issue# 606 - tap).
@@ -951,6 +956,7 @@ Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and
 | req-grid-import-grift-edge-removal-5 | An Incomplete Identity Is Refused | Proposed | A target missing a declared discriminator, or carrying an empty, null or undeclared one, is refused with nothing written, by the rule of `req-grid-edge-identity-8`. | |
 | req-grid-import-grift-edge-removal-6 | Duplicates Resolve To One Edge | Proposed | Two targets resolving to one live edge are `duplicate_removal_target`; an edge both upserted and removed in one document is `entity_id_in_upsert_and_removal`, checked on the resolved id. | |
 | req-grid-import-grift-edge-removal-7 | No Expected Version | Proposed | `entity_expected_version` on an identity-addressed target is a schema failure. | |
+| req-grid-import-grift-edge-removal-8 | Resolution Is A Read | Proposed | Before resolving any identity-addressed target the importer authorises `grid.read` in the import's scope, in addition to the `grid.delete` a `deletes` section already requires. | |
 
 
 ## Import-Side Provenance
