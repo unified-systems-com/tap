@@ -452,7 +452,7 @@ An edge whose source relationship has gone is not found absent by anything today
 Proposed (Issue# 912 - tap). The first slice is a **dry-run**: no edge is removed on an authority statement. Applying one is a separate, later change (Issue# 920 - tap) that waits on a hand-verified dry-run output, and it needs the run's operator-armed authority (`-9`). Dimension-scoped statements wait on per-run collector configuration (Issue# 907 - tap); the field is reserved so the statement does not change shape when they arrive.
 
 #### Implementation
-**The statement.** A batch carries an optional `edge-cases` section whose one defined member here is `authority`, an array of claims. One claim is:
+**The statement.** A batch carries an optional `edge_cases` section whose one defined member here is `authority`, an array of claims. One claim is:
 
 ```json
 {
@@ -486,7 +486,7 @@ This requirement is deliberately *dominant*: an edge between two nodes has no ow
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-reconcile-edge-authority-1 | The Statement Shape | Proposed | A batch's `edge-cases.authority` claims carry `edge_type`, `anchor`, `direction` and `read`; a claim with no `read`, an unknown `direction`, or a `dimensions` field is refused with nothing written. | `dimensions` reserved for Issue# 907 - tap. |
+| req-grid-reconcile-edge-authority-1 | The Statement Shape | Proposed | A batch's `edge_cases.authority` claims carry `edge_type`, `anchor`, `direction` and `read`; a claim with no `read`, an unknown `direction`, or a `dimensions` field is refused with nothing written. | `dimensions` reserved for Issue# 907 - tap. |
 | req-grid-reconcile-edge-authority-2 | Dominant Scope | Proposed | The scope is every live edge of the type at the anchor in the direction, whoever wrote it; proposals are not limited to the claimant's edges. | |
 | req-grid-reconcile-edge-authority-3 | Asserted Is Derived | Proposed | The asserted set is the batch's own edges of the type at the anchor in the direction, including found edges and edges skipped for an unresolved endpoint; everything else live in scope is proposed. | An unresolved target counts as asserted. |
 | req-grid-reconcile-edge-authority-4 | One Claim Per Scope | Proposed | Two claims for one (edge type, anchor, direction) in a batch fail the batch as `duplicate_authority_claim`. | All of a producer's rules contribute before the claim. |
