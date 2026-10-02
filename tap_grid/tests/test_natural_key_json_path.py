@@ -17,6 +17,7 @@ transaction, so nothing outlives the test. No core type declares a path; this is
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -257,14 +258,59 @@ class TestTheGeneratedSearch:
 @pytest.mark.django_db
 class TestTheIndexAnswersTheSearch:
     @SPEC_18
-    def test_postgres_plans_the_search_on_the_generated_index(self, keyed_on_a_path: tuple[str, ...]) -> None:
-        """The search's expression and the index's are the same text, so PostgreSQL can match them.
-        Two authored copies would drift silently into a sequential scan; this reads the plan."""
+    def test_the_search_and_the_index_spell_the_expression_the_same_way(
+        self, keyed_on_a_path: tuple[str, ...]
+    ) -> None:
+        """The search's expression and the index's are the same text, so PostgreSQL CAN match them.
+        Two authored copies would drift silently; this compares the two directly.
+
+        **Deliberately not an EXPLAIN assertion, and that is the point of this test's history.**
+        It used to set ``enable_seqscan = off`` and assert the index NAME appeared in the plan.
+        That passed locally and failed in CI (`product-lines`, 2026-09-29/30), because it asserted a
+        planner CHOICE rather than the property above. The CI plan contained no sequential scan at
+        all — `enable_seqscan` was honoured and irrelevant, since it discourages seq scans and does
+        nothing to stop the planner preferring a DIFFERENT index. On a one-row table it took the
+        unique index on ``entity_id`` and applied this predicate as a plain filter, which is a
+        perfectly good plan and says nothing about drift.
+
+        What drift would actually look like: the index is created once, at migration time, from
+        ``index_expressions``; the search is compiled on every call. Both call ``_key_transform``
+        today, so they cannot diverge in code — but a MIGRATED index outlives the code that wrote
+        it. Comparing the stored ``indexdef`` against today's compiled SQL is what catches that, and
+        it involves no planner, no row counts and no statistics.
+        """
         _panel("p", {"tenant": "t"})
+        sql, _params = search(Panel.objects.live(), {"slug": "p", "config.tenant": "t"}).query.sql_with_params()
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL enable_seqscan = off")
-        plan = search(Panel.objects.live(), {"slug": "p", "config.tenant": "t"}).explain()
-        assert "nk_web_panel_json_probe" in plan, plan
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE indexname = %s", ["nk_web_panel_json_probe"])
+            (definition,) = cursor.fetchone()
+
+        # Two things have to agree, and an earlier draft of this test checked only the first.
+        #
+        # 1. The OPERATOR. `->` yields jsonb and can answer a jsonb index; `->>` yields text
+        #    and silently cannot, so a drift from one to the other is exactly the defect.
+        operator = re.compile(r"config\"?\s*(#>>|#>|->>|->)")
+        in_search = operator.findall(sql.replace('"', ""))
+        in_index = operator.findall(definition)
+        assert in_search, sql
+        assert in_index, definition
+        assert set(in_search) == set(in_index) == {"->"}, (in_search, in_index, sql, definition)
+
+        # 2. The KEY. Codex's review of PR# 901 - tap caught that operator equality alone is
+        #    satisfied by an index on a DIFFERENT key — `config -> 'other'` passes a check that
+        #    only compares `->`, so the test's name would have over-claimed. Verified by probe:
+        #    rebuilding the index as `config -> 'OTHER'` left the first assertion green.
+        #    The declaration is the single source both sides must match, so compare against it
+        #    rather than against each other.
+        for name in keyed_on_a_path:
+            column, keys = split_path(name)
+            if not keys:
+                continue
+            leaf = keys[-1]
+            # The index stores the key inline (`-> 'tenant'::text`); the search binds it as a
+            # parameter, which is why the SQL text alone cannot be compared here.
+            assert f"-> '{leaf}'" in definition, (name, definition)
+            assert leaf in [p for p in _params if isinstance(p, str)], (name, _params)
 
     @SPEC_15
     def test_the_index_is_typed_jsonb_not_text(self, keyed_on_a_path: tuple[str, ...]) -> None:
