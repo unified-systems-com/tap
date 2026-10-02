@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/85b393cb6a72 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/ddc54223a632 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -580,9 +580,8 @@ def _check_edge_files(manifest: Any, result: ValidationResult) -> None:
     if not manifest.edges:
         return
 
-    from django.core.exceptions import ImproperlyConfigured
-
-    from tap_grid.edge_identity import parse_edge_identity
+    # Django-free on purpose: structure-level validation runs in plugin CI with no Django.
+    from tap_grid.edge_identity_shape import EdgeIdentityError, check_edge_identity
 
     check = CheckResult(id="edge-files", name="Edge definition files valid")
     for edge in manifest.edges:
@@ -593,8 +592,8 @@ def _check_edge_files(manifest: Any, result: ValidationResult) -> None:
         # (req-tap-plugin-manifest-v0-edge-identity-1, -2).
         if edge.identity is not None:
             try:
-                parse_edge_identity(edge.slug, edge.identity, property_schema=edge.property_schema)
-            except ImproperlyConfigured as exc:
+                check_edge_identity(edge.slug, edge.identity, property_schema=edge.property_schema)
+            except EdgeIdentityError as exc:
                 check.fail(str(exc), path=edge.file_path)
     result.checks.append(check)
 

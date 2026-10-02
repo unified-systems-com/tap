@@ -17,6 +17,10 @@ Every model declares how one of its rows is *found again* from a source's facts:
 - ``None`` means *nobody has declared yet*. It is a guard failure, never a synonym
   for keyless: three states, not two.
 
+The path grammar (:func:`split_path`) imports nothing from Django, and Django is imported only
+inside the functions that build ORM expressions, so a Django-free caller (plugin conformance
+validation) can share the one grammar rather than keep a second copy.
+
 Two things this module deliberately is **not**:
 
 - It is not identity. ``Entity.id`` is always an assigned UUIDv7. A content-derived id
@@ -36,10 +40,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
-
-from django.core.exceptions import FieldDoesNotExist
-from django.db.models import F, JSONField
-from django.db.models.fields.json import KeyTransform
 
 if TYPE_CHECKING:
     from django.db.models import Expression, QuerySet
@@ -169,6 +169,8 @@ def _key_transform(name: str) -> Expression:
     other. ``jsonb`` equality is type-aware (``123`` is not ``"123"``); a text cast would lose
     that, which is why this is ``KeyTransform`` and not ``KeyTextTransform``.
     """
+    from django.db.models.fields.json import KeyTransform
+
     column, keys = split_path(name)
     expression: Any = column
     for key in keys:
@@ -178,6 +180,8 @@ def _key_transform(name: str) -> Expression:
 
 def index_expressions(declared: Sequence[str]) -> list[Any]:
     """The index over a declaration, one expression per entry, in declared order."""
+    from django.db.models import F
+
     return [_key_transform(name) if is_path(name) else F(name) for name in declared]
 
 
@@ -207,6 +211,9 @@ def declaration_problems(model: Any, declared: Sequence[str], *, check_schema: b
     reason to fail. Shared by the core guard and the startup index install, so a plugin's
     declaration is held to what core's is.
     """
+    from django.core.exceptions import FieldDoesNotExist
+    from django.db.models import JSONField
+
     problems: list[str] = []
     for name in declared:
         try:
