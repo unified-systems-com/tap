@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0c50944318b9 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f1aa242a2f63 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -33,7 +33,7 @@ from tap_grid.grift.refs import resolve_refs, substitute_ids
 from tap_grid.models import BaseModel, Entity
 from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
 from tap_grid.service_types import WriteOperation
-from tap_grid.services import resolve_identity, write_batch
+from tap_grid.services import resolve_edge_identity, resolve_identity, write_batch
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +337,12 @@ _ERROR_CODES = frozenset(
         # type has declared no search at all.
         "identity_ambiguous",
         "identity_undeclared",
+        # Edge identity (req-grid-edge-identity, Issue# 913 - tap): an edge whose declared key
+        # has a hole, and two edges of one batch (or a keyless edge and a live one) that are
+        # the same relationship. An undeclared type is a logged warning in warn mode and
+        # `identity_undeclared` after the flip (Issue# 928 - tap).
+        "incomplete_edge_key",
+        "duplicate_edge",
         # The contents declaration (req-grift-contents): a declaration the batch does not
         # match, or an aspect this importer does not accept.
         "contents_mismatch",
@@ -2580,7 +2586,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/68bde357beb7 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/fd5e4f8c9406 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2717,6 +2723,24 @@ def _execute_grift_batch(
                 if substitutions:
                     substitute_ids(batch_container, substitutions)
                     final_refs = {ref: substitutions.get(pid, pid) for ref, pid in final_refs.items()}
+
+            # Edges are found by their type's declared identity, after the nodes, so every
+            # endpoint is final (req-grid-edge-identity). A found edge's id replaces the
+            # provisional one, and the op builder below then routes it to replace_edge,
+            # the same write path a found node takes (req-grid-edge-identity-10).
+            edge_substitutions = _resolve_edge_identities(
+                batch_container,
+                final_refs,
+                batch_path=batch_path,
+                batch_entity_id=batch_entity_id,
+                ctx=ctx,
+                issues=issues,
+                parsed_removals=parsed_removals,
+                dangling_edge_ids=dangling_edge_ids,
+            )
+            if edge_substitutions:
+                substitute_ids(batch_container, edge_substitutions)
+                final_refs = {ref: edge_substitutions.get(pid, pid) for ref, pid in final_refs.items()}
 
             # Build operations: determine create vs replace per entity before executing.
             ops: list[WriteOperation] = []
@@ -3511,6 +3535,245 @@ def _resolve_ref_identities(
         taken.add(found)
         substitutions[provisional] = found
         logger.debug("[b7ec] ref %s of batch %s resolved to existing %s %s", ref, batch_entity_id, entity_type, found)
+    return substitutions
+
+
+def _resolve_edge_identities(
+    batch_container: dict[str, Any],
+    refs: dict[str, str],
+    *,
+    batch_path: str,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    issues: list[GriftIssue],
+    parsed_removals: _ParsedRemovalSections | None,
+    dangling_edge_ids: set[str],
+) -> dict[str, str]:
+    """Find each ref-addressed edge of one batch by its type's declared identity.
+
+    Returns ``provisional id -> found id`` for the edges that already exist. Runs after the
+    batch's node refs resolved, so every endpoint is a final id. Fails the batch
+    (``_BatchFailed``) on an incomplete key, an ambiguous match, a keyless edge that duplicates
+    another, or two edges of this batch that are one relationship.
+
+    Which edges are looked up: an edge whose own envelope is a ``ref``. An edge addressed by
+    an explicit id keeps today's behaviour (``req-grid-edge-identity-6``); only its keyless
+    duplicate check runs, since a keyless edge equal to another is refused however it is
+    addressed (``-5``). An undeclared type is created as before, with a warning, until the
+    switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
+    a read of the grid, so the import authorises ``grid.read`` first (``-13``).
+
+    TAP-IMPLEMENTS: req-grid-edge-identity@c9373f34c7e6/d6b5e1063396 (enforcement) — the importer
+        step that applies edge identity to a batch: which edges are looked up, the in-batch and
+        keyless duplicate rules, the read authorisation, and the warn-mode switch for
+        undeclared types (acceptance -5, -6, -9, -13).
+    """
+    from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid import edge_identity as edge_identity_module
+    from tap_grid.edge_identity import (
+        IncompleteEdgeKey,
+        KeylessEdgeExists,
+        edge_identity_values,
+        edge_lock_key,
+        get_edge_identity,
+        incomplete_paths,
+    )
+
+    edges = batch_container.get("edges", [])
+    if not edges:
+        return {}
+    ref_of = {pid: ref for ref, pid in refs.items()}
+
+    def is_keyless(edge_type: str) -> bool:
+        identity = get_edge_identity(edge_type)
+        return identity is not None and identity.keyless
+
+    # Reading the grid for an edge (a ref's lookup, a keyless edge's duplicate check) tells the
+    # submitter what is there, so it needs read, not only import (req-grid-edge-identity-13).
+    if any(e["entity"]["entity_id"] in ref_of or is_keyless(e["edge"]["edge_type"]) for e in edges):
+        policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_edge_identity")
+
+    explicit_ids = {
+        item["entity"]["entity_id"]
+        for section in ("nodes", "edges")
+        for item in batch_container.get(section, [])
+        if item["entity"]["entity_id"] not in ref_of
+    }
+    removal_targets = {t.entity_id: t for t in parsed_removals.all_targets()} if parsed_removals else {}
+    substitutions: dict[str, str] = {}
+    taken: set[str] = set()
+    keys_seen: dict[str, str] = {}  # lock key -> who in this batch already named that relationship
+    keyless_pairs: dict[tuple[str, str, str], str] = {}
+    # An explicitly addressed edge keeps today's behaviour (no lookup), but it still names a
+    # relationship: a ref in the same batch describing the same one must not create it twice.
+    # Its key is the derivation the verb uses, read once from the declaration; an undeclared or
+    # keyless type, or an incomplete key, has none.
+    for edge_obj in edges:
+        envelope_id = edge_obj["entity"]["entity_id"]
+        if envelope_id in ref_of or envelope_id in dangling_edge_ids:
+            continue
+        payload = edge_obj["edge"]
+        identity = get_edge_identity(payload["edge_type"])
+        if identity is None or identity.keyless:
+            continue
+        values = edge_identity_values(identity, payload.get("properties") or {})
+        if not incomplete_paths(values):
+            explicit_key = edge_lock_key(
+                payload["edge_type"], payload["from_entity_id"], payload["to_entity_id"], values
+            )
+            keys_seen.setdefault(explicit_key, f"entity_id {envelope_id}")
+
+    def fail(code: str, message: str, path: str, edge_type: str, entity_id: str | None = None) -> _BatchFailed:
+        issues.append(
+            _issue(
+                code,
+                message,
+                "execution",
+                path,
+                entity_id=entity_id,
+                batch_entity_id=batch_entity_id,
+                entity_type="edge",
+                operation="resolve_edge_identity",
+            )
+        )
+        return _BatchFailed()
+
+    for edge_idx, edge_obj in enumerate(edges):
+        envelope_id = edge_obj["entity"]["entity_id"]
+        payload = edge_obj["edge"]
+        edge_type = payload["edge_type"]
+        path = f"{batch_path}.edges[{edge_idx}]"
+        if envelope_id in dangling_edge_ids:
+            continue  # skipped in permissive mode; there is no relationship to identify
+        identity = get_edge_identity(edge_type)
+        from_id, to_id = payload["from_entity_id"], payload["to_entity_id"]
+        is_ref = envelope_id in ref_of
+        who = f"ref {ref_of[envelope_id]!r}" if is_ref else f"entity_id {envelope_id}"
+
+        if identity is not None and identity.keyless:
+            pair = (edge_type, str(from_id), str(to_id))
+            if pair in keyless_pairs:
+                raise fail(
+                    "duplicate_edge",
+                    f"{who} and {keyless_pairs[pair]} of this batch are both {edge_type} {from_id} -> {to_id}; "
+                    "the type is keyless, so two identical edges cannot be told apart (req-grid-edge-identity-5)",
+                    path,
+                    edge_type,
+                    envelope_id,
+                )
+            keyless_pairs[pair] = who
+        if not is_ref:
+            if identity is not None and identity.keyless:
+                try:
+                    resolve_edge_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                        edge_type, from_id, to_id, payload.get("properties") or {}, caller_context=ctx
+                    )
+                except KeylessEdgeExists as exc:
+                    others = [str(c) for c in exc.candidates if str(c) != envelope_id]
+                    if others:
+                        raise fail("duplicate_edge", f"{who}: {exc}", path, edge_type, envelope_id) from exc
+            continue
+
+        ref = ref_of[envelope_id]
+        if identity is None:
+            if edge_identity_module.ENFORCE_EDGE_IDENTITY_DECLARED:
+                raise fail(
+                    "identity_undeclared",
+                    f"ref {ref!r}: edge type {edge_type} declares no identity, so a ref-addressed edge of it "
+                    "cannot be found again (req-grid-edge-identity-6). Declare discriminators or keyless on "
+                    "its edge definition.",
+                    f"{path}.entity.ref",
+                    edge_type,
+                )
+            # Warn mode logs, as the edge-schema rule's warn mode does ([d393]): the import's result
+            # is unchanged until the flip, so producers can declare first.
+            logger.warning(
+                "[9acf] ref %s of batch %s: edge type %s declares no identity; created without a lookup, as "
+                "before. Declare one on its edge definition before Issue# 928 - tap makes this a refusal "
+                "(req-grid-edge-identity-6).",
+                ref,
+                batch_entity_id,
+                edge_type,
+            )
+            continue
+        try:
+            resolution = resolve_edge_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                edge_type,
+                from_id,
+                to_id,
+                payload.get("properties") or {},
+                caller_context=ctx,
+                provisional=envelope_id,
+            )
+        except IncompleteEdgeKey as exc:
+            raise fail("incomplete_edge_key", f"ref {ref!r}: {exc}", f"{path}.edge.properties", edge_type) from exc
+        except KeylessEdgeExists as exc:
+            raise fail("duplicate_edge", f"ref {ref!r}: {exc}", path, edge_type) from exc
+        except AmbiguousIdentity as exc:
+            candidates = [str(c) for c in exc.candidates]
+            AppFlaw.report(
+                invariant_id="identity_ambiguous",
+                tags=["data", "integration"],
+                handling=HANDLING_ABORT_OPERATION,
+                message=(
+                    f"Batch {batch_entity_id} failed: {edge_type} ref {ref!r} matched {len(candidates)} live "
+                    "edges — the edge type's identity declaration cannot tell them apart."
+                ),
+                logger=logger,
+                batch_entity_id=batch_entity_id,
+                entity_type="edge",
+                candidates=candidates,
+            )
+            raise fail("identity_ambiguous", f"ref {ref!r}: {exc}", f"{path}.entity.ref", edge_type) from exc
+        if resolution.key is not None and not identity.keyless:
+            if resolution.key in keys_seen:
+                raise fail(
+                    "duplicate_edge",
+                    f"ref {ref!r} and {keys_seen[resolution.key]} of this batch are the same {edge_type} "
+                    "relationship (identical endpoints and discriminators); one relationship, one edge "
+                    "(req-grid-edge-identity-9)",
+                    f"{path}.entity.ref",
+                    edge_type,
+                )
+            keys_seen[resolution.key] = f"ref {ref!r}"
+        if not resolution.found:
+            continue
+        found = str(resolution.entity_id)
+        if found in explicit_ids:
+            raise fail(
+                "duplicate_entity_id",
+                f"ref {ref!r} resolves to edge {found}, which this batch also addresses by entity_id; one "
+                "relationship, one write",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        if found in removal_targets:
+            target = removal_targets[found]
+            raise fail(
+                "entity_id_in_upsert_and_removal",
+                f"ref {ref!r} resolves to edge {found}, which this batch also names as a removal target "
+                f"({target.section}.{target.kind}s at {target.path}); split upsert-then-remove into separate "
+                "documents if that is intended",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        if found in taken:
+            raise fail(
+                "duplicate_entity_id",
+                f"ref {ref!r} resolves to edge {found}, which another ref of this batch already resolved to",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        taken.add(found)
+        substitutions[envelope_id] = found
+        logger.debug(
+            "[fff7] edge ref %s of batch %s resolved to existing %s %s", ref, batch_entity_id, edge_type, found
+        )
     return substitutions
 
 

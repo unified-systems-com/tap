@@ -36,10 +36,17 @@ from tap.registry import Registry
 from tap_grid.natural_key import split_path
 
 __all__ = [
+    "ENFORCE_EDGE_IDENTITY_DECLARED",
     "IDENTITY_PATH_ROOT",
     "Discriminator",
     "EdgeIdentity",
+    "IncompleteEdgeKey",
+    "KeylessEdgeExists",
+    "edge_identity_values",
+    "edge_lock_key",
+    "find_live_edges",
     "get_edge_identity",
+    "incomplete_paths",
     "list_declared_edge_types",
     "parse_edge_identity",
     "register_edge_identity",
@@ -49,9 +56,52 @@ __all__ = [
 #: node-grammar path ``"properties.scope"``.
 IDENTITY_PATH_ROOT: Final[str] = "properties"
 
+#: Fail-closed switch for ``req-grid-edge-identity-6``: a ref-addressed edge of a type with no
+#: identity declaration. False is warn mode (ruled 2026-10-02): the edge is created as before,
+#: with no lookup, and the import reports a warning naming the type, so producers can declare
+#: their types before anything refuses them. The flip to True is Issue# 928 - tap. Tests may
+#: monkeypatch it to exercise both paths.
+ENFORCE_EDGE_IDENTITY_DECLARED: bool = False
+
 _IDENTITY_MEMBERS: Final[frozenset[str]] = frozenset({"discriminators", "keyless"})
 _DISCRIMINATOR_MEMBERS: Final[frozenset[str]] = frozenset({"path", "description"})
 _KEYLESS_MEMBERS: Final[frozenset[str]] = frozenset({"reason"})
+
+
+class IncompleteEdgeKey(ValueError):
+    """A declared discriminator is absent, null or empty, so the edge's key is incomplete.
+
+    Rejected, never matched as "not found" (``req-grid-edge-identity-8``): a key with a hole
+    would find nothing on every run and mint a duplicate each time. Deliberately stricter than
+    the node convention, where an empty string is observed-empty and searched
+    (``req-grid-entity-natural-key-16``): for an edge discriminator it distinguishes nothing.
+    """
+
+    def __init__(self, edge_type: str, paths: list[str]) -> None:
+        self.edge_type = edge_type
+        self.paths = list(paths)
+        super().__init__(
+            f"{edge_type}: declared discriminator(s) {self.paths} are absent, null or empty, so the edge's "
+            "identity key is incomplete; an incomplete key is rejected, never matched as not found "
+            "(req-grid-edge-identity-8)"
+        )
+
+
+class KeylessEdgeExists(LookupError):
+    """A keyless type's (type, source, target) already has a live edge.
+
+    A keyless type has no search, so nothing says a second submission is the same edge: the
+    batch carrying it fails (``req-grid-edge-identity-5``).
+    """
+
+    def __init__(self, edge_type: str, from_id: object, to_id: object, candidates: list[object]) -> None:
+        self.edge_type = edge_type
+        self.candidates = list(candidates)
+        super().__init__(
+            f"{edge_type} is keyless and {from_id} -> {to_id} already has a live edge of it "
+            f"({', '.join(str(c) for c in self.candidates[:10])}); a keyless type cannot tell a re-sent edge "
+            "from a second one, so the batch fails (req-grid-edge-identity-5)"
+        )
 
 
 @dataclass(frozen=True)
@@ -128,7 +178,7 @@ def parse_edge_identity(edge_type: str, raw: Any, *, property_schema: Mapping[st
     apps register Python dicts no schema ever sees, and a declaration must mean the same thing
     whichever way it arrived.
 
-    TAP-IMPLEMENTS: req-grid-edge-identity-declaration@e48348aed4cd/08b088116dac (derivation) — the
+    TAP-IMPLEMENTS: req-grid-edge-identity-declaration@24e3819f0e13/08b088116dac (derivation) — the
         one reading of an identity member: exactly one of discriminators and keyless, each
         discriminator an object with a path and a description, each path resolving through the
         type's property schema (acceptance -1, -2, -3, -6).
@@ -203,7 +253,7 @@ def register_edge_identity(
 ) -> EdgeIdentity:
     """Parse and register an edge type's identity declaration; a second one is an error.
 
-    TAP-IMPLEMENTS: req-grid-edge-identity-declaration@e48348aed4cd/01fdbee21b58 (enforcement) — the
+    TAP-IMPLEMENTS: req-grid-edge-identity-declaration@24e3819f0e13/01fdbee21b58 (enforcement) — the
         one registration point every definition home calls (a plugin's .edge.json, a core app's
         edge_types list, the grid-standard edges), so a declaration is read once and refused a
         second time rather than merged (acceptance -4, -7).
@@ -237,3 +287,60 @@ def get_edge_identity(edge_type: str) -> EdgeIdentity | None:
 def list_declared_edge_types() -> list[str]:
     """Every edge type slug that carries an identity declaration, sorted."""
     return _edge_identity_registry.keys()
+
+
+def edge_identity_values(identity: EdgeIdentity, properties: Mapping[str, Any]) -> dict[str, object]:
+    """Each declared discriminator's value as an edge's ``properties`` carries it, keyed by path.
+
+    Read through the node natural key's extraction under the ``properties`` root, so a missing
+    key, an explicit JSON null and a missing or non-object parent all read as ``None``.
+    """
+    from tap_grid.natural_key import constituting_properties
+
+    payload = {IDENTITY_PATH_ROOT: dict(properties)}
+    values = constituting_properties([f"{IDENTITY_PATH_ROOT}.{path}" for path in identity.paths], payload)
+    return {path: values[f"{IDENTITY_PATH_ROOT}.{path}"] for path in identity.paths}
+
+
+def incomplete_paths(values: Mapping[str, object]) -> list[str]:
+    """The discriminator paths whose value cannot be part of a key: absent, null, or empty.
+
+    Empty means ``""`` and the empty object and array; ``0`` and ``False`` are values.
+    """
+    return [path for path, value in values.items() if value is None or value == "" or value == {} or value == []]
+
+
+def edge_lock_key(edge_type: str, from_id: object, to_id: object, values: Mapping[str, object]) -> str:
+    """The advisory-lock key two writers of one relationship both take (``req-grid-edge-identity-4``).
+
+    Derived through the node lock helper from the type, both endpoint ids and the discriminator
+    values, so it is never authored a second time. A keyless type passes no values and locks on
+    (type, source, target), which is what its duplicate check reads.
+    """
+    from tap_grid.natural_key import identity_lock_key
+
+    key = identity_lock_key(
+        f"edge:{edge_type}",
+        {"from": str(from_id), "to": str(to_id), **{f"{IDENTITY_PATH_ROOT}.{p}": v for p, v in values.items()}},
+    )
+    if key is None:  # pragma: no cover - incomplete keys are refused before the lock is taken
+        raise IncompleteEdgeKey(edge_type, [p for p, v in values.items() if v is None])
+    return key
+
+
+def find_live_edges(
+    edge_type: str, from_id: object, to_id: object, values: Mapping[str, object], *, limit: int = 11
+) -> list[Any]:
+    """Live edges of ``edge_type`` between the two endpoint ids whose discriminators equal ``values``.
+
+    Bound to the endpoints' entity ids (``req-grid-edge-identity-1``); served by the
+    ``(from_entity, edge_type)`` index; discriminators compared typed, through the same search the
+    node natural key uses. Capped: a caller names candidates, it does not enumerate a grid.
+    """
+    from tap_grid.models import Edge
+    from tap_grid.natural_key import search
+
+    # `objects` is the LiveManager: live rows only, so a tombstoned edge is never found.
+    between = Edge.objects.filter(edge_type=edge_type, from_entity_id=from_id, to_entity_id=to_id)
+    matching: Any = search(between, {f"{IDENTITY_PATH_ROOT}.{p}": v for p, v in values.items()}) if values else between
+    return list(matching.order_by("entity_id")[:limit])

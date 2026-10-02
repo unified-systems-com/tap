@@ -60,6 +60,7 @@ from tap_grid.exceptions import (
 from tap_grid.models import BaseModel, Edge, Entity
 from tap_grid.service_types import (
     BatchWriteResult,
+    EdgeIdentityResolution,
     EdgeTypeDescription,
     IdentityResolution,
     NodeTypeDescription,
@@ -107,6 +108,7 @@ __all__ = [
     "purge_node",
     "purge_edge",
     "resolve_identity",
+    "resolve_edge_identity",
     # Read API (grid.read)
     "resolve_entity",
     "get_node",
@@ -309,9 +311,7 @@ def write_batch(
     # way it inherits the ambient actor above: the boundary that bound the ambient
     # context is the one that knows what the writes under it are for.
     _label_sources = [c for c in (caller_context, get_caller_context()) if c is not None]
-    mint_name = batch_name or next(
-        (n for n in ((c.batch_name or "").strip() for c in _label_sources) if n), None
-    )
+    mint_name = batch_name or next((n for n in ((c.batch_name or "").strip() for c in _label_sources) if n), None)
     mint_description = batch_description or next(
         (d for d in ((c.batch_description or "").strip() for c in _label_sources) if d), None
     )
@@ -1477,6 +1477,97 @@ def resolve_identity(
     if row is None:
         return IdentityResolution(entity_id=assigned, found=False, key=key)
     return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
+
+
+@requires_capability(WRITE_CAPABILITY, operation="resolve_edge_identity")
+def resolve_edge_identity(
+    edge_type: str,
+    from_id: str | uuid.UUID,
+    to_id: str | uuid.UUID,
+    properties: Mapping[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+    provisional: str | uuid.UUID | None = None,
+) -> EdgeIdentityResolution:
+    """Find the live edge a relationship already has, or assign it a fresh id — under a lock.
+
+    The edge counterpart of :func:`resolve_identity` (``req-grid-edge-identity``). The edge
+    type's declaration (``req-grid-edge-identity-declaration``) names the discriminators; their
+    values are read from ``properties`` once, an incomplete key is refused, and the same values
+    with the type and both endpoint ids key a transaction-scoped advisory lock taken BEFORE the
+    grid is read, so two writers of one relationship serialise and the second finds the first's
+    edge. Then the search runs among live edges between those two endpoint ids: zero assigns
+    ``provisional`` (or a fresh UUIDv7), one returns that edge's id, more than one raises
+    ``AmbiguousIdentity``. A keyless type is locked on (type, source, target) and only checked
+    for an existing live edge, which raises ``KeylessEdgeExists``. An undeclared type is
+    reported, not refused: whether that fails the batch is the caller's switch
+    (``ENFORCE_EDGE_IDENTITY_DECLARED``, warn mode until Issue# 928 - tap).
+
+    Must run inside the caller's transaction, so resolution and the write commit together.
+
+    TAP-IMPLEMENTS: req-grid-edge-identity@c9373f34c7e6/40ca45c00964 (derivation) — the one place
+        a relationship's declared identity becomes the id written under: incomplete-key refusal,
+        the lock before any read, the bound search among live edges and the assignment on a
+        miss all happen here, inside the caller's transaction.
+
+    Args:
+        edge_type: The edge type slug.
+        from_id: The resolved source entity id.
+        to_id: The resolved target entity id.
+        properties: The edge's properties as the batch carries them.
+        caller_context: Actor identity and batch scope.
+        provisional: The id to assign when nothing is found (the importer's preflight mint).
+
+    Returns:
+        EdgeIdentityResolution naming the id to write under and what was decided.
+
+    Raises:
+        ServiceValidationError: No open transaction.
+        IncompleteEdgeKey: A declared discriminator is absent, null or empty.
+        KeylessEdgeExists: The type is keyless and the pair already has a live edge of it.
+        AmbiguousIdentity: More than one live edge matches.
+    """
+    from tap_grid.edge_identity import (
+        IncompleteEdgeKey,
+        KeylessEdgeExists,
+        edge_identity_values,
+        edge_lock_key,
+        find_live_edges,
+        get_edge_identity,
+        incomplete_paths,
+    )
+    from tap_grid.natural_key import AmbiguousIdentity
+
+    assigned = _coerce_uuid(provisional) if provisional is not None else None
+    if assigned is None:
+        assigned = uuid.uuid7()
+    identity = get_edge_identity(edge_type)
+    if identity is None:
+        return EdgeIdentityResolution(entity_id=assigned, found=False, undeclared=True)
+    if not connection.in_atomic_block:
+        raise ServiceValidationError(
+            "resolve_edge_identity must run inside the caller's transaction: its lock is transaction-scoped, "
+            "so resolution and the write it precedes commit together."
+        )
+    values = edge_identity_values(identity, properties)
+    holes = incomplete_paths(values)
+    if holes:
+        raise IncompleteEdgeKey(edge_type, holes)
+    key = edge_lock_key(edge_type, from_id, to_id, values)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+    rows = find_live_edges(edge_type, from_id, to_id, values)
+    if identity.keyless:
+        if rows:
+            raise KeylessEdgeExists(edge_type, from_id, to_id, [row.entity_id for row in rows])
+        return EdgeIdentityResolution(entity_id=assigned, found=False, keyless=True, key=key)
+    if len(rows) > 1:
+        raise AmbiguousIdentity(
+            f"edge {edge_type}", {"from": str(from_id), "to": str(to_id), **values}, [row.entity_id for row in rows]
+        )
+    if not rows:
+        return EdgeIdentityResolution(entity_id=assigned, found=False, key=key)
+    return EdgeIdentityResolution(entity_id=rows[0].entity_id, found=True, key=key)
 
 
 @requires_capability(READ_CAPABILITY, operation="get_node")

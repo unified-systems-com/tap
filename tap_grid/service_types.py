@@ -145,6 +145,30 @@ class IdentityResolution:
     key: str | None = None
 
 
+@dataclass(frozen=True)
+class EdgeIdentityResolution:
+    """What ``resolve_edge_identity`` decided for one relationship (``req-grid-edge-identity``).
+
+    Attributes:
+        entity_id: The id to write under: the live edge's when found, else the provisional one.
+        found: True when a live edge answered the type's declared identity; the write is a
+            replace of that edge rather than a create.
+        undeclared: True when the type declares no identity. Nothing was looked up; under the
+            warn-mode switch the caller creates the edge as before and reports a warning.
+        keyless: True when the type is declared keyless; nothing was looked up beyond the
+            duplicate check, and the edge is new.
+        key: The lock key the resolution took, or None when nothing was locked (undeclared).
+            Two resolutions with one key describe one relationship, whether or not an edge
+            existed yet.
+    """
+
+    entity_id: uuid.UUID
+    found: bool
+    undeclared: bool = False
+    keyless: bool = False
+    key: str | None = None
+
+
 @dataclass
 class WriteResult:
     """Result envelope for a single write operation.

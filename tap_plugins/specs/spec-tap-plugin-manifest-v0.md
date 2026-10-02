@@ -341,7 +341,7 @@ Status: `Implemented`
 Refines `req-tap-plugin-manifest-v0-edge-file`, whose text stands. An edge definition file gains one optional member, `identity`, carrying the declaration `req-grid-edge-identity-declaration` specifies: an object with exactly one of `discriminators` (an array of `{path, description}` objects, empty for the plain key) and `keyless` (an object with a `reason`).
 
 #### Status Details
-Built (Issue# 913 - tap): the loader and `edge-definition.schema.json` accept the member, the loader and `validate_plugin` run the declaration's checks, and the registry refuses a second declaration. A declaration is read and validated before the importer finds edges by it, so a plugin can ship its declarations before the importer requires them (`req-grid-edge-identity-6`). The member is optional so a plugin written before the rollout still loads.
+Built (Issue# 913 - tap): the loader and `edge-definition.schema.json` accept the member, the loader and `validate_plugin` run the declaration's checks, and the registry refuses a second declaration. The importer finds a ref-addressed edge by its type's declaration (`req-grid-edge-identity`). The member is optional so a plugin written before the rollout still loads, and an undeclared type is only warned about at import until Issue# 928 - tap makes it a refusal (`req-grid-edge-identity-6`), so plugins can ship their declarations before anything requires them.
 
 #### Implementation
 Example, a type whose key adds one discriminator:

@@ -186,12 +186,13 @@ def _envelope(value: Any) -> dict[str, Any]:
 
 
 def substitute_ids(batch: dict[str, Any], mapping: Mapping[str, str]) -> None:
-    """Rewrite node ids and edge endpoints of one batch in place — the execution-time half.
+    """Rewrite node ids, edge ids and edge endpoints of one batch in place — the execution-time half.
 
     Preflight mints a provisional id per ref; inside the batch transaction the resolver may
     find that the source object already has a row, and this swaps the provisional id for
-    the found one everywhere the batch names it. Edge envelope ids are never substituted:
-    edges are ``KEYLESS`` and keep their assignment.
+    the found one everywhere the batch names it. A ref-addressed edge found by its type's
+    declared identity (``req-grid-edge-identity``) has its envelope id swapped the same way;
+    an edge addressed by an explicit id is never in the mapping and keeps its assignment.
     """
     if not mapping:
         return
@@ -200,6 +201,9 @@ def substitute_ids(batch: dict[str, Any], mapping: Mapping[str, str]) -> None:
         if envelope.get("entity_id") in mapping:
             envelope["entity_id"] = mapping[envelope["entity_id"]]
     for edge in _items(batch, "edges"):
+        envelope = _envelope(edge.get("entity"))
+        if envelope.get("entity_id") in mapping:
+            envelope["entity_id"] = mapping[envelope["entity_id"]]
         payload = edge.get("edge")
         if not isinstance(payload, dict):
             continue
