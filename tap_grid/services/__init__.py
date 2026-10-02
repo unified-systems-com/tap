@@ -1509,7 +1509,7 @@ def resolve_edge_identity(
     it found (an id, or every candidate), so a caller that may write but not read is refused here
     whoever calls it, not only when the importer remembers to ask (``req-grid-edge-identity-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/150846d00521 (derivation) — the one place
+    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/60d4179c54e3 (derivation) — the one place
         a relationship's declared identity becomes the id written under: incomplete-key refusal,
         the lock before any read, the bound search among live edges and the assignment on a
         miss all happen here, inside the caller's transaction.
@@ -1545,6 +1545,14 @@ def resolve_edge_identity(
     assigned = _coerce_uuid(provisional) if provisional is not None else None
     if assigned is None:
         assigned = uuid.uuid7()
+    # One endpoint, one spelling: the lock key and the search both read these canonical ids, so
+    # two callers spelling one endpoint differently serialise on one lock.
+    try:
+        source, target = _coerce_uuid(from_id), _coerce_uuid(to_id)
+    except ValueError as exc:
+        raise ServiceValidationError("from_id and to_id must be entity UUIDs.") from exc
+    if source is None or target is None:
+        raise ServiceValidationError("from_id and to_id must be entity UUIDs.")
     identity = get_edge_identity(edge_type)
     if identity is None:
         return EdgeIdentityResolution(entity_id=assigned, found=False, undeclared=True)
@@ -1557,13 +1565,13 @@ def resolve_edge_identity(
     holes = incomplete_paths(values)
     if holes:
         raise IncompleteEdgeKey(edge_type, holes)
-    key = edge_lock_key(edge_type, from_id, to_id, values)
+    key = edge_lock_key(edge_type, source, target, values)
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
-    rows = find_live_edges(edge_type, from_id, to_id, values)
+    rows = find_live_edges(edge_type, source, target, values)
     if identity.keyless:
         if rows:
-            raise KeylessEdgeExists(edge_type, from_id, to_id, [row.entity_id for row in rows])
+            raise KeylessEdgeExists(edge_type, source, target, [row.entity_id for row in rows])
         return EdgeIdentityResolution(entity_id=assigned, found=False, keyless=True, key=key)
     if len(rows) > 1:
         raise AmbiguousIdentity(

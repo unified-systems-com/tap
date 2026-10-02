@@ -371,6 +371,20 @@ class TestALookupIsARead:
 @pytest.mark.django_db
 @pytest.mark.usefixtures("declared")
 class TestTheVerb:
+    @SPEC[4]
+    def test_two_spellings_of_one_endpoint_find_one_edge(self, pair: tuple[str, str]) -> None:
+        a, b = pair
+        assert _import(_edge(a, b, PLAIN, ref="e")).success
+        (edge,) = _live(PLAIN, a, b)
+        with transaction.atomic():
+            resolution = resolve_edge_identity(PLAIN, a.upper(), b.replace("-", ""), {})
+        assert resolution.found and resolution.entity_id == edge.entity_id
+
+    @SPEC[4]
+    def test_a_non_uuid_endpoint_is_refused(self) -> None:
+        with transaction.atomic(), pytest.raises(ServiceValidationError, match="entity UUIDs"):
+            resolve_edge_identity(PLAIN, "not-a-uuid", str(uuid.uuid4()), {})
+
     @SPEC[6]
     def test_an_undeclared_type_is_reported_not_looked_up(self, pair: tuple[str, str]) -> None:
         a, b = pair
@@ -405,9 +419,12 @@ class TestOutsideATransaction:
             resolve_edge_identity(PLAIN, str(uuid.uuid4()), str(uuid.uuid4()), {})
 
 
+@SPEC[4]
 def test_the_lock_key_is_a_function_of_the_identity() -> None:
     a, b = str(uuid.uuid4()), str(uuid.uuid4())
     assert edge_lock_key(PLAIN, a, b, {}) == edge_lock_key(PLAIN, uuid.UUID(a), uuid.UUID(b), {})
+    # One endpoint, one lock, however it is spelled: upper case and hyphenless are the same UUID.
+    assert edge_lock_key(PLAIN, a, b, {}) == edge_lock_key(PLAIN, a.upper(), b.replace("-", ""), {})
     assert edge_lock_key(PLAIN, a, b, {}) != edge_lock_key(PLAIN, b, a, {}), "direction is part of identity"
     assert edge_lock_key(PLAIN, a, b, {}) != edge_lock_key(KEYLESS, a, b, {})
     assert edge_lock_key(DISCRIMINATED, a, b, {"proficiency": "novice"}) != edge_lock_key(

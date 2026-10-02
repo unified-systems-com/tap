@@ -26,6 +26,7 @@ second registration is a configuration error (``req-grid-edge-identity-declarati
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -195,13 +196,23 @@ def edge_lock_key(edge_type: str, from_id: object, to_id: object, values: Mappin
 
     Derived through the node lock helper from the type, both endpoint ids and the discriminator
     values, so it is never authored a second time. A keyless type passes no values and locks on
-    (type, source, target), which is what its duplicate check reads.
+    (type, source, target), which is what its duplicate check reads. Each endpoint id is
+    canonicalised first: ``ABC…``, ``abc…`` and the hyphenless form are one entity to PostgreSQL,
+    so they must be one lock, or two writers spelling one endpoint differently would each take
+    their own lock and both create the edge.
+
+    Raises:
+        ValueError: An endpoint id is not a UUID.
     """
     from tap_grid.natural_key import identity_lock_key
 
     key = identity_lock_key(
         f"edge:{edge_type}",
-        {"from": str(from_id), "to": str(to_id), **{f"{IDENTITY_PATH_ROOT}.{p}": v for p, v in values.items()}},
+        {
+            "from": str(uuid.UUID(str(from_id))),
+            "to": str(uuid.UUID(str(to_id))),
+            **{f"{IDENTITY_PATH_ROOT}.{p}": v for p, v in values.items()},
+        },
     )
     if key is None:  # pragma: no cover - incomplete keys are refused before the lock is taken
         raise IncompleteEdgeKey(edge_type, [p for p, v in values.items() if v is None])
