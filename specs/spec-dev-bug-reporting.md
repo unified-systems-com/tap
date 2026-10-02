@@ -95,6 +95,12 @@ the titles, URLs and states of the results, never their bodies. Those bodies are
 text, and reading them would put that text in the context of the session that holds the reporter's
 real data (`req-dev-bugfix-isolation` explains why that combination is the one to avoid).
 
+The search is outbound too: its query reaches GitHub before any consent gate. So the query is built
+only from TAP's own vocabulary: the plugin slug when the plugin is ours, an error class or message
+template with its values removed, or a model or field name from the published schema. It passes the
+tripwire (`req-dev-bugreport-tripwire`) before it is sent. It is shown to the reporter, who can
+skip the search altogether.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -103,6 +109,7 @@ real data (`req-dev-bugfix-isolation` explains why that combination is the one t
 | req-dev-bugreport-route-2 | Owner From The Boot Record | Proposed | For a failure in an installed plugin, the target repository is the `install.plugins[].source.url` of that plugin in the running instance's boot record, not a name the agent infers. | |
 | req-dev-bugreport-route-3 | Third-Party Plugins Are Not Ours To File | Proposed | A source URL outside `unified-systems-com` is reported to the reporter as a third-party repository; the skill does not open an issue in a `unified-systems-com` repository for it. | |
 | req-dev-bugreport-route-4 | Duplicate Search Reads Titles Only | Proposed | The duplicate search requests titles, URLs and states and nothing else, so no issue body or comment reaches the session. | |
+| req-dev-bugreport-route-5 | The Search Query Is Checked Before It Leaves | Proposed | The duplicate-search query passes the tripwire and is shown to the reporter before it is sent; a query containing a planted instance value is blocked, and the reporter can skip the search. | |
 
 ### Synthetic Data, Judged From The Schema
 ----
@@ -167,7 +174,7 @@ Status: `Proposed`
 The environment section is built from a fixed list of sources and nothing else:
 
 - the TAP version and image tag;
-- the boot record's plugin list with each plugin's `slug`, `rev` and `commit`, but not its `source.url` when that URL is a fork or a private host;
+- the boot record's plugin list with each plugin's `slug`, `rev` and `commit`, for plugins sourced from `unified-systems-com`. Any other plugin appears only as "third-party plugin" with its `rev`, because its slug and repository may be private;
 - the boot profile's `profile_kind`;
 - the host OS and architecture;
 - the Docker and Compose versions;
@@ -198,7 +205,7 @@ Before the preview, the skill builds a **deny list from the reporter's own insta
 
 - the values held in the fields classified sensitive in `req-dev-bugreport-synthetic`, read locally and kept local;
 - the instance's own hostnames;
-- the repository owner names;
+- every repository owner and repository name in the boot record's plugin sources outside `unified-systems-com`, plus those plugins' slugs;
 - the local username and home path.
 
 The outgoing text is checked against that list, and against `tap/credential_patterns.py`, the
@@ -214,6 +221,7 @@ into the report, the repository, or anywhere outside the session.
 | req-dev-bugreport-tripwire-1 | Planted Value Is Caught | Proposed | A value present in the reporter's instance and planted into the draft blocks the send and is named with its line. | The X3 done-test |
 | req-dev-bugreport-tripwire-2 | Planted Credential Is Caught | Proposed | A string matching a `CREDENTIAL_PATTERNS` shape planted into the draft blocks the send. | |
 | req-dev-bugreport-tripwire-3 | Clean Is Not Called Safe | Proposed | On a pass, the skill reports "no match against your instance's values" and does not call the report safe. | |
+| req-dev-bugreport-tripwire-4 | Private Plugin Names Are Caught | Proposed | A third-party plugin's slug or repository name, planted into the draft or the environment section, blocks the send. | |
 
 ### Exact Bytes, Explicit Yes, Fail Closed
 ----
@@ -331,10 +339,17 @@ before reading the file. The preflight refuses to continue if:
 - `gh auth status` succeeds;
 - any `GH_TOKEN`, `GITHUB_TOKEN` or `AWS_*` credential variable is set;
 - the secrets store is readable;
-- an outbound request to `github.com` succeeds.
+- any of three egress probes succeeds: an HTTPS request to `github.com`, a TCP connection to a public IP address with no name lookup, and a DNS resolution of a name nobody controls.
 
-It names which check failed, and does not offer to skip it. Network denial itself comes from the
-environment the skill runs in, an agent sandbox. Which sandbox is a separate decision.
+It names which check failed, and does not offer to skip it. Probing only GitHub would prove only
+that GitHub is blocked. The three probes test the claim the skill needs, deny-all egress, from
+three directions: an allowlisted host, an address with no name, and DNS, the channel sandboxes
+most often leave open.
+
+**Deny-all egress is a precondition, not a hope.** The skill does not supply it; the environment it
+runs in does, through an agent sandbox. Which sandbox is a separate decision. Until one is chosen,
+the preflight's refusal is what holds the line: a session that can reach the network cannot run
+this skill past the fetch.
 
 Running the reproduction needs a TAP stack. The skill uses a fresh, throwaway stack, never the
 reporter's or the maintainer's working instance, loaded only with the report's synthetic GRIFT
@@ -344,7 +359,8 @@ document.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-bugfix-isolation-1 | Preflight Refuses A Credentialed Session | Proposed | With `gh` authenticated, a token or AWS credential in the environment, the secrets store readable, or `github.com` reachable, the skill stops after the fetch and names the failing check. | |
+| req-dev-bugfix-isolation-1 | Preflight Refuses A Credentialed Session | Proposed | With `gh` authenticated, a token or AWS credential in the environment, or the secrets store readable, the skill stops after the fetch and names the failing check. | |
+| req-dev-bugfix-isolation-4 | Preflight Refuses Any Egress | Proposed | With `github.com` blocked but a non-GitHub host, a bare IP or DNS still reachable, the skill stops and names which probe succeeded. | |
 | req-dev-bugfix-isolation-2 | One Fetch | Proposed | The skill performs exactly one network operation, the issue fetch, before the preflight, and none after. | |
 | req-dev-bugfix-isolation-3 | Throwaway Stack Only | Proposed | Reproduction runs in a stack created for the run and loaded only with the report's synthetic data. | |
 
