@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 10 |
-| unbuilt | 3 |
+| mapped | 11 |
+| unbuilt | 2 |
 | unaccounted | 1 |
 | 0-ACID (payable) | 1 |
 
@@ -14,6 +14,7 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
+| `req-tap-plugin-manifest-v0-edge-identity` | Implemented | Tested | — | `req-tap-plugin-manifest-v0-edge-identity-1`, `req-tap-plugin-manifest-v0-edge-identity-2`, `req-tap-plugin-manifest-v0-edge-identity-3` |
 | `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
 | `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
 | `req-tap-plugin-manifest-v0-falsifiers` | Implemented | Verified | `_parse_falsifiers` | `req-tap-plugin-manifest-v0-falsifiers-1`, `req-tap-plugin-manifest-v0-falsifiers-2`, `req-tap-plugin-manifest-v0-falsifiers-3`, `req-tap-plugin-manifest-v0-falsifiers-4` |

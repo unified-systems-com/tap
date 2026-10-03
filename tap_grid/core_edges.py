@@ -34,6 +34,11 @@ PRODUCED_BATCH_PROPERTY_SCHEMA: dict[str, Any] = {
     "required": ["disposition"],
 }
 
+# A plain key: a PRODUCED_BATCH edge is identified by (producer, batch) alone
+# (req-grid-edge-produced-batch-claims-1). Not keyless: a repeat within one job is the same
+# relationship and collapses to one edge, and `disposition` is state on it, never a second key.
+PRODUCED_BATCH_IDENTITY: dict[str, Any] = {"discriminators": []}
+
 
 def register_core_edges() -> None:
     """Register grid-standard edge types. Idempotent — safe to call repeatedly.
@@ -49,6 +54,7 @@ def register_core_edges() -> None:
         register_edge_property_schema,
         register_edge_type_constraints,
     )
+    from tap_grid.edge_identity import get_edge_identity, register_edge_identity
 
     # PRODUCED_BATCH: producer -> batch. Target is always `batch`; source is
     # open by design (any producer entity type may originate one).
@@ -60,3 +66,7 @@ def register_core_edges() -> None:
         )
     if get_edge_property_schema("PRODUCED_BATCH") is None:
         register_edge_property_schema("PRODUCED_BATCH", PRODUCED_BATCH_PROPERTY_SCHEMA)
+    if get_edge_identity("PRODUCED_BATCH") is None:
+        register_edge_identity(
+            "PRODUCED_BATCH", PRODUCED_BATCH_IDENTITY, property_schema=PRODUCED_BATCH_PROPERTY_SCHEMA
+        )

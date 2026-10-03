@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/27d72b10d894 (enforcement)
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/154cb695c729 (enforcement)
     — the strict raise-on-unknown parse discipline is module-wide here.
 
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
@@ -95,6 +95,7 @@ class EdgeEntry:
     targets: list[str] | None  # None = wildcard
     property_schema: dict[str, Any] | None
     default_dimensions: dict[str, Any] | None
+    identity: dict[str, Any] | None = None  # req-tap-plugin-manifest-v0-edge-identity
 
 
 @dataclass
@@ -403,7 +404,7 @@ def _load_edge_file(
     manifest_path: Path,
 ) -> EdgeEntry:
     """
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edge-file@cf01a8875e8c/b46d7431c49a (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edge-file@cf01a8875e8c/9037bced18ae (derivation) —
         the one-edge-type strict JSON object loads here.
     """
     try:
@@ -427,6 +428,7 @@ def _load_edge_file(
         targets=data.get("targets"),
         property_schema=data.get("property_schema"),
         default_dimensions=data.get("default_dimensions"),
+        identity=data.get("identity"),
     )
 
 

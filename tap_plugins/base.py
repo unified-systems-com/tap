@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
-    """Register edge constraints, property schemas, and default dimensions.
+    """Register edge constraints, property schemas, default dimensions and identity declarations.
 
     Utility for non-plugin apps that need to register edge types without a manifest.
     Processes a list of edge type dicts using the legacy {slug, sources, targets, ...} shape.
@@ -28,6 +28,7 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
         register_edge_property_schema,
         register_edge_type_constraints,
     )
+    from tap_grid.edge_identity import register_edge_identity
 
     for et in edge_types:
         slug = et["slug"]
@@ -43,6 +44,9 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
         if "default_dimensions" in et:
             register_edge_default_dimensions(slug, et["default_dimensions"])
 
+        if "identity" in et:
+            register_edge_identity(slug, et["identity"], property_schema=et.get("property_schema"))
+
 
 class TapPluginConfig(AppConfig):
     """Base AppConfig for TAP plugins.
@@ -56,7 +60,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/bf9b76e28a05 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/366c5be48f7b (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -168,6 +172,7 @@ class TapPluginConfig(AppConfig):
             register_edge_property_schema,
             register_edge_type_constraints,
         )
+        from tap_grid.edge_identity import register_edge_identity
 
         for edge in self._manifest.edges:
             sources = [{"type": s} for s in edge.sources] if edge.sources is not None else None
@@ -181,6 +186,9 @@ class TapPluginConfig(AppConfig):
 
             if edge.default_dimensions is not None:
                 register_edge_default_dimensions(edge.slug, edge.default_dimensions)
+
+            if edge.identity is not None:
+                register_edge_identity(edge.slug, edge.identity, property_schema=edge.property_schema)
 
     # ---------------------------------------------------------------------------
     # Type registration
