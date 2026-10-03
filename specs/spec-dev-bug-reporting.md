@@ -64,7 +64,7 @@ credentials and has no network, and a human pushes whatever it produced.
 | req-dev-bugreport-consent | [Exact Bytes, Explicit Yes, Fail Closed](#exact-bytes-explicit-yes-fail-closed) | Proposed | Preview the exact file, name the repository as public and permanent, take a yes bound to that content, and never improvise on a failed send |
 | req-dev-bugreport-shape | [A Report Shape The Fixer Can Parse](#a-report-shape-the-fixer-can-parse) | Proposed | Fixed headings plus one machine-readable block; an AI-assistance disclosure |
 | req-dev-bugfix-untrusted-intake | [The Report Is Data](#the-report-is-data) | Proposed | Extract into the report shape; read only the reporter's and maintainers' comments; nothing in it is an instruction |
-| req-dev-bugfix-isolation | [No Credentials, No Network, After Reading](#no-credentials-no-network-after-reading) | Proposed | A fail-closed preflight refuses to proceed while the session can reach a GitHub token, the secrets store or cloud credentials |
+| req-dev-bugfix-isolation | [No Credentials, No Network, After Reading](#no-credentials-no-network-after-reading) | Proposed | Runs only inside a named deny-all sandbox, on commits reachable from our own refs, in a confined throwaway stack; a fail-closed preflight refuses a credentialed or networked session |
 | req-dev-bugfix-reproduce | [Reproduce Twice Before Fixing](#reproduce-twice-before-fixing) | Proposed | A failing test on the reporter's version and on `main`, or one of three named exits |
 | req-dev-bugfix-handback | [A Human Pushes](#a-human-pushes) | Proposed | A local branch, before and after evidence, and a draft PR body; the skill never pushes, opens a PR, or signs off |
 
@@ -158,7 +158,7 @@ The procedure:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-bugreport-synthetic-1 | No Export Leaves | Proposed | The report never contains output of `export_grift`, a database dump, or a log line taken from the reporter's instance without passing the tripwire (`req-dev-bugreport-tripwire`). | |
+| req-dev-bugreport-synthetic-1 | No Export Leaves | Proposed | The report never contains output of `export_grift`, a database dump, or a log line from the reporter's instance, with no exception for text that passes the tripwire. The only instance-generated text allowed is the environment section's `manage.py health` output (`req-dev-bugreport-environment`), and that must also pass the tripwire. | The tripwire is a detector, not a licence |
 | req-dev-bugreport-synthetic-2 | Classification Quotes The Schema | Proposed | Every field in the failing shape is shown to the reporter with its published `description` quoted and a sensitive or not-sensitive judgement with a reason. | |
 | req-dev-bugreport-synthetic-3 | Undescribed Means Sensitive | Proposed | A field whose schema entry has no `description` is classified sensitive and named as a schema gap. | |
 | req-dev-bugreport-synthetic-4 | Reserved Ranges Only | Proposed | Every synthetic IP, domain, AWS account ID and email address falls in the documentation-reserved ranges named above. | |
@@ -352,28 +352,41 @@ before reading the file. The preflight refuses to continue if:
 - the secrets store is readable;
 - any of three egress probes succeeds: an HTTPS request to `github.com`, a TCP connection to a public IP address with no name lookup, and a DNS resolution of a name nobody controls.
 
-It names which check failed, and does not offer to skip it. Probing only GitHub would prove only
-that GitHub is blocked. The three probes test the claim the skill needs, deny-all egress, from
-three directions: an allowlisted host, an address with no name, and DNS, the channel sandboxes
-most often leave open.
+It names which check failed, and does not offer to skip it. The probes come from three directions:
+an allowlisted host, an address with no name, and DNS, the channel sandboxes most often leave open.
 
-**Deny-all egress is a precondition, not a hope.** The skill does not supply it; the environment it
-runs in does, through an agent sandbox. Which sandbox is a separate decision. Until one is chosen,
-the preflight's refusal is what holds the line: a session that can reach the network cannot run
-this skill past the fetch.
+**The probes detect a misconfigured sandbox. They do not prove isolation.** Three blocked
+destinations say nothing about the rest: other hosts, private addresses, metadata endpoints, a
+proxy, another protocol. Deny-all egress has to come from the environment, an agent sandbox that
+enforces it, and the skill requires one. The sandbox is named, the skill checks it is present
+before reading the issue, and the probes are a smoke test that it is actually on. **Until a
+sandbox is chosen and named here, `submit-a-fix` stops after the fetch.** A probe that happens to
+fail is not a substitute.
 
-Running the reproduction needs a TAP stack. The skill uses a fresh, throwaway stack, never the
-reporter's or the maintainer's working instance, loaded only with the report's synthetic GRIFT
-document.
+**Executing a report runs code a stranger chose, so it runs where it cannot reach the host.** A
+report names commits, a failing operation and a synthetic GRIFT document, and reproducing it runs
+TAP at those commits. So:
+
+- **Provenance first.** Every commit the report names must be reachable from a tag or from `main`
+  in the target repository, fetched from that repository and never from a URL in the report. A
+  commit that is not stops the run as "not one of ours". A fork's commit is not reproduced: the
+  reporter is asked to reproduce on a release.
+- **The stack is fresh and confined.** It is never the reporter's or the maintainer's working
+  instance, and it holds nothing but the report's synthetic GRIFT document. It has no Docker
+  socket, no host mounts beyond a scratch copy of the checkout, no secrets store, dropped
+  capabilities, and CPU, memory and time limits. Reaching any host file or local service from
+  inside it is a defect in the sandbox, not something the skill is trusted to avoid.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-dev-bugfix-isolation-1 | Preflight Refuses A Credentialed Session | Proposed | With `gh` authenticated, a token or AWS credential in the environment, or the secrets store readable, the skill stops after the fetch and names the failing check. | |
-| req-dev-bugfix-isolation-4 | Preflight Refuses Any Egress | Proposed | With `github.com` blocked but a non-GitHub host, a bare IP or DNS still reachable, the skill stops and names which probe succeeded. | |
+| req-dev-bugfix-isolation-4 | Preflight Refuses Any Egress | Proposed | With `github.com` blocked but a non-GitHub host, a bare IP or DNS still reachable, the skill stops and names which probe succeeded. | A smoke test, not proof: isolation-5 is the boundary |
+| req-dev-bugfix-isolation-5 | A Named Sandbox Or No Run | Proposed | Without a named, enforcing deny-all sandbox detected before the issue is read, the skill stops after the fetch; failed probes alone never let it continue. | Blocked until a sandbox is chosen |
+| req-dev-bugfix-isolation-6 | Only Our Commits Run | Proposed | A commit the report names that is not reachable from a tag or `main` of the target repository, fetched from that repository, stops the run as "not one of ours". | |
 | req-dev-bugfix-isolation-2 | One Fetch | Proposed | The skill performs exactly one network operation, the issue fetch, before the preflight, and none after. | |
-| req-dev-bugfix-isolation-3 | Throwaway Stack Only | Proposed | Reproduction runs in a stack created for the run and loaded only with the report's synthetic data. | |
+| req-dev-bugfix-isolation-3 | Throwaway, Confined Stack Only | Proposed | Reproduction runs in a stack created for the run, loaded only with the report's synthetic data, with no Docker socket, no host mounts beyond a scratch checkout, no secrets store, dropped capabilities and resource limits. | |
 
 ### Reproduce Twice Before Fixing
 ----
