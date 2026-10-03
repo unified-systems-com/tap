@@ -138,7 +138,7 @@ def is_reverse_edge_path(path: str) -> bool:
 def entity_scope_filters(scope: ReadScope, entity_path: str) -> dict[str, Any]:
     """Filter kwargs admitting only the spine rows ``scope`` may see, at ``entity_path``.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/f7bd287ff822 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@a9c5f485fee7/f7bd287ff822 (derivation) —
         the one definition of what a scope admits; every base relation and scoped join calls it.
 
     ``entity_path`` is the ORM path to an Entity row (``""`` for a spine queryset's own row).
@@ -441,7 +441,7 @@ def _unscoped_aliases(query: Any) -> list[str]:
 def assert_query_scoped(query: Any, using: str, scope: ReadScope) -> None:
     """Fail closed unless every relation the compiled ``query`` reads is scoped.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/ccdaae4034f4 (enforcement) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@a9c5f485fee7/ccdaae4034f4 (enforcement) — the
         primary enforcement: the property is checked on the compiled query, not on the source text.
 
     Compiles a CLONE first, because some joins (``select_related``, ``order_by`` across a

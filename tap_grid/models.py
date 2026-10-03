@@ -1082,10 +1082,10 @@ class Edge(BaseModel):
 
     ENTITY_TYPE: ClassVar[str] = "edge"
     # Keyless (req-grid-entity-natural-key):
-    # edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling.
+    # the Edge MODEL has no constituting properties, because an edge's identity depends on its type: each edge TYPE declares how one of its edges is found again (req-grid-edge-identity-declaration, tap_grid/edge_identity.py). This model-level KEYLESS is not where edge identity lives.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
     NATURAL_KEY_REASON: ClassVar[str] = (
-        "edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling"
+        "the Edge model has no constituting properties, because an edge's identity depends on its type: each edge type declares how one of its edges is found again (req-grid-edge-identity-declaration); this model-level declaration is not where edge identity lives"
     )
 
     # from_entity, to_entity, and edge_type are dedicated create_edge() parameters,
@@ -1490,6 +1490,10 @@ class BatchEventType(models.TextChoices):
     LINK = "link", "Link (edge creation)"
     UNLINK = "unlink", "Unlink (edge deletion)"
     FORCE_REIMPORT = "force_reimport", "Force Re-Import"
+    # An edge the importer declined to write because an endpoint did not resolve
+    # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own
+    # transaction; entity_id is the edge's provisional id, which no entity has.
+    SKIP = "skip", "Skip (edge not written)"
 
 
 class BatchEvent(models.Model):

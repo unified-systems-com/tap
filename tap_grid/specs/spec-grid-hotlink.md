@@ -66,7 +66,7 @@ Each hotlink definition includes:
 | `selector_type` | Yes | Extraction backend identifier, such as `path` in v1 |
 | `selector` | Yes | Selector string interpreted by the chosen backend |
 | `edge_direction` | Yes | Direction of the corresponding edges relative to the node, such as `outbound` |
-| `edge_type` | Yes | Edge type that materializes the embedded references |
+| `edge_type` | Yes | Edge type that materializes the embedded references. Must be a defined edge type (`req-grid-hotlink-model-5`) |
 | `mode` | Yes | Validation mode: `exists`, `unique`, or `exact` |
 
 Optional metadata may be added later, but v1 should remain intentionally narrow.
@@ -100,6 +100,7 @@ Keeping `HOTLINKS` separate from `FIELD_VALIDATION_SCHEMA` is intentional. `FIEL
 | req-grid-hotlink-model-2 | Authoritative Definition | Implemented | `HOTLINKS` is the authoritative declaration of hotlink meaning; edge hotlink data identifies participation but does not redefine the contract. | |
 | req-grid-hotlink-model-3 | Narrow Required Keys | Implemented | Each hotlink definition must declare `name`, `field`, `selector_type`, `selector`, `edge_direction`, `edge_type`, and `mode`. | |
 | req-grid-hotlink-model-4 | Multiple Definitions Supported | Implemented | A model may declare more than one hotlink definition when multiple embedded reference systems exist. | |
+| req-grid-hotlink-model-5 | Edge Type Is Defined | Implemented | A hotlink's `edge_type` names a defined edge type — a loaded plugin manifest's `.edge.json`, an app's registered `edge_types` entry with sources, targets and a description, or a core edge. A hotlink naming an undefined type fails the Django system check `tap_grid.E004` (an Error) at boot, and `validate_plugin`'s `edge-declarations` check at a plugin's author time. | One predicate for every model edge declaration (`tap/edge_declarations.py`); `tap_grid/tests/test_checks.py::TestHotlinkEdgeTypesResolve`. The six tap_viz types (USES_ARRANGEMENT, USES_LAYOUT, USES_ELEVATION, USES_DEFAULT_ELEVATION, NAVIGATES_TO, USES_PROJECTION) were registered in `tap_viz/apps.py` by the same change. Issue# 910 - tap. |
 
 #### Future
 Startup validation of `HOTLINKS` declarations is now implemented alongside `FIELD_VALIDATION_SCHEMA` via `_check_hotlinks` in `__init_subclass__`.

@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/21cf8d807790 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/ddc54223a632 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -506,7 +506,7 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
     """Parse and structurally validate the manifest. Returns PluginManifest or None.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@a9d9438fb31f/c6bb1155c694 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@3155497a896f/c6bb1155c694 (derivation) —
         the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
         same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
         validator and the boot path cannot drift apart on what a valid manifest is.
@@ -580,11 +580,21 @@ def _check_edge_files(manifest: Any, result: ValidationResult) -> None:
     if not manifest.edges:
         return
 
+    # Django-free on purpose: structure-level validation runs in plugin CI with no Django.
+    from tap_grid.edge_identity_shape import EdgeIdentityError, check_edge_identity
+
     check = CheckResult(id="edge-files", name="Edge definition files valid")
     for edge in manifest.edges:
         check.info(
             f"Edge {edge.slug}: {edge.name} " f"(sources={edge.sources or 'any'}, targets={edge.targets or 'any'})"
         )
+        # Author time sees what boot would refuse: the same parse the registry runs
+        # (req-tap-plugin-manifest-v0-edge-identity-1, -2).
+        if edge.identity is not None:
+            try:
+                check_edge_identity(edge.slug, edge.identity, property_schema=edge.property_schema)
+            except EdgeIdentityError as exc:
+                check.fail(str(exc), path=edge.file_path)
     result.checks.append(check)
 
 

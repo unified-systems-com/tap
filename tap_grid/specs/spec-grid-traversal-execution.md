@@ -514,12 +514,14 @@ Ruled 2026-09-25 (register r156, Q92b): the requirement ships in two parts.
   check, and targeted repro tests for tap#811 in `tap_grid/tests/test_gryphon_read_scope.py`.
 - **Part 2 — the property campaign** (follow-up, not started): a Gridkin property campaign
   that retires a random node or edge under every supported pattern shape
-  (`req-grid-traversal-exec-read-scope-10`), the SQL-snapshot re-audit that goes with it
-  (`req-grid-traversal-exec-read-scope-11`), a `gryphon_playground` release carrying both,
-  and the boot-profile pin bump that adopts it. The Part 1 engine change alters the emitted
-  SQL of every edge-bearing shape (the added scope predicates and endpoint joins), so the
-  pinned playground release's `.sql.txt` snapshots report `SQL MISMATCH` until Part 2's
-  release is pinned; the expected **envelopes** are unaffected on live data.
+  (`req-grid-traversal-exec-read-scope-10`), and the SQL-snapshot re-audit that goes with it
+  (`req-grid-traversal-exec-read-scope-11`).
+- **Moved into Part 1** (ruled 2026-09-26, register r159-r166, Q99a/Q101a): the playground
+  re-snapshot and its pin. The corpus pins exact SQL text and the Part 1 engine changes the
+  emitted SQL of every edge-bearing shape, so Part 1 could not merge green without them.
+  `gryphon_playground` v0.6.2 carries the regenerated `.sql.txt` snapshots (53 files, no
+  `*.expected.json` change), and the `core_ci` and `soak` boot profiles pin it. Regenerating
+  the text is not the one-by-one audit `-11` asks for, so `-11` stays Proposed.
 
 #### Implementation
 
@@ -627,12 +629,12 @@ Three questions the design review raised, answered here so the code is checkable
 | req-grid-traversal-exec-read-scope-13 | Widening Requires A Capability | Proposed | A scope other than `LiveNow` is accepted only when the caller holds a dedicated capability, checked before execution; `grid.read` alone never widens. | Built with the first widening scope; today every non-`LiveNow` scope is refused |
 | req-grid-traversal-exec-read-scope-14 | Grid Models Default To LiveManager | Implemented | A Django system check (`tap_grid.E005`) errors when any registered grid model's default manager, or its `objects`, is not exactly `LiveManager`. | Ruled r156 Q93 |
 | req-grid-traversal-exec-read-scope-10 | Property Coverage By Shape | Proposed | A Gridkin property campaign retires a random node or edge under every supported pattern shape; engine and oracle agree and no tombstoned element appears. | Part 2 |
-| req-grid-traversal-exec-read-scope-11 | Live Results Unchanged | Proposed | Every existing Gridkin expected envelope stays green; SQL-snapshot diffs are only the added scope predicates, audited one by one. | Part 2 re-snapshots; Part 1 checks envelopes only |
+| req-grid-traversal-exec-read-scope-11 | Live Results Unchanged | Proposed | Every existing Gridkin expected envelope stays green; SQL-snapshot diffs are only the added scope predicates, audited one by one. | Part 1 re-snapshotted (playground v0.6.2); the one-by-one audit is Part 2 |
 
 #### Future
 
-- Part 2 (above): the Gridkin property campaign, the snapshot re-audit, the playground release
-  and the pin bump.
+- Part 2 (above): the Gridkin property campaign and the snapshot re-audit, with the playground
+  release and pin bump that carry them.
 - Temporal scopes (`AsOf`, `Between`): `req-grid-traversal-exec-temporal-scope` (Proposed).
 - Record the applied scope in the compiled trace's `policies[]` once that artifact exists
   (`req-grid-traversal-exec-compiled-trace`, Backlog).

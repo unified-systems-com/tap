@@ -576,6 +576,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-batch | [Batch Container](#batch-container) | Implemented | Serialized TAP batches wrap nodes and edges |
 | req-grift-node | [Node Object](#node-object) | Implemented | Full-object node interchange contract |
 | req-grift-edge | [Edge Object](#edge-object) | Implemented | Full-object edge interchange contract |
+| req-grift-edge-identity-surface | [Edge Identity Document Surface](#edge-identity-document-surface) | Proposed | The three document shapes edge identity adds: an endpoint named by type and natural key, a removal target named by edge identity, and the batch `edge_cases` section carrying authority claims |
 | req-grift-validation | [Validation Rules](#validation-rules) | Implemented | Strict schema and sanity rules |
 | req-grift-seed-ids | [Seed Data ID Convention](#seed-data-id-convention) | Deprecated | Superseded by [spec-grid-uuid-selection.md](spec-grid-uuid-selection.md) and [spec-grift-seed-ids-real-uuid7.md](spec-grift-seed-ids-real-uuid7.md) |
 | req-grift-order | [Canonical Export Ordering](#canonical-export-ordering) | Backlog | Export ordering (no exporter yet) |
@@ -962,6 +963,35 @@ In current TAP implementations this may be realized by validating `properties` a
   }
 }
 ```
+
+## Edge Identity Document Surface
+----
+RID: `req-grift-edge-identity-surface`
+
+Status: `Proposed`
+
+Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Each shape is added to `grift-document.schema.json` in the same change as the importer code that honours it, so no field is ever accepted and then dropped. The endpoint by natural key has landed (Issue# 914 - tap); removal by identity and the `edge_cases` section are still proposals the schema rejects.
+
+#### Status Details
+Proposed (Issue# 912 - tap; epic Issue# 911 - tap).
+
+#### Implementation
+| Shape | Where | Behaviour |
+| --- | --- | --- |
+| Endpoint by natural key | `GriftEdgePayload`: `from_key` / `to_key` beside `from_entity_id` / `from_ref`, exactly one per endpoint | `{ "entity_type": <type>, "key": { <declared natural-key property>: <value>, ... } }`, resolved by the importer (`req-grid-import-grift-edge-endpoints`) |
+| Removal by edge identity | `GriftDeletesSection.edges` target, as an alternative to `entity_id` | `{ "edge_type", "from", "to", "discriminators", "reason" }` (`req-grid-import-grift-edge-removal`) |
+| Authority claims | A new optional batch-container member `edge_cases`, whose one defined member is `authority` | An array of `{ "edge_type", "anchor", "direction", "read" }` claims, with a reserved `dimensions` (`req-grid-reconcile-edge-authority`) |
+
+An importer that does not implement a shape fails preflight on a document carrying it, rather than ignoring it. A key never carries an identity, a search or an override of the sender's choosing: it names *which* declared properties to look up, and the receiving grid's declaration decides what they mean (`req-grid-entity-natural-key-2`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-edge-identity-surface-1 | Shapes Land With Their Code | Proposed | The schema accepts each of the three shapes only in the change that adds the importer behaviour for it; until then a document carrying one fails preflight. | No accept-and-drop. |
+| req-grift-edge-identity-surface-2 | A Key Names, The Grid Decides | Proposed | An endpoint or removal key is read against the receiving grid's own natural-key declaration; the document supplies values for declared properties and nothing else. | `req-grid-entity-natural-key-2`. |
+| req-grift-edge-identity-surface-3 | `edge_cases` Is Closed | Proposed | The `edge_cases` section accepts only its defined members; an unknown member fails the document. | Room for the edge overwrite policy without an open-ended bag. |
+
 
 ## Validation Rules
 ----

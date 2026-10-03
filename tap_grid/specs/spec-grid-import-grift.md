@@ -35,6 +35,8 @@ This separation is deliberate. The file format should stay stable and portable, 
 | req-grid-import-grift-sweep-purge | [Sweep Purge](#sweep-purge) | Implemented | Hard-delete escalation of batch-scoped sweep, DEBUG-gated |
 | req-grid-import-grift-dangling | [Dangling Edge Modes](#dangling-edge-modes) | Implemented | Strict and permissive handling |
 | req-grid-import-grift-provenance | [Import-Side Provenance](#import-side-provenance) | Implemented | Local actor/history behavior |
+| req-grid-import-grift-edge-endpoints | [Edge Endpoints By Natural Key](#edge-endpoints-by-natural-key) | Implemented | An edge endpoint may name a node by type and natural key, resolved against the batch then the live grid; an unresolved endpoint is skipped and recorded as a `skip` event |
+| req-grid-import-grift-edge-removal | [Edge Removal By Identity](#edge-removal-by-identity) | Proposed | A `deletes` target may name an edge by identity and ends whichever live relationship matches at execution time; purges stay id-addressed |
 | req-grid-import-grift-results | [Import Results](#import-results) | Implemented | Structured reporting expectations |
 | req-grid-import-grift-ordering | [Deterministic Ordering And Last-Write-Wins](#deterministic-ordering-and-last-write-wins) | Implemented | Three-level ordering contract; last-write-wins per entity; lint surface |
 | req-grid-import-grift-ordering-strict | [Strict-No-Overwrite Mode](#strict-no-overwrite-mode) | Backlog | Optional fail-on-pre-existing-entity mode for production/federation use |
@@ -856,6 +858,108 @@ The importer should support two dangling-edge modes.
 - valid nodes and valid edges may still import
 
 In both modes, dangling-edge analysis is completed during preflight, not discovered opportunistically mid-transaction.
+
+## Edge Endpoints By Natural Key
+----
+RID: `req-grid-import-grift-edge-endpoints`
+
+Status: `Implemented`
+
+Today an edge endpoint is an id, or a batch-local ref that must name a node of the **same batch** (`req-grid-import-grift-identity-3`; an endpoint naming no node of the batch is `unknown_ref`). A collector that has found a relationship to a node it did not write in this batch, a node an earlier batch or another producer created, has no way to say so without knowing that node's id. This requirement lets an endpoint name a node by **type and natural key**. The build is Issue# 914 - tap; the epic is Issue# 911 - tap.
+
+#### Status Details
+Implemented (Issue# 914 - tap): `grift-document.schema.json` carries `from_key` / `to_key`; the preflight check is `tap_grid/grift/importer.py::_endpoint_key_is_sound`, resolution is `::_resolve_endpoint_keys`, and the skip event is `tap_grid/batch.py::record_skip_event`. A document carrying endpoint keys is resolved on a copy, as one carrying refs is, so the caller's dict is never rewritten.
+
+#### Implementation
+**Shape.** An edge payload names each endpoint in exactly one of three forms: `from_entity_id` / `to_entity_id` (an id), `from_ref` / `to_ref` (a node ref of this batch), or `from_key` / `to_key`:
+
+```json
+"from_key": {
+  "entity_type": "package",
+  "key": { "ecosystem": "npm", "name": "left-pad" }
+}
+```
+
+`key` carries exactly the properties the named type declares as its `NATURAL_KEY` (`req-grid-entity-natural-key`), a dotted path where the declaration uses one, and nothing else.
+
+**Resolution** runs inside the batch's transaction, after the batch's own node refs resolve (`req-grid-import-grift-identity-3`), in this order: first the batch's own nodes (a node of that type in this batch whose resolved declared values equal the key), then the **live** grid through the type's generated search (`find_existing`). A tombstoned node is never found. More than one live match fails the batch as `identity_ambiguous`, as for a ref node. A lookup **never creates** a node: an endpoint that names nothing is an unresolved endpoint, not a new one.
+
+**An endpoint key is complete or it is refused.** A declared property that is absent or `null` in `key`, a property the type does not declare, and a type that declares no natural key (`KEYLESS`) or is undeclared are each a malformed endpoint (`incomplete_endpoint_key`, `endpoint_type_unkeyed`), refused with nothing written.
+
+**An unresolved endpoint** (a key naming no live node, and also an endpoint id that names no live entity) is handled by the dangling-edge mode (`req-grid-import-grift-dangling`): strict fails the batch as `dangling_edge`; permissive skips that edge, **writes a `skip` event** and lists it in the import result. Because a key endpoint can only be resolved against the grid inside the transaction, its dangling analysis happens at execution, not at preflight; this is the one exception to "dangling-edge analysis is completed during preflight". An endpoint id that names no entity at all is still analysed at preflight, as today.
+
+**The `skip` event.** `BatchEventType` gains `skip`. It records that an edge was not written: the edge type, which endpoint (`from` or `to`), that endpoint's type and key (or ref or id), and the reason. It is written **inside the batch's own transaction** (ruled 2026-10-02): it commits with the batch and rolls back with it, so a skip event exists exactly when the batch that left the edge out committed, and no crash can separate the two. This is the transactional-outbox shape, the record of a write stored in the same transaction as the write. A batch that fails writes nothing, its skip events included, and its result lists each unresolved endpoint as an issue, which is where a failed run's import failures are read. The event is a record of what the importer *declined to do*; it never changes the graph. Its `entity_id` is the edge's provisional id (the id it would have been written under; no entity with it exists), with `entity_type` `edge`, so the event, the import result and the batch's issues all name the same thing.
+
+**Resolution is a read.** A key endpoint is resolved by searching the live grid, and the result (a resolved id, or every candidate on ambiguity) reaches the submitter. Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it resolves any key endpoint, and refuses the batch otherwise with nothing written and nothing disclosed.
+
+**Surfaced.** The import result carries the skips (count and list, each with its event id), and a collector's run record references them, so an unresolved endpoint is visible where the run is read. Today a permissive-mode skip is a log line and a warning that `submit_grift` discards.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-edge-endpoints-1 | Three Endpoint Forms, Exactly One | Implemented | An edge payload names each endpoint by exactly one of id, ref or key; the document schema holds the exclusive-or. | Extends `GriftEdgePayload` (`from_key` / `to_key`, `GriftEndpointKey`). `tap_grid/tests/test_grift_edge_endpoints.py::TestResolution`. |
+| req-grid-import-grift-edge-endpoints-2 | Batch First, Then Grid | Implemented | A key endpoint resolves against the batch's own nodes first, then the live grid's generated search; a tombstoned node is never found. | Resolution runs inside the batch transaction, after node refs. `tap_grid/tests/test_grift_edge_endpoints.py::TestResolution`. |
+| req-grid-import-grift-edge-endpoints-3 | Complete Keys Only | Implemented | A key lacking a declared property, carrying an undeclared one, or naming a `KEYLESS` or undeclared type is refused with nothing written. | `incomplete_endpoint_key`, `endpoint_type_unkeyed`, `endpoint_key_mismatch` (an undeclared property). `tap_grid/grift/importer.py::_endpoint_key_is_sound`; `tap_grid/tests/test_grift_edge_endpoints.py::TestCompleteKeysOnly`. |
+| req-grid-import-grift-edge-endpoints-4 | Ambiguity Fails The Batch | Implemented | A key matching more than one live node fails the whole batch as `identity_ambiguous`, naming every candidate. | As `req-grid-entity-natural-key-13`. `tap_grid/tests/test_grift_edge_endpoints.py::TestResolution::test_two_live_matches_fail_the_batch_naming_both`. |
+| req-grid-import-grift-edge-endpoints-5 | A Lookup Never Mints | Implemented | Resolving an endpoint creates no node; an endpoint that names nothing is unresolved. | No phantom endpoints. `tap_grid/tests/test_grift_edge_endpoints.py::TestUnresolved`. |
+| req-grid-import-grift-edge-endpoints-6 | Unresolved Follows The Dangling Mode | Implemented | An unresolved endpoint fails the batch in strict mode and skips only that edge in permissive mode. Key endpoints are analysed at execution; id endpoints naming no entity keep their preflight analysis. | Refines `req-grid-import-grift-dangling-1`. `tap_grid/tests/test_grift_edge_endpoints.py::TestUnresolved`. |
+| req-grid-import-grift-edge-endpoints-7 | A Skip Is Recorded In Its Batch | Implemented | Every edge a permissive batch skipped for an unresolved endpoint has one `skip` `BatchEvent` of that batch, written inside the batch's own transaction, carrying the edge type, the endpoint, its type and key (or ref or id), and the reason; its `entity_id` is the edge's provisional id. A batch that fails writes no skip event; its result lists each unresolved endpoint as an issue. A test covers a permissive skip followed by an execution-time failure in the same batch: nothing is written, and the skip appears only in the result. | Inside the batch transaction (ruled 2026-10-02). `tap_grid/batch.py::record_skip_event`; `tap_grid/tests/test_grift_edge_endpoints.py::TestUnresolved`. |
+| req-grid-import-grift-edge-endpoints-8 | Skips Are Surfaced | Implemented | The import result lists every skip with its event id, and the collector run record references them. | The run record lists at most 100 by event id, with the exact count (`tap_cares/collectors/base.py`, `GRIFT_EDGES_SKIPPED`). `tap_grid/tests/test_grift_edge_endpoints.py::TestTheRunRecord`. |
+| req-grid-import-grift-edge-endpoints-9 | Resolution Is A Read | Implemented | Before resolving any key endpoint the importer authorises `grid.read` in the import's scope; an actor without it is refused with nothing written and no id disclosed. | Node refs: Issue# 924 - tap. `tap_grid/tests/test_grift_edge_endpoints.py::TestResolutionIsARead`. |
+
+
+## Edge Removal By Identity
+----
+RID: `req-grid-import-grift-edge-removal`
+
+Status: `Proposed`
+
+`deletes.edges` targets today name an edge by its `entity_id` (`req-grid-import-grift-removals`, `req-grift-import-deletes`). A collector that no longer knows the id of an edge it wants ended (an id it never held, because the edge was found by identity) cannot say so. This requirement lets a `deletes.edges` target name the edge by its **identity** instead. The build is Issue# 915 - tap.
+
+#### Status Details
+Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and the schemas gain it with the code.
+
+#### Implementation
+**Shape.** A `deletes.edges` target carries either `entity_id` (as today) or an identity form, never both:
+
+```json
+{
+  "edge_type": "DEPENDS_ON",
+  "from": { "entity_type": "package", "key": { "purl": "pkg:npm/left-pad@1.3.0" } },
+  "to": { "entity_id": "01962ebd-f9d4-7f8a-9b4e-0e4f4d2dc102" },
+  "discriminators": { "scope": "build" },
+  "reason": "No longer declared in the manifest."
+}
+```
+
+`from` and `to` take an endpoint in the id form or the key form of `req-grid-import-grift-edge-endpoints`; `discriminators` maps each declared discriminator path to its value and is present exactly when the type declares any.
+
+**Meaning.** A key-addressed delete ends **whichever live relationship matches at the moment the batch executes**. It is not bound to the edge that existed when the sender last looked: if that edge was retired and the relationship returned with a new id, the delete ends the new one. "Missing" means no live match, and `deletes.on_missing` governs it. A tombstoned edge never matches, so `on_tombstoned` does not apply to this form. More than one live match is an ambiguity error that aborts the batch. The edge is ended by the existing `delete_edge_by_entity` verb, in the same `write_batch` call and in the same position as an id-addressed delete (`req-grid-import-grift-removals`).
+
+**Purges stay id-addressed.** Hard deletion names an id; there is no key-addressed purge.
+
+**Resolution is a read.** Importing (`grid.import_grift`) and writing (`grid.write`) are not reading (`grid.read`), so the importer authorises `grid.read` in the import's scope before it resolves an identity-addressed target, as for endpoints (`req-grid-import-grift-edge-endpoints-9`); a delete also needs `grid.delete`, which the importer already authorises for a `deletes` section.
+
+**The same lock.** Resolving an identity-addressed target takes the identity lock of `req-grid-edge-identity-4` before it reads the grid, so a delete by identity and a concurrent write of the same relationship serialise.
+
+**No version.** `entity_expected_version` is not accepted on an identity-addressed target: the sender addresses a relationship, and the row whose version it would name is not known to it until the match is made.
+
+**Duplicates.** Two targets that resolve to one live edge are `duplicate_removal_target`, whichever forms named it. An edge the same document also upserts, by id or by identity, is `entity_id_in_upsert_and_removal`; the check is re-applied to the resolved id, as it is for ref nodes (Issue# 606 - tap).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-edge-removal-1 | Id Or Identity, Never Both | Proposed | A `deletes.edges` target carries `entity_id` or the identity form (`edge_type`, `from`, `to`, and `discriminators` where declared); both, or neither, is a schema failure. Only `deletes.edges` accepts the identity form; `purges` and `deletes.nodes` do not. | |
+| req-grid-import-grift-edge-removal-2 | Ends The Live Match | Proposed | An identity-addressed delete ends the live edge matching at execution time and no other; "missing" means no live match and follows `deletes.on_missing`. | `on_tombstoned` does not apply. |
+| req-grid-import-grift-edge-removal-3 | Replay After A Return Ends The New Edge | Proposed | Delete an edge by identity, let the relationship return as a new edge, then replay the same delete: the new edge ends. | The 2026-10-02 ruling, as a test. |
+| req-grid-import-grift-edge-removal-4 | Ambiguity Aborts | Proposed | More than one live match aborts the batch and names every candidate id. | |
+| req-grid-import-grift-edge-removal-5 | An Incomplete Identity Is Refused | Proposed | A target missing a declared discriminator, or carrying an empty, null or undeclared one, is refused with nothing written, by the rule of `req-grid-edge-identity-8`. | |
+| req-grid-import-grift-edge-removal-6 | Duplicates Resolve To One Edge | Proposed | Two targets resolving to one live edge are `duplicate_removal_target`; an edge both upserted and removed in one document is `entity_id_in_upsert_and_removal`, checked on the resolved id. | |
+| req-grid-import-grift-edge-removal-7 | No Expected Version | Proposed | `entity_expected_version` on an identity-addressed target is a schema failure. | |
+| req-grid-import-grift-edge-removal-8 | Resolution Is A Read | Proposed | Before resolving any identity-addressed target the importer authorises `grid.read` in the import's scope, in addition to the `grid.delete` a `deletes` section already requires. | |
+
 
 ## Import-Side Provenance
 ----

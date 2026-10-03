@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # carry). See spec-grid-service-batch.md req-grid-service-batch-metadata-7.
 AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
 
+
 def _clamp_batch_name(name: str) -> str:
     """Clamp a batch name to what BOTH ends of the spine can hold.
 
@@ -226,6 +227,36 @@ def record_batch_event(
         model_name=model_name,
         actor=actor,
         metadata=metadata or {},
+    )
+
+
+def record_skip_event(batch_id: str, edge_entity_id: str, metadata: dict[str, Any]) -> BatchEvent:
+    """Record that a batch declined to write an edge because an endpoint did not resolve.
+
+    Written inside the batch's own transaction, so it commits and rolls back with the batch
+    (``req-grid-import-grift-edge-endpoints-7``, ruled 2026-10-02). ``entity_id`` is the edge's
+    provisional id: no entity has it, because the edge was never written, but it is the id the
+    import result and the batch's issues name the edge by.
+
+    Args:
+        batch_id: The entity id of the batch that skipped the edge.
+        edge_entity_id: The edge's provisional id.
+        metadata: The edge type, each unresolved endpoint, and the reason.
+
+    Returns:
+        The recorded event.
+    """
+    from tap_grid.models import Batch, BatchEvent, BatchEventType
+
+    actor: Any = get_history_user()
+    return BatchEvent.objects.create(
+        batch=Batch.objects.get(entity_id=batch_id),
+        event_type=BatchEventType.SKIP,
+        entity_id=edge_entity_id,
+        entity_type="edge",
+        model_name="Edge",
+        actor=actor,
+        metadata=metadata,
     )
 
 

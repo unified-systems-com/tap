@@ -158,9 +158,12 @@ def declared_edge_types() -> list[Any]:
 def check_edge_declarations_resolve(app_configs: Any, **kwargs: Any) -> list[Error]:
     """Every edge type a model declares must be a defined edge type (Issue# 583 - tap).
 
-    OUTBOUND_EDGES, INBOUND_EDGES and CONTAINMENT_EDGES name edge types by slug. Renaming an
-    edge definition leaves every declaration reading as valid while the cascade follows an
-    edge nothing will ever carry — a declaration that exists but is false. This runs after
+    OUTBOUND_EDGES, INBOUND_EDGES, CONTAINMENT_EDGES and each HOTLINKS entry's ``edge_type``
+    name edge types by slug. Renaming an edge definition leaves every declaration reading as
+    valid while the cascade follows an edge nothing will ever carry — a declaration that
+    exists but is false. A hotlink is held to the same rule (req-grid-hotlink-model-5,
+    Issue# 910 - tap): its edges are real grid edges, so the type they carry must be a
+    defined one, not a string only the hotlink knows. This runs after
     every app is ready, so the defined set is the whole stack's. Fail-closed: an Error, not
     a Warning, because the false declaration is silent everywhere else.
     """

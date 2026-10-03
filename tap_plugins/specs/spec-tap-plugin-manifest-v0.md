@@ -32,6 +32,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 | req-tap-plugin-manifest-v0-models | [Model Mappings](#model-mappings) | Implemented | Exact slug-to-class mapping for declared TAP model types |
 | req-tap-plugin-manifest-v0-edges | [Edge Mappings](#edge-mappings) | Implemented | Exact slug-to-file mapping for declared edge types |
 | req-tap-plugin-manifest-v0-edge-file | [Edge Definition File](#edge-definition-file) | Implemented | Strict JSON shape for individual edge definition files |
+| req-tap-plugin-manifest-v0-edge-identity | [Edge Identity Declaration In The Definition File](#edge-identity-declaration-in-the-definition-file) | Implemented | The optional `identity` member of an edge definition file: declared discriminators or keyless, per `req-grid-edge-identity-declaration` |
 | req-tap-plugin-manifest-v0-editors | [Editor Mappings](#editor-mappings) | Implemented | Exact entity-type-to-descriptor mapping for declared editors |
 | req-tap-plugin-manifest-v0-searches | [Search Mappings](#search-mappings) | Implemented | Exact runner-key-to-callable mapping for declared search runners |
 | req-tap-plugin-manifest-v0-falsifiers | [Falsifier Mappings](#falsifier-mappings) | Implemented | Exact entity-type-to-class mapping for declared per-type falsifiers; owned types only |
@@ -330,6 +331,53 @@ Example:
 
 #### Future
 If TAP later needs richer endpoint selectors, it can introduce them in a later manifest version without forcing them into v0.
+
+### Edge Identity Declaration In The Definition File
+----
+RID: `req-tap-plugin-manifest-v0-edge-identity`
+
+Status: `Implemented`
+
+Refines `req-tap-plugin-manifest-v0-edge-file`, whose text stands. An edge definition file gains one optional member, `identity`, carrying the declaration `req-grid-edge-identity-declaration` specifies: an object with exactly one of `discriminators` (an array of `{path, description}` objects, empty for the plain key) and `keyless` (an object with a `reason`).
+
+#### Status Details
+Built (Issue# 913 - tap): the loader and `edge-definition.schema.json` accept the member, the loader and `validate_plugin` run the declaration's checks, and the registry refuses a second declaration. The importer finds a ref-addressed edge by its type's declaration (`req-grid-edge-identity`). The member is optional so a plugin written before the rollout still loads, and an undeclared type is only warned about at import until Issue# 928 - tap makes it a refusal (`req-grid-edge-identity-6`), so plugins can ship their declarations before anything requires them.
+
+#### Implementation
+Example, a type whose key adds one discriminator:
+
+```json
+{
+  "slug": "DEPENDS_ON",
+  "name": "Depends on",
+  "description": "A package depends on another package.",
+  "sources": ["package"],
+  "targets": ["package"],
+  "property_schema": {
+    "type": "object",
+    "properties": { "scope": { "type": "string", "enum": ["runtime", "build", "test"] } }
+  },
+  "identity": {
+    "discriminators": [
+      {
+        "path": "scope",
+        "description": "The dependency scope as the manifest declares it. Set by the collector from the manifest section the dependency appears in. In the key because one package can depend on another at two scopes at once."
+      }
+    ]
+  }
+}
+```
+
+The loader checks each discriminator `path` against `property_schema` (`req-grid-edge-identity-declaration-3`) and registers the declaration once per slug (`-4`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-manifest-v0-edge-identity-1 | Optional Identity Member | Implemented | `identity` is an optional member of an edge definition file; its shape is `req-grid-edge-identity-declaration-1` and `-2`, and an invalid declaration fails the plugin load. | `tap_plugins/manifest.py::_load_edge_file`. `tap_plugins/tests/test_manifest_edge_identity.py::TestTheLoaderReadsIt`. |
+| req-tap-plugin-manifest-v0-edge-identity-2 | Checked Against The Property Schema | Implemented | A discriminator path that does not resolve through the file's `property_schema`, or discriminators declared with no `property_schema`, fail the plugin load. | `req-grid-edge-identity-declaration-3`; author time through `validate_plugin`. `tap_plugins/tests/test_manifest_edge_identity.py::TestValidatePluginSeesWhatBootWouldRefuse`. |
+| req-tap-plugin-manifest-v0-edge-identity-3 | Registered Once | Implemented | The loader registers the declaration under the edge slug; a second declaration for one slug across plugins fails the load. | `req-grid-edge-identity-declaration-4`; `tap_plugins/base.py::_register_edges_from_manifest`. `tap_grid/tests/test_edge_identity_declaration.py::TestTheRegistry`. |
+
 
 ### Editor Mappings
 ----
