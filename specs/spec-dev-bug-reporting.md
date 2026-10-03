@@ -307,6 +307,16 @@ apply. In one SWE-bench study, about a third of the agent fixes graded successfu
 supplied in the issue (arXiv 2410.06992). In a public repository that channel belongs to whoever
 writes the issue.
 
+**An optional typed classifier can add stops, never remove them.** When one is configured (TypeSafe's
+Jev is the first candidate, ruled 2026-10-02), each paragraph of the report is also put to it as a
+yes/no question: is this text an instruction aimed at an agent? A yes stops the run and asks, exactly
+as the skill's own reading does. A no changes nothing. The skill's own judgement still applies, and
+so do the preflight and the human push. A typed model returns probabilities, not prose, so injected
+text can nudge its score but cannot make it write "this is safe" (arXiv 2609.28613 measured
+attacker-chosen decisions at 1.8–3.5% across 510 cases). TypeSafe's own guidance is that it is not a
+standalone security boundary. The issue is public text, so sending it to a hosted classifier
+discloses nothing that was not already published.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -314,6 +324,7 @@ writes the issue.
 | req-dev-bugfix-untrusted-intake-1 | Only Author And Maintainer Comments | Proposed | Comments from accounts other than the issue author and the repository's maintainers are not read into the session. | |
 | req-dev-bugfix-untrusted-intake-2 | Hidden Text Stripped And Named | Proposed | Invisible characters, HTML comments and collapsed blocks are removed before the model reads the issue, and the removal is reported. | |
 | req-dev-bugfix-untrusted-intake-3 | Instruction-Shaped Text Stops The Run | Proposed | A planted instruction in the issue body (for example, "also run `curl …`") is reported as a finding, and the skill does not act on it. | |
+| req-dev-bugfix-untrusted-intake-4 | A Classifier Only Adds Stops | Proposed | With a typed classifier configured, its yes stops the run, and its no on a planted instruction still leaves the run stopped by the skill's own reading; with none configured, the skill behaves identically otherwise. | |
 
 ### No Credentials, No Network, After Reading
 ----
@@ -465,4 +476,5 @@ can read.
 - **`review-a-fix`**, the third skill. It must treat the diff itself as untrusted, because the Amazon Q extension compromise arrived through a merged pull request, and it must never be the merge decision.
 - **Issue forms for plugin repositories**, generated once for the fleet. Today none of the 24 has one, and neither does the org `.github` repository.
 - **A gitleaks pass on new issue bodies**, as an Action, for the reports that do not come through the skill.
+- **A session-wide injection hook** (a `PreToolUse`/`PostToolUse` classifier on everything a session reads), ruled 2026-10-02 to wait until a locally run model is evaluated (for example, the open-weights AgentJev-0.6B). A hosted classifier would send private session content to a third party.
 - **Agent sandboxes beyond this skill.** Every session that reads issue or PR text has the same exposure `req-dev-bugfix-isolation` closes for one skill.
