@@ -126,6 +126,12 @@ identity is an assigned UUIDv7 plus a derived natural key; retirement records
 containment. Falsifiers, evidence completeness and shadow nodes for known unknowns belong to the same
 model.
 
+**Absence is declared, never invented as a value** (`tap_grid/specs/spec-grid-node.md`,
+`req-grid-node-observation`, decided 2026-06-30). A field's absence meaning is declared per field
+and recovered through FLIP rather than invented as an in-band sentinel. Rollout is incremental,
+field by field, with no central enforcement yet — a new absence reason or merge/patch semantic
+should extend this convention rather than invent a competing one.
+
 **Dimensions become nodes** (ruled 2026-09-20, epic `tap#708`). Dimensions gain assigned identity as
 nodes that nothing points at — no inbound edges — rather than remaining only a flat JSON object on the
 spine. The concept keeps its role; its representation changes.
