@@ -292,6 +292,23 @@ class TestForceReimport:
         assert Entity.objects.get(pk=uuid.UUID(source["entity"]["entity_id"])).deleted_at is not None
         assert len(_skip_events()) == 1
 
+    @SPEC[6]
+    def test_a_skipped_edge_never_leaves_a_live_edge_on_a_swept_node(self) -> None:
+        """The revision drops a node and skips the edge that named it: the earlier edge and its
+        endpoint stay or go together, whether or not the sweep retires edges yet."""
+        source, target = _panel("source"), _panel("target")
+        batch_id, edge_id = _batch_entity_id(), str(uuid.uuid4())
+        source_id, target_id = source["entity"]["entity_id"], target["entity"]["entity_id"]
+        written = _edge(edge_id=edge_id, from_entity_id=source_id, to_entity_id=target_id)
+        assert grift_import(_minimal_doc([_batch_container(batch_id, nodes=[source, target], edges=[written])])).success
+        skipped = _edge(edge_id=edge_id, from_key=_key("nobody"), to_entity_id=target_id)
+        revised = _minimal_doc([_batch_container(batch_id, nodes=[target], edges=[skipped])])
+        result = grift_import(revised, force_batches=[batch_id], dangling_edge_mode="permissive")
+        assert result.success, result.errors
+        edge_live = Entity.objects.get(pk=uuid.UUID(edge_id)).deleted_at is None
+        source_live = Entity.objects.get(pk=uuid.UUID(source_id)).deleted_at is None
+        assert source_live or not edge_live, "a live edge was left on a node the sweep tombstoned"
+
     # Cites no criterion: a test expected to fail is not evidence. The behaviour is the sweep's
     # (req-grid-import-grift-batch-scoped-sweep), and the marker goes on when the xfail comes off.
     @pytest.mark.xfail(
