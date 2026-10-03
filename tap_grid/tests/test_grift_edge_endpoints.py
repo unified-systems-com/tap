@@ -292,7 +292,8 @@ class TestForceReimport:
         assert Entity.objects.get(pk=uuid.UUID(source["entity"]["entity_id"])).deleted_at is not None
         assert len(_skip_events()) == 1
 
-    @SPEC[6]
+    # Cites no criterion: a test expected to fail is not evidence. The behaviour is the sweep's
+    # (req-grid-import-grift-batch-scoped-sweep), and the marker goes on when the xfail comes off.
     @pytest.mark.xfail(
         strict=True,
         reason="Issue# 938 - tap: the force-reimport sweep never retires edges (candidates are CREATE events; "

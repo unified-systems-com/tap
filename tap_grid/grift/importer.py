@@ -4153,8 +4153,9 @@ def _run_batch_scoped_sweep(
     # --- Build the new-version id sets (post-apply state). ---
     new_node_ids: set[str] = {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])}
     # An edge this revision skipped for an unresolved endpoint (``skipped_edge_ids``, permissive
-    # mode) was not written by it: it is absent from the new state, so its earlier write is a sweep
-    # candidate, and it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
+    # mode) was not written by it, so it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
+    # It is absent from the new state, but its earlier write is not retired yet: edge writes are
+    # ``link`` events and the candidates below are ``create`` events only (Issue# 938 - tap).
     written_edges = [e for e in batch_container.get("edges", []) if e["entity"]["entity_id"] not in skipped_edge_ids]
     new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in written_edges}
     new_edge_endpoints: list[tuple[str, str]] = [
