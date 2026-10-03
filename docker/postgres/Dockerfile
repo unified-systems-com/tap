@@ -53,15 +53,25 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af
 
 # postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
-# image), openssl (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
+# image), openssl-4.0 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
+#
+# `openssl-4.0`, not the bare `openssl` alias — tap#932/#933. `postgresql-16-client` already
+# pulls `libpq-18` transitively, and Wolfi's current `libpq-18` hard-depends on
+# so:libcrypto.so.4/so:libssl.so.4 regardless of what we request here — requesting the 3.x
+# family for ourselves would just put this image's `openssl` CLI on a different core than its
+# own Postgres client tools. See Dockerfile (web image) for the full writeup: this is verified
+# safe for FIPS (the provider's own ABI is a stable, major-version-independent boundary by
+# OpenSSL's own design, confirmed empirically via a passing `fipsinstall` self-test against this
+# exact combination), and the lingering `libssl3`/`libcrypto3` (.so.3) belong to `apk-tools`
+# itself, not anything either Dockerfile requests, and never share a process with postgres.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     postgresql-16 \
     postgresql-16-client \
     postgresql-16-oci-entrypoint \
     gosu \
-    openssl \
+    openssl-4.0=4.0.3-r2 \
     bash \
     tzdata \
       ; then break; fi; \

@@ -86,18 +86,53 @@ WORKDIR /app
 #   - curl: docker/install-tailwindcss.sh; also in-container debugging.
 #   - tzdata: the IANA zoneinfo DB Debian slim shipped implicitly but Wolfi's minimal base
 #     does not; without it Python's zoneinfo cannot resolve settings.TIME_ZONE and boot aborts.
-#   - openssl: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also debugging.
+#   - openssl-4.0: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also
+#     debugging. NAMED explicitly, not the bare `openssl` alias — see below.
 #   Build toolchain for `cryptography` --no-binary (D7 — applies in BOTH FIPS modes, so it lives
 #   here in base, not in the FIPS stage): the sdist compiles a Rust + C extension against the
 #   system OpenSSL headers at `uv sync` time (dev installs at runtime, not image build).
 #   - build-base: gcc/make/libc headers.
 #   - rust: cargo + rustc for cryptography's Rust extension.
-#   - openssl-dev: system OpenSSL headers cryptography links against.
+#   - openssl-4.0-dev: system OpenSSL headers cryptography links against.
 #   - pkgconf: pkg-config, used by the build to locate OpenSSL.
 #   - python-3.14-dev: Python.h for the C extension.
 #   - postgresql-dev: pg_config + libpq headers so psycopg's `[c]` extra builds against the
 #     SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the `[binary]`
 #     wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (see pyproject.toml).
+#
+# `openssl-4.0`/`openssl-4.0-dev`, not the bare `openssl`/`openssl-dev` names — tap#932/#933.
+# Wolfi started shipping this as a second, parallel package family. `python-3.14-base` and
+# `libpq-18` (pulled in by `postgresql-client`/`postgresql-dev`) already hard-depend on
+# so:libcrypto.so.4/so:libssl.so.4 regardless of what we request — Wolfi's own base packages
+# have moved, not something this Dockerfile can opt out of. Naming the bare `openssl-dev`
+# alongside that is what caused the actual incident: requesting the 3.x family for OURSELVES
+# while Python/libpq independently required the 4.x family produced a real `apk` conflict
+# (both try to own the same header/lib paths) and, even where it didn't conflict, would have
+# left tap's own `cryptography`/psycopg build on a DIFFERENT OpenSSL core than Python's own
+# `_ssl` module and libpq — the two-cores-in-one-process hazard tap#931 tracks, which broke
+# SCRAM auth outright for another shop hitting the identical Wolfi/Postgres combination.
+#
+# This is SAFE for FIPS, verified directly rather than assumed: the FIPS provider's own ABI is
+# a stable boundary OpenSSL deliberately keeps independent of the general library ABI — "a FIPS
+# provider built from any validated version may be used together with an OpenSSL library built
+# from any supported release from OpenSSL 3.0 onwards ... including future major release
+# series" (openssl/openssl README-FIPS.md). Confirmed empirically too: built this image through
+# `fips-1` with openssl-4.0 requested exactly as below, and `openssl fipsinstall` ran its full
+# self-test battery (every KAT, PCT, and DRBG check) against the UNCHANGED, already-validated
+# provider (`docker/build-openssl-fips.sh`'s pin is untouched) and printed INSTALL PASSED. The
+# provider itself never gets rebuilt against 4.0 source — that would actually drop the CMVP
+# validation (the cert is for a specific compiled artifact); what moves is the surrounding
+# libcrypto/libssl the already-validated provider loads into, exactly as the design intends.
+#
+# `libssl3`/`libcrypto3` (.so.3) still land in the image regardless of any of this — confirmed
+# (2026-10-03) they're required by `apk-tools` itself, baked into every Wolfi base image before
+# any `RUN apk add` here executes, not by anything this Dockerfile requests. `apk` runs as its
+# own standalone process at build time (and for any ad-hoc invocation); it never shares a
+# process with gunicorn/Django/psycopg, so it is outside the single-core invariant that matters.
+#
+# Pinned to a specific version, not left floating on the bare family name, so a bump stays a
+# deliberate, reviewed act — the Renovate `apk` datasource rule (renovate.json5) proposes the
+# next one instead of this silently drifting onto whatever Wolfi ships next.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     python-3.14 \
@@ -106,10 +141,10 @@ RUN for i in 1 2 3; do \
     postgresql-client \
     curl \
     tzdata \
-    openssl \
+    openssl-4.0=4.0.3-r2 \
     build-base \
     rust \
-    openssl-dev \
+    openssl-4.0-dev=4.0.3-r2 \
     pkgconf \
     python-3.14-dev \
     postgresql-dev \
