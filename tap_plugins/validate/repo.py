@@ -1363,6 +1363,58 @@ def _declares_releases(repo_root: Path) -> list[str]:
     return [rel for rel in RELEASE_PLEASE_FILES if (repo_root / rel).is_file()]
 
 
+#: The spellings of a job condition that is false before any event is considered. GitHub accepts
+#: `if: false` and `if: ${{ false }}` and simply never runs the job, so a workflow can be present,
+#: correctly targeted, correctly triggered and correctly granted while attesting nothing. Only
+#: STATICALLY false conditions are listed: anything referencing an event, an input or a secret
+#: cannot be decided by reading the file, and failing those would red every legitimately
+#: conditional lane.
+_STATICALLY_FALSE_IF = frozenset({"false", "0", "''", '""'})
+
+
+def _release_job_is_disabled(text: str, lineno: int) -> bool:
+    """Whether the job whose ``uses:`` sits at *lineno* carries a statically false ``if:``.
+
+    Deliberately narrow. A condition this cannot decide is NOT reported — the check would otherwise
+    fail a lane that is conditional for a good reason, and over-reporting here is the fail-open
+    direction's mirror: it teaches authors to delete a condition to quiet a checker.
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - shares the fallback path's test
+        return False
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(root, yaml.MappingNode):
+        return False
+
+    def _get(node: object, key: str) -> object:
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        for k, v in node.value:
+            if isinstance(k, yaml.ScalarNode) and k.value == key:
+                return v
+        return None
+
+    jobs = _get(root, "jobs")
+    if not isinstance(jobs, yaml.MappingNode):
+        return False
+    for _job_id, job in jobs.value:
+        uses = _get(job, "uses")
+        if not (isinstance(uses, yaml.ScalarNode) and uses.start_mark.line + 1 == lineno):
+            continue
+        cond = _get(job, "if")
+        if not isinstance(cond, yaml.ScalarNode):
+            return False
+        raw = str(cond.value).strip()
+        if raw.startswith("${{") and raw.endswith("}}"):
+            raw = raw[3:-2].strip()
+        return raw.lower() in _STATICALLY_FALSE_IF
+    return False
+
+
 def _fires_on_a_release_tag(text: str) -> bool | None:
     """Whether the workflow triggers on a tag push. ``None`` when it cannot be determined.
 
@@ -1532,6 +1584,18 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
             "granting less is refused before any job exists — startup_failure, zero jobs, no log — "
             "and the release still publishes an unattested wheel. A job-level block replaces the "
             "workflow grant rather than merging with it, so listing one scope drops the others",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
+
+    if _release_job_is_disabled(text, line):
+        check.fail(
+            f"{RELEASE_WORKFLOW}:{line} calls the release lane from a job whose `if:` is false "
+            "before any event is considered, so the job never runs. Every other property here is "
+            "correct — the target, the trigger and the grant — and the repository still publishes "
+            "an unattested wheel on every release tag. Remove the condition or make it one that "
+            "a release can satisfy",
             path=RELEASE_WORKFLOW,
         )
         result.checks.append(check)

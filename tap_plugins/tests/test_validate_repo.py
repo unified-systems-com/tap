@@ -1064,6 +1064,33 @@ class TestReleaseLane:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
         assert check.status == "pass", _messages(check)
 
+    def test_a_disabled_calling_job_fails(self, tmp_path: Path) -> None:
+        """`if: ${{ false }}` is accepted by GitHub and simply never runs the job. Target, trigger
+        and grant can all be correct while the repository publishes an unattested wheel on every
+        release tag, which is the invisible state this check exists to catch."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ false }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "never runs" in _messages(check)
+
+    def test_a_condition_that_cannot_be_decided_is_not_reported(self, tmp_path: Path) -> None:
+        """Only STATICALLY false conditions fail. A condition referencing the event cannot be
+        decided by reading the file, and failing it would red every legitimately conditional lane —
+        over-reporting here teaches authors to delete a condition to quiet the checker, which is
+        the mirror of the fail-open direction."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n",
+            "  release-sbom:\n    if: ${{ github.repository_owner == 'unified-systems-com' }}\n",
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
     def test_an_unverifiable_trigger_fails_rather_than_passing(self, tmp_path: Path, monkeypatch) -> None:
         """Unknown is not conformant, the same verdict the caller-presence half of this check
         already reaches on an inconclusive parse.

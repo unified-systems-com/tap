@@ -79,8 +79,11 @@ tap's copy; the pins must not.
 - **Release** with `scripts/release-plugin.sh` from a `--dev-plugins` workspace: strict validation + the
   plugin's tests, PR-based landing, immutable `v<x.y.z>` tag. A release advances no consumer's pin.
 - **A release lane is part of the bootstrap, not part of releasing.** `.github/workflows/release-sbom.yml`
-  is a thin caller of core's `plugin-release-sbom.yml`, pinned by SHA, triggered by the release tag push —
-  the same shape as the `plugin-ci.yml` caller. It builds the wheel at the tag, derives the SBOM from that
+  is a thin caller of core's `plugin-release-sbom.yml`, pinned by SHA, triggered by the release tag push,
+  granting `contents: read`, `id-token: write` and `attestations: write` on the calling job — the same
+  shape as the `plugin-ci.yml` caller. The grant is not optional: the lane declares `permissions: {}`
+  and its jobs take subsets of those three, so a caller granting less has its run refused before any
+  job exists and the release publishes an unattested wheel anyway. It builds the wheel at the tag, derives the SBOM from that
   wheel, and signs provenance plus both SBOM predicates into GitHub's attestation store, which is what lets
   a consumer run `gh attestation verify <wheel> --owner unified-systems-com`. **Ship it on bootstrap day,
   before the repository ever releases.** Omitting it is invisible until the first release, and the first
