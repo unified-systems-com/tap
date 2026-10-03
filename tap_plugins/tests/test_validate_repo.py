@@ -940,20 +940,24 @@ class TestReleaseLane:
     first release — which is the run nobody watches, since it succeeds.
     """
 
-    def _release_lane(self, ref: str = _SHA, *, calls_shared: bool = True) -> str:
+    def _release_lane(
+        self, ref: str = _SHA, *, calls_shared: bool = True, grant: str | None = None
+    ) -> str:
+        """The conformant caller shape, which is the one the fleet actually carries.
+
+        The grant is part of the shape rather than decoration: the lane declares
+        `permissions: {}` and its jobs take subsets of `contents: read`, `id-token: write` and
+        `attestations: write`, so a caller granting less has its run refused at creation and
+        attests nothing. `grant=""` builds the caller with no block at all.
+        """
         target = f"{REUSABLE_RELEASE}@{ref}" if calls_shared else f"./.github/workflows/local.yml@{ref}"
-        return textwrap.dedent(
-            f"""\
-            name: release-sbom
-            on:
-              push:
-                tags: ["v*"]
-            jobs:
-              release-sbom:
-                uses: {target}
-                with:
-                  plugin_slug: shell_sample
-            """
+        if grant is None:
+            grant = "contents: read\n      id-token: write\n      attestations: write"
+        block = f"    permissions:\n      {grant}\n" if grant else ""
+        return (
+            "name: release-sbom\non:\n  push:\n    tags: [\"v*\"]\njobs:\n  release-sbom:\n"
+            + block
+            + f"    uses: {target}\n    with:\n      plugin_slug: shell_sample\n"
         )
 
     def test_declares_releases_without_a_lane_fails(self, tmp_path: Path) -> None:
@@ -1033,6 +1037,32 @@ class TestReleaseLane:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
         assert check.status == "fail", _messages(check)
         assert "no job calls" in _messages(check)
+
+    def test_a_caller_that_cannot_grant_the_lane_fails(self, tmp_path: Path) -> None:
+        """Presence is not capability. The lane signs provenance and both SBOM predicates, so it
+        needs `id-token: write` and `attestations: write`; a caller granting only `contents: read`
+        has its run refused at creation and the release publishes an unattested wheel anyway."""
+        lane = self._release_lane(grant="contents: read")
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "`id-token: write`" in _messages(check)
+        assert "`attestations: write`" in _messages(check)
+        assert "startup_failure" in _messages(check)
+
+    def test_a_job_level_write_all_satisfies_the_release_grant(self, tmp_path: Path) -> None:
+        """A job-level scalar shorthand DECLARES a block, so it replaces the workflow grant rather
+        than reading as an absent one — and `write-all` covers all three scopes the lane needs."""
+        lane = self._release_lane(grant=None).replace(
+            "    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n",
+            "    permissions: write-all\n",
+        )
+        assert "write-all" in lane
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
 
     def test_an_unverifiable_trigger_fails_rather_than_passing(self, tmp_path: Path, monkeypatch) -> None:
         """Unknown is not conformant, the same verdict the caller-presence half of this check

@@ -69,6 +69,18 @@ RELEASE_WORKFLOW = ".github/workflows/release-sbom.yml"
 #: `REUSABLE_PREFIX`, so this constant is about PRESENCE, which nothing asked before.
 REUSABLE_RELEASE = REUSABLE_PREFIX + "plugin-release-sbom.yml"
 
+#: What a job calling the RELEASE lane must grant. `plugin-release-sbom.yml` declares
+#: `permissions: {}` at workflow level and its jobs take subsets of exactly these three
+#: (its own header, line 70) — so a caller granting less has its run refused at creation, the
+#: same mechanism that produced eight `startup_failure` repositories on 2026-09-29. Separate from
+#: `REQUIRED_CALLER_GRANT` because it is a different callee with different needs; collapsing them
+#: would make one constant wrong for both.
+REQUIRED_RELEASE_GRANT: dict[str, str] = {
+    "contents": "read",
+    "id-token": "write",
+    "attestations": "write",
+}
+
 #: release-please's two files. Carrying either is a repository SAYING it intends to cut releases
 #: from its own history — which is the condition that makes an absent release lane a defect rather
 #: than a choice. The manifest alone is enough: a repository mid-onboarding is still declaring.
@@ -93,7 +105,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@51d42e8b0d9d/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@f7a42076da13/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -435,6 +447,11 @@ def _job_permissions(text: str, lineno: int) -> dict[str, str] | None:
         if not (isinstance(uses, yaml.ScalarNode) and uses.start_mark.line + 1 == lineno):
             continue
         perms = _get(job, "permissions")
+        if isinstance(perms, yaml.ScalarNode):
+            # A job-level `permissions: read-all` DECLARES a block, so it REPLACES the workflow
+            # grant. Returning None here said "no block" and fell back to the workflow map — the
+            # replace-vs-inherit collapse that broke eight repositories, in the other direction.
+            return _scope_shorthand(perms.value)
         if not isinstance(perms, yaml.MappingNode):
             return None
         return {
@@ -1498,8 +1515,31 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
+    # PRESENCE IS NOT CAPABILITY. A correctly named caller firing on the right tag still attests
+    # nothing if it cannot grant the lane what the lane declares: GitHub refuses the run at
+    # creation, which is the invisible `startup_failure` this check set already learned once.
+    # `repo-caller-permissions` cannot cover this — it keys on the CI caller, a different callee.
+    line = next((n for n, ref in entries if ref.split("@", 1)[0] == REUSABLE_RELEASE), 0)
+    perms = _job_permissions(text, line)
+    effective = perms if perms is not None else (_workflow_permissions(text) or {})
+    short = {k: v for k, v in REQUIRED_RELEASE_GRANT.items() if not _satisfies(_granted_scope(effective, k), v)}
+    if short:
+        wanted = ", ".join(f"`{k}: {v}`" for k, v in sorted(REQUIRED_RELEASE_GRANT.items()))
+        check.fail(
+            f"{RELEASE_WORKFLOW}:{line} calls the release lane but is missing "
+            f"{', '.join(f'`{k}: {REQUIRED_RELEASE_GRANT[k]}`' for k in sorted(short))} on THAT job. "
+            f"The lane signs provenance and both SBOM predicates, so it needs {wanted}; a caller "
+            "granting less is refused before any job exists — startup_failure, zero jobs, no log — "
+            "and the release still publishes an unattested wheel. A job-level block replaces the "
+            "workflow grant rather than merging with it, so listing one scope drops the others",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
+
     check.info(
-        f"{RELEASE_WORKFLOW} calls the shared release lane on a release tag push; "
+        f"{RELEASE_WORKFLOW} calls the shared release lane on a release tag push, granting "
+        f"{', '.join(f'{k}: {v}' for k, v in sorted(REQUIRED_RELEASE_GRANT.items()))}; "
         f"{', '.join(declared)} present"
     )
     result.checks.append(check)
