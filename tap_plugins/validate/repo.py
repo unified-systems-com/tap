@@ -93,7 +93,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@de4eddca44c3/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@51d42e8b0d9d/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -369,7 +369,7 @@ def _workflow_permissions(text: str) -> dict[str, str] | None:
 
 #: GitHub's whole-scope shorthand. `permissions: read-all` / `write-all` is a STRING, not a map,
 #: and grants that level on every scope. Modelled as a wildcard entry rather than an enumeration so
-#: a scope nobody has thought of yet still resolves (AI review, PR# 945 - tap).
+#: a scope nobody has thought of yet still resolves.
 _ALL_SCOPES = "*"
 
 
@@ -394,7 +394,7 @@ def _satisfies(granted: str | None, needed: str) -> bool:
     declares `contents: read` runs. Comparing for EQUALITY failed such a caller — which is the same
     error class this check's own `-8` fix exists to remove. A check that reds a configuration that
     actually works teaches people to "fix" a working repository, and that is precisely how the
-    2026-09-29 outage was instructed (AI review, PR# 945 - tap).
+    2026-09-29 outage was instructed.
     """
     if granted is None:
         return False
@@ -750,9 +750,10 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
                 # names neither grants none.
                 check.warn(
                     f"{rel}:{lineno} grants `contents: write` on the job calling the reusable lane. "
-                    "That is repository write, and it is needed only while core's scanning job "
-                    "writes the dependency graph; once that job uploads SARIF instead it is an "
-                    "over-grant. NARROW it to `contents: read` — do not remove the scope. A job "
+                    "That is repository write, and NO job in the lane holds it: the "
+                    "dependency-graph submission it was granted for is retired and the scanning job "
+                    "uploads SARIF instead (`plugin-ci.yml` header, the Q20 ruling of 2026-09-25). "
+                    "NARROW it to `contents: read` — do not remove the scope. A job "
                     "block naming only `security-events: write` grants no `contents` at all, "
                     "because a job-level block replaces the workflow grant rather than merging "
                     "with it, and the lane's own jobs declare `contents: read`",
@@ -1397,8 +1398,7 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
     **The caller must also be able to fire.** A `release-sbom.yml` that calls the shared lane but
     triggers only on `workflow_dispatch` passes a presence test and still lets every release tag
     publish unattested — the check would report the property while the property was false. So the
-    tag trigger is asserted here too. Both AI review seats raised this independently on
-    `PR# 945 - tap`, and they were right: presence of the caller does not prove releases reach it.
+    tag trigger is asserted here too: presence of the caller does not prove releases reach it.
     Measured before asserting it, 24 of 24 plugin repositories already carry `push:` with `tags:`,
     so this reds nothing — the same ordering this change's §1 took, and the mirror of the mistake
     that caused the outage its `-8` half fixes.
@@ -1446,8 +1446,8 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
     entries, complete = _job_uses(text)
     # EXACT target, never a prefix. `startswith` counted
     # `…/plugin-release-sbom.yml-disabled@<sha>` as the shared lane, so a repository could pass
-    # this check while calling something that is not the attestation workflow (AI review,
-    # PR# 945 - tap, raised independently by two seats). A `uses:` is `<target>@<ref>`, so the
+    # this check while calling something that is not the attestation workflow. A `uses:` is
+    # `<target>@<ref>`, so the
     # target is what must match — splitting on the FIRST `@` because a ref may not contain one.
     calls = [ref for _, ref in entries if ref.split("@", 1)[0] == REUSABLE_RELEASE]
 
@@ -1472,6 +1472,20 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         return
 
     fires = _fires_on_a_release_tag(text)
+    if fires is None:
+        # UNKNOWN IS NOT CONFORMANT — the same verdict the caller-presence half above reaches on an
+        # incomplete parse. Treating an unverifiable trigger as a pass is this very check's own
+        # defect one level up: a `uses:` line the line-scan fallback can still see, paired with an
+        # unparseable `on:`, would report the repository conformant while GitHub never runs the lane.
+        check.fail(
+            f"{RELEASE_WORKFLOW} calls `{REUSABLE_RELEASE}` but its `on:` triggers could not be "
+            "parsed, so whether a release tag reaches the lane is unknown. An unknown shape is not "
+            "a conformant one: install the parser (core's ci-tooling group carries it) and re-run "
+            "rather than reading this as a pass",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
     if fires is False:
         check.fail(
             f"{RELEASE_WORKFLOW} calls `{REUSABLE_RELEASE}` but does not trigger on a tag push, so "
@@ -1484,8 +1498,10 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    trigger = "on a release tag push" if fires else "and its trigger could not be parsed"
-    check.info(f"{RELEASE_WORKFLOW} calls the shared release lane {trigger}; {', '.join(declared)} present")
+    check.info(
+        f"{RELEASE_WORKFLOW} calls the shared release lane on a release tag push; "
+        f"{', '.join(declared)} present"
+    )
     result.checks.append(check)
 
 

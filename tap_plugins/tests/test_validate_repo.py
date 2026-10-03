@@ -600,7 +600,7 @@ def _caller_with_workflow_grant(ref: str, workflow_grant: str) -> str:
 
     The inheriting shape. `_caller_with_grant` fixes the workflow level at `contents: read`, which
     cannot express an inherited `contents: write` or GitHub's `read-all`/`write-all` shorthand —
-    the two shapes the AI review on `PR# 945 - tap` found were failed despite being runnable.
+    the two runnable shapes that an equality test silently failed.
     """
     return (
         f"name: ci\non: [pull_request]\npermissions:\n  {workflow_grant}\n\njobs:\n  tap:\n"
@@ -883,8 +883,8 @@ def _caller_with_workflow_grant_literal(ref: str, literal: str) -> str:
 
 
 class TestEffectiveGrantIsNotEquality:
-    """AI review, `PR# 945 - tap`: the grant arithmetic compared for EQUALITY, so shapes GitHub
-    accepts were failed. Fail-closed, so never a bypass — but a check that reds a runnable
+    """The grant arithmetic once compared scopes for EQUALITY, so shapes GitHub accepts were
+    failed. Fail-closed, so never a bypass — but a check that reds a runnable
     repository teaches people to "fix" a working one, which is how the 2026-09-29 outage was
     instructed in the first place. The same error class as the `-8` half of this change.
     """
@@ -1020,8 +1020,8 @@ class TestReleaseLane:
 
 
     def test_a_lookalike_reusable_path_is_not_the_shared_lane(self, tmp_path: Path) -> None:
-        """AI review, `PR# 945 - tap`, raised independently by both seats: the call was matched with
-        `startswith`, so `…/plugin-release-sbom.yml-disabled@<sha>` counted as the attestation lane.
+        """The call was once matched with `startswith`, so
+        `…/plugin-release-sbom.yml-disabled@<sha>` counted as the attestation lane.
         A repository could pass this check while calling something else entirely — and the pin check
         would accept it too, since it stays under `REUSABLE_PREFIX`. The target is compared exactly.
         """
@@ -1033,6 +1033,32 @@ class TestReleaseLane:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
         assert check.status == "fail", _messages(check)
         assert "no job calls" in _messages(check)
+
+    def test_an_unverifiable_trigger_fails_rather_than_passing(self, tmp_path: Path, monkeypatch) -> None:
+        """Unknown is not conformant, the same verdict the caller-presence half of this check
+        already reaches on an inconclusive parse.
+
+        With no YAML parser the lexical fallback still finds the `uses:` line, so the call is
+        proven — while the `on:` triggers cannot be read at all. Reporting that pair as conformant
+        is this check's own defect one level up: a repository declaring releases would pass while
+        GitHub never runs the lane, which is the unattested first release it exists to catch.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("no yaml for this test")
+            return real_import(name, *args, **kwargs)
+
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": self._release_lane()})
+        (repo / "release-please-config.json").write_text("{}\n")
+        monkeypatch.setattr(builtins, "__import__", _no_yaml)
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "could not be parsed" in _messages(check)
+        assert "An unknown shape is not a conformant one" in _messages(check)
 
     def test_a_lane_that_cannot_fire_fails(self, tmp_path: Path) -> None:
         """Presence of the caller does not prove a release reaches it. A lane triggered only by
