@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/e487d456d9cc (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4e3c17277833 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -4125,7 +4125,7 @@ def _run_batch_scoped_sweep(
 ) -> tuple[list[GriftSweptEntity], list[GriftSweepSkipped]]:
     """Detect and remove entities the prior version of this batch created that
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/498c573cb832 (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/c098e4b6e7fc (derivation)
         — the force-reimport omission sweep.
     are absent in the revised content. Returns (swept_entities, sweep_skipped).
 
@@ -4148,38 +4148,38 @@ def _run_batch_scoped_sweep(
     """
     from django.db.models import Q
 
-    from tap_grid.models import BatchEvent, BatchEventType, Edge
+    from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
 
     # --- Build the new-version id sets (post-apply state). ---
     new_node_ids: set[str] = {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])}
     # An edge this revision skipped for an unresolved endpoint (``skipped_edge_ids``, permissive
-    # mode) was not written by it, so it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
-    # It is absent from the new state, but its earlier write is not retired yet: edge writes are
-    # ``link`` events and the candidates below are ``create`` events only (Issue# 938 - tap).
+    # mode) was not written by it: it is absent from the new state, so its earlier write is a sweep
+    # candidate, and it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
     written_edges = [e for e in batch_container.get("edges", []) if e["entity"]["entity_id"] not in skipped_edge_ids]
     new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in written_edges}
     new_edge_endpoints: list[tuple[str, str]] = [
         (e["edge"]["from_entity_id"], e["edge"]["to_entity_id"]) for e in written_edges
     ]
 
-    # --- Candidates: entities this batch CREATEd that are absent from the new sets. ---
-    create_events = BatchEvent.objects.filter(
-        batch__entity_id=batch_entity_id,
-        event_type=BatchEventType.CREATE,
-    ).values("entity_id", "entity_type")
-
-    candidate_entity_ids: list[tuple[str, str]] = []  # (entity_id, entity_type)
-    swept_node_ids: set[str] = set()
-    swept_edge_ids: set[str] = set()
-    for ev in create_events:
-        eid = str(ev["entity_id"])
-        etype = ev["entity_type"]
-        if etype == "edge" and eid not in new_edge_ids:
-            candidate_entity_ids.append((eid, etype))
-            swept_edge_ids.add(eid)
-        elif etype != "edge" and eid not in new_node_ids:
-            candidate_entity_ids.append((eid, etype))
-            swept_node_ids.add(eid)
+    # --- Candidates: live entities this batch first wrote that are absent from the new sets. ---
+    # A node's first write is a ``create`` event and an edge's a ``link`` event. An entity already
+    # tombstoned (by an earlier sweep, an explicit removal or a cascade) is not a candidate.
+    first_writes: dict[str, str] = {
+        str(ev["entity_id"]): ev["entity_type"]
+        for ev in BatchEvent.objects.filter(batch__entity_id=batch_entity_id)
+        .filter(Q(event_type=BatchEventType.CREATE) | Q(event_type=BatchEventType.LINK, entity_type="edge"))
+        .values("entity_id", "entity_type")
+    }
+    first_write_ids = [uuid.UUID(e) for e in first_writes]
+    live = set(Entity.objects.filter(pk__in=first_write_ids, deleted_at__isnull=True).values_list("pk", flat=True))
+    candidate_entity_ids: list[tuple[str, str]] = [  # (entity_id, entity_type)
+        (eid, etype)
+        for eid, etype in first_writes.items()
+        if uuid.UUID(eid) in live and eid not in (new_edge_ids if etype == "edge" else new_node_ids)
+    ]
+    # Edges first: a node's referential guardrail discounts only an edge already cleared to go,
+    # never one this sweep will keep.
+    candidate_entity_ids.sort(key=lambda c: c[1] != "edge")
 
     if not candidate_entity_ids:
         return [], []
@@ -4187,6 +4187,7 @@ def _run_batch_scoped_sweep(
     swept: list[GriftSweptEntity] = []
     skipped: list[GriftSweepSkipped] = []
     cleared: list[tuple[str, str]] = []  # candidates that passed both guardrails
+    cleared_edge_ids: list[uuid.UUID] = []
 
     # --- Evaluate guardrails per candidate. ---
     for entity_id_str, entity_type in candidate_entity_ids:
@@ -4214,7 +4215,7 @@ def _run_batch_scoped_sweep(
             surviving_existing = (
                 Edge.all_objects.filter(Q(from_entity_id=candidate_uuid) | Q(to_entity_id=candidate_uuid))
                 .filter(entity__deleted_at__isnull=True)
-                .exclude(entity_id__in=[uuid.UUID(e) for e in swept_edge_ids])
+                .exclude(entity_id__in=cleared_edge_ids)
             )
             if surviving_existing.exists():
                 skipped.append(
@@ -4239,6 +4240,8 @@ def _run_batch_scoped_sweep(
                 continue
 
         cleared.append((entity_id_str, entity_type))
+        if entity_type == "edge":
+            cleared_edge_ids.append(uuid.UUID(entity_id_str))
 
     # --- Strict-mode abort: any skip cancels the entire force re-import. ---
     if sweep_strict and skipped:
