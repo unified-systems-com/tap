@@ -52,6 +52,7 @@ class _RejectedResult:
 class _Batch:
     def __init__(self, bid: str) -> None:
         self.batch_entity_id = bid
+        self.skips: list[object] = []  # mirrors GriftImportedBatch: a clean import skipped no edge
 
 
 class _CleanCounts:

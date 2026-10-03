@@ -109,6 +109,7 @@ __all__ = [
     "purge_edge",
     "resolve_identity",
     "resolve_edge_identity",
+    "find_by_natural_key",
     # Read API (grid.read)
     "resolve_entity",
     "get_node",
@@ -1477,6 +1478,50 @@ def resolve_identity(
     if row is None:
         return IdentityResolution(entity_id=assigned, found=False, key=key)
     return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
+
+
+@requires_capability(READ_CAPABILITY, operation="find_by_natural_key")
+def find_by_natural_key(
+    type_slug: str,
+    properties: Mapping[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+) -> uuid.UUID | None:
+    """The live row a node type's declared natural key names, or None. Never creates one.
+
+    The read half of :func:`resolve_identity`: the same generated search over live rows, with no
+    lock and no assignment, because a caller naming a node by key (an edge endpoint,
+    ``req-grid-import-grift-edge-endpoints``) wants the node that exists and must never mint
+    one. ``properties`` carries exactly the type's declared constituting properties.
+
+    Args:
+        type_slug: Registered node type slug; it must declare a ``NATURAL_KEY``.
+        properties: The declared constituting values.
+        caller_context: Actor identity.
+
+    Returns:
+        The live row's entity id, or None when no live row matches.
+
+    Raises:
+        ServiceValidationError: Unknown type, or a type that declares no natural key.
+        AmbiguousIdentity: More than one live row matches.
+    """
+    from tap_grid.registry import get_model_class
+
+    try:
+        model_cls = cast(type[BaseModel], get_model_class(type_slug))
+    except KeyError as exc:
+        raise ServiceValidationError(f"Unknown entity type {type_slug!r}.") from exc
+    if not isinstance(model_cls.NATURAL_KEY, tuple):
+        raise ServiceValidationError(f"{type_slug} declares no NATURAL_KEY, so nothing can be found by key.")
+    # Exactly the declared names, nothing else: no ORM lookup suffix or extra field reaches the
+    # filter (find_existing enforces the same; this makes it the service's refusal).
+    if set(properties) != set(model_cls.NATURAL_KEY):
+        raise ServiceValidationError(
+            f"{type_slug} is found by exactly {list(model_cls.NATURAL_KEY)}; got {sorted(properties)}."
+        )
+    row = model_cls.find_existing(**properties)
+    return None if row is None else row.entity_id
 
 
 @requires_capability(WRITE_CAPABILITY, operation="resolve_edge_identity")

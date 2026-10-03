@@ -60,6 +60,9 @@ from tap_cares.exceptions import GriftRejectedError
 # record_* call-site token (minted via scripts/log-site-id; unique within
 # this file, enforced by the repo-wide site-uniqueness test).
 _SITE_GRIFT_REJECTED = "4613"
+_SITE_GRIFT_EDGES_SKIPPED = "7381"
+#: How many skipped edges a run record lists by event id; the count is always exact.
+_SKIPS_RECORDED = 100
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "collection_job_results.schema.json"
 _SCHEMA: dict[str, Any] = load_schema(_SCHEMA_PATH)
@@ -340,6 +343,32 @@ class CollectorBase(ABC):
 
         self._produced_batches.extend((str(b.batch_entity_id), "imported") for b in result.imported_batches)
         self._produced_batches.extend((str(b.batch_entity_id), "skipped") for b in result.skipped_batches)
+
+        # Edges a permissive import declined to write for an unresolved endpoint: each has a
+        # `skip` BatchEvent of its batch, and the run record names them by event id, so a reader
+        # of the run finds them without the logs (req-grid-import-grift-edge-endpoints-8).
+        skips = [skip for b in result.imported_batches for skip in b.skips]
+        if skips:
+            self.record_warn(
+                _SITE_GRIFT_EDGES_SKIPPED,
+                "GRIFT_EDGES_SKIPPED",
+                f"{len(skips)} edge(s) were not written because an endpoint did not resolve; each is recorded as "
+                "a skip event of its batch.",
+                message_data={
+                    "count": len(skips),
+                    # Capped so a run that skips many edges keeps a readable record; every skip is
+                    # still a BatchEvent of its batch, queryable in full.
+                    "skips": [
+                        {
+                            "event_id": s["event_id"],
+                            "edge_entity_id": s["edge_entity_id"],
+                            "edge_type": s["edge_type"],
+                            "unresolved": s["unresolved"],
+                        }
+                        for s in skips[:_SKIPS_RECORDED]
+                    ],
+                },
+            )
 
         if result.errors and on_rejection == "abort":
             # Name the offender: the importer's issues carry entity_type + path —
