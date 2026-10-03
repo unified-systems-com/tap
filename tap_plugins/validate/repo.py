@@ -1371,6 +1371,39 @@ def _declares_releases(repo_root: Path) -> list[str]:
 #: conditional lane.
 _STATICALLY_FALSE_IF = frozenset({"false", "0", "''", '""'})
 
+#: A comparison of two LITERALS — `'a' == 'b'`, `1 != 1`. Both sides are constants, so the result
+#: is decidable by reading the file and a false one disables the job as surely as `if: false`.
+#: A comparison involving `github.*`, `inputs.*` or a secret is NOT matched: those are runtime
+#: context, and guessing at them would red conditional lanes that work.
+_LITERAL_COMPARISON_RE = re.compile(
+    r"""^(?P<left>'[^']*'|"[^"]*"|-?\d+(?:\.\d+)?|true|false)\s*"""
+    r"""(?P<op>==|!=)\s*"""
+    r"""(?P<right>'[^']*'|"[^"]*"|-?\d+(?:\.\d+)?|true|false)$""",
+    re.IGNORECASE,
+)
+
+
+def _literal_comparison_is_false(expr: str) -> bool:
+    """Whether *expr* is a comparison of two literals that evaluates to false.
+
+    Only literals. The guard's whole justification is that it decides what the file decides, and a
+    constant comparison qualifies while `github.repository_owner == '…'` does not — that one needs
+    the event, so it stays accepted even though a reader can often guess the answer.
+    """
+    m = _LITERAL_COMPARISON_RE.match(expr.strip())
+    if m is None:
+        return False
+
+    def _norm(token: str) -> str:
+        token = token.strip()
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            return token[1:-1]
+        return token.lower()
+
+    left, right = _norm(m.group("left")), _norm(m.group("right"))
+    equal = left == right
+    return not equal if m.group("op") == "==" else equal
+
 
 def _release_job_is_disabled(text: str, lineno: int) -> bool:
     """Whether the job whose ``uses:`` sits at *lineno* carries a statically false ``if:``.
@@ -1411,7 +1444,9 @@ def _release_job_is_disabled(text: str, lineno: int) -> bool:
         raw = str(cond.value).strip()
         if raw.startswith("${{") and raw.endswith("}}"):
             raw = raw[3:-2].strip()
-        return raw.lower() in _STATICALLY_FALSE_IF
+        if raw.lower() in _STATICALLY_FALSE_IF:
+            return True
+        return _literal_comparison_is_false(raw)
     return False
 
 

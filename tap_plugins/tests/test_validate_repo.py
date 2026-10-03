@@ -1077,6 +1077,42 @@ class TestReleaseLane:
         assert check.status == "fail", _messages(check)
         assert "never runs" in _messages(check)
 
+    def test_a_false_literal_comparison_disables_the_job(self, tmp_path: Path) -> None:
+        """`${{ 'a' == 'b' }}` is two constants, so the file itself decides the answer and the job
+        never runs. The guard's justification is that it decides what the file decides, so a
+        constant comparison has to be in scope or the justification is only half applied."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ 'a' == 'b' }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "never runs" in _messages(check)
+
+    def test_a_true_literal_comparison_is_accepted(self, tmp_path: Path) -> None:
+        """The other direction, so the guard is not just "any comparison fails"."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ 'v' == 'v' }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
+    def test_a_context_comparison_is_left_alone(self, tmp_path: Path) -> None:
+        """`github.repository_owner == '…'` needs the event. A reader can often guess the answer,
+        which is exactly why the guard must not: guessing reds conditional lanes that work, and
+        teaching authors to delete conditions to quiet a checker is the fail-open mirror."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n",
+            "  release-sbom:\n    if: ${{ github.repository_owner == 'someone-else' }}\n",
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
     def test_a_condition_that_cannot_be_decided_is_not_reported(self, tmp_path: Path) -> None:
         """Only STATICALLY false conditions fail. A condition referencing the event cannot be
         decided by reading the file, and failing it would red every legitimately conditional lane —
