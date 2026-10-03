@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/ecef6eff35fb (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/e487d456d9cc (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2684,7 +2684,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/7fead304e3e5 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/476d67ac7abd (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3368,6 +3368,7 @@ def _execute_grift_batch(
                     caller_ctx=ctx,
                     sweep_strict=sweep_strict,
                     purge=purge,
+                    skipped_edge_ids=frozenset(dangling_edge_ids),
                 )
                 # Emit the FORCE_REIMPORT batch event.
                 _emit_force_reimport_event(
@@ -4120,10 +4121,11 @@ def _run_batch_scoped_sweep(
     caller_ctx: CallerContext,
     sweep_strict: bool,
     purge: bool,
+    skipped_edge_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[GriftSweptEntity], list[GriftSweepSkipped]]:
     """Detect and remove entities the prior version of this batch created that
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/a2faed40473c (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/498c573cb832 (derivation)
         — the force-reimport omission sweep.
     are absent in the revised content. Returns (swept_entities, sweep_skipped).
 
@@ -4150,13 +4152,13 @@ def _run_batch_scoped_sweep(
 
     # --- Build the new-version id sets (post-apply state). ---
     new_node_ids: set[str] = {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])}
-    new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in batch_container.get("edges", [])}
-    # An edge skipped for an unresolved key endpoint carries no ids and was never written, so it
-    # keeps no candidate alive (req-grid-import-grift-edge-endpoints-6).
+    # An edge this revision skipped for an unresolved endpoint (``skipped_edge_ids``, permissive
+    # mode) was not written by it: it is absent from the new state, so its earlier write is a sweep
+    # candidate, and it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
+    written_edges = [e for e in batch_container.get("edges", []) if e["entity"]["entity_id"] not in skipped_edge_ids]
+    new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in written_edges}
     new_edge_endpoints: list[tuple[str, str]] = [
-        (e["edge"]["from_entity_id"], e["edge"]["to_entity_id"])
-        for e in batch_container.get("edges", [])
-        if "from_entity_id" in e["edge"] and "to_entity_id" in e["edge"]
+        (e["edge"]["from_entity_id"], e["edge"]["to_entity_id"]) for e in written_edges
     ]
 
     # --- Candidates: entities this batch CREATEd that are absent from the new sets. ---

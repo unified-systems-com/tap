@@ -273,6 +273,47 @@ class TestUnresolved:
 
 
 @pytest.mark.django_db
+class TestForceReimport:
+    @pytest.fixture(autouse=True)
+    def _debug_on(self, settings: Any) -> None:
+        settings.DEBUG = True  # force re-import is DEBUG-only
+
+    @SPEC[6]
+    def test_a_skipped_edge_keeps_no_dropped_node_alive(self) -> None:
+        """A node the revision drops is swept even when a skipped edge of the revision names it."""
+        source, target = _panel("source"), _panel("target")
+        batch_id = _batch_entity_id()
+        first = _minimal_doc([_batch_container(batch_id, nodes=[source, target])])
+        assert grift_import(first).success
+        skipped = _edge(from_entity_id=str(uuid.uuid4()), to_entity_id=source["entity"]["entity_id"])
+        revised = _minimal_doc([_batch_container(batch_id, nodes=[target], edges=[skipped])])
+        result = grift_import(revised, force_batches=[batch_id], dangling_edge_mode="permissive")
+        assert result.success, result.errors
+        assert Entity.objects.get(pk=uuid.UUID(source["entity"]["entity_id"])).deleted_at is not None
+        assert len(_skip_events()) == 1
+
+    @SPEC[6]
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Issue# 938 - tap: the force-reimport sweep never retires edges (candidates are CREATE events; "
+        "edges are recorded as link).",
+    )
+    def test_an_edge_the_revision_skips_is_swept(self) -> None:
+        source, target = _panel("source"), _panel("target")
+        batch_id, edge_id = _batch_entity_id(), str(uuid.uuid4())
+
+        def version(edge: dict[str, Any]) -> Any:
+            return _minimal_doc([_batch_container(batch_id, nodes=[source, target], edges=[edge])])
+
+        source_id, target_id = source["entity"]["entity_id"], target["entity"]["entity_id"]
+        assert grift_import(version(_edge(edge_id=edge_id, from_entity_id=source_id, to_entity_id=target_id))).success
+        revised = version(_edge(edge_id=edge_id, from_key=_key("nobody"), to_entity_id=target_id))
+        result = grift_import(revised, force_batches=[batch_id], dangling_edge_mode="permissive")
+        assert result.success, result.errors
+        assert Entity.objects.get(pk=uuid.UUID(edge_id)).deleted_at is not None
+
+
+@pytest.mark.django_db
 class TestResolutionIsARead:
     @SPEC[9]
     def test_an_actor_refused_read_is_refused_the_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
