@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -112,7 +113,7 @@ _MARKER = "<!-- unified-ai-review -->"
 _needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="split_bot_comments is a jq program; jq is not installed here")
 
 
-def _split(comments: list[dict]) -> dict:
+def _split(comments: list[dict[str, Any]]) -> dict[str, Any]:
     """Run the script's `split_bot_comments` on a comment list — no network, no API."""
     import json
 
@@ -129,10 +130,11 @@ def _split(comments: list[dict]) -> dict:
             text=True,
             check=True,
         ).stdout
-    return json.loads(out)
+    result: dict[str, Any] = json.loads(out)
+    return result
 
 
-def _comment(login: str, body: str) -> dict:
+def _comment(login: str, body: str) -> dict[str, Any]:
     return {"user": {"login": login}, "body": body, "html_url": f"https://example.test/{login}"}
 
 
