@@ -107,6 +107,24 @@
         }
       }
     },
+    "GriftEndpointKey": {
+      "type": "object",
+      "description": "An edge endpoint named by its node type and natural key instead of an id: the key carries exactly the properties the type declares as its NATURAL_KEY, and the receiving grid's declaration decides what they mean (req-grift-edge-identity-surface-2).",
+      "additionalProperties": false,
+      "required": ["entity_type", "key"],
+      "properties": {
+        "entity_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The endpoint node's type slug; it must declare a NATURAL_KEY."
+        },
+        "key": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "One value per declared NATURAL_KEY property (a dotted path where the declaration uses one), and no others."
+        }
+      }
+    },
     "GriftEdgePayload": {
       "type": "object",
       "additionalProperties": false,
@@ -119,7 +137,11 @@
         "from_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "The edge's source named by a node ref of the same batch; exactly one of from_entity_id and from_ref is present."
+          "description": "The edge's source named by a node ref of the same batch; exactly one of from_entity_id, from_ref and from_key is present."
+        },
+        "from_key": {
+          "$ref": "#/$defs/GriftEndpointKey",
+          "description": "The edge's source named by type and natural key, resolved against this batch's nodes, then the live grid (req-grid-import-grift-edge-endpoints); exactly one of from_entity_id, from_ref and from_key is present."
         },
         "to_entity_id": {
           "type": "string",
@@ -128,7 +150,11 @@
         "to_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "The edge's target named by a node ref of the same batch; exactly one of to_entity_id and to_ref is present."
+          "description": "The edge's target named by a node ref of the same batch; exactly one of to_entity_id, to_ref and to_key is present."
+        },
+        "to_key": {
+          "$ref": "#/$defs/GriftEndpointKey",
+          "description": "The edge's target named by type and natural key, resolved against this batch's nodes, then the live grid (req-grid-import-grift-edge-endpoints); exactly one of to_entity_id, to_ref and to_key is present."
         },
         "edge_type": {
           "type": "string",
@@ -146,6 +172,9 @@
             },
             {
               "required": ["from_ref"]
+            },
+            {
+              "required": ["from_key"]
             }
           ]
         },
@@ -156,6 +185,9 @@
             },
             {
               "required": ["to_ref"]
+            },
+            {
+              "required": ["to_key"]
             }
           ]
         }

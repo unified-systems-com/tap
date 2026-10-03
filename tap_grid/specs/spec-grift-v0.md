@@ -970,7 +970,7 @@ RID: `req-grift-edge-identity-surface`
 
 Status: `Proposed`
 
-Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Every shape below is a proposal: the schemas in this document and `grift-document.schema.json` do not yet carry them and still reject them, and each is added in the same change as the importer code that honours it, so no field is ever accepted and then dropped.
+Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Each shape is added to `grift-document.schema.json` in the same change as the importer code that honours it, so no field is ever accepted and then dropped. The endpoint by natural key has landed (Issue# 914 - tap); removal by identity and the `edge_cases` section are still proposals the schema rejects.
 
 #### Status Details
 Proposed (Issue# 912 - tap; epic Issue# 911 - tap).

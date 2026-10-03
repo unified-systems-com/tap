@@ -1490,6 +1490,10 @@ class BatchEventType(models.TextChoices):
     LINK = "link", "Link (edge creation)"
     UNLINK = "unlink", "Unlink (edge deletion)"
     FORCE_REIMPORT = "force_reimport", "Force Re-Import"
+    # An edge the importer declined to write because an endpoint did not resolve
+    # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own
+    # transaction; entity_id is the edge's provisional id, which no entity has.
+    SKIP = "skip", "Skip (edge not written)"
 
 
 class BatchEvent(models.Model):

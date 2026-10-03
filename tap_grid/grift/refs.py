@@ -74,10 +74,25 @@ def uses_refs(document: dict[str, Any]) -> bool:
     return False
 
 
+def uses_endpoint_keys(document: dict[str, Any]) -> bool:
+    """True when any edge endpoint names a node by type and natural key (``from_key`` / ``to_key``).
+
+    Such an endpoint is rewritten to an id inside the batch transaction
+    (``req-grid-import-grift-edge-endpoints``), so a document carrying one is resolved on a copy,
+    exactly as a document carrying refs is: the caller's dict is never rewritten.
+    """
+    for batch in _batches(document):
+        for edge in _items(batch, "edges"):
+            payload = edge.get("edge")
+            if isinstance(payload, dict) and ("from_key" in payload or "to_key" in payload):
+                return True
+    return False
+
+
 def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_only) -> RefResolution:
     """Rewrite every ref in ``document`` to an id, on a copy; report what could not be resolved.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@ce374e22e149/ffd1838762d5 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@ce374e22e149/6d49a134f0d2 (derivation) — the one
         pass that turns a batch-local ref into the id every later stage and record sees
         (acceptance -3); the id itself is assigned by the resolver, never derived from the ref.
 
@@ -87,6 +102,8 @@ def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_
     the same batch. A batch entity is never a ref — it is the import identity.
     """
     if not uses_refs(document):
+        if uses_endpoint_keys(document):
+            return RefResolution(document=copy.deepcopy(document))
         return RefResolution(document=document)
 
     resolved_document = copy.deepcopy(document)
