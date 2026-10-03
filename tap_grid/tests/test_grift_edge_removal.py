@@ -11,6 +11,7 @@ yet, so the tests declare them for their own duration, as ``test_grift_edge_iden
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 from django.db import transaction
 
+from tap_grid.cascade_corpus.timing import finish, in_thread
 from tap_grid.edge_identity import IncompleteEdgeKey, _edge_identity_registry, register_edge_identity
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift import grift_import
@@ -235,6 +237,47 @@ class TestReplay:
         assert replay.success, replay.errors
         assert not _live(returned)
         assert not _live(first)
+
+
+@pytest.mark.django_db(transaction=True)
+class TestTwoDeleters:
+    @SPEC[2]
+    def test_ending_the_same_edges_in_opposite_orders_does_not_deadlock(
+        self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each batch looks one edge up, then waits until the other has looked one up too.
+
+        Taken in document order, each batch would hold one edge's lock while waiting for the
+        other's, a deadlock Postgres breaks by failing one batch. Taken in lock-key order, both
+        batches start with the same edge: the second waits for the first to commit, and both succeed.
+        """
+        from tap_grid.grift import importer
+
+        a, b = pair
+        (c,) = _ids(_node(name="c"))
+        ab, ac = _write(_edge(a, b), _edge(a, c))
+        both_looked = threading.Barrier(2, timeout=3)
+        real_lookup = find_edge_by_identity  # the function the importer imported
+        waited = threading.local()
+
+        def look_up_then_wait(*args: Any, **kwargs: Any) -> Any:
+            found = real_lookup(*args, **kwargs)
+            if not getattr(waited, "once", False):
+                waited.once = True
+                try:
+                    both_looked.wait()
+                except threading.BrokenBarrierError:
+                    pass  # the other batch is queued on this one's lock, which is the point
+            return found
+
+        monkeypatch.setattr(importer, "find_edge_by_identity", look_up_then_wait)
+        forward = (_by_identity(_at(a), _at(b)), _by_identity(_at(a), _at(c)))
+        first = in_thread(lambda: _import(deletes=_deletes(*forward, on_missing="ignore")))
+        second = in_thread(lambda: _import(deletes=_deletes(*reversed(forward), on_missing="ignore")))
+        finish(first, second)
+        r1, r2 = first[1].value, second[1].value
+        assert r1.success and r2.success, (r1.errors, r2.errors)
+        assert not _live(ab) and not _live(ac)
 
 
 @pytest.mark.django_db

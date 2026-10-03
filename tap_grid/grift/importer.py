@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4336a8617fb1 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d713fd28ca59 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -3956,7 +3956,11 @@ def _resolve_removal_identities(
     another target of this batch names, or an edge this batch also upserts, fails the batch, every
     such target listed first. Resolving reads the grid, so the import authorises ``grid.read``.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/5eb29ae1ec3e (derivation) — the
+    The endpoints are found first, since that takes no lock; then the edges are looked up in the
+    order of their lock keys, not the document's, so two batches ending overlapping relationships
+    take those locks in one order and never each hold one while waiting for the other's.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/5baf02cc1901 (derivation) — the
         resolution of a delete by identity: the live match at execution, missing by on_missing,
         ambiguity and duplicates refused, under grid.read and the identity lock.
 
@@ -3966,6 +3970,7 @@ def _resolve_removal_identities(
     """
     from tap_auth import policy
     from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid.edge_identity import edge_lock_key
     from tap_grid.registry import get_model_class
 
     targets = parsed_removals.deletes_edge_identities
@@ -3994,37 +3999,49 @@ def _resolve_removal_identities(
             )
         )
 
+    def missing(target: _ParsedIdentityRemoval) -> bool:
+        """Apply ``deletes.on_missing`` to a target that matched nothing; True when it fails the batch."""
+        nonlocal skipped
+        message = f"The delete at {target.path} matches no live {target.edge_type} edge"
+        if on_missing == "error":
+            note("removal_target_missing", f"{message} (section=deletes, on_missing=error).", target.path)
+            return True
+        if on_missing == "warn":
+            note("removal_target_missing_warned", f"{message}; on_missing=warn — skipping.", target.path)
+        skipped += 1
+        return False
+
+    def endpoint_id(endpoint: dict[str, Any]) -> str | None:
+        if "entity_id" in endpoint:
+            return str(endpoint["entity_id"])
+        model_cls: Any = get_model_class(endpoint["entity_type"])
+        properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
+        return _find_node_by_key(endpoint["entity_type"], properties, batch_keys, ctx)
+
+    located: list[tuple[str, _ParsedIdentityRemoval, str, str]] = []  # (lock key, target, from, to)
     for target in targets:
-        ends: dict[str, str | None] = {}
         try:
-            for side, endpoint in target.endpoints.items():
-                if "entity_id" in endpoint:
-                    ends[side] = endpoint["entity_id"]
-                    continue
-                model_cls: Any = get_model_class(endpoint["entity_type"])
-                properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
-                ends[side] = _find_node_by_key(endpoint["entity_type"], properties, batch_keys, ctx)
-            source, sink = ends["from"], ends["to"]
-            found_id = (
-                find_edge_by_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
-                    target.edge_type, source, sink, target.discriminators, caller_context=ctx
-                )
-                if source is not None and sink is not None
-                else None
+            source, sink = endpoint_id(target.endpoints["from"]), endpoint_id(target.endpoints["to"])
+        except AmbiguousIdentity as exc:
+            note("identity_ambiguous", f"The delete at {target.path}: {exc}", target.path)
+            failed = True
+            continue
+        if source is None or sink is None:
+            failed = missing(target) or failed
+            continue
+        located.append((edge_lock_key(target.edge_type, source, sink, target.discriminators), target, source, sink))
+
+    for _, target, source, sink in sorted(located, key=lambda entry: entry[0]):
+        try:
+            found_id = find_edge_by_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                target.edge_type, source, sink, target.discriminators, caller_context=ctx
             )
         except AmbiguousIdentity as exc:
             note("identity_ambiguous", f"The delete at {target.path}: {exc}", target.path)
             failed = True
             continue
         if found_id is None:
-            message = f"The delete at {target.path} matches no live {target.edge_type} edge"
-            if on_missing == "error":
-                note("removal_target_missing", f"{message} (section=deletes, on_missing=error).", target.path)
-                failed = True
-                continue
-            if on_missing == "warn":
-                note("removal_target_missing_warned", f"{message}; on_missing=warn — skipping.", target.path)
-            skipped += 1
+            failed = missing(target) or failed
             continue
         found = str(found_id)
         if found in named:
