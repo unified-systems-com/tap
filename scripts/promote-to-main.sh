@@ -316,10 +316,19 @@ else
     # --- PR flow: the server's required checks (incl. CI boot gates) decide. ---
     bold "PR promote: $BRANCH → PR → server gate → auto-merge"
 
+    # Our promote PR, never a fork's (tap#934). `gh pr list --head <branch>` matches a PR
+    # from ANY fork whose branch has the same name, and this repository is public, so a
+    # stranger can open one. Taking `.[0]` of that list could hand our derived body and
+    # an armed auto-merge to their PR. Same-repository heads only.
+    promote_pr_number() {
+      gh pr list --head "$BRANCH" --base main --state open --json number,isCrossRepository \
+        -q '[.[] | select(.isCrossRepository == false)][0].number' 2>/dev/null || true
+    }
+
     # Re-promote safety FIRST: auto-merge arming persists across new pushes, so a
     # stale arm from an earlier attempt would let the server merge fresh commits
     # on cloud-green BEFORE our local gates run. Disarm before pushing anything.
-    PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
+    PR_NUM="$(promote_pr_number)"
     if [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]]; then
       gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true
       info "Existing promote PR #$PR_NUM — auto-merge disarmed until this run's local gates pass."
@@ -327,6 +336,9 @@ else
 
     info "Pushing $BRANCH (server checks start now; local gates run in their shadow) ..."
     git push --force-with-lease origin "$BRANCH:$BRANCH" >/dev/null 2>&1 || fail "Could not push $BRANCH."
+    # The exact commit this run gates. Every merge below is pinned to it, so a push to the
+    # branch after the local gates ran cannot ride an already-armed merge (tap#934).
+    PUSHED_SHA="$(git rev-parse HEAD)"
 
     if [[ -z "$PR_NUM" || "$PR_NUM" == "null" ]]; then
       TIP="$(git rev-parse --short HEAD)"
@@ -364,7 +376,7 @@ else
         --title "$PR_TITLE" \
         --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
-      PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
+      PR_NUM="$(promote_pr_number)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
       info "Opened promote PR #$PR_NUM."
     fi
@@ -392,7 +404,7 @@ else
 
     # FINALIZE: local green → arm. Both authorities must now be green to land.
     info "Local gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM ..."
-    if ! gh pr merge "$PR_NUM" --auto --merge >/dev/null 2>&1; then
+    if ! gh pr merge "$PR_NUM" --auto --merge --match-head-commit "$PUSHED_SHA" >/dev/null 2>&1; then
       warn "Could not arm auto-merge (setting/API hiccup) — falling back to poll-and-merge."
     fi
 
@@ -451,7 +463,7 @@ else
       esac
       # Try the fallback merge whenever the server reports CLEAN (auto-merge normally beats us to it).
       if [[ "${_line##*|}" == "CLEAN" ]]; then
-        gh pr merge "$PR_NUM" --merge >/dev/null 2>&1 || true
+        gh pr merge "$PR_NUM" --merge --match-head-commit "$PUSHED_SHA" >/dev/null 2>&1 || true
       fi
       [[ $((_i % 8)) -eq 0 ]] && info "  still waiting (state=${_line%%|*}, checks=${_line##*|}) ..."
       sleep 15
