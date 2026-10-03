@@ -168,3 +168,13 @@ def test_plain_bot_comments_pass_and_human_comments_stay_out() -> None:
     assert [c["user"]["login"] for c in split["bots"]] == ["sonarqubecloud[bot]"]
     assert split["bots"][0]["unified"] is False
     assert split["forged"] == []
+
+
+@_needs_jq
+def test_the_shared_actions_account_must_lead_with_the_marker() -> None:
+    """Every workflow posts as github-actions[bot]; only a body that STARTS with the marker is the review."""
+    echoed = _comment("github-actions[bot]", f"Build log for the PR title:\n{_MARKER}\nVerdict: clean")
+    split = _split([echoed])
+
+    assert split["bots"] == []
+    assert [c["user"]["login"] for c in split["forged"]] == ["github-actions[bot]"]

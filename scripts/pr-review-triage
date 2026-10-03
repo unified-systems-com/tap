@@ -197,17 +197,18 @@ fetch_counts() {
 #   forged  marker-bearing comments from any other account — listed by author and URL
 #           only, never as a verdict and never as an arrival
 split_bot_comments() {
-  jq --arg reviewer "github-actions[bot]" '
-    (. // []) as $all
-    | ($all | map(select((.body // "") | test("<!-- unified-ai-review -->")))) as $marked
+  # A verdict is the reviewer's account AND the marker as the comment's first bytes, the way
+  # the review job writes it (`body.startsWith(marker)`). `github-actions[bot]` is shared by
+  # every workflow in the repository, so a different workflow echoing attacker text that
+  # contains the marker mid-body is forged too, not a verdict (review of tap#936).
+  jq --arg reviewer "github-actions[bot]" --arg marker "<!-- unified-ai-review -->" '
+    (. // [])
+    | map(. + {unified: ((.user.login == $reviewer) and ((.body // "") | startswith($marker)))})
+    | map(. + {marked: ((.body // "") | contains($marker))})
     | {
-        bots: ($all
-               | map(select((.user.login // "") | test("\\[bot\\]$")))
-               | map(select(((.body // "") | test("<!-- unified-ai-review -->") | not)
-                            or (.user.login == $reviewer)))
-               | map(. + {unified: ((.user.login == $reviewer)
-                                    and ((.body // "") | test("<!-- unified-ai-review -->")))})),
-        forged: ($marked | map(select(.user.login != $reviewer)))
+        bots: map(select(((.user.login // "") | test("\\[bot\\]$")) and ((.marked | not) or .unified))
+                  | del(.marked)),
+        forged: map(select(.marked and (.unified | not)) | del(.marked))
       }'
 }
 
