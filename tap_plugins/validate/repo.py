@@ -105,7 +105,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@f7a42076da13/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@8b7ff7546489/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -1383,8 +1383,8 @@ _LITERAL_COMPARISON_RE = re.compile(
 )
 
 
-def _literal_comparison_is_false(expr: str) -> bool:
-    """Whether *expr* is a comparison of two literals that evaluates to false.
+def _literal_comparison_decides(expr: str) -> bool | None:
+    """The value of *expr* when it is a comparison of two literals, else ``None``.
 
     Only literals. The guard's whole justification is that it decides what the file decides, and a
     constant comparison qualifies while `github.repository_owner == '…'` does not — that one needs
@@ -1392,7 +1392,7 @@ def _literal_comparison_is_false(expr: str) -> bool:
     """
     m = _LITERAL_COMPARISON_RE.match(expr.strip())
     if m is None:
-        return False
+        return None
 
     def _norm(token: str) -> str:
         token = token.strip()
@@ -1402,26 +1402,39 @@ def _literal_comparison_is_false(expr: str) -> bool:
 
     left, right = _norm(m.group("left")), _norm(m.group("right"))
     equal = left == right
-    return not equal if m.group("op") == "==" else equal
+    return equal if m.group("op") == "==" else not equal
 
 
-def _release_job_is_disabled(text: str, lineno: int) -> bool:
-    """Whether the job whose ``uses:`` sits at *lineno* carries a statically false ``if:``.
+def _release_job_condition(text: str, lineno: int) -> str:
+    """The decidability of the ``if:`` on the job whose ``uses:`` sits at *lineno*.
 
-    Deliberately narrow. A condition this cannot decide is NOT reported — the check would otherwise
-    fail a lane that is conditional for a good reason, and over-reporting here is the fail-open
-    direction's mirror: it teaches authors to delete a condition to quiet a checker.
+    Three answers, because the verdict has three honest states and collapsing them loses the one
+    that matters:
+
+    * ``"absent"`` — no condition; the job runs whenever the workflow triggers.
+    * ``"false"``  — decided false by reading the file (`false`, `${{ false }}`, `'a' == 'b'`).
+      The job is dead, so the lane attests nothing.
+    * ``"true"``   — decided true by reading the file.
+    * ``"unknown"`` — the condition needs the event, an input or a secret.
+
+    **Why ``"unknown"`` is neither a pass nor a failure.** This requirement claims every release is
+    attested, and a condition nobody can evaluate statically does not establish that — so reporting
+    it as conformant overstates what was checked. But refusing it outright would forbid a construct
+    core itself uses (`plugin-ci.yml` gates its upload job on `inputs.plugin_repo == ''`), and a
+    guard against releasing from a fork is a GOOD condition to have on a release job. So it warns:
+    the property is not established here, and the reader decides. Failing it would teach authors to
+    delete a condition to quiet a checker, which is how the 2026-09-29 outage was instructed.
     """
     try:
         import yaml
     except ImportError:  # pragma: no cover - shares the fallback path's test
-        return False
+        return "absent"
     try:
         root = yaml.compose(text)
     except yaml.YAMLError:
-        return False
+        return "absent"
     if not isinstance(root, yaml.MappingNode):
-        return False
+        return "absent"
 
     def _get(node: object, key: str) -> object:
         if not isinstance(node, yaml.MappingNode):
@@ -1433,21 +1446,26 @@ def _release_job_is_disabled(text: str, lineno: int) -> bool:
 
     jobs = _get(root, "jobs")
     if not isinstance(jobs, yaml.MappingNode):
-        return False
+        return "absent"
     for _job_id, job in jobs.value:
         uses = _get(job, "uses")
         if not (isinstance(uses, yaml.ScalarNode) and uses.start_mark.line + 1 == lineno):
             continue
         cond = _get(job, "if")
         if not isinstance(cond, yaml.ScalarNode):
-            return False
+            return "absent"
         raw = str(cond.value).strip()
         if raw.startswith("${{") and raw.endswith("}}"):
             raw = raw[3:-2].strip()
         if raw.lower() in _STATICALLY_FALSE_IF:
-            return True
-        return _literal_comparison_is_false(raw)
-    return False
+            return "false"
+        if raw.lower() in {"true", "1"}:
+            return "true"
+        decided = _literal_comparison_decides(raw)
+        if decided is not None:
+            return "false" if decided is False else "true"
+        return "unknown"
+    return "absent"
 
 
 def _fires_on_a_release_tag(text: str) -> bool | None:
@@ -1624,7 +1642,8 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    if _release_job_is_disabled(text, line):
+    condition = _release_job_condition(text, line)
+    if condition == "false":
         check.fail(
             f"{RELEASE_WORKFLOW}:{line} calls the release lane from a job whose `if:` is false "
             "before any event is considered, so the job never runs. Every other property here is "
@@ -1635,6 +1654,18 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
+    if condition == "unknown":
+        # The property this check asserts is "a repository that cuts releases attests them", and a
+        # condition that needs the event does not establish it. Saying so is honest; failing it
+        # would forbid a guard against releasing from a fork, which is a condition worth having.
+        check.warn(
+            f"{RELEASE_WORKFLOW}:{line} calls the release lane from a job whose `if:` depends on "
+            "the event, so whether a release reaches the lane cannot be established by reading the "
+            "file. The condition may well be correct — a guard against releasing from a fork is "
+            "worth having — but this check cannot prove every release is attested while it is "
+            "there. Confirm by hand that a release tag on this repository satisfies it",
+            path=RELEASE_WORKFLOW,
+        )
 
     check.info(
         f"{RELEASE_WORKFLOW} calls the shared release lane on a release tag push, granting "

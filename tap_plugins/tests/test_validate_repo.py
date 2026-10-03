@@ -1100,10 +1100,14 @@ class TestReleaseLane:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
         assert check.status == "pass", _messages(check)
 
-    def test_a_context_comparison_is_left_alone(self, tmp_path: Path) -> None:
-        """`github.repository_owner == '…'` needs the event. A reader can often guess the answer,
-        which is exactly why the guard must not: guessing reds conditional lanes that work, and
-        teaching authors to delete conditions to quiet a checker is the fail-open mirror."""
+    def test_a_context_condition_warns_rather_than_passing_or_failing(self, tmp_path: Path) -> None:
+        """A condition needing the event is neither proven nor dead, and the verdict says so.
+
+        Passing it overstates what was checked — this requirement claims every release is attested,
+        which an unevaluable condition does not establish. Failing it would forbid a construct core
+        itself uses (`plugin-ci.yml` gates its upload job on `inputs.plugin_repo == ''`) and would
+        teach authors to delete a fork guard to quiet the checker. So it warns.
+        """
         lane = self._release_lane().replace(
             "  release-sbom:\n",
             "  release-sbom:\n    if: ${{ github.repository_owner == 'someone-else' }}\n",
@@ -1111,21 +1115,8 @@ class TestReleaseLane:
         repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
         (repo / "release-please-config.json").write_text("{}\n")
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
-        assert check.status == "pass", _messages(check)
-
-    def test_a_condition_that_cannot_be_decided_is_not_reported(self, tmp_path: Path) -> None:
-        """Only STATICALLY false conditions fail. A condition referencing the event cannot be
-        decided by reading the file, and failing it would red every legitimately conditional lane —
-        over-reporting here teaches authors to delete a condition to quiet the checker, which is
-        the mirror of the fail-open direction."""
-        lane = self._release_lane().replace(
-            "  release-sbom:\n",
-            "  release-sbom:\n    if: ${{ github.repository_owner == 'unified-systems-com' }}\n",
-        )
-        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
-        (repo / "release-please-config.json").write_text("{}\n")
-        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
-        assert check.status == "pass", _messages(check)
+        assert check.status == "warn", _messages(check)
+        assert "cannot be established by reading the file" in _messages(check)
 
     def test_an_unverifiable_trigger_fails_rather_than_passing(self, tmp_path: Path, monkeypatch) -> None:
         """Unknown is not conformant, the same verdict the caller-presence half of this check
