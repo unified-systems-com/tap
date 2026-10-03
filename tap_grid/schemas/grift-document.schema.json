@@ -318,6 +318,58 @@
         }
       }
     },
+    "GriftEdgeRemovalByIdentity": {
+      "type": "object",
+      "description": "A deletes.edges target naming the edge by its identity instead of its id: it ends whichever live edge of the type matches between the two endpoints when the batch executes, and \"missing\" means no live match (req-grid-import-grift-edge-removal). The type must declare a plain identity. No entity_expected_version: the sender addresses a relationship, not a row.",
+      "additionalProperties": false,
+      "required": ["edge_type", "from", "to", "reason"],
+      "properties": {
+        "edge_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The edge type slug; it must declare a plain identity (discriminators, possibly none)."
+        },
+        "from": {
+          "$ref": "#/$defs/GriftRemovalEndpoint",
+          "description": "The edge's source, by id or by type and natural key."
+        },
+        "to": {
+          "$ref": "#/$defs/GriftRemovalEndpoint",
+          "description": "The edge's target, by id or by type and natural key."
+        },
+        "discriminators": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Each discriminator path the type declares, mapped to its value; present exactly when the type declares any. An absent, null or empty value is refused."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the relationship is ended, recorded with the removal."
+        }
+      }
+    },
+    "GriftRemovalEndpoint": {
+      "description": "One endpoint of an edge named for removal by identity: an entity id, or a node type and its natural key, resolved against this batch's nodes, then the live grid.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entity_id"],
+          "description": "The endpoint by its entity id.",
+          "properties": {
+            "entity_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The endpoint's entity id."
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/GriftEndpointKey"
+        }
+      ]
+    },
     "GriftDeletesSection": {
       "type": "object",
       "additionalProperties": false,
@@ -331,8 +383,16 @@
         },
         "edges": {
           "type": "array",
+          "description": "Edges to end, each named by entity id or by identity; exactly one of the two forms per target.",
           "items": {
-            "$ref": "#/$defs/GriftRemovalTarget"
+            "oneOf": [
+              {
+                "$ref": "#/$defs/GriftRemovalTarget"
+              },
+              {
+                "$ref": "#/$defs/GriftEdgeRemovalByIdentity"
+              }
+            ]
           }
         },
         "nodes": {
