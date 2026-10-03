@@ -36,7 +36,7 @@ This separation is deliberate. The file format should stay stable and portable, 
 | req-grid-import-grift-dangling | [Dangling Edge Modes](#dangling-edge-modes) | Implemented | Strict and permissive handling |
 | req-grid-import-grift-provenance | [Import-Side Provenance](#import-side-provenance) | Implemented | Local actor/history behavior |
 | req-grid-import-grift-edge-endpoints | [Edge Endpoints By Natural Key](#edge-endpoints-by-natural-key) | Implemented | An edge endpoint may name a node by type and natural key, resolved against the batch then the live grid; an unresolved endpoint is skipped and recorded as a `skip` event |
-| req-grid-import-grift-edge-removal | [Edge Removal By Identity](#edge-removal-by-identity) | Proposed | A `deletes` target may name an edge by identity and ends whichever live relationship matches at execution time; purges stay id-addressed |
+| req-grid-import-grift-edge-removal | [Edge Removal By Identity](#edge-removal-by-identity) | Implemented | A `deletes` target may name an edge by identity and ends whichever live relationship matches at execution time; purges stay id-addressed |
 | req-grid-import-grift-results | [Import Results](#import-results) | Implemented | Structured reporting expectations |
 | req-grid-import-grift-ordering | [Deterministic Ordering And Last-Write-Wins](#deterministic-ordering-and-last-write-wins) | Implemented | Three-level ordering contract; last-write-wins per entity; lint surface |
 | req-grid-import-grift-ordering-strict | [Strict-No-Overwrite Mode](#strict-no-overwrite-mode) | Backlog | Optional fail-on-pre-existing-entity mode for production/federation use |
@@ -915,12 +915,12 @@ Implemented (Issue# 914 - tap): `grift-document.schema.json` carries `from_key` 
 ----
 RID: `req-grid-import-grift-edge-removal`
 
-Status: `Proposed`
+Status: `Implemented`
 
 `deletes.edges` targets today name an edge by its `entity_id` (`req-grid-import-grift-removals`, `req-grift-import-deletes`). A collector that no longer knows the id of an edge it wants ended (an id it never held, because the edge was found by identity) cannot say so. This requirement lets a `deletes.edges` target name the edge by its **identity** instead. The build is Issue# 915 - tap.
 
 #### Status Details
-Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and the schemas gain it with the code.
+Implemented (Issue# 915 - tap): the shape is `GriftEdgeRemovalByIdentity` in `grift-document.schema.json`, checked at preflight by `tap_grid/grift/importer.py::_parse_identity_removal` and resolved at execution by `::_resolve_removal_identities` through the read verb `tap_grid/services::find_edge_by_identity`. Tests: `tap_grid/tests/test_grift_edge_removal.py`.
 
 #### Implementation
 **Shape.** A `deletes.edges` target carries either `entity_id` (as today) or an identity form, never both:
@@ -935,7 +935,9 @@ Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and
 }
 ```
 
-`from` and `to` take an endpoint in the id form or the key form of `req-grid-import-grift-edge-endpoints`; `discriminators` maps each declared discriminator path to its value and is present exactly when the type declares any.
+`from` and `to` take an endpoint in the id form (`{ "entity_id" }`) or the key form of `req-grid-import-grift-edge-endpoints` (`{ "entity_type", "key" }`, resolved against this batch's nodes, then the live grid); there is no ref form. `discriminators` maps each declared discriminator path to its value and is present exactly when the type declares any; a discriminator the type does not declare is a schema failure. The target carries no `entity_type`: it can only name an edge.
+
+**Only a plain identity can be named.** The type must declare discriminators (an empty list included). A keyless type has no identity to name (deleting one of several identical edges is parked with keyless duplicates, `req-grid-edge-identity`), and an undeclared type has none yet; a target naming either is refused at preflight as `removal_identity_unkeyed`, as an endpoint key naming an unkeyed node type is.
 
 **Meaning.** A key-addressed delete ends **whichever live relationship matches at the moment the batch executes**. It is not bound to the edge that existed when the sender last looked: if that edge was retired and the relationship returned with a new id, the delete ends the new one. "Missing" means no live match, and `deletes.on_missing` governs it. A tombstoned edge never matches, so `on_tombstoned` does not apply to this form. More than one live match is an ambiguity error that aborts the batch. The edge is ended by the existing `delete_edge_by_entity` verb, in the same `write_batch` call and in the same position as an id-addressed delete (`req-grid-import-grift-removals`).
 
@@ -947,20 +949,20 @@ Proposed (Issue# 912 - tap). As for endpoints, the shape below is a proposal and
 
 **No version.** `entity_expected_version` is not accepted on an identity-addressed target: the sender addresses a relationship, and the row whose version it would name is not known to it until the match is made.
 
-**Duplicates.** Two targets that resolve to one live edge are `duplicate_removal_target`, whichever forms named it. An edge the same document also upserts, by id or by identity, is `entity_id_in_upsert_and_removal`; the check is re-applied to the resolved id, as it is for ref nodes (Issue# 606 - tap).
+**Duplicates.** Two targets that resolve to one live edge are `duplicate_removal_target`, whichever forms named it. An edge the same document also upserts, by id or by identity, is `entity_id_in_upsert_and_removal`; the check is re-applied to the resolved id, as it is for ref nodes (Issue# 606 - tap), and like theirs it is batch-local: a later batch of the same file meets an edge an earlier batch ended as no live match. Every refused target of a batch is listed before the batch fails.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-import-grift-edge-removal-1 | Id Or Identity, Never Both | Proposed | A `deletes.edges` target carries `entity_id` or the identity form (`edge_type`, `from`, `to`, and `discriminators` where declared); both, or neither, is a schema failure. Only `deletes.edges` accepts the identity form; `purges` and `deletes.nodes` do not. | |
-| req-grid-import-grift-edge-removal-2 | Ends The Live Match | Proposed | An identity-addressed delete ends the live edge matching at execution time and no other; "missing" means no live match and follows `deletes.on_missing`. | `on_tombstoned` does not apply. |
-| req-grid-import-grift-edge-removal-3 | Replay After A Return Ends The New Edge | Proposed | Delete an edge by identity, let the relationship return as a new edge, then replay the same delete: the new edge ends. | The 2026-10-02 ruling, as a test. |
-| req-grid-import-grift-edge-removal-4 | Ambiguity Aborts | Proposed | More than one live match aborts the batch and names every candidate id. | |
-| req-grid-import-grift-edge-removal-5 | An Incomplete Identity Is Refused | Proposed | A target missing a declared discriminator, or carrying an empty, null or undeclared one, is refused with nothing written, by the rule of `req-grid-edge-identity-8`. | |
-| req-grid-import-grift-edge-removal-6 | Duplicates Resolve To One Edge | Proposed | Two targets resolving to one live edge are `duplicate_removal_target`; an edge both upserted and removed in one document is `entity_id_in_upsert_and_removal`, checked on the resolved id. | |
-| req-grid-import-grift-edge-removal-7 | No Expected Version | Proposed | `entity_expected_version` on an identity-addressed target is a schema failure. | |
-| req-grid-import-grift-edge-removal-8 | Resolution Is A Read | Proposed | Before resolving any identity-addressed target the importer authorises `grid.read` in the import's scope, in addition to the `grid.delete` a `deletes` section already requires. | |
+| req-grid-import-grift-edge-removal-1 | Id Or Identity, Never Both | Implemented | A `deletes.edges` target carries `entity_id` or the identity form (`edge_type`, `from`, `to`, and `discriminators` where declared); both, or neither, is a schema failure. Only `deletes.edges` accepts the identity form; `purges` and `deletes.nodes` do not. | A `oneOf` in `GriftDeletesSection.edges`. `tap_grid/tests/test_grift_edge_removal.py::TestTheShape`. |
+| req-grid-import-grift-edge-removal-2 | Ends The Live Match | Implemented | An identity-addressed delete ends the live edge matching at execution time and no other; "missing" means no live match and follows `deletes.on_missing`. | `on_tombstoned` does not apply. An endpoint key that names no live node is missing too. `::TestTheLiveMatch`. |
+| req-grid-import-grift-edge-removal-3 | Replay After A Return Ends The New Edge | Implemented | Delete an edge by identity, let the relationship return as a new edge, then replay the same delete: the new edge ends. | The 2026-10-02 ruling, as a test: `::TestReplay`. |
+| req-grid-import-grift-edge-removal-4 | Ambiguity Aborts | Implemented | More than one live match aborts the batch and names every candidate id. | `identity_ambiguous`. `::TestAmbiguity`. |
+| req-grid-import-grift-edge-removal-5 | An Incomplete Identity Is Refused | Implemented | A target missing a declared discriminator, or carrying an empty, null or undeclared one, is refused with nothing written, by the rule of `req-grid-edge-identity-8`. | Preflight: `incomplete_edge_key`, or `schema_validation_failed` for an undeclared one; a keyless or undeclared type is `removal_identity_unkeyed`. `::TestAnIncompleteIdentity`. |
+| req-grid-import-grift-edge-removal-6 | Duplicates Resolve To One Edge | Implemented | Two targets resolving to one live edge are `duplicate_removal_target`; an edge both upserted and removed in one document is `entity_id_in_upsert_and_removal`, checked on the resolved id. | Within the batch. `::TestDuplicates`. |
+| req-grid-import-grift-edge-removal-7 | No Expected Version | Implemented | `entity_expected_version` on an identity-addressed target is a schema failure. | `::TestTheShape`. |
+| req-grid-import-grift-edge-removal-8 | Resolution Is A Read | Implemented | Before resolving any identity-addressed target the importer authorises `grid.read` in the import's scope, in addition to the `grid.delete` a `deletes` section already requires. | The verb is read-gated too. `::TestResolutionIsARead`. |
 
 
 ## Import-Side Provenance
