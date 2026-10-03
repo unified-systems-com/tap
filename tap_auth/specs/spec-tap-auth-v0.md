@@ -66,7 +66,7 @@ This spec supersedes the user/auth architecture previously parked under `tap_gri
 | req-tap-auth-app | [Auth App Ownership](#auth-app-ownership) | Implemented | `tap_auth` is the platform auth app and management plane; `/auth/` routes mounted, `/auth` reserved |
 | req-tap-auth-user-model | [Canonical User Model](#canonical-user-model) | Proposed | Move canonical user from `tap_grid` to `tap_auth` |
 | req-tap-auth-actor-model | [Named Actor Model](#named-actor-model) | Proposed | No service-boundary `User=None`; human/program actor kinds |
-| req-tap-auth-builtins | [Protected Built-Ins](#protected-built-ins) | Proposed | Built-in users/groups use immutable natural keys |
+| req-tap-auth-builtins | [Protected Built-Ins](#protected-built-ins) | Proposed | Built-in users/groups use immutable natural keys; their absence is observable via the `auth.builtin_actors` probe (`-6`), and a boot-time assertion is proposed in Future |
 | req-tap-auth-capabilities | [Capability Registry](#capability-registry) | Proposed | Declarative JSON file (schema-validated) hard-syncs to Django permissions |
 | req-tap-auth-roles | [Role Definitions](#role-definitions) | Implemented | Roles (capability bundles) in a schema-validated JSON file; bootloader least-privilege guarded by test |
 | req-tap-auth-program-users | [Program-User Definitions](#program-user-definitions) | Proposed | **Design/deferred.** Program-only-by-construction declarative file; humans operator-only |
@@ -266,6 +266,58 @@ TAP-managed built-in actors and groups are protected security objects, not ordin
 | req-tap-auth-builtins-3 | Builtin Key Constraint | Proposed | DB/app constraints require built-in users to have immutable unique keys. | |
 | req-tap-auth-builtins-4 | Admin Forms Block Protected Mutation | Proposed | Django admin and public forms cannot mutate protected fields or delete protected objects. | |
 | req-tap-auth-builtins-5 | Bootloader Is v1 | Proposed | `tap_bootloader` is a v1 protected `program` built-in (boot writes run as it); the per-app-owned `tap_cares.collector`/`tap_cares.scheduler` (and any `tap_system`) actors are promoted in lockstep with the `missing_actor` enforcement flip. | |
+| req-tap-auth-builtins-6 | Absence Is Observable | Implemented | The `auth.builtin_actors` readiness probe (`tap_auth/health.py`) reports `unhealthy` when any of `tap_bootloader` / `tap_cares.scheduler` / `tap_cares.collector` does not resolve, naming the keys and the remedy. "Resolve" is `get_builtin_actor`'s own definition, so an inactive built-in fails the probe rather than resolving and being denied later. `critical=False`, matching `auth.providers`: boot already runs `sync_auth()` unconditionally, so absence at RUNTIME is a regression to surface, not a reason to refuse readiness. | `tap_auth/tests/test_health.py::TestProbeBuiltinActors` — all three resolve is healthy; a deleted `tap_cares.scheduler` is unhealthy and the detail names `sync_auth`; a `deactivated_at`-carrying built-in counts as missing. Added 2026-10-03 after the incident in **Boot-Time Assertion Of Built-In Actors** below. |
+
+#### Future
+
+##### Boot-Time Assertion Of Built-In Actors
+
+**Proposal, not a decision.** Raised 2026-10-03 and deliberately left unbuilt; revisit if the
+condition below recurs.
+
+**The incident.** On 2026-09-30 `tap_cares.scheduler` was absent in a `core_ci` lane. `scheduler_tick`
+resolves that actor on every tick and cannot run without it, so every tick raised `MissingActor` —
+and the tick caught it, logged it, and returned normally, so the task framework recorded
+`state=SUCCESSFUL`. A scheduler that fired nothing for the life of the container reported itself
+healthy, and the only trace was a stack trace in a container log that CI discards unless some
+*other* step fails. Full write-up, including what it could not establish:
+`docs/postmortems/2026-09-30-scheduler-tick-raises-and-reports-success.md`.
+
+Two of the three remedies considered are now built: `req-tap-auth-builtins-6` above (the probe), and
+`scheduler_tick` no longer reporting success when it could not run (`tap_cares/task_backend.py`;
+`req-tap-cares-scheduler-tick`). This is the third.
+
+**The shape.** `tap_boot`'s `_phase_auth` already calls `sync_auth()` unconditionally, which mints
+all three built-ins. The proposal is that the same phase then *asserts* they resolve, and raises
+`BootError` if any does not — failing closed at the source, so an instance that cannot mint its own
+program actors does not come up claiming readiness. The precedent is in the same file:
+`_phase_posture` calls `check_deploy_posture` and raises `BootError` on a posture failure
+(`req-boot-phases`).
+
+**Why it is not built.** Three reasons, in order of weight.
+
+1. **The condition it would catch is not understood yet.** The postmortem's §4 says plainly that WHY
+   the actor was absent is unresolved — `sync_auth()` mints it unconditionally, boot reported
+   success, and the ticks failed for eight straight minutes, which rules out a startup race. Two
+   candidate mechanisms are named and neither is tested. A gate that refuses boot on a condition
+   nobody has characterised can brick a boot path for a reason its author did not anticipate, which
+   is the opposite of the fail-closed intent.
+2. **It is the only one of the three that can make a working instance stop working.** The probe
+   reports and the tick's honesty changes a task's recorded state; neither can prevent a standup.
+   This can, and that asymmetry is why it wants a deliberate ruling rather than inclusion by
+   analogy.
+3. **The cheaper two may be sufficient.** The probe runs in the same readiness set the CI lane
+   already gates on (`manage.py health --set readiness`), so the silence this incident depended on
+   is already broken without touching boot.
+
+**What would settle it.** The postmortem's §4 dispatch probe: one `core-ci` run with the web log
+dumped unconditionally and the built-in actors plus `settings.DATABASES` printed from inside the
+container after boot. That distinguishes "readiness passed before the auth phase ran" from "the
+worker resolves a different database" — and those want different fixes, only one of which this
+proposal addresses.
+
+**Owner.** Unassigned. `tap_cares`/`tap_boot` territory rather than a change to make from the
+outside, and `tap#886`'s epic is the nearest live context.
 
 ---
 

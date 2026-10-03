@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tap.secret_naming import SECRET_SUFFIX
-from tap_auth.health import probe_auth_providers
+from tap_auth.health import probe_auth_providers, probe_builtin_actors
 from tap_health.results import ProbeStatus
 
 
@@ -81,5 +83,60 @@ class TestProbeRegistration:
         from tap_health.registry import health_probe_registry
 
         probe = health_probe_registry.get("auth.providers")
+        assert probe.group == "tap_auth"
+        assert probe.critical is False
+
+
+class TestProbeBuiltinActors:
+    """`auth.builtin_actors` — the assertion whose absence let a dead scheduler report healthy.
+
+    Both directions, because a probe only ever seen to pass has not been shown capable of failing,
+    and this one exists precisely because nothing was watching.
+    `docs/postmortems/2026-09-30-scheduler-tick-raises-and-reports-success.md`.
+    """
+
+    @pytest.mark.django_db
+    def test_all_three_resolve_is_healthy(self) -> None:
+        """The test harness runs `sync_auth`, so the built-ins are present."""
+        result = probe_builtin_actors()
+        assert result.status is ProbeStatus.HEALTHY, result
+        assert "resolve" in (result.detail or "")
+
+    @pytest.mark.django_db
+    def test_a_missing_actor_is_unhealthy_and_names_the_remedy(self) -> None:
+        """THE REGRESSION. With `tap_cares.scheduler` gone, `scheduler_tick` cannot run at all —
+        which is exactly the state that previously produced `state=SUCCESSFUL` every minute."""
+        from django.contrib.auth import get_user_model
+
+        from tap_auth.sync import ACTOR_SCHEDULER
+
+        get_user_model().objects.filter(tap_builtin_key=ACTOR_SCHEDULER).delete()
+        result = probe_builtin_actors()
+        assert result.status is ProbeStatus.UNHEALTHY, result
+        detail = result.detail or ""
+        assert ACTOR_SCHEDULER in detail
+        assert "sync_auth" in detail, detail
+
+    @pytest.mark.django_db
+    def test_an_inactive_actor_counts_as_missing(self) -> None:
+        """The zombie built-in `get_builtin_actor`'s docstring names: a row carrying
+        `deactivated_at` must fail HERE rather than resolve and be denied later. The probe reuses
+        that function so there is one definition of active, not two."""
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+
+        from tap_auth.sync import ACTOR_COLLECTOR
+
+        get_user_model().objects.filter(tap_builtin_key=ACTOR_COLLECTOR).update(
+            deactivated_at=timezone.now()
+        )
+        result = probe_builtin_actors()
+        assert result.status is ProbeStatus.UNHEALTHY, result
+        assert ACTOR_COLLECTOR in (result.detail or "")
+
+    def test_probe_is_registered(self) -> None:
+        from tap_health.registry import health_probe_registry
+
+        probe = health_probe_registry.get("auth.builtin_actors")
         assert probe.group == "tap_auth"
         assert probe.critical is False

@@ -85,4 +85,55 @@ def probe_auth_providers() -> ProbeResult:
     return ProbeResult.healthy(detail=f"{len(configs)} provider(s): offline self-test OK")
 
 
-__all__ = ["probe_auth_providers"]
+def probe_builtin_actors() -> ProbeResult:
+    """Do the built-in program actors resolve? (`req-tap-auth-builtins`.)
+
+    **Why this exists, stated because its absence had a cost.** `scheduler_tick` resolves
+    `tap_cares.scheduler` on every tick and cannot run without it. On 2026-09-30 that actor was
+    absent in a CI lane: every tick raised `MissingActor`, the tick swallowed it, and the task
+    framework recorded `state=SUCCESSFUL` — so a scheduler that fired nothing for the life of the
+    container reported itself healthy, and the only trace was a stack trace in a container log that
+    is discarded unless something else fails. Nothing asserted these actors resolve; this is that
+    assertion. See `docs/postmortems/2026-09-30-scheduler-tick-raises-and-reports-success.md`.
+
+    **"Resolve" is `get_builtin_actor`'s own definition, not a second one.** It calls that function
+    per key, so absent and inactive are one answer here exactly as they are at every call site —
+    the "zombie built-in" the function's docstring names (a row carrying `deactivated_at`) fails
+    this probe rather than passing it and failing later.
+
+    `critical=False`, matching `auth.providers`: boot already runs `sync_auth()` unconditionally in
+    `_phase_auth`, so an actor missing at RUNTIME is a regression to surface loudly, not a reason to
+    refuse readiness. Whether boot should additionally hard-assert this at standup is a separate,
+    stronger proposal — `req-tap-auth-builtins` Future.
+
+    The remedy is in the message because it is one command and it is safe: `sync_auth()` is
+    idempotent (`_ensure_program_actor` is a get-or-create plus a repair of drifted managed fields).
+    """
+    from tap_auth.actors import BOOTLOADER, COLLECTOR, SCHEDULER, get_builtin_actor
+    from tap_auth.errors import MissingActor
+
+    expected = (BOOTLOADER, SCHEDULER, COLLECTOR)
+    missing: list[str] = []
+    for key in expected:
+        try:
+            get_builtin_actor(key)
+        except MissingActor:
+            missing.append(key)
+        except Exception as exc:  # noqa: BLE001 — a probe reports; it never raises into the caller.
+            logger.warning("[c3f1] health: built-in actor %r check errored: %s", key, exc)
+            return ProbeResult.unhealthy("auth.builtin_actors.check_error", detail=exception_detail(exc))
+
+    if missing:
+        return ProbeResult.unhealthy(
+            "auth.builtin_actors.missing",
+            detail=(
+                f"built-in program actor(s) not found or inactive: {', '.join(missing)} — "
+                "system-initiated work that declares one of these identities cannot run at all. "
+                "Run `manage.py sync_auth` (idempotent) and re-check; if a key is still missing "
+                "afterwards the cause is configuration or database routing, not a missing row"
+            ),
+        )
+    return ProbeResult.healthy(detail=f"{len(expected)} built-in program actor(s) resolve")
+
+
+__all__ = ["probe_auth_providers", "probe_builtin_actors"]

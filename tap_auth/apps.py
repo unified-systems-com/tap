@@ -33,10 +33,19 @@ class TapAuthConfig(AppConfig):
         # critical_for_boot providers, so the probe is the non-blocking runtime
         # view. See tap_auth/health.py and spec-tap-cares-secrets.md
         # (Conditional Validation Lives In Health Probes).
-        from tap_auth.health import probe_auth_providers
+        from tap_auth.health import probe_auth_providers, probe_builtin_actors
         from tap_health.registry import register_health_probe
         from tap_health.selection import READINESS
 
         register_health_probe(
             "auth.providers", probe_auth_providers, sets=(READINESS,), group="tap_auth", critical=False
+        )
+        # The built-in program actors. Nothing asserted these resolve until 2026-09-30, when
+        # `tap_cares.scheduler` was absent in a CI lane and the scheduler reported SUCCESSFUL on
+        # every tick it could not run (docs/postmortems/2026-09-30-scheduler-tick-raises-and-
+        # reports-success.md). `critical=False` for the same reason as `auth.providers`: boot
+        # already runs `sync_auth()` unconditionally, so absence at RUNTIME is a regression to
+        # surface, not a reason to refuse readiness.
+        register_health_probe(
+            "auth.builtin_actors", probe_builtin_actors, sets=(READINESS,), group="tap_auth", critical=False
         )
