@@ -1514,6 +1514,12 @@ def find_by_natural_key(
         raise ServiceValidationError(f"Unknown entity type {type_slug!r}.") from exc
     if not isinstance(model_cls.NATURAL_KEY, tuple):
         raise ServiceValidationError(f"{type_slug} declares no NATURAL_KEY, so nothing can be found by key.")
+    # Exactly the declared names, nothing else: no ORM lookup suffix or extra field reaches the
+    # filter (find_existing enforces the same; this makes it the service's refusal).
+    if set(properties) != set(model_cls.NATURAL_KEY):
+        raise ServiceValidationError(
+            f"{type_slug} is found by exactly {list(model_cls.NATURAL_KEY)}; got {sorted(properties)}."
+        )
     row = model_cls.find_existing(**properties)
     return None if row is None else row.entity_id
 

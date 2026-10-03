@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/174cf4477e13 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/efe459f1b400 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -3684,7 +3684,7 @@ def _resolve_endpoint_keys(
     Resolving a key reads the grid and tells the submitter what it found, so the import
     authorises ``grid.read`` first (``req-grid-import-grift-edge-endpoints-9``).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/b92d95d965f7 (derivation) —
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/b4781f86483f (derivation) —
         the resolution of a key endpoint: batch first, then the live grid, ambiguity refused,
         nothing minted, an unresolved endpoint left to the dangling-edge mode, under grid.read.
     """
@@ -3710,6 +3710,7 @@ def _resolve_endpoint_keys(
             batch_keys.setdefault(key, []).append(node_obj["entity"]["entity_id"])
 
     unresolved: dict[str, list[dict[str, Any]]] = {}
+    strict_unresolved = False
     for edge_idx, edge_obj in enumerate(edges):
         payload = edge_obj["edge"]
         edge_id = edge_obj["entity"]["entity_id"]
@@ -3750,6 +3751,8 @@ def _resolve_endpoint_keys(
                 del payload[key_field]
                 continue
             if dangling_edge_mode == "strict":
+                # Every unresolved endpoint is listed before the batch fails, so one run names
+                # them all (req-grid-import-grift-edge-endpoints-7).
                 issues.append(
                     _issue(
                         "dangling_edge",
@@ -3763,9 +3766,12 @@ def _resolve_endpoint_keys(
                         edge_entity_id=edge_id,
                     )
                 )
-                raise _BatchFailed()
+                strict_unresolved = True
+                continue
             dangling_edge_ids.add(edge_id)
             unresolved.setdefault(edge_id, []).append({"endpoint": side, "entity_type": entity_type, "key": properties})
+    if strict_unresolved:
+        raise _BatchFailed()
     return unresolved
 
 

@@ -177,6 +177,38 @@ class TestUnresolved:
 
     @SPEC[6]
     @SPEC[7]
+    def test_strict_mode_names_every_unresolved_endpoint(self) -> None:
+        result = grift_import(_doc(edges=[_edge(from_key=_key("nobody"), to_key=_key("no-one"))]))
+        dangling = [e for e in result.errors if e.code == "dangling_edge"]
+        assert sorted(e.path.rsplit(".", 1)[-1] for e in dangling) == ["from_key", "to_key"]
+
+    @SPEC[6]
+    def test_a_skipped_key_edge_of_a_type_with_declared_identity_is_still_skipped(self) -> None:
+        """Edge identity runs after endpoint resolution and must pass over a skipped edge."""
+        from tap_grid.edge_identity import _edge_identity_registry, register_edge_identity
+
+        before = _edge_identity_registry.all()
+        register_edge_identity(LINK, {"discriminators": []})
+        try:
+            ids = _seed("target")
+            result = grift_import(
+                _doc(
+                    edges=[
+                        {
+                            **_edge(from_key=_key("nobody"), to_entity_id=ids["target"]),
+                            "entity": {"ref": "e", "entity_type": "edge", "dimensions": {}},
+                        }
+                    ]
+                ),
+                dangling_edge_mode="permissive",
+            )
+            assert result.success, result.errors
+            assert len(_skip_events()) == 1
+        finally:
+            _edge_identity_registry._reset_for_testing(before)
+
+    @SPEC[6]
+    @SPEC[7]
     @SPEC[8]
     def test_permissive_mode_skips_the_edge_and_records_it_in_the_batch(self) -> None:
         ids = _seed("target")
@@ -250,6 +282,18 @@ class TestResolutionIsARead:
         assert asked == [READ_CAPABILITY]
         assert not result.success
         assert _edges_between(ids["source"], ids["target"]) == []
+
+
+@pytest.mark.django_db
+class TestTheVerb:
+    @SPEC[3]
+    @pytest.mark.parametrize("properties", [{"slug__icontains": "x"}, {"slug": "x", "name": "y"}, {}])
+    def test_find_by_natural_key_takes_exactly_the_declared_properties(self, properties: dict[str, Any]) -> None:
+        from tap_grid.exceptions import ServiceValidationError
+        from tap_grid.services import find_by_natural_key
+
+        with pytest.raises(ServiceValidationError, match="found by exactly"):
+            find_by_natural_key("panel", properties)
 
 
 @pytest.mark.django_db
