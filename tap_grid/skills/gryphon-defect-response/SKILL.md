@@ -1,7 +1,7 @@
 ---
 name: gryphon-defect-response
 description: What to do the moment you hit a Gryphon defect — a wrong result, a silently dropped clause, a crash — anywhere: a plugin build, a vendor page, a demo. The standing procedure is FIX IT ON THE FLY, not log it and route around it. A DEFECT you fix on the fly without asking, via gryphon-fix-bug. A MISSING CAPABILITY you do NOT build unilaterally — you stop and tell the user, because it changes what the language is. Use BEFORE gryphon-fix-bug or build-gryphon-capability; this is the first response and it decides which road you are on.
-allowed-tools: Read Grep Glob Bash(scripts/dc *) Bash(scripts/*) Bash(grep *) Bash(git *) Bash(gh *)
+allowed-tools: Read Grep Glob Bash(scripts/dc *) Bash(scripts/*) Bash(grep *) Bash(git *)
 argument-hint: <a one-line description of what Gryphon did wrong>
 ---
 

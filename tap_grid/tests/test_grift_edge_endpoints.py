@@ -295,7 +295,7 @@ class TestForceReimport:
     @SPEC[6]
     def test_a_skipped_edge_never_leaves_a_live_edge_on_a_swept_node(self) -> None:
         """The revision drops a node and skips the edge that named it: the earlier edge and its
-        endpoint stay or go together, whether or not the sweep retires edges yet."""
+        endpoint stay or go together."""
         source, target = _panel("source"), _panel("target")
         batch_id, edge_id = _batch_entity_id(), str(uuid.uuid4())
         source_id, target_id = source["entity"]["entity_id"], target["entity"]["entity_id"]
@@ -309,13 +309,7 @@ class TestForceReimport:
         source_live = Entity.objects.get(pk=uuid.UUID(source_id)).deleted_at is None
         assert source_live or not edge_live, "a live edge was left on a node the sweep tombstoned"
 
-    # Cites no criterion: a test expected to fail is not evidence. The behaviour is the sweep's
-    # (req-grid-import-grift-batch-scoped-sweep), and the marker goes on when the xfail comes off.
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Issue# 938 - tap: the force-reimport sweep never retires edges (candidates are CREATE events; "
-        "edges are recorded as link).",
-    )
+    @pytest.mark.spec("req-grid-import-grift-batch-scoped-sweep")
     def test_an_edge_the_revision_skips_is_swept(self) -> None:
         source, target = _panel("source"), _panel("target")
         batch_id, edge_id = _batch_entity_id(), str(uuid.uuid4())

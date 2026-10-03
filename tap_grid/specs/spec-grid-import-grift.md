@@ -704,9 +704,11 @@ A candidate entity that has already been tombstoned by an explicit `deletes` tar
 
 A candidate for sweep is an entity meeting all of:
 
-- the entity's **creation history row** (first historical record) carries `batch_id == <the batch being force-reimported>`
-- the entity's current `entity_id` does not appear in the revised batch's node or edge set
-- the entity is not already tombstoned (whether by this batch's explicit `deletes` or by prior history)
+- the entity's **creation history row** (first historical record) carries `batch_id == <the batch being force-reimported>`: a node's `create` event, an edge's `link` event
+- the entity's current `entity_id` does not appear in the revised batch's node or edge set, counting only edges the revision wrote (an edge it skipped for an unresolved endpoint, `req-grid-import-grift-edge-endpoints-6`, is absent)
+- the entity is not already tombstoned (whether by this batch's explicit `deletes`, by an earlier sweep, or by prior history)
+
+An edge is a candidate on the same terms as a node, whichever batches own its endpoints.
 
 Candidates are computed after the revised batch's upserts have been staged AND after this batch's explicit removal sections have run, so the candidate set reflects the post-explicit-removal graph. This ordering means a bundle author may use explicit `deletes` for entities they want to name explicitly (with attached `reason`) and rely on the sweep for the longer tail of entities the batch originally created.
 
@@ -722,7 +724,7 @@ No history row exists for this entity with `batch_id != <this batch>`. If any ot
 
 After the sweep's proposed deletions are applied, no edge exists that is connected to this entity — in either direction. An edge survives the sweep and references the candidate if:
 
-- the edge exists in the current graph AND is not itself being swept, OR
+- the edge exists in the current graph AND is not itself being swept (a candidate edge counts as swept only once it has passed Guardrail A, so edge candidates are evaluated before node candidates), OR
 - the edge is newly created by the revised batch content and points at this candidate (a content bug in the revision — preflight should catch it, but the guardrail provides a second line of defense)
 
 If any such edge survives, skip the candidate. The entity remains structurally connected to the post-apply graph and must not be removed.
@@ -766,7 +768,7 @@ The importer's force-reimport report must include:
 
 - The sweep does not touch entities whose creation history is not owned by this batch. Dimensional authority, cross-plugin cleanup, and importer-declared ownership over a dimension are out of scope and tracked as a future concern (see *Future* below).
 - The sweep does not re-tombstone already-tombstoned entities, and does not restore tombstoned entities.
-- The sweep does not observe edge-only creation records. Edges created by this batch that point at entities owned by other batches stay put unless the edge itself is absent from the revised content; in that case the edge is an ordinary upsert-delete target and handled by batch-standard cascade behavior, not by the sweep.
+- The sweep never retires a node on an edge's account. Sweeping an edge whose endpoints other batches own leaves those endpoints in place.
 
 ### Future
 
