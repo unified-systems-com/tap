@@ -230,6 +230,18 @@ class TestUnresolved:
         assert skip["event_id"] == str(event.id) and skip["edge_entity_id"] == edge_id
 
     @SPEC[7]
+    def test_a_node_this_batch_creates_is_not_listed_as_unresolved(self) -> None:
+        """The skip is recorded before the batch's nodes are written; a new node of the batch still resolves."""
+        fresh = _panel("created-here")
+        result = grift_import(
+            _doc(nodes=[fresh], edges=[_edge(from_key=_key("nobody"), to_entity_id=fresh["entity"]["entity_id"])]),
+            dangling_edge_mode="permissive",
+        )
+        assert result.success, result.errors
+        (event,) = _skip_events()
+        assert event.metadata["unresolved"] == [{"endpoint": "from", "entity_type": "panel", "key": {"slug": "nobody"}}]
+
+    @SPEC[7]
     def test_an_id_endpoint_that_names_nothing_is_recorded_too(self) -> None:
         ids = _seed("target")
         missing = str(uuid.uuid4())

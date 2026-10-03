@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/efe459f1b400 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/ecef6eff35fb (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2684,7 +2684,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/446720ed6748 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/7fead304e3e5 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2998,7 +2998,11 @@ def _execute_grift_batch(
                     )
                     skips.append(
                         _record_edge_skip(
-                            batch_entity_id, edge_entity_id, edge, unresolved_keys.get(edge_entity_id, [])
+                            batch_entity_id,
+                            edge_entity_id,
+                            edge,
+                            unresolved_keys.get(edge_entity_id, []),
+                            {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])},
                         )
                     )
                     continue
@@ -3776,19 +3780,26 @@ def _resolve_endpoint_keys(
 
 
 def _record_edge_skip(
-    batch_entity_id: str, edge_entity_id: str, edge: dict[str, Any], unresolved_keys: list[dict[str, Any]]
+    batch_entity_id: str,
+    edge_entity_id: str,
+    edge: dict[str, Any],
+    unresolved_keys: list[dict[str, Any]],
+    batch_node_ids: set[str],
 ) -> dict[str, Any]:
     """Write the skip event for one edge a permissive batch left out, and describe it for the result.
 
     Each endpoint that did not resolve is named as the batch named it: a key that found no live
-    node, or an id that names no live entity.
+    node, or an id that names neither a node of this batch nor a live entity. This runs while the
+    batch's operations are being assembled, before its nodes are written, so a node this batch
+    creates is resolved by membership in ``batch_node_ids``, as preflight resolves it, never by a
+    database lookup that cannot see it yet.
     """
     from tap_grid.batch import record_skip_event
 
     endpoints = list(unresolved_keys)
     for side, id_field, _ in _EDGE_ENDPOINT_FORMS:
         endpoint_id = edge.get(id_field)
-        if endpoint_id is None:
+        if endpoint_id is None or endpoint_id in batch_node_ids:
             continue
         if not Entity.objects.filter(pk=uuid.UUID(endpoint_id), deleted_at__isnull=True).exists():
             endpoints.append({"endpoint": side, "entity_id": endpoint_id})
