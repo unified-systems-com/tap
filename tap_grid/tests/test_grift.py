@@ -810,6 +810,20 @@ class TestGriftForceReimport:
         kept = Entity.objects.get(pk=uuid.UUID(nid_keep))
         assert kept.deleted_at is None
 
+    def test_a_second_force_reimport_leaves_a_swept_node_alone(self):
+        """An entity already tombstoned is not a sweep candidate, so it is not swept again."""
+        bid = _batch_entity_id()
+        nid_keep = _node_entity_id()
+        nid_drop = _node_entity_id()
+        grift_import(self._initial_doc(bid, [nid_keep, nid_drop]))
+        revised = _minimal_doc([_batch_container(bid, nodes=[_character_node(nid_keep, name="char-0")])])
+        assert grift_import(revised, force_batches=[bid]).success
+
+        result = grift_import(revised, force_batches=[bid])
+        assert result.success, result.errors
+        assert result.imported_batches[0].swept_entities == []
+        assert Entity.objects.get(pk=uuid.UUID(nid_drop)).deleted_at is not None
+
     def test_sweep_skips_externally_written_entity(self):
         """Guardrail A — an entity touched by a different batch is skipped."""
         from tap_grid.batch import create_batch
@@ -961,6 +975,110 @@ class TestGriftForceReimport:
         result = grift_import(_minimal_doc([]), force_batches=[bogus])
         assert not result.success
         assert any(e.code == "force_reimport_batch_not_found" for e in result.errors)
+
+
+@pytest.mark.spec("req-grid-import-grift-batch-scoped-sweep")
+@pytest.mark.django_db
+class TestGriftSweepEdges:
+    """The sweep retires an edge the earlier version of a batch wrote and the revision omits.
+
+    An edge's first write is a ``link`` event, as a node's is a ``create`` event.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _debug_on(self, settings: Any) -> None:
+        settings.DEBUG = True  # force re-import is DEBUG-only
+
+    @staticmethod
+    def _ids() -> tuple[str, str, str, str]:
+        return _batch_entity_id(), _node_entity_id(), _node_entity_id(), _edge_entity_id()
+
+    @staticmethod
+    def _doc(bid: str, wielder: str, ring: str, *, keep_ring: bool = True, edge: str | None = None) -> dict[str, Any]:
+        nodes = [_character_node(wielder, "Wielder")]
+        if keep_ring:
+            nodes.append(
+                {
+                    "entity": {
+                        "entity_id": ring,
+                        "entity_type": "grid_fixtures__dual_endpoint",
+                        "name": "Ring",
+                        "dimensions": {},
+                    },
+                    "node": {"name": "Ring", "description": "modest", "kind": "Valinor"},
+                }
+            )
+        edges = [_wields_edge(edge, wielder, ring)] if edge else []
+        return _minimal_doc([_batch_container(bid, nodes=nodes, edges=edges)])
+
+    @staticmethod
+    def _live(entity_id: str) -> bool:
+        return Entity.objects.get(pk=uuid.UUID(entity_id)).deleted_at is None
+
+    def test_an_edge_the_revision_omits_is_swept(self):
+        bid, wielder, ring, edge = self._ids()
+        assert grift_import(self._doc(bid, wielder, ring, edge=edge)).success
+        result = grift_import(self._doc(bid, wielder, ring), force_batches=[bid])
+        assert result.success, result.errors
+        summary = result.imported_batches[0]
+        assert [(s.entity_id, s.entity_type) for s in summary.swept_entities] == [(edge, "edge")]
+        assert not self._live(edge)
+        assert self._live(wielder) and self._live(ring)
+
+    def test_a_node_and_its_edge_dropped_together_are_both_swept(self):
+        bid, wielder, ring, edge = self._ids()
+        assert grift_import(self._doc(bid, wielder, ring, edge=edge)).success
+        result = grift_import(self._doc(bid, wielder, ring, keep_ring=False), force_batches=[bid])
+        assert result.success, result.errors
+        summary = result.imported_batches[0]
+        assert {s.entity_id for s in summary.swept_entities} == {edge, ring}
+        assert summary.sweep_skipped == []
+        assert not self._live(edge) and not self._live(ring)
+        assert self._live(wielder)
+
+    def test_an_edge_another_batch_wrote_keeps_itself_and_its_endpoint(self):
+        """Guardrail A holds for an edge, and a node discounts only an edge that is itself cleared."""
+        from tap_grid.batch import create_batch
+        from tap_grid.caller_context import CallerContext, get_caller_context
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        bid, wielder, ring, edge = self._ids()
+        assert grift_import(self._doc(bid, wielder, ring, edge=edge)).success
+        other = create_batch(name="other")
+        caller = get_caller_context()
+        assert caller is not None
+        ctx = CallerContext(user=caller.user, batch_id=str(other.entity_id))
+        write_batch([WriteOperation(verb="replace_edge", target=edge, payload={"properties": {}})], caller_context=ctx)
+
+        result = grift_import(self._doc(bid, wielder, ring, keep_ring=False), force_batches=[bid])
+        assert result.success, result.errors
+        summary = result.imported_batches[0]
+        assert summary.swept_entities == []
+        assert {(s.entity_id, s.reason) for s in summary.sweep_skipped} == {
+            (edge, "sweep_skipped_external_write"),
+            (ring, "sweep_skipped_referenced"),
+        }
+        assert self._live(edge) and self._live(ring)
+
+    def test_a_second_force_reimport_leaves_a_swept_edge_alone(self):
+        bid, wielder, ring, edge = self._ids()
+        assert grift_import(self._doc(bid, wielder, ring, edge=edge)).success
+        assert grift_import(self._doc(bid, wielder, ring), force_batches=[bid]).success
+        result = grift_import(self._doc(bid, wielder, ring), force_batches=[bid])
+        assert result.success, result.errors
+        assert result.imported_batches[0].swept_entities == []
+        assert not self._live(edge)
+
+    def test_purge_hard_deletes_an_orphan_edge(self):
+        bid, wielder, ring, edge = self._ids()
+        assert grift_import(self._doc(bid, wielder, ring, edge=edge)).success
+        result = grift_import(self._doc(bid, wielder, ring), force_batches=[bid], purge=True)
+        assert result.success, result.errors
+        assert [(s.entity_id, s.action) for s in result.imported_batches[0].swept_entities] == [(edge, "purge")]
+        assert not Entity.objects.filter(pk=uuid.UUID(edge)).exists()
+        assert not Edge.all_objects.filter(entity_id=uuid.UUID(edge)).exists()
+        assert self._live(wielder) and self._live(ring)
 
 
 # ---------------------------------------------------------------------------
