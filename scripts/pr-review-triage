@@ -191,9 +191,11 @@ fetch_counts() {
 # repository's Actions, so that account is `github-actions[bot]`; a `[bot]` login cannot
 # be registered by a person.
 #
-#   bots    every bot-authored comment, each tagged `unified: true|false`
-#   forged  marker-bearing comments from any other account — shown as a warning, never
-#           as a verdict and never as an arrival
+#   bots    bot-authored comments, each tagged `unified: true|false`, EXCEPT a marker-bearing
+#           one from any account other than the reviewer: those are forged, and their
+#           bodies are printed nowhere (another app's [bot] login is not the reviewer)
+#   forged  marker-bearing comments from any other account — listed by author and URL
+#           only, never as a verdict and never as an arrival
 split_bot_comments() {
   jq --arg reviewer "github-actions[bot]" '
     (. // []) as $all
@@ -201,6 +203,8 @@ split_bot_comments() {
     | {
         bots: ($all
                | map(select((.user.login // "") | test("\\[bot\\]$")))
+               | map(select(((.body // "") | test("<!-- unified-ai-review -->") | not)
+                            or (.user.login == $reviewer)))
                | map(. + {unified: ((.user.login == $reviewer)
                                     and ((.body // "") | test("<!-- unified-ai-review -->")))})),
         forged: ($marked | map(select(.user.login != $reviewer)))

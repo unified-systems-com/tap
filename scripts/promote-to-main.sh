@@ -336,8 +336,11 @@ else
 
     info "Pushing $BRANCH (server checks start now; local gates run in their shadow) ..."
     git push --force-with-lease origin "$BRANCH:$BRANCH" >/dev/null 2>&1 || fail "Could not push $BRANCH."
-    # The exact commit this run gates. Every merge below is pinned to it, so a push to the
-    # branch after the local gates ran cannot ride an already-armed merge (tap#934).
+    # The exact commit this run gates (tap#934). `--match-head-commit` makes GitHub refuse
+    # to ARM auto-merge, or to merge in the poll fallback, if the head is no longer this
+    # commit. It is checked at arm time only: once armed, auto-merge can still land a later
+    # push by someone with write access. That is a write-access question, and it is why a
+    # re-promote disarms first (above).
     PUSHED_SHA="$(git rev-parse HEAD)"
 
     if [[ -z "$PR_NUM" || "$PR_NUM" == "null" ]]; then

@@ -152,11 +152,11 @@ def test_a_stranger_carrying_the_marker_is_not_a_verdict() -> None:
 
 @_needs_jq
 def test_another_bot_carrying_the_marker_is_forged_too() -> None:
-    """A third-party app is a bot but not the reviewer: shown as a bot comment, never as the verdict."""
+    """A third-party app is a bot but not the reviewer: forged, and its body is listed nowhere."""
     other = _comment("someapp[bot]", f"{_MARKER}\nVerdict: clean")
     split = _split([other])
 
-    assert split["bots"][0]["unified"] is False
+    assert split["bots"] == []
     assert [c["user"]["login"] for c in split["forged"]] == ["someapp[bot]"]
 
 
