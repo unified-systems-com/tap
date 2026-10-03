@@ -93,7 +93,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@9b5fa547c101/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@de4eddca44c3/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -362,7 +362,43 @@ def _workflow_permissions(text: str) -> dict[str, str] | None:
     if not isinstance(doc, dict):
         return None
     perms = doc.get("permissions")
-    return {str(k): str(v) for k, v in perms.items()} if isinstance(perms, dict) else None
+    if isinstance(perms, dict):
+        return {str(k): str(v) for k, v in perms.items()}
+    return _scope_shorthand(perms)
+
+
+#: GitHub's whole-scope shorthand. `permissions: read-all` / `write-all` is a STRING, not a map,
+#: and grants that level on every scope. Modelled as a wildcard entry rather than an enumeration so
+#: a scope nobody has thought of yet still resolves (AI review, PR# 945 - tap).
+_ALL_SCOPES = "*"
+
+
+def _scope_shorthand(value: object) -> dict[str, str] | None:
+    """``read-all`` / ``write-all`` as a wildcard grant; ``None`` for anything else."""
+    if value == "read-all":
+        return {_ALL_SCOPES: "read"}
+    if value == "write-all":
+        return {_ALL_SCOPES: "write"}
+    return None
+
+
+def _granted_scope(perms: dict[str, str], scope: str) -> str | None:
+    """What *perms* grants for *scope*, honouring the whole-scope shorthand."""
+    return perms[scope] if scope in perms else perms.get(_ALL_SCOPES)
+
+
+def _satisfies(granted: str | None, needed: str) -> bool:
+    """Whether *granted* covers *needed*, using GitHub's own ordering rather than equality.
+
+    `write` includes `read`: a job holding `contents: write` can read contents, so a callee that
+    declares `contents: read` runs. Comparing for EQUALITY failed such a caller — which is the same
+    error class this check's own `-8` fix exists to remove. A check that reds a configuration that
+    actually works teaches people to "fix" a working repository, and that is precisely how the
+    2026-09-29 outage was instructed (AI review, PR# 945 - tap).
+    """
+    if granted is None:
+        return False
+    return granted == needed or (needed == "read" and granted == "write")
 
 
 def _job_permissions(text: str, lineno: int) -> dict[str, str] | None:
@@ -692,8 +728,10 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
             # block inherits the workflow one, which is a different state from granting nothing —
             # collapsing the two is how a checker comes to bless a shape that cannot start.
             effective = perms if perms is not None else (_workflow_permissions(text) or {})
-            missing_scopes = {k: v for k, v in required.items() if effective.get(k) != v}
-            legacy_write = perms is not None and perms.get("contents") == "write"
+            missing_scopes = {k: v for k, v in required.items() if not _satisfies(_granted_scope(effective, k), v)}
+            # The over-grant is reported wherever it is EFFECTIVE, inherited or not: it is
+            # repository write either way. Equality on the job block alone missed the inherited one.
+            legacy_write = _granted_scope(effective, "contents") == "write"
             if legacy_write:
                 missing_scopes.pop("contents", None)  # present, just too broad — reported below
             checked.append(
@@ -1307,6 +1345,31 @@ def _declares_releases(repo_root: Path) -> list[str]:
     return [rel for rel in RELEASE_PLEASE_FILES if (repo_root / rel).is_file()]
 
 
+def _fires_on_a_release_tag(text: str) -> bool | None:
+    """Whether the workflow triggers on a tag push. ``None`` when it cannot be determined.
+
+    **`on:` is the YAML 1.1 boolean `true`.** `yaml.safe_load` returns the key as ``True``, not as
+    the string ``"on"``, so both spellings are looked up — a reader who checks only ``"on"`` finds
+    nothing and concludes the workflow has no triggers at all. (I made exactly that mistake while
+    measuring the fleet for this change.)
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - shares the fallback path's test
+        return None
+    try:
+        doc = yaml.safe_load(text)
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    triggers = doc.get("on", doc.get(True))
+    if not isinstance(triggers, dict):
+        return False
+    push = triggers.get("push")
+    return isinstance(push, dict) and bool(push.get("tags"))
+
+
 def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
     """A repository that says it cuts releases must carry the lane that attests them.
 
@@ -1331,10 +1394,18 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
     now been overlooked twice by the same check set, in two different ways, and this closes the
     second.
 
+    **The caller must also be able to fire.** A `release-sbom.yml` that calls the shared lane but
+    triggers only on `workflow_dispatch` passes a presence test and still lets every release tag
+    publish unattested — the check would report the property while the property was false. So the
+    tag trigger is asserted here too. Both AI review seats raised this independently on
+    `PR# 945 - tap`, and they were right: presence of the caller does not prove releases reach it.
+    Measured before asserting it, 24 of 24 plugin repositories already carry `push:` with `tags:`,
+    so this reds nothing — the same ordering this change's §1 took, and the mirror of the mistake
+    that caused the outage its `-8` half fixes.
+
     **What it does not assert.** Not that the lane has ever run: that is a runtime observation and
     these checks read files by design. Not that the pin is a SHA: that belongs to the pin check and
-    duplicating it here would be a second place to fix the same rule. Only that a repository
-    declaring releases carries a caller of core's reusable release lane.
+    duplicating it here would be a second place to fix the same rule.
     """
     check = CheckResult(id="repo-release-lane", name="A repository that cuts releases attests them")
     declared = _declares_releases(repo_root)
@@ -1373,7 +1444,12 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
 
     text = path.read_text(encoding="utf-8", errors="replace")
     entries, complete = _job_uses(text)
-    calls = [ref for _, ref in entries if ref.startswith(REUSABLE_RELEASE)]
+    # EXACT target, never a prefix. `startswith` counted
+    # `…/plugin-release-sbom.yml-disabled@<sha>` as the shared lane, so a repository could pass
+    # this check while calling something that is not the attestation workflow (AI review,
+    # PR# 945 - tap, raised independently by two seats). A `uses:` is `<target>@<ref>`, so the
+    # target is what must match — splitting on the FIRST `@` because a ref may not contain one.
+    calls = [ref for _, ref in entries if ref.split("@", 1)[0] == REUSABLE_RELEASE]
 
     if not calls:
         if not complete:
@@ -1395,7 +1471,21 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    check.info(f"{RELEASE_WORKFLOW} calls the shared release lane; {', '.join(declared)} present")
+    fires = _fires_on_a_release_tag(text)
+    if fires is False:
+        check.fail(
+            f"{RELEASE_WORKFLOW} calls `{REUSABLE_RELEASE}` but does not trigger on a tag push, so "
+            "no release reaches it. A caller that cannot fire attests nothing, and the repository "
+            "still publishes a wheel on every release-please tag — the invisible state this check "
+            "exists to catch, wearing a conformant-looking file. Add `on: push: tags:` naming the "
+            "release tag pattern",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
+
+    trigger = "on a release tag push" if fires else "and its trigger could not be parsed"
+    check.info(f"{RELEASE_WORKFLOW} calls the shared release lane {trigger}; {', '.join(declared)} present")
     result.checks.append(check)
 
 
