@@ -204,7 +204,25 @@ class TestClaims:
         job = _run(_register("missing", ClaimsAMissingBatch))  # status unchanged: SUCCESSFUL
         (failed,) = [e for e in job.results["error"] if e["message_code"] == "PRODUCED_BATCH_LINK_FAILED"]
         assert failed["message_data"]["disposition"] == "skipped"
-        assert "DoesNotExist" in failed["message_data"]["error"]
+        assert failed["message_data"]["error"] == "DoesNotExist"
+
+    @SPEC[4]
+    def test_a_failed_link_records_the_error_class_never_its_text(
+        self, isolate_collector_registry: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An exception's message can carry SQL or values; the job's results get its class only."""
+        from tap_grid import services
+
+        def leaky(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("token=s3cr3t-value")
+
+        monkeypatch.setattr(services, "create_edge", leaky)
+        batch = str(uuid.uuid4())
+        monkeypatch.setattr(SubmitsOnce, "BATCH", batch)
+        job = _run(_register("leaky", SubmitsOnce))
+        (failed,) = [e for e in job.results["error"] if e["message_code"] == "PRODUCED_BATCH_LINK_FAILED"]
+        assert failed["message_data"]["error"] == "RuntimeError"
+        assert "s3cr3t" not in str(job.results)
 
     @SPEC[4]
     def test_two_jobs_claiming_the_same_batches_in_opposite_orders_do_not_deadlock(

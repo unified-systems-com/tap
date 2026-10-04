@@ -117,7 +117,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     Every claim that did not become an edge, refused or failed, is returned for the task body to
     record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@3878f7cd507f/3920541ef602 (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@3878f7cd507f/a6a4a7cd2df2 (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
@@ -174,7 +174,9 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                     "code": "PRODUCED_BATCH_LINK_FAILED",
                     "batch_entity_id": batch_id,
                     "disposition": disposition,
-                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                    # The class only: an exception's text can carry SQL or values, and the job's
+                    # results are read through the API; the full detail is in the log line above.
+                    "error": type(exc).__name__,
                 }
             )
     return unlinked
@@ -202,7 +204,8 @@ def _record_unlinked_claims(instance: Any, unlinked: list[dict[str, Any]]) -> No
             instance.record_error(
                 "d874",
                 "PRODUCED_BATCH_LINK_FAILED",
-                f"Batch {claim['batch_entity_id']} ({claim['disposition']}) was not linked to this job: {claim['error']}",
+                f"Batch {claim['batch_entity_id']} ({claim['disposition']}) was not linked to this job "
+                f"({claim['error']}; the server log has the detail).",
                 message_data=data,
             )
 
