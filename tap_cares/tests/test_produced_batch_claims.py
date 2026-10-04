@@ -216,7 +216,7 @@ class TestClaims:
         def leaky(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("token=s3cr3t-value")
 
-        monkeypatch.setattr(services, "create_edge", leaky)
+        monkeypatch.setattr(services, "_create_edge_internal", leaky)
         batch = str(uuid.uuid4())
         monkeypatch.setattr(SubmitsOnce, "BATCH", batch)
         job = _run(_register("leaky", SubmitsOnce))

@@ -70,10 +70,13 @@ def create_edge_endpoint(request: HttpRequest, payload: EdgeIn) -> tuple[int, Ed
     return 201, edge
 
 
-@router.delete("/{entity_id}/", response={204: None})
-def delete_edge_endpoint(request: HttpRequest, entity_id: uuid.UUID) -> tuple[int, None]:
+@router.delete("/{entity_id}/", response={204: None, 400: ErrorOut})
+def delete_edge_endpoint(request: HttpRequest, entity_id: uuid.UUID) -> tuple[int, None | dict[str, str]]:
     # Authorize before the lookup (req-tap-auth-policy): grid.delete gates up front.
     policy.authorize(require_caller_context(), DELETE_CAPABILITY, operation="delete_edge")
     edge = get_object_or_404(Edge.objects.select_related("entity"), entity__pk=entity_id)
-    delete_edge(edge, caller_context=require_caller_context())
+    try:
+        delete_edge(edge, caller_context=require_caller_context())
+    except InvalidEdgeError as e:  # an internal-only edge type (req-grid-edge-internal-3)
+        return 400, {"detail": str(e)}
     return 204, None

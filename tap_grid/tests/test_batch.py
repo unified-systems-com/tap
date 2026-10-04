@@ -310,12 +310,11 @@ class TestProducedBatches:
         return create_entity("concept", name=name)
 
     def _link(self, producer, batch, disposition):
-        create_edge(
-            from_entity=producer,
-            to_entity=batch.entity,
-            edge_type="PRODUCED_BATCH",
-            properties={"disposition": disposition},
-        )
+        from tap_grid.services import _create_edge_internal_for_test
+
+        # PRODUCED_BATCH is internal-only (req-grid-edge-internal): fixtures build it through the
+        # trusted-internal path the claims path uses.
+        _create_edge_internal_for_test(producer, batch.entity, "PRODUCED_BATCH", {"disposition": disposition})
 
     def test_groups_by_disposition(self):
         producer = self._producer()
@@ -553,14 +552,14 @@ class TestCallerNamedServiceBatches:
     @pytest.mark.spec("req-grid-service-batch-caller-name-2")
     def test_create_edge_names_the_batch_not_the_edge(self):
         """`create_edge` already takes `name` for the edge; `batch_name` is the batch's."""
-        producer = create_entity("concept", name="producer")
-        target = create_batch(source="t:target")
+        # A public edge type: PRODUCED_BATCH is internal-only (req-grid-edge-internal).
+        producer = create_entity("grid_fixtures__constrained_source", name="producer")
+        target = create_entity("grid_fixtures__constrained_target", name="target")
 
         edge = create_edge(
             from_entity=producer,
-            to_entity=target.entity,
-            edge_type="PRODUCED_BATCH",
-            properties={"disposition": "imported"},
+            to_entity=target,
+            edge_type="CONSTRAINED_LINK__grid_fixtures",
             name="the edge",
             batch_name="the batch",
         )
@@ -816,15 +815,11 @@ class TestMintedBatchLabelRequired:
         from tap_grid.exceptions import EdgePropertyValidationError
         from tap_grid.services import create_edge
 
-        producer = create_entity("concept", name="producer")
-        target = create_batch(source="t:target")
+        # A public edge type: PRODUCED_BATCH is internal-only (req-grid-edge-internal).
+        producer = create_entity("grid_fixtures__constrained_source", name="producer")
+        target = create_entity("grid_fixtures__constrained_target", name="target")
         with pytest.raises(EdgePropertyValidationError, match="batch_description"):
-            create_edge(
-                from_entity=producer,
-                to_entity=target.entity,
-                edge_type="PRODUCED_BATCH",
-                properties={"disposition": "imported"},
-            )
+            create_edge(from_entity=producer, to_entity=target, edge_type="CONSTRAINED_LINK__grid_fixtures")
 
     @pytest.mark.spec("req-grid-service-batch-label-required-4")
     def test_a_context_label_names_the_minted_batch(self):

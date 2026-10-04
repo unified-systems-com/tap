@@ -184,7 +184,7 @@ class TestFailedRun:
         def _boom(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("edge write exploded")
 
-        monkeypatch.setattr("tap_cares.services.create_edge", _boom)
+        monkeypatch.setattr("tap_cares.services._create_edge_internal", _boom)
 
         with pytest.raises(RuntimeError):
             run_collection(col)

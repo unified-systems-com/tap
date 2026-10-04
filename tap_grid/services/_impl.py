@@ -258,6 +258,25 @@ def _contained_children(
     )
 
 
+def _refuse_internal_edge_type(edge_type: str, verb: str, internal_only_bypass: bool) -> None:
+    """Refuse a generic write of an internal-only edge type (req-grid-edge-internal).
+
+    The edge counterpart of the INTERNAL_ONLY node gate: the trusted-internal path passes the
+    bypass, which ``write_batch`` grants a program actor only. Ending a node's edges when the node
+    is deleted does not come through here, so an internal-only edge still ends with its endpoint.
+
+    TAP-IMPLEMENTS: req-grid-edge-internal@3947d5d8c25a/f4c607b823a2 (enforcement) — the pipeline's
+        refusal, which every write_batch caller and GRIFT import pass through.
+    """
+    from tap_grid.constraints import is_internal_edge_type
+
+    if is_internal_edge_type(edge_type) and not internal_only_bypass:
+        raise ServiceUnsupportedOperationError(
+            f"'{edge_type}' is an internal-only edge type and cannot be written through the generic service "
+            f"layer ({verb})."
+        )
+
+
 def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
     """Take FOR UPDATE on the given Entity rows in ascending id order, and return the ids found.
 
@@ -619,6 +638,7 @@ def _execute_write_pipeline(
             if to_entity.entity_type == "edge":
                 raise ServiceConstraintError("Edges cannot have other edges as endpoints (to_entity is an edge).")
             model_cls = Edge
+            _refuse_internal_edge_type(op.edge_type, op.verb, internal_only_bypass)
             instance = Edge(from_entity=from_entity, to_entity=to_entity, edge_type=op.edge_type)
 
         else:
@@ -676,6 +696,8 @@ def _execute_write_pipeline(
                     f"'{target_entity.entity_type}' is an internal-only type and cannot be modified through the generic service layer."
                 )
             instance = model_cls.all_objects.select_related("entity").get(entity_id=target_uuid)
+            if isinstance(instance, Edge):
+                _refuse_internal_edge_type(instance.edge_type, op.verb, internal_only_bypass)
 
             # Write prohibition — tombstoned entities cannot be mutated.
             if not is_delete and instance.entity.deleted_at is not None:

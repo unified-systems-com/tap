@@ -41,6 +41,7 @@ from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.models import Batch, BatchStatus, Edge, Entity, clamp_to_fields
 from tap_grid.services import (
+    _create_edge_internal,
     _create_node_internal,
     _patch_node_internal,
     create_edge,
@@ -426,7 +427,7 @@ def _claim_and_create_fire(
             raise SchedulerError(f"ScheduleFire create failed: " f"{[(e.code, e.message) for e in fire_result.errors]}")
         fire = ScheduleFire.objects.get(entity_id=fire_result.entity_id)
 
-        create_edge(
+        _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             from_entity=schedule.entity,
             to_entity=fire.entity,
             edge_type="HAS_FIRED",
@@ -493,7 +494,7 @@ def _finalize_fire_triggered(
             raise SchedulerError(
                 f"TRIGGERED patch failed for fire {fire.entity_id}: " f"{[(e.code, e.message) for e in result.errors]}"
             )
-        create_edge(
+        _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             from_entity=fire.entity,
             to_entity=job.entity,
             edge_type="TRIGGERED_JOB",
