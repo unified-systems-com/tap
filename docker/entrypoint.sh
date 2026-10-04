@@ -181,6 +181,22 @@ echo "==> DEBUG tap#933: openssl version -a"
 openssl version -a || true
 echo "==> DEBUG tap#933: openssl list -providers -verbose"
 openssl list -providers -verbose || true
+echo "==> DEBUG tap#933: nproc + entropy pool"
+nproc || true
+cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "entropy_avail: not readable"
+echo "==> DEBUG tap#933: bare openssl CLI CTR-DRBG + EC keygen, same shell, same config"
+openssl rand -hex 16 || echo "CLI rand FAILED rc=$?"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /tmp/debug-ec.pem 2>&1 || echo "CLI genpkey FAILED rc=$?"
+echo "==> DEBUG tap#933: Python EC keygen, 3 attempts in one process (first-call-only vs persistent?)"
+uv run python3 -c "
+from cryptography.hazmat.primitives.asymmetric import ec
+for i in range(3):
+    try:
+        ec.generate_private_key(ec.SECP256R1())
+        print(f'attempt {i}: OK')
+    except Exception as e:
+        print(f'attempt {i}: FAILED: {e!r}')
+" || true
 if ! uv run python -m tap.fips; then
     emit_abort fips "FIPS self-check failed: declared mode not enforced (see above); refusing to serve"
     exit 1
