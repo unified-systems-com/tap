@@ -409,6 +409,44 @@ in a place the hashing audit never looked.* The fail-closed boot self-check (D15
 health probe are the backstops that turn a future regression of this class into an immediate,
 explained boot failure rather than a mystery.
 
+### L18 — A refused negative-control fetch can poison the process for later, unrelated crypto ⚠️
+
+Found 2026-10 (tap#933/#931), while accepting Wolfi's `openssl-4.0` package migration: the boot
+self-check (D15) started failing `cryptography`'s P-256 keygen — the webauthn/passkey path itself,
+not MD5 — with `error:12000090:random number generator:rand_new_drbg:unable to fetch drbg` in the
+process's **default** `OSSL_LIB_CTX`. 100% reproducible on real GitHub Actions hardware; 0%
+reproducible across every local repro tried (native aarch64, QEMU-emulated amd64, a genuinely fresh
+`uv sync`, the real `docker compose` stack) — architecture, `-m` vs `-c` invocation, import-time
+package side effects, and gunicorn's fork model were each tested and ruled out in turn.
+
+Isolated to a 5-line reproduction with no `tap` code involved at all: `hashlib.sha256()` (a positive
+control), then `_hashlib.new("md5", ...)` (correctly refused — the intended L5 negative-control
+probe), then `cryptography`'s EC keygen. That order fails every time on real hardware. Reversing it —
+the keygen first, the MD5 probe after — passes every time, same hardware, same config, verified
+across multiple container restarts. The DRBG failure has nothing to do with the hashing boundary
+being probed; **the act of correctly refusing an unapproved fetch leaves the context unable to
+satisfy a later, unrelated one**, for the remainder of the process's life.
+
+This matches a known, closed-wontfix upstream limitation (`openssl/openssl#27691`, "Multiple copies
+of openssl inside the same process need unique copies of loaded modules (fips.so)" — maintainer's own
+words: "there is some static state in `fips.so` itself that is modified when the library is loaded
+and if it's loaded again, that state is not usable by the second loader"), though the exact trigger
+here is a single load, not a double one — a provider-level fetch-cache side effect, not a reload.
+Real hardware is apparently a necessary condition alongside the ordering; QEMU's generic CPU model
+never reproduced it despite matching every other variable.
+
+**Generalize beyond this one self-check:** `hashlib.md5()`/`_hashlib.new("md5", ...)` called *without*
+`usedforsecurity=False` anywhere in the process — tap's own code or any dependency's — is refused
+exactly like this probe, and per this finding the refusal is not necessarily contained to that one
+call. In a long-lived gunicorn worker, one incidental unguarded MD5 touch could leave every
+*subsequent* request on that worker failing an unrelated DRBG-needing operation (signing, keygen,
+passkey verification) until the worker recycles — an intermittent, worker-specific failure shape with
+no obvious link back to its actual cause. The fix applied here (reorder D15's own checks so every
+required positive operation completes before any negative-control probe) closes the one instance
+found; it does not protect against the next one a dependency introduces. A more durable fix — running
+negative-control probes, wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX` rather
+than the default global one — is open, tracked as a follow-up, not yet built.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |

@@ -132,13 +132,21 @@ def assert_declared_mode() -> str:
     mode = declared_mode()
     if mode == "1":
         _approved_python_hash_works()
+        # cryptography's own positive-then-negative check runs BEFORE the raw _hashlib MD5
+        # probe below, not after (tap#933/#931, L18): a correctly-refused MD5 fetch in the
+        # process's default OSSL_LIB_CTX leaves that context unable to satisfy a later,
+        # unrelated DRBG fetch — proven on real CI hardware to be 100% reproducible with the
+        # probe-then-keygen order and 100% absent with keygen-then-probe, independent of
+        # architecture, -m invocation, or any tap-specific code (a 5-line reproduction).
+        # Every required positive operation must complete before any negative-control probe
+        # that can leave the shared context in a refused state.
+        _cryptography_fips_consistent(expect_enforced=True)
         if not _md5_for_security_refused():
             raise FipsSelfCheckError(
                 "image declares FIPS on (TAP_FIPS_MODE=1) but _hashlib MD5 for security use was "
                 "NOT refused — the OpenSSL FIPS provider config did not take effect (the L1 "
                 "fail-open trap). Refusing to serve."
             )
-        _cryptography_fips_consistent(expect_enforced=True)
     else:
         # Non-FIPS declared: prove it does NOT enforce, so the image cannot silently lie about
         # its posture in the other direction. A refusal here means the image claims non-FIPS
