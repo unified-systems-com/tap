@@ -171,6 +171,16 @@ uv sync --all-packages
 # a new bare hashlib.md5()/SELECT md5() in a dependency is a boot-breaking regression under
 # FIPS — both are caught here before any schema mutation.
 echo "==> FIPS self-check (assert declared mode is actually enforced)..."
+# TEMPORARY DEBUG (tap#933/#931) — to be reverted once the data is collected. Gathering
+# real-hardware facts the local QEMU-emulated amd64 repro could not surface, ahead of the
+# EC-keygen "unable to fetch drbg" failure this job reliably hits.
+echo "==> DEBUG tap#933: CPU model + relevant feature flags"
+grep -m1 '^model name' /proc/cpuinfo || true
+grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(rdrand|rdseed|aes|avx|avx2|avx512f|sha_ni|sha)$' || true
+echo "==> DEBUG tap#933: openssl version -a"
+openssl version -a || true
+echo "==> DEBUG tap#933: openssl list -providers -verbose"
+openssl list -providers -verbose || true
 if ! uv run python -m tap.fips; then
     emit_abort fips "FIPS self-check failed: declared mode not enforced (see above); refusing to serve"
     exit 1
