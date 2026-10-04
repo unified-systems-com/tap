@@ -103,13 +103,19 @@ def _approved_python_hash_works() -> None:
         raise FipsSelfCheckError(f"SHA-256 is not OpenSSL-backed (module={module!r}); cannot trust the FIPS boundary.")
 
 
-def _cryptography_fips_consistent(*, expect_enforced: bool) -> None:
-    """Assert `cryptography` (webauthn's engine) agrees with the declared mode.
+def _cryptography_positive_control(*, expect_enforced: bool) -> None:
+    """Positive control: `cryptography` (webauthn's engine) executes the approved passkey path.
 
     This is THE integration point (L9): its wheel would statically bundle a private OpenSSL
     that ignores the system FIPS config, so we build it --no-binary and verify here that it
-    links the system provider. Positive control: P-256 ECDSA sign+verify — the exact passkey
-    assertion path. Negative control (FIPS only): MD5 via `cryptography` is refused.
+    links the system provider. P-256 ECDSA sign+verify — the exact passkey assertion path.
+
+    Deliberately separate from the MD5 negative control below (tap#933/#931, L18): a function
+    that ran its own positive control then its own negative control, back to back, was found to
+    poison the shared context for whatever ran NEXT regardless — the negative control's refused
+    fetch doesn't care that ITS OWN positive control already succeeded; it still leaves the
+    context unable to satisfy the following caller's fetch. Every positive control across this
+    whole self-check must run before every negative one, not just within one function.
     """
     try:
         from cryptography.hazmat.primitives import hashes
@@ -121,15 +127,19 @@ def _cryptography_fips_consistent(*, expect_enforced: bool) -> None:
             ) from exc
         return
 
-    # Positive control (both modes): the approved passkey path executes.
     key = ec.generate_private_key(ec.SECP256R1())
     signature = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
     key.public_key().verify(signature, b"assertion", ec.ECDSA(hashes.SHA256()))
 
-    if not expect_enforced:
-        return
 
-    # Negative control (FIPS only): a non-approved digest is refused by the same engine.
+def _cryptography_md5_refused() -> None:
+    """Negative control (FIPS only): a non-approved digest is refused by `cryptography`.
+
+    Run this LAST, after every positive control this self-check needs (L18) — see
+    `_cryptography_positive_control`'s docstring for why.
+    """
+    from cryptography.hazmat.primitives import hashes
+
     try:
         digest = hashes.Hash(hashes.MD5())
         digest.update(b"probe")
@@ -149,13 +159,16 @@ def assert_declared_mode() -> str:
     """
     mode = declared_mode()
     if mode == "1":
-        # cryptography's own check runs FIRST (tap#933/#931, L18): a correctly-refused MD5
-        # fetch in the process's default OSSL_LIB_CTX leaves that context unable to satisfy a
-        # later, unrelated DRBG fetch — proven on real CI hardware to be 100% reproducible with
-        # any MD5 touch before the keygen, and 100% absent with the keygen first, independent
-        # of architecture or -m invocation. Below this, every other check uses `_hashlib`
-        # directly rather than `hashlib` for the same reason.
-        _cryptography_fips_consistent(expect_enforced=True)
+        # ALL positive controls run first, THEN all negative ones (tap#933/#931, L18): a
+        # correctly-refused MD5 fetch in the process's default OSSL_LIB_CTX leaves that context
+        # unable to satisfy a LATER, unrelated fetch from anything — CTR-DRBG, SHA-256, any of
+        # it — for the rest of the process's life. Proven on real CI hardware to be 100%
+        # reproducible with any MD5 touch (via `_hashlib`, `hashlib`'s own import-time behavior,
+        # or `cryptography`'s own negative control) before a later positive operation, and 100%
+        # absent when every positive runs first. `_cryptography_positive_control` and
+        # `_cryptography_md5_refused` are deliberately separate functions, not one function run
+        # twice, so this ordering is enforced across the whole self-check, not just within it.
+        _cryptography_positive_control(expect_enforced=True)
         _approved_python_hash_works()
         if not _md5_for_security_refused():
             raise FipsSelfCheckError(
@@ -163,16 +176,19 @@ def assert_declared_mode() -> str:
                 "NOT refused — the OpenSSL FIPS provider config did not take effect (the L1 "
                 "fail-open trap). Refusing to serve."
             )
+        _cryptography_md5_refused()
     else:
         # Non-FIPS declared: prove it does NOT enforce, so the image cannot silently lie about
         # its posture in the other direction. A refusal here means the image claims non-FIPS
-        # while FIPS is actually active — a declaration mismatch, also fail-closed.
+        # while FIPS is actually active — a declaration mismatch, also fail-closed. No ordering
+        # hazard in this branch: MD5 is expected to SUCCEED (not be refused) when FIPS is off,
+        # so there is no refused fetch here to poison anything.
         if _md5_for_security_refused():
             raise FipsSelfCheckError(
                 "image declares FIPS off (TAP_FIPS_MODE=0) but MD5 for security use is refused — "
                 "the running crypto posture does not match the declared mode."
             )
-        _cryptography_fips_consistent(expect_enforced=False)
+        _cryptography_positive_control(expect_enforced=False)
     return mode
 
 

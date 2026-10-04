@@ -444,10 +444,17 @@ three passes, each disproven by the next real CI run before being trusted:
    mid-loop, **later names in that same loop can also silently fail to register** — including the
    approved, FIPS-supported SHA-256 this module's own positive control needs. Deferring the import
    moved *when* the hazard fired, not *whether* it could still take out something needed afterward.
-3. The fix that held: stop using the `hashlib.py` wrapper at all. `_approved_python_hash_works` now
-   uses `_hashlib.new("sha256", ...)` directly, the same "layer that cannot fall back" L5 already
-   mandated for the negative control. `_hashlib` has no bulk-construction loop — only `hashlib.py`
-   does — so nothing in this module imports `hashlib` anywhere, in either branch.
+3. Dropping `hashlib.py` fixed the import-time hazard, but a fourth real-CI run then failed with
+   the exact same symptom shape from a **third** source: `_cryptography_positive_control`'s own
+   MD5 negative control (`hashes.Hash(hashes.MD5())`) ran right after its own successful keygen,
+   inside the same function — and poisoned the context for `_approved_python_hash_works`, which
+   ran immediately afterward. The refusal doesn't care that ITS OWN positive control already
+   succeeded; it still breaks the NEXT caller's fetch, whoever that is. The fix that finally held:
+   split that function into `_cryptography_positive_control` and `_cryptography_md5_refused`, and
+   order the ENTIRE self-check as every positive control first, then every negative one, with no
+   function anywhere running both. Three separate code paths — `hashlib.py`'s own import,
+   `_hashlib.new("md5", ...)`, and `cryptography`'s `hashes.MD5()` — all reproduce the identical
+   mechanism, confirming it is the refused fetch itself, not any one API's particular implementation.
 
 **Why MD5 is refused here at all is itself a Wolfi packaging fact, not purely a FIPS one.**
 Wolfi's new freestanding legacy provider (`openssl-provider-legacy-allowed`, the one gated behind
