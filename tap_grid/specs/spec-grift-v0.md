@@ -970,7 +970,7 @@ RID: `req-grift-edge-identity-surface`
 
 Status: `Proposed`
 
-Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Every shape below is a proposal: the schemas in this document and `grift-document.schema.json` do not yet carry them and still reject them, and each is added in the same change as the importer code that honours it, so no field is ever accepted and then dropped.
+Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Each shape is added to `grift-document.schema.json` in the same change as the importer code that honours it, so no field is ever accepted and then dropped. The endpoint by natural key (Issue# 914 - tap) and removal by identity (Issue# 915 - tap) have landed; the `edge_cases` section is still a proposal the schema rejects.
 
 #### Status Details
 Proposed (Issue# 912 - tap; epic Issue# 911 - tap).
@@ -979,7 +979,7 @@ Proposed (Issue# 912 - tap; epic Issue# 911 - tap).
 | Shape | Where | Behaviour |
 | --- | --- | --- |
 | Endpoint by natural key | `GriftEdgePayload`: `from_key` / `to_key` beside `from_entity_id` / `from_ref`, exactly one per endpoint | `{ "entity_type": <type>, "key": { <declared natural-key property>: <value>, ... } }`, resolved by the importer (`req-grid-import-grift-edge-endpoints`) |
-| Removal by edge identity | `GriftDeletesSection.edges` target, as an alternative to `entity_id` | `{ "edge_type", "from", "to", "discriminators", "reason" }` (`req-grid-import-grift-edge-removal`) |
+| Removal by edge identity | `GriftDeletesSection.edges` target (`GriftEdgeRemovalByIdentity`), as an alternative to `entity_id`; `deletes.nodes` and `purges` stay id-addressed | `{ "edge_type", "from", "to", "discriminators", "reason" }`, each endpoint `{ "entity_id" }` or `{ "entity_type", "key" }` (`GriftRemovalEndpoint`), resolved by the importer (`req-grid-import-grift-edge-removal`) |
 | Authority claims | A new optional batch-container member `edge_cases`, whose one defined member is `authority` | An array of `{ "edge_type", "anchor", "direction", "read" }` claims, with a reserved `dimensions` (`req-grid-reconcile-edge-authority`) |
 
 An importer that does not implement a shape fails preflight on a document carrying it, rather than ignoring it. A key never carries an identity, a search or an override of the sender's choosing: it names *which* declared properties to look up, and the receiving grid's declaration decides what they mean (`req-grid-entity-natural-key-2`).

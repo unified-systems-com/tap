@@ -88,6 +88,15 @@ Two co-located incident corpora live under `docs/`, answering different question
 - Nodes are concrete `BaseModel` subclasses with a one-to-one backing `Entity`.
 - Edges are first-class graph objects with their own backing `Entity`.
 - Dimensions live on `Entity` as flat JSON metadata used for scoping and interpretation.
+- **Absence is declared, never invented as a value.** `null` means unobserved, concrete-empty
+  (`""`/`[]`/`{}`) means a source looked and found nothing, and FLIP's presence-or-absence for a
+  field distinguishes a known unknown (explicitly asserted) from an unknown unknown (untouched) —
+  three states, never collapsed into a sentinel value or invented in-band. Before proposing a new
+  absence reason, a per-key delete primitive, or a merge/patch semantic, check
+  `req-grid-node-observation` in `tap_grid/specs/spec-grid-node.md` (decided 2026-06-30) — it is
+  very likely already decided there. Two independent design threads missed this and nearly
+  duplicated or contradicted it in 2026-09, which is why this is stated here rather than left to be
+  found only by opening that spec.
 - TAP-managed node and edge mutations go through the service layer.
 - **Direct ORM writes — the code rule and the agent rule are different, and the agent rule is a hard stop.**
   - *In the codebase*, direct ORM access is permitted in **migrations, deliberate model-level tests, service-layer internals, and the Search `orm`-mode compiler**. Anything else is flagged by `tap/guards/direct_write.py` and ratchets toward zero; a sanctioned below-service write carries a per-site `# TAP-WRITE-COV: <reason>`, which `DirectWriteExemptionGuard` fails the moment it stops suppressing a flagged write.

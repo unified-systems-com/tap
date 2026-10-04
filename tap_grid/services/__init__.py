@@ -109,6 +109,8 @@ __all__ = [
     "purge_edge",
     "resolve_identity",
     "resolve_edge_identity",
+    "find_by_natural_key",
+    "find_edge_by_identity",
     # Read API (grid.read)
     "resolve_entity",
     "get_node",
@@ -1479,6 +1481,50 @@ def resolve_identity(
     return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
 
 
+@requires_capability(READ_CAPABILITY, operation="find_by_natural_key")
+def find_by_natural_key(
+    type_slug: str,
+    properties: Mapping[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+) -> uuid.UUID | None:
+    """The live row a node type's declared natural key names, or None. Never creates one.
+
+    The read half of :func:`resolve_identity`: the same generated search over live rows, with no
+    lock and no assignment, because a caller naming a node by key (an edge endpoint,
+    ``req-grid-import-grift-edge-endpoints``) wants the node that exists and must never mint
+    one. ``properties`` carries exactly the type's declared constituting properties.
+
+    Args:
+        type_slug: Registered node type slug; it must declare a ``NATURAL_KEY``.
+        properties: The declared constituting values.
+        caller_context: Actor identity.
+
+    Returns:
+        The live row's entity id, or None when no live row matches.
+
+    Raises:
+        ServiceValidationError: Unknown type, or a type that declares no natural key.
+        AmbiguousIdentity: More than one live row matches.
+    """
+    from tap_grid.registry import get_model_class
+
+    try:
+        model_cls = cast(type[BaseModel], get_model_class(type_slug))
+    except KeyError as exc:
+        raise ServiceValidationError(f"Unknown entity type {type_slug!r}.") from exc
+    if not isinstance(model_cls.NATURAL_KEY, tuple):
+        raise ServiceValidationError(f"{type_slug} declares no NATURAL_KEY, so nothing can be found by key.")
+    # Exactly the declared names, nothing else: no ORM lookup suffix or extra field reaches the
+    # filter (find_existing enforces the same; this makes it the service's refusal).
+    if set(properties) != set(model_cls.NATURAL_KEY):
+        raise ServiceValidationError(
+            f"{type_slug} is found by exactly {list(model_cls.NATURAL_KEY)}; got {sorted(properties)}."
+        )
+    row = model_cls.find_existing(**properties)
+    return None if row is None else row.entity_id
+
+
 @requires_capability(WRITE_CAPABILITY, operation="resolve_edge_identity")
 @requires_capability(READ_CAPABILITY, operation="resolve_edge_identity")
 def resolve_edge_identity(
@@ -1580,6 +1626,85 @@ def resolve_edge_identity(
     if not rows:
         return EdgeIdentityResolution(entity_id=assigned, found=False, key=key)
     return EdgeIdentityResolution(entity_id=rows[0].entity_id, found=True, key=key)
+
+
+@requires_capability(READ_CAPABILITY, operation="find_edge_by_identity")
+def find_edge_by_identity(
+    edge_type: str,
+    from_id: str | uuid.UUID,
+    to_id: str | uuid.UUID,
+    discriminators: Mapping[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+) -> uuid.UUID | None:
+    """The live edge a relationship names now, or None — under the identity lock. Never creates one.
+
+    The read half of :func:`resolve_edge_identity`, for a caller that addresses a relationship
+    rather than a row: a delete by identity (``req-grid-import-grift-edge-removal``) ends
+    whichever live edge matches when it runs. The same lock is taken before the grid is read, so
+    a delete by identity and a concurrent write of that relationship serialise. Only a type with
+    a declared plain identity can be addressed this way: a keyless type has no identity to name,
+    and an undeclared one has none yet. ``discriminators`` maps exactly the declared paths to
+    their values; an absent, null or empty value is refused, never looked up.
+
+    Args:
+        edge_type: The edge type slug.
+        from_id: The resolved source entity id.
+        to_id: The resolved target entity id.
+        discriminators: Each declared discriminator path and its value.
+        caller_context: Actor identity.
+
+    Returns:
+        The live edge's entity id, or None when no live edge matches.
+
+    Raises:
+        ServiceValidationError: No open transaction, a type with no plain identity, a non-UUID
+            endpoint, or discriminators other than exactly the declared paths.
+        IncompleteEdgeKey: A declared discriminator is null or empty.
+        AmbiguousIdentity: More than one live edge matches.
+    """
+    from tap_grid.edge_identity import (
+        IncompleteEdgeKey,
+        edge_lock_key,
+        find_live_edges,
+        get_edge_identity,
+        incomplete_paths,
+    )
+    from tap_grid.natural_key import AmbiguousIdentity
+
+    identity = get_edge_identity(edge_type)
+    if identity is None or identity.keyless:
+        state = "is keyless" if identity is not None else "declares no identity"
+        raise ServiceValidationError(f"{edge_type} {state}, so no edge of it can be found by identity.")
+    if set(discriminators) != set(identity.paths):
+        raise ServiceValidationError(
+            f"{edge_type} is found by exactly the discriminators {list(identity.paths)}; got {sorted(discriminators)}."
+        )
+    try:
+        source, target = _coerce_uuid(from_id), _coerce_uuid(to_id)
+    except ValueError as exc:
+        raise ServiceValidationError("from_id and to_id must be entity UUIDs.") from exc
+    if source is None or target is None:
+        raise ServiceValidationError("from_id and to_id must be entity UUIDs.")
+    if not connection.in_atomic_block:
+        raise ServiceValidationError(
+            "find_edge_by_identity must run inside the caller's transaction: its lock is transaction-scoped, "
+            "so the match and what the caller does with it commit together."
+        )
+    values = {path: discriminators[path] for path in identity.paths}
+    holes = incomplete_paths(values)
+    if holes:
+        raise IncompleteEdgeKey(edge_type, holes)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [edge_lock_key(edge_type, source, target, values)]
+        )
+    rows = find_live_edges(edge_type, source, target, values)
+    if len(rows) > 1:
+        raise AmbiguousIdentity(
+            f"edge {edge_type}", {"from": str(source), "to": str(target), **values}, [row.entity_id for row in rows]
+        )
+    return rows[0].entity_id if rows else None
 
 
 @requires_capability(READ_CAPABILITY, operation="get_node")
