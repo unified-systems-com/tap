@@ -486,43 +486,36 @@ COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modul
 # base's modern `openssl` loads + self-tests our pinned module (D4).
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
 
-# openssl.cnf activating the strict `fips` + `base` provider set with fips=yes globally.
-# ORDER IS LOAD-BEARING (L1): `openssl_conf` must be in the default (pre-section) block. The
-# `.include` pulls in fipsmodule.cnf, which STARTS with [fips_sect] — so it must come AFTER
-# `openssl_conf`, else openssl_conf is swallowed into [fips_sect] and NO providers activate
-# (the config "parses" fine but silently falls back to the default provider — the fail-open
-# trap). `.include /etc/ssl/ca.cnf` restores the stock openssl.cnf include that pointing
-# OPENSSL_CONF at our file otherwise displaces (else `openssl req` breaks; TLS trust is
-# unaffected — L14). `base` supplies encoders/decoders (no crypto primitives) and is required
-# for OpenSSL key-file I/O; it is not a hole in the boundary (L15).
-RUN printf '%s\n' \
-  'config_diagnostics = 1' \
-  'openssl_conf = openssl_init' \
-  '' \
-  '.include /etc/ssl/fipsmodule.cnf' \
-  '.include /etc/ssl/ca.cnf' \
-  '' \
-  '[openssl_init]' \
-  'providers = provider_sect' \
-  'alg_section = algorithm_sect' \
-  '' \
-  '[provider_sect]' \
-  'fips = fips_sect' \
-  'base = base_sect' \
-  '' \
-  '[base_sect]' \
-  'activate = 1' \
-  '' \
-  '[algorithm_sect]' \
-  'default_properties = fips=yes' \
-  > /etc/ssl/openssl-fips.cnf
-ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+# SPIKE (tap#933/#931, L18): activate `fips`+`base` by EDITING Wolfi's stock
+# /etc/ssl/openssl.cnf in place, instead of pointing OPENSSL_CONF at a separate,
+# hand-written file. The separate-file approach (L14) was already known to displace the
+# stock file's `.include ca.cnf`; editing in place also preserves its `[ssl_module]`/
+# `[crypto_policy]` RFC-9325 TLS security policy (modern cipher suites, protocol floors,
+# post-quantum key exchange) — a bigger loss than L14 recorded, not discovered until this
+# spike. Swaps the stock `default`+`legacy` providers for `fips`+`base` (same strict,
+# no-`default` posture as D6) while leaving everything else — the CHAINGUARD_LEGACY_*
+# vars (now inert, since `legacy` is no longer referenced), `.include ca.cnf`,
+# `[ssl_module]`/`[crypto_policy]` — untouched. `python3` (not `sed`) for the edit:
+# portable regardless of which `sed` variant this Wolfi base ships.
+RUN python3 -c " \
+import re; \
+path = '/etc/ssl/openssl.cnf'; \
+text = open(path).read(); \
+text = text.replace('default = default_sect', 'fips = fips_sect'); \
+text = text.replace('legacy = legacy_sect', 'base = base_sect'); \
+text = text.replace('[default_sect]', '[fips_sect]'); \
+text = re.sub(r'\[legacy_sect\]\nactivate = \\\$ENV::CHAINGUARD_LEGACY_ALLOWED\nenable-legacy-allowed = \\\$ENV::CHAINGUARD_LEGACY_ALLOWED\nenable-des = \\\$ENV::CHAINGUARD_LEGACY_ENABLE_DES\n', '[base_sect]\nactivate = 1\n', text); \
+text = text.replace('providers = provider_sect\n', 'providers = provider_sect\nalg_section = algorithm_sect\n'); \
+text = text.replace('.include ca.cnf\n', '.include ca.cnf\n.include fipsmodule.cnf\n'); \
+text += '\n[algorithm_sect]\ndefault_properties = fips=yes\n'; \
+open(path, 'w').write(text); \
+print('==> patched /etc/ssl/openssl.cnf:'); \
+print(text)"
 
-# TEMPORARY spike (tap#933/#931): CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1 REMOVED to test whether
-# `cryptography`'s own legacy-provider auto-load (which this var normally suppresses, D8) is
-# implicated in the DRBG-fetch-poisoning bug. NOT a security posture change for real use --
-# this is a diagnostic probe only.
-# ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+# Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
+# (Ruled out as a factor in the DRBG-fetch-poisoning bug — tap#953, closed: removing this
+# produced an identical failure. Restored to its real value for this spike.)
+ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
 
 # Declare the mode machine-legibly (D14); the boot self-check asserts it is actually enforced.
 ENV TAP_FIPS_MODE=1
