@@ -171,6 +171,21 @@ uv sync --all-packages
 # a new bare hashlib.md5()/SELECT md5() in a dependency is a boot-breaking regression under
 # FIPS — both are caught here before any schema mutation.
 echo "==> FIPS self-check (assert declared mode is actually enforced)..."
+echo "==> DEBUG tap#933: _hashlib.new('sha256', ...) ALONE, first thing in a fresh process"
+uv run python3 -c "
+import _hashlib
+try:
+    d = _hashlib.new('sha256', b'probe')
+    print('sha256 via _hashlib.new: OK', d.hexdigest())
+except Exception as e:
+    print('sha256 via _hashlib.new: FAILED', repr(e))
+try:
+    import _hashlib as h2
+    d2 = h2.openssl_sha256(b'probe')
+    print('sha256 via _hashlib.openssl_sha256: OK', d2.hexdigest())
+except Exception as e:
+    print('sha256 via _hashlib.openssl_sha256: FAILED', repr(e))
+" || true
 if ! uv run python -m tap.fips; then
     emit_abort fips "FIPS self-check failed: declared mode not enforced (see above); refusing to serve"
     exit 1
