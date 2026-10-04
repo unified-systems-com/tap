@@ -105,7 +105,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@8b7ff7546489/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@d8e29c3a5b47/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -1641,6 +1641,31 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
+
+    # OVER-GRANT, reported the way `-8` reports it on the CI caller. The lane splits its jobs so no
+    # third-party code shares a token that can sign (`plugin-release-sbom.yml` header,
+    # `req-cicd-runner-least-privilege-3`), and a caller handing it `write-all` undoes that intent
+    # at the caller boundary — every writable scope, for a job whose whole purpose is three. The
+    # grant above is satisfied either way, so this warns rather than fails: capability is the
+    # property asserted here, narrowness is worth saying out loud.
+    broad = sorted(k for k, v in effective.items() if v == "write" and REQUIRED_RELEASE_GRANT.get(k) != "write")
+    if _granted_scope(effective, _ALL_SCOPES) == "write":
+        check.warn(
+            f"{RELEASE_WORKFLOW}:{line} grants `permissions: write-all` on the job calling the "
+            "release lane. That is every writable scope for a job that needs exactly three, and it "
+            "hands repository write to a lane deliberately split so no third-party step shares a "
+            "token that can sign. NARROW it to "
+            + ", ".join(f"`{k}: {v}`" for k, v in sorted(REQUIRED_RELEASE_GRANT.items())),
+            path=RELEASE_WORKFLOW,
+        )
+    elif broad:
+        check.warn(
+            f"{RELEASE_WORKFLOW}:{line} grants "
+            + ", ".join(f"`{k}: write`" for k in broad)
+            + " on the job calling the release lane, which the lane does not need. NARROW the job to "
+            + ", ".join(f"`{k}: {v}`" for k, v in sorted(REQUIRED_RELEASE_GRANT.items())),
+            path=RELEASE_WORKFLOW,
+        )
 
     condition = _release_job_condition(text, line)
     if condition == "false":

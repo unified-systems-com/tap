@@ -1051,9 +1051,16 @@ class TestReleaseLane:
         assert "`attestations: write`" in _messages(check)
         assert "startup_failure" in _messages(check)
 
-    def test_a_job_level_write_all_satisfies_the_release_grant(self, tmp_path: Path) -> None:
+    def test_a_job_level_write_all_satisfies_the_grant_but_is_reported(self, tmp_path: Path) -> None:
         """A job-level scalar shorthand DECLARES a block, so it replaces the workflow grant rather
-        than reading as an absent one — and `write-all` covers all three scopes the lane needs."""
+        than reading as an absent one — and `write-all` covers all three scopes the lane needs.
+
+        It is still not conformant-and-silent. The lane splits its jobs so no third-party step
+        shares a token that can sign (`req-cicd-runner-least-privilege-3`), and a caller handing it
+        every writable scope undoes that at the caller boundary. Capability is what this check
+        asserts, so the grant is satisfied and the breadth warns — the same shape `-8` uses for
+        `contents: write` on the CI caller, which this check was silent about until now.
+        """
         lane = self._release_lane(grant=None).replace(
             "    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n",
             "    permissions: write-all\n",
@@ -1062,7 +1069,9 @@ class TestReleaseLane:
         repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
         (repo / "release-please-config.json").write_text("{}\n")
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
-        assert check.status == "pass", _messages(check)
+        assert check.status == "warn", _messages(check)
+        assert "NARROW it to" in _messages(check)
+        assert "`attestations: write`" in _messages(check)
 
     def test_a_disabled_calling_job_fails(self, tmp_path: Path) -> None:
         """`if: ${{ false }}` is accepted by GitHub and simply never runs the job. Target, trigger
