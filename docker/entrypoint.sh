@@ -197,6 +197,23 @@ for i in range(3):
     except Exception as e:
         print(f'attempt {i}: FAILED: {e!r}')
 " || true
+echo "==> DEBUG tap#933: same retry, but via -m on a throwaway module (isolate -m vs -c, no tap package)"
+cat > /app/_debug_ec_test.py <<'PYEOF'
+from cryptography.hazmat.primitives.asymmetric import ec
+for i in range(3):
+    try:
+        ec.generate_private_key(ec.SECP256R1())
+        print(f"-m attempt {i}: OK")
+    except Exception as e:
+        print(f"-m attempt {i}: FAILED: {e!r}")
+PYEOF
+uv run python -m _debug_ec_test || true
+rm -f /app/_debug_ec_test.py
+echo "==> DEBUG tap#933: calling the real tap.fips module twice in a row (first-invocation-only vs persistent?)"
+uv run python -m tap.fips && rc1=0 || rc1=$?
+echo "first -m tap.fips call exit=$rc1"
+uv run python -m tap.fips && rc2=0 || rc2=$?
+echo "second -m tap.fips call exit=$rc2"
 if ! uv run python -m tap.fips; then
     emit_abort fips "FIPS self-check failed: declared mode not enforced (see above); refusing to serve"
     exit 1
