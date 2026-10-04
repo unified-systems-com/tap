@@ -29,7 +29,7 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-produced-batch | [PRODUCED_BATCH Standard Edge](#produced_batch-standard-edge) | Implemented | Canonical edge from any batch producer to a `Batch` entity; replaces embedded batch-ID lists |
 | req-grid-edge-identity-declaration | [Edge Identity Declaration](#edge-identity-declaration) | Proposed | Every edge type declares, on its edge definition, how a relationship of that type is found again: declared discriminators (objects with a path and a description) or keyless with a reason |
 | req-grid-edge-identity | [Edge Identity](#edge-identity) | Implemented | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
-| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Implemented | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
+| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | In Development | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
 
 
 ## Explanation
@@ -635,12 +635,12 @@ Cut-over: edges collectors wrote under derived ids are live today. Identity look
 ----
 RID: `req-grid-edge-produced-batch-claims`
 
-Status: `Implemented`
+Status: `In Development`
 
 Refines `req-grid-edge-produced-batch` (ruled 2026-10-02) and leaves its text as it stands. A batch is produced by one job, so the job-to-batch relationship is singular, but a *job* may mention a batch it did not produce.
 
 #### Status Details
-Implemented (Issue# 918 - tap) in `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
+In Development. The claims path is built (Issue# 918 - tap): criteria 1 to 4. Holding the rule against every other writer is criterion 5, Issue# 948 - tap. The claims path is `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
 
 #### Implementation
 `PRODUCED_BATCH` is a **plain key** (`discriminators: []`): its identity is (job, batch). It is not keyless. `disposition` is a defined and consumed property (`req-grid-edge-produced-batch-3`; the batch read helpers and the cold-boot gate read it), so a later job holding a `skipped` edge to a batch it did not produce is designed behaviour and not an error: `skipped` means "submitted, and the importer found it already present", so it claims no creation.
@@ -654,7 +654,8 @@ A repeat submission of one batch within one job collapses to one edge, and `impo
 | req-grid-edge-produced-batch-claims-1 | A Plain Key | Implemented | `PRODUCED_BATCH` declares `discriminators: []`, so its identity is (job, batch). | `tap_grid/core_edges.py::PRODUCED_BATCH_IDENTITY`. `tap_grid/tests/test_edge_identity_declaration.py::TestCoreTypesDeclare::test_produced_batch_is_a_plain_key`. |
 | req-grid-edge-produced-batch-claims-2 | A Repeat Collapses | Implemented | A batch submitted more than once within one job yields one edge, and `imported` wins over `skipped`. | Claims collapse per batch (`_collapse_claims`), and the edge is found by identity before one is created, so linking again adds none and an `imported` claim upgrades this job's `skipped` edge. `::test_a_batch_submitted_twice_in_one_run_is_one_imported_edge`, `::test_linking_again_makes_no_second_edge_and_imported_upgrades_skipped`. |
 | req-grid-edge-produced-batch-claims-3 | A Later Job May Skip | Implemented | A job may hold a `skipped` edge to a batch it did not produce without error. | The disposition semantics already in force. `::test_a_later_job_skipping_a_batch_it_did_not_produce_is_fine`. |
-| req-grid-edge-produced-batch-claims-4 | At Most One Imported Claim | Implemented | At most one job holds an `imported` edge to one batch. A conflicting claim is checked and written atomically, with the batch row locked, and is a loud error recorded on the job; the job's status is unchanged. | The batch row is locked and `imported_by` read in one savepoint per `imported` claim, in batch-id order so two jobs never wait on each other; a refused claim writes no edge, logs `[d812]`, and is recorded in the job's `results.error` as `PRODUCED_BATCH_CONFLICT` by the terminal write (a claim that fails otherwise is `PRODUCED_BATCH_LINK_FAILED`). Held on the claims path; the generic write paths are Issue# 948 - tap. `::test_a_second_imported_claim_is_refused_and_recorded_on_the_job`, `::test_a_failed_run_records_a_refused_claim_too`. |
+| req-grid-edge-produced-batch-claims-4 | A Conflicting Claim Is Refused | Implemented | A job's `imported` claim on a batch another job already holds as `imported` is checked and written atomically, with the batch row locked: it writes no edge, and it is a loud error recorded on the job; the job's status is unchanged. | The batch row is locked and `imported_by` read in one savepoint per `imported` claim, in batch-id order so two jobs never wait on each other; a refused claim logs `[d812]` and is recorded in the job's `results.error` as `PRODUCED_BATCH_CONFLICT` by the terminal write (a claim that fails otherwise is `PRODUCED_BATCH_LINK_FAILED`). `::test_a_second_imported_claim_is_refused_and_recorded_on_the_job`, `::test_a_failed_run_records_a_refused_claim_too`, `::test_two_jobs_claiming_the_same_batches_in_opposite_orders_do_not_deadlock`. |
+| req-grid-edge-produced-batch-claims-5 | No Writer Adds A Second Imported Holder | Proposed | At most one job holds an `imported` edge to one batch, whatever writes it: a generic edge write or a GRIFT import that would add a second `imported` holder is refused. | Issue# 948 - tap. Today only the claims path (criterion 4) holds it. |
 
 
 ## Status Vocabulary

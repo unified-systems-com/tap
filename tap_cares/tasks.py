@@ -117,7 +117,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     Every claim that did not become an edge, refused or failed, is returned for the task body to
     record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@cf2be80823ca/3920541ef602 (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@3878f7cd507f/3920541ef602 (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
