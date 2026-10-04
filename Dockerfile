@@ -21,7 +21,7 @@
 # Full decision record + re-runnable verification suite: doc-fips-assessment-record.md.
 
 # TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
-ARG TAP_FIPS=1
+ARG TAP_FIPS=0 # TEMPORARY tap#933 isolation test — revert to 1 before merge
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
