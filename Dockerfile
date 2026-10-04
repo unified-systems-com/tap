@@ -33,7 +33,10 @@
 # upstream, not before — re-enabling it blind just reintroduces a boot-time defect under load.
 
 # TAP_FIPS is a global build ARG so it can select the final stage below.
-ARG TAP_FIPS=0
+# TEMPORARY spike (tap#933/#931): flipped to 1 to test a specific hypothesis
+# (cryptography's unconditional `default`-provider load), not a reversion of the
+# main branch's deliberate TAP_FIPS=0 default.
+ARG TAP_FIPS=1
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
@@ -518,6 +521,14 @@ ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
 
 # Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+
+# TEMPORARY spike (tap#933/#931, L18): cryptography's src/rust/src/lib.rs unconditionally
+# calls `provider::Provider::load(None, "default")` at import time, with no suppression
+# flag anywhere in the source. This env var does NOTHING against the stock PyPI wheel —
+# it is only meaningful once docker/entrypoint.sh's SPIKE block (below) replaces the
+# installed cryptography with a locally-patched build that adds this exact gate,
+# mirroring CRYPTOGRAPHY_OPENSSL_NO_LEGACY's existing pattern.
+ENV CRYPTOGRAPHY_OPENSSL_NO_DEFAULT=1
 
 # Declare the mode machine-legibly (D14); the boot self-check asserts it is actually enforced.
 ENV TAP_FIPS_MODE=1

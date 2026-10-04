@@ -159,6 +159,38 @@ echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 uv sync --all-packages
 
 # ---------------------------------------------------------------------------
+# TEMPORARY SPIKE (tap#933/#931, L18): build a patched `cryptography` from source with
+# the unconditional `default`-provider load (src/rust/src/lib.rs) made skippable via a
+# new CRYPTOGRAPHY_OPENSSL_NO_DEFAULT env var, mirroring the existing
+# CRYPTOGRAPHY_OPENSSL_NO_LEGACY gate, then install it over the stock PyPI build just
+# synced above. Tests whether avoiding this unconditional load avoids the DRBG-fetch
+# failure. Reuses the SAME apk packages (git, rust, build-base, openssl-4.0-dev,
+# pkgconf, python-3.14-dev) tap's own --no-binary cryptography build already needs.
+# To be removed entirely once this test's data is collected.
+echo "==> SPIKE tap#933: building patched cryptography (no-default-provider-load)..."
+rm -rf /tmp/cryptography-patched
+git clone --quiet --depth 1 --branch 50.0.0 https://github.com/pyca/cryptography.git /tmp/cryptography-patched
+python3 -c "
+path = '/tmp/cryptography-patched/src/rust/src/lib.rs'
+text = open(path).read()
+assert '_default: provider::Provider,' in text, 'struct field pattern not found -- cryptography source has drifted from what this patch expects'
+assert 'let _default = provider::Provider::load(None, \"default\")?;' in text, 'load call pattern not found -- cryptography source has drifted from what this patch expects'
+text = text.replace(
+    '_default: provider::Provider,',
+    '_default: Option<provider::Provider>,',
+)
+text = text.replace(
+    'let _default = provider::Provider::load(None, \"default\")?;',
+    'let load_default = !env::var(\"CRYPTOGRAPHY_OPENSSL_NO_DEFAULT\").is_ok_and(|v| !v.is_empty() && v != \"0\");\n    let _default = if load_default { Some(provider::Provider::load(None, \"default\")?) } else { None };',
+)
+open(path, 'w').write(text)
+print('==> patched src/rust/src/lib.rs OK')
+"
+echo "==> SPIKE tap#933: installing the patched build (this compiles the Rust extension, several minutes)..."
+uv pip install --python /app/.venv /tmp/cryptography-patched --reinstall --no-deps
+echo "==> SPIKE tap#933: patched cryptography installed. CRYPTOGRAPHY_OPENSSL_NO_DEFAULT=${CRYPTOGRAPHY_OPENSSL_NO_DEFAULT:-<unset>}"
+
+# ---------------------------------------------------------------------------
 # FIPS boot self-check (req-cicd-base-image-lifecycle-6, decision D15) — fail closed.
 # ---------------------------------------------------------------------------
 # The image DECLARES its FIPS posture (org.tap.fips label + TAP_FIPS_MODE env); this PROVES
