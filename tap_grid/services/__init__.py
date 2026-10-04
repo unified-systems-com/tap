@@ -53,6 +53,7 @@ from tap_grid.exceptions import (
     ServiceConflictError,
     ServiceConstraintError,
     ServiceNotFoundError,
+    ServiceUnsupportedOperationError,
     ServiceValidationError,
     ServiceVersionConflictError,
     is_deadlock,
@@ -81,6 +82,7 @@ from tap_grid.services._impl import (
     _ensure_batch,
     _execute_write_pipeline,
     _load_entity_or_raise,
+    _refuse_internal_edge_type,
 )
 from tap_grid.write_guard import service_write_scope
 
@@ -1232,6 +1234,51 @@ def _create_node_internal(
     )
 
 
+@requires_capability(WRITE_CAPABILITY, operation="_create_edge_internal")
+def _create_edge_internal(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    caller_context: CallerContext | None = None,
+) -> Edge:
+    """Trusted-internal create for an internal-only (or any) edge type (req-grid-edge-internal).
+
+    ``create_edge`` minus the internal-only gate: the same pre-checks and the same pipeline, with
+    the bypass ``write_batch`` grants only a program actor. For subsystem code that writes its own
+    bookkeeping edges (``PRODUCED_BATCH``, ``HAS_COLLECTION_JOB``, ``HAS_FIRED``, ``TRIGGERED_JOB``).
+
+    Raises:
+        InvalidEdgeError: An endpoint is an edge, or the edge violates topology constraints.
+        EdgePropertyValidationError: The pipeline refused the write.
+    """
+    return _create_edge(
+        from_entity, to_entity, edge_type, properties, caller_context=caller_context, internal_only_bypass=True
+    )
+
+
+@requires_capability(WRITE_CAPABILITY, operation="_replace_edge_internal")
+def _replace_edge_internal(
+    target: str | uuid.UUID,
+    payload: dict[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+) -> WriteResult:
+    """Trusted-internal replace for an internal-only (or any) edge type (req-grid-edge-internal).
+
+    ``replace_edge`` minus the internal-only gate, for subsystem code (the ``PRODUCED_BATCH`` claims
+    path upgrades its own ``skipped`` edge to ``imported`` with it).
+    """
+    op = WriteOperation(verb="replace_edge", target=target, payload=payload)
+    batch_result = write_batch([op], caller_context=caller_context, _internal_only_bypass=True)
+    return (
+        batch_result.results[0]
+        if batch_result.results
+        else WriteResult(success=False, batch_id=batch_result.batch_id, errors=batch_result.errors)
+    )
+
+
 @requires_capability(WRITE_CAPABILITY, operation="_patch_node_internal")
 def _patch_node_internal(
     target: str | uuid.UUID,
@@ -1265,6 +1312,28 @@ def _patch_node_internal(
         batch_result.results[0]
         if batch_result.results
         else WriteResult(success=False, batch_id=batch_result.batch_id, errors=batch_result.errors)
+    )
+
+
+def _create_edge_internal_for_test(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    caller_context: CallerContext | None = None,
+) -> Edge:
+    """Test-only trusted-internal edge create (req-grid-edge-internal).
+
+    Same semantics as `_create_edge_internal`, but raises `RuntimeError` unless running under
+    Django test/DEBUG settings, so tests can build internal-only edges (PRODUCED_BATCH fixtures,
+    for example) without going through the subsystem that owns them.
+    """
+    _assert_test_or_debug("_create_edge_internal_for_test")
+    return (
+        _create_edge_internal(  # TAP-AUTHZ-COV: test-only helper; _assert_test_or_debug makes it production-unreachable
+            from_entity, to_entity, edge_type, properties, caller_context=caller_context
+        )
     )
 
 
@@ -1993,14 +2062,43 @@ def create_edge(
     ``_record_provenance`` (no separate best-effort BatchEvent). The topology and
     edge-constraint pre-checks below run first so the legacy ``InvalidEdgeError``
     contract is preserved for callers (e.g. the edges API) that catch it; the
-    nono (edge-as-endpoint) check precedes constraint validation.
+    nono (edge-as-endpoint) check precedes constraint validation. An internal-only
+    edge type is refused here (req-grid-edge-internal); subsystem code uses
+    ``_create_edge_internal``.
     """
+    return _create_edge(
+        from_entity,
+        to_entity,
+        edge_type,
+        properties,
+        name,
+        caller_context=caller_context,
+        batch_name=batch_name,
+        batch_description=batch_description,
+    )
+
+
+def _create_edge(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    name: str = "",
+    *,
+    caller_context: CallerContext | None = None,
+    batch_name: str | None = None,
+    batch_description: str | None = None,
+    internal_only_bypass: bool = False,
+) -> Edge:
+    """The body ``create_edge`` and ``_create_edge_internal`` share; gated by its callers."""
     # Edges cannot connect to other edges (req-grid-edge-nono) — pre-checked here
     # to raise InvalidEdgeError (the pipeline would raise ServiceConstraintError).
     if from_entity.entity_type == "edge":
         raise InvalidEdgeError("Edges cannot have other edges as endpoints (from_entity is an edge).")
     if to_entity.entity_type == "edge":
         raise InvalidEdgeError("Edges cannot have other edges as endpoints (to_entity is an edge).")
+    if not internal_only_bypass:
+        _refuse_internal_edge_object(edge_type, "create_edge")
 
     _validate_edge_constraint(from_entity.entity_type, to_entity.entity_type, edge_type)
 
@@ -2015,8 +2113,12 @@ def create_edge(
         edge_type=edge_type,
         payload=payload,
     )
-    batch_result = write_batch(
-        [op], caller_context=caller_context, batch_name=batch_name, batch_description=batch_description
+    batch_result = write_batch(  # TAP-AUTHZ-COV: gated by create_edge / _create_edge_internal
+        [op],
+        caller_context=caller_context,
+        batch_name=batch_name,
+        batch_description=batch_description,
+        _internal_only_bypass=internal_only_bypass,
     )
     result = batch_result.results[0] if batch_result.results else None
     if result is None or not result.success or result.entity_id is None:
@@ -2031,6 +2133,21 @@ def create_edge(
         edge.entity.save(update_fields=["name", "updated_at"])
 
     return edge
+
+
+def _refuse_internal_edge_object(edge_type: str, verb: str) -> None:
+    """The internal-only edge gate for the helpers that take and return Edge objects
+    (req-grid-edge-internal-3).
+
+    The pipeline's refusal, raised as ``InvalidEdgeError``: the refusal these helpers' callers
+    already handle (the edges API turns it into a 400), where the pipeline verbs return
+    ``unsupported_operation``. ``create_edge`` is also refused by the pipeline;
+    ``update_edge_properties`` and ``delete_edge`` write through the ORM, so this is their only gate.
+    """
+    try:
+        _refuse_internal_edge_type(edge_type, verb, internal_only_bypass=False)
+    except ServiceUnsupportedOperationError as exc:
+        raise InvalidEdgeError(str(exc)) from exc
 
 
 @requires_capability(WRITE_CAPABILITY, operation="update_edge_properties")
@@ -2048,6 +2165,7 @@ def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
     Returns:
         The updated Edge instance.
     """
+    _refuse_internal_edge_object(edge.edge_type, "update_edge_properties")
     edge.properties = properties
     edge.save(update_fields=["properties"])
     return edge
@@ -2056,6 +2174,7 @@ def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
 @requires_capability(DELETE_CAPABILITY, operation="delete_edge")
 def delete_edge(edge: Edge, *, caller_context: CallerContext | None = None) -> None:
     """Delete an Edge and its backing Entity."""
+    _refuse_internal_edge_object(edge.edge_type, "delete_edge")
     # Deleting the backing Entity cascades to the Edge via OneToOne,
     # but we go through the Entity to keep the pattern consistent.
     edge.entity.delete()

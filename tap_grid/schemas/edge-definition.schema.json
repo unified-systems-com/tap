@@ -49,6 +49,10 @@
       },
       "description": "Dimensions applied to edges of this type on creation."
     },
+    "internal_only": {
+      "type": "boolean",
+      "description": "The type is bookkeeping that only subsystem code writes (req-grid-edge-internal): the generic edge verbs and GRIFT import refuse it, and GRIFT export leaves it out. Defaults to false."
+    },
     "identity": {
       "type": "object",
       "description": "How a relationship of this type is found again (req-grid-edge-identity-declaration). Exactly one of discriminators (an empty array is the plain key: type, source and target) or keyless. Optional while declarations roll out; a ref-addressed edge of a type without one is refused at import (req-grid-edge-identity-6).",

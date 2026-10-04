@@ -140,7 +140,6 @@ class TestCreateEdge:
         assert "detail" in data
         assert "cannot create 'INVALID_EDGE_TYPE'" in data["detail"]
 
-
     @pytest.mark.spec("req-grid-service-batch-label-required-6")
     @pytest.mark.parametrize(
         "field, value",
@@ -184,6 +183,19 @@ class TestCreateEdge:
         batches = get_entity_batches(response.json()["entity_id"])
         assert [(x.name, x.description) for x in batches] == [(LABEL["batch_name"], LABEL["batch_description"])]
 
+    @pytest.mark.spec("req-grid-edge-internal-3")
+    def test_an_internal_only_edge_type_returns_400(self, logged_in_client, two_entities):
+        from tap_grid.batch import create_batch
+
+        a, _ = two_entities
+        batch = create_batch(source="t:api").entity
+        body = {"from_entity_id": str(a.pk), "to_entity_id": str(batch.pk), "edge_type": "PRODUCED_BATCH", **LABEL}
+        response = logged_in_client.post("/api/v1/edges/", data=json.dumps(body), content_type="application/json")
+
+        assert response.status_code == 400
+        assert "internal-only" in response.json()["detail"]
+        assert not Edge.objects.filter(edge_type="PRODUCED_BATCH", to_entity_id=batch.pk).exists()
+
 
 @pytest.mark.django_db
 class TestDeleteEdge:
@@ -197,3 +209,18 @@ class TestDeleteEdge:
     def test_not_found(self, logged_in_client):
         response = logged_in_client.delete(f"/api/v1/edges/{uuid.uuid4()}/")
         assert response.status_code == 404
+
+    @pytest.mark.spec("req-grid-edge-internal-3")
+    def test_an_internal_only_edge_returns_400_and_stays(self, logged_in_client, two_entities):
+        from tap_grid.batch import create_batch
+        from tap_grid.services import _create_edge_internal_for_test
+
+        a, _ = two_entities
+        edge = _create_edge_internal_for_test(
+            a, create_batch(source="t:api").entity, "PRODUCED_BATCH", {"disposition": "imported"}
+        )
+        response = logged_in_client.delete(f"/api/v1/edges/{edge.entity_id}/")
+
+        assert response.status_code == 400
+        assert "internal-only" in response.json()["detail"]
+        assert Edge.objects.filter(pk=edge.pk).exists()

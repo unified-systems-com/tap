@@ -117,7 +117,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     Every claim that did not become an edge, refused or failed, is returned for the task body to
     record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@3878f7cd507f/a6a4a7cd2df2 (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@573c12406621/164e83c07726 (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
@@ -127,7 +127,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
 
     from tap_grid.batch import imported_by
     from tap_grid.models import Entity
-    from tap_grid.services import create_edge, replace_edge, resolve_edge_identity
+    from tap_grid.services import _create_edge_internal, _replace_edge_internal, resolve_edge_identity
 
     job_id = str(job.entity_id)
     unlinked: list[dict[str, Any]] = []
@@ -154,9 +154,11 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                 found = resolve_edge_identity("PRODUCED_BATCH", job_id, batch_id, {})
                 if found.found:
                     if disposition == "imported":
-                        replace_edge(found.entity_id, {"properties": {"disposition": "imported"}})
+                        _replace_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.collector via acting_as; grid.write re-checked at the write backstop
+                            found.entity_id, {"properties": {"disposition": "imported"}}
+                        )
                     continue
-                create_edge(
+                _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.collector via acting_as; grid.write re-checked at the write backstop
                     from_entity=job.entity,
                     to_entity=batch_entity,
                     edge_type="PRODUCED_BATCH",

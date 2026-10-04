@@ -29,7 +29,8 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-produced-batch | [PRODUCED_BATCH Standard Edge](#produced_batch-standard-edge) | Implemented | Canonical edge from any batch producer to a `Batch` entity; replaces embedded batch-ID lists |
 | req-grid-edge-identity-declaration | [Edge Identity Declaration](#edge-identity-declaration) | Proposed | Every edge type declares, on its edge definition, how a relationship of that type is found again: declared discriminators (objects with a path and a description) or keyless with a reason |
 | req-grid-edge-identity | [Edge Identity](#edge-identity) | Implemented | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
-| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | In Development | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
+| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Implemented | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
+| req-grid-edge-internal | [Internal-Only Edge Types](#internal-only-edge-types) | Implemented | An edge type may be declared internal-only: the generic edge verbs and GRIFT import refuse it, subsystem code writes it through a trusted-internal path, and GRIFT export leaves it out. The node rule (`req-grid-entity-internal`) applied to edges |
 
 
 ## Explanation
@@ -635,12 +636,12 @@ Cut-over: edges collectors wrote under derived ids are live today. Identity look
 ----
 RID: `req-grid-edge-produced-batch-claims`
 
-Status: `In Development`
+Status: `Implemented`
 
 Refines `req-grid-edge-produced-batch` (ruled 2026-10-02) and leaves its text as it stands. A batch is produced by one job, so the job-to-batch relationship is singular, but a *job* may mention a batch it did not produce.
 
 #### Status Details
-In Development. The claims path is built (Issue# 918 - tap): criteria 1 to 4. Holding the rule against every other writer is criterion 5, Issue# 948 - tap. The claims path is `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
+Implemented. The claims path is built (Issue# 918 - tap): criteria 1 to 4. Criterion 5 holds the rule against every other writer by making `PRODUCED_BATCH` internal-only (Issue# 948 - tap, `req-grid-edge-internal`), so the claims path is its only writer. The claims path is `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
 
 #### Implementation
 `PRODUCED_BATCH` is a **plain key** (`discriminators: []`): its identity is (job, batch). It is not keyless. `disposition` is a defined and consumed property (`req-grid-edge-produced-batch-3`; the batch read helpers and the cold-boot gate read it), so a later job holding a `skipped` edge to a batch it did not produce is designed behaviour and not an error: `skipped` means "submitted, and the importer found it already present", so it claims no creation.
@@ -655,7 +656,40 @@ A repeat submission of one batch within one job collapses to one edge, and `impo
 | req-grid-edge-produced-batch-claims-2 | A Repeat Collapses | Implemented | A batch submitted more than once within one job yields one edge, and `imported` wins over `skipped`. | Claims collapse per batch (`_collapse_claims`), and the edge is found by identity before one is created, so linking again adds none and an `imported` claim upgrades this job's `skipped` edge. `::test_a_batch_submitted_twice_in_one_run_is_one_imported_edge`, `::test_linking_again_makes_no_second_edge_and_imported_upgrades_skipped`. |
 | req-grid-edge-produced-batch-claims-3 | A Later Job May Skip | Implemented | A job may hold a `skipped` edge to a batch it did not produce without error. | The disposition semantics already in force. `::test_a_later_job_skipping_a_batch_it_did_not_produce_is_fine`. |
 | req-grid-edge-produced-batch-claims-4 | A Conflicting Claim Is Refused | Implemented | A job's `imported` claim on a batch another job already holds as `imported` is checked and written atomically, with the batch row locked: it writes no edge, and it is a loud error recorded on the job; the job's status is unchanged. | The batch row is locked and `imported_by` read in one savepoint per `imported` claim, in batch-id order so two jobs never wait on each other; a refused claim logs `[d812]` and is recorded in the job's `results.error` as `PRODUCED_BATCH_CONFLICT` by the terminal write (a claim that fails otherwise is `PRODUCED_BATCH_LINK_FAILED`). `::test_a_second_imported_claim_is_refused_and_recorded_on_the_job`, `::test_a_failed_run_records_a_refused_claim_too`, `::test_two_jobs_claiming_the_same_batches_in_opposite_orders_do_not_deadlock`. |
-| req-grid-edge-produced-batch-claims-5 | No Writer Adds A Second Imported Holder | Proposed | At most one job holds an `imported` edge to one batch, whatever writes it: a generic edge write or a GRIFT import that would add a second `imported` holder is refused. | Issue# 948 - tap. Today only the claims path (criterion 4) holds it. |
+| req-grid-edge-produced-batch-claims-5 | No Writer Adds A Second Imported Holder | Implemented | At most one job holds an `imported` edge to one batch, whatever writes it: a generic edge write or a GRIFT import that would add a second `imported` holder is refused. | Issue# 948 - tap: `PRODUCED_BATCH` is internal-only (`req-grid-edge-internal`), so the generic verbs and GRIFT refuse every write of it, and the claims path (criterion 4) is the one writer. `tap_grid/tests/test_edge_internal.py::TestTheGenericVerbsRefuse`, `::TestGriftRefuses`. |
+
+
+### Internal-Only Edge Types
+----
+RID: `req-grid-edge-internal`
+
+Status: `Implemented`
+
+Some edge types are bookkeeping that one subsystem writes about its own work: which job produced a batch, which collector a job ran for, which schedule fired and what the fire started. Nobody else has a reason to write them, and a generic write of one could break a rule the owning subsystem holds (at most one job holds an `imported` claim to a batch, `req-grid-edge-produced-batch-claims`). Such a type is declared **internal-only**, the edge counterpart of an `INTERNAL_ONLY` node type (`req-grid-entity-internal`).
+
+#### Status Details
+Implemented (Issue# 948 - tap, ruled 2026-10-04). The declaration is `internal_only` on the edge definition (`edge-definition.schema.json`), registered in `tap_grid/constraints.py` (`register_edge_internal_only`, read by `is_internal_edge_type`) from a plugin's `edge_types` list or manifest entry, and by `tap_grid/core_edges.py` for core types. The gate is `tap_grid/services/_impl.py::_refuse_internal_edge_type`, called on `create_edge` and on `patch_edge` / `replace_edge` / `delete_edge` after the edge is loaded. The trusted-internal path is `_create_edge_internal` and `_replace_edge_internal` in `tap_grid/services/__init__.py`. Tests: `tap_grid/tests/test_edge_internal.py`.
+
+#### Implementation
+Four types are internal-only: `PRODUCED_BATCH` (core, written by the claims path in `tap_cares/tasks.py`), and tap_cares' `HAS_COLLECTION_JOB` (`run_collection`), `HAS_FIRED` and `TRIGGERED_JOB` (the scheduler). `SCHEDULED_TARGET` is not: a schedule and its target are authored in GRIFT.
+
+The generic edge verbs refuse an internal-only type with `ServiceUnsupportedOperationError`, the error the node gate raises. GRIFT import writes through those verbs, so an import carrying one fails its batch. The trusted-internal path is the same pipeline with the gate lifted: the same validation, provenance and batch, behind the same bypass the node path uses, which `write_batch` grants a program actor only. GRIFT export leaves internal-only edges out and records each in its skip ledger, as it does internal-only nodes.
+
+Deleting a node ends every edge attached to it by one bulk update, not through the edge verbs, so an internal-only edge still ends with its endpoint: deleting a `Schedule` ends its `HAS_FIRED` edges. Purge is not refused either, as for nodes (`req-grid-service-purge-5`): it is a deliberate, DEBUG-only hard delete, not a generic write.
+
+As for nodes, this is a tripwire against accidental writes, not a wall against in-process code, which can call the `_`-prefixed path. The boundary that matters is the network one, where neither the generic verbs nor GRIFT reach these types.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-internal-1 | Declared On The Edge Definition | Implemented | An edge definition may carry `internal_only: true`; the default is false. The flag is read from a plugin's `edge_types` list and from its manifest, and a core type registers it in code. | `tap_grid/constraints.py::register_edge_internal_only`, `::is_internal_edge_type`. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
+| req-grid-edge-internal-2 | The Four Bookkeeping Types | Implemented | `PRODUCED_BATCH`, `HAS_COLLECTION_JOB`, `HAS_FIRED` and `TRIGGERED_JOB` are internal-only; `SCHEDULED_TARGET` is not. | Ruled 2026-10-04. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
+| req-grid-edge-internal-3 | Generic Verbs Refuse | Implemented | `create_edge`, `patch_edge`, `replace_edge` and `delete_edge` refuse an internal-only type with `ServiceUnsupportedOperationError` and write nothing. | `tap_grid/tests/test_edge_internal.py::TestTheGenericVerbsRefuse`. |
+| req-grid-edge-internal-4 | GRIFT Import Refuses | Implemented | A GRIFT import carrying an edge of an internal-only type fails its batch with nothing written. | It writes through the generic verbs. `tap_grid/tests/test_edge_internal.py::TestGriftRefuses`. |
+| req-grid-edge-internal-5 | A Trusted-Internal Path | Implemented | `_create_edge_internal` and `_replace_edge_internal` write an internal-only type through the full pipeline minus the gate, for a program actor only. | The node bypass, reused. `tap_grid/tests/test_edge_internal.py::TestTheTrustedInternalPath`. |
+| req-grid-edge-internal-6 | Export Leaves Them Out | Implemented | GRIFT export does not emit an internal-only edge and records it in the skip ledger as `internal_only_entity_type`. | `tap_grid/grift/exporter.py`. `tap_grid/tests/test_edge_internal.py::TestExportLeavesThemOut`. |
+| req-grid-edge-internal-7 | They End With Their Endpoint | Implemented | Deleting an endpoint node ends its internal-only edges as it ends any other edge. | `tap_grid/tests/test_edge_internal.py::TestTheyEndWithTheirEndpoint`. |
 
 
 ## Status Vocabulary

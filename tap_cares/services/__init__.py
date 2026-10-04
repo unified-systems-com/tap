@@ -2,8 +2,8 @@
 
 `run_collection` is the public entry point for starting a collector run. It
 creates the on-grid CollectionJob via `_create_node_internal` (CollectionJob
-is INTERNAL_ONLY), links it to the Collector via HAS_COLLECTION_JOB through the standard
-service-layer `create_edge`, then enqueues the Django Task that will execute
+is INTERNAL_ONLY), links it to the Collector via HAS_COLLECTION_JOB through `_create_edge_internal`
+(HAS_COLLECTION_JOB is an internal-only edge type), then enqueues the Django Task that will execute
 the registered collector class.
 
 Per `req-tap-cares-collector-job-sole-writer`, the task body owns all
@@ -42,7 +42,7 @@ from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.models import Batch, BatchStatus
 from tap_grid.reconcile import RUN_CONFIG_KEY
-from tap_grid.services import _create_node_internal, _patch_node_internal, create_edge
+from tap_grid.services import _create_edge_internal, _create_node_internal, _patch_node_internal
 
 logger = logging.getLogger(__name__)
 
@@ -581,7 +581,8 @@ def run_collection(
          `manual_run_source`, and `run_mode` on the row
          (req-tap-cares-collector-run-collection-9).
       2. Creates a HAS_COLLECTION_JOB edge from collector.entity to the new job via
-         `tap_grid.services.create_edge`.
+         `tap_grid.services._create_edge_internal` (an internal-only edge type,
+         req-grid-edge-internal).
       3. Enqueues the `run_collector` Django Task with the JSON-safe
          collector + job + lifecycle-batch entity IDs. The batch id rides the
          task payload because the remaining lifecycle writes happen in the
@@ -661,7 +662,7 @@ def run_collection(
 
         job = CollectionJob.objects.get(entity_id=job_create.entity_id)
 
-        create_edge(
+        _create_edge_internal(
             from_entity=collector.entity,
             to_entity=job.entity,
             edge_type="HAS_COLLECTION_JOB",

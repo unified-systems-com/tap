@@ -137,6 +137,15 @@ _edge_default_dimensions_registry: Registry[dict[str, str]] = Registry(
     description="Default visual dimension values per edge type.",
 )
 
+# Internal-only edge types: edge_type -> True (req-grid-edge-internal). The edge counterpart of a
+# node model's INTERNAL_ONLY: the generic write path refuses the type, and subsystem code writes
+# it through the trusted-internal path.
+_edge_internal_only_registry: Registry[bool] = Registry(
+    "edge_internal_only",
+    title="Internal-Only Edge Types",
+    description="Edge types the generic service layer and GRIFT refuse to write; written only by subsystem code.",
+)
+
 # Backward compatibility aliases (legacy names still importable)
 _NODE_REGISTRY = _node_registry
 _EDGE_TYPE_REGISTRY = _edge_type_registry
@@ -313,6 +322,28 @@ def register_edge_default_dimensions(edge_type: str, dimensions: dict[str, str])
         dimensions: A dict of dimension key/value pairs to apply to the edge's backing Entity.
     """
     _edge_default_dimensions_registry.register(edge_type, dict(dimensions))
+
+
+def register_edge_internal_only(edge_type: str) -> None:
+    """Mark an edge type internal-only (req-grid-edge-internal).
+
+    Called for an edge definition that declares ``internal_only: true``. The generic write path
+    (``create_edge``, ``replace_edge``, ``patch_edge``, ``delete_edge_by_entity``, ``write_batch``,
+    and so GRIFT import) then refuses the type; subsystem code writes it through
+    ``_create_edge_internal`` / ``_replace_edge_internal``.
+
+    Raises ImproperlyConfigured if the type is already registered.
+    """
+    _edge_internal_only_registry.register(edge_type, True)
+
+
+def is_internal_edge_type(edge_type: str) -> bool:
+    """True when ``edge_type`` is internal-only (req-grid-edge-internal).
+
+    TAP-IMPLEMENTS: req-grid-edge-internal@3947d5d8c25a/9fb8f5fc16f4 (derivation) — the one place
+        the declaration is read: every gate and the exporter ask here, never a list of their own.
+    """
+    return _edge_internal_only_registry.get_optional(edge_type) is True
 
 
 def get_edge_default_dimensions(edge_type: str) -> dict[str, str]:

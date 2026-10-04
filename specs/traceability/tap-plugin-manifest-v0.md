@@ -13,7 +13,7 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
+| `req-tap-plugin-manifest-v0-edge-file` | Implemented | Verified | `_load_edge_file` | `req-tap-plugin-manifest-v0-edge-file-7` |
 | `req-tap-plugin-manifest-v0-edge-identity` | Implemented | Tested | — | `req-tap-plugin-manifest-v0-edge-identity-1`, `req-tap-plugin-manifest-v0-edge-identity-2`, `req-tap-plugin-manifest-v0-edge-identity-3` |
 | `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
 | `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |

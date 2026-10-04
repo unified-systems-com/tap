@@ -51,6 +51,8 @@ def register_core_edges() -> None:
     from tap_grid.constraints import (
         get_edge_property_schema,
         get_edge_type_constraints,
+        is_internal_edge_type,
+        register_edge_internal_only,
         register_edge_property_schema,
         register_edge_type_constraints,
     )
@@ -70,3 +72,7 @@ def register_core_edges() -> None:
         register_edge_identity(
             "PRODUCED_BATCH", PRODUCED_BATCH_IDENTITY, property_schema=PRODUCED_BATCH_PROPERTY_SCHEMA
         )
+    # Bookkeeping a run writes about itself, read by reconcile: only the claims path writes it
+    # (req-grid-edge-internal, req-grid-edge-produced-batch-claims-5).
+    if not is_internal_edge_type("PRODUCED_BATCH"):
+        register_edge_internal_only("PRODUCED_BATCH")
