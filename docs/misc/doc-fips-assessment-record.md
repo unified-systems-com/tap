@@ -427,25 +427,51 @@ across multiple container restarts. The DRBG failure has nothing to do with the 
 being probed; **the act of correctly refusing an unapproved fetch leaves the context unable to
 satisfy a later, unrelated one**, for the remainder of the process's life.
 
+**The precise trigger is narrower and more surprising than "call MD5 first."** A first reorder of
+`assert_declared_mode()`'s own explicit calls (crypto check before the explicit MD5 probe) did
+**not** fix it on real CI — because `hashlib` (the stdlib *wrapper* module, not `_hashlib`, the raw
+OpenSSL-backed C extension) was still imported at `tap/fips.py`'s module scope, and `hashlib.py`'s
+own module-level code eagerly pre-builds a constructor for every standard hash name, including MD5,
+the instant it is imported — catching and silently logging any failure
+(`ERROR:root:code for hash md5 was not found`) rather than raising. Under FIPS that automatic,
+import-time MD5 build attempt is itself a refused fetch, with the same consequence as the explicit
+probe, and it ran before any of the reordered explicit calls did. The actual fix is deferring
+`import hashlib` itself to run after `cryptography`'s check, not just reordering function calls that
+assumed the import was free. `_hashlib` (the raw C extension `_md5_for_security_refused` already used
+directly) has no such eager behavior — only the `hashlib.py` wrapper does.
+
 This matches a known, closed-wontfix upstream limitation (`openssl/openssl#27691`, "Multiple copies
 of openssl inside the same process need unique copies of loaded modules (fips.so)" — maintainer's own
 words: "there is some static state in `fips.so` itself that is modified when the library is loaded
 and if it's loaded again, that state is not usable by the second loader"), though the exact trigger
 here is a single load, not a double one — a provider-level fetch-cache side effect, not a reload.
 Real hardware is apparently a necessary condition alongside the ordering; QEMU's generic CPU model
-never reproduced it despite matching every other variable.
+never reproduced it despite matching every other variable. Web research (2026-10) found no existing
+report of this exact chain, but strong circumstantial support that the underlying subsystem is a
+live source of bugs: `openssl/openssl#26699` traced a near-identical symptom (a correctly-registered
+algorithm not found by the method store) into the newer lock-free provider hashtable
+(`crypto/evp/evp_fetch.c`'s `ossl_ht_get`/`lockless_reads` path); `#24272` and `#30883` are other
+recent regressions/fixes in the same area; `#29212` confirms TSAN-detectable races exist nearby. A
+lock-free hashtable race that real hardware's memory ordering exposes and QEMU's more sequential
+emulation masks fits every observation here, though this has not been confirmed against OpenSSL's
+own source.
 
-**Generalize beyond this one self-check:** `hashlib.md5()`/`_hashlib.new("md5", ...)` called *without*
-`usedforsecurity=False` anywhere in the process — tap's own code or any dependency's — is refused
-exactly like this probe, and per this finding the refusal is not necessarily contained to that one
-call. In a long-lived gunicorn worker, one incidental unguarded MD5 touch could leave every
-*subsequent* request on that worker failing an unrelated DRBG-needing operation (signing, keygen,
-passkey verification) until the worker recycles — an intermittent, worker-specific failure shape with
-no obvious link back to its actual cause. The fix applied here (reorder D15's own checks so every
-required positive operation completes before any negative-control probe) closes the one instance
-found; it does not protect against the next one a dependency introduces. A more durable fix — running
-negative-control probes, wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX` rather
-than the default global one — is open, tracked as a follow-up, not yet built.
+**Generalize beyond this one self-check, and beyond "calling" MD5 at all:** the trigger is not
+limited to code that explicitly calls `hashlib.md5()`/`_hashlib.new("md5", ...)`. Merely
+`import hashlib` — an extremely common, otherwise-unremarkable stdlib import that almost any
+nontrivial Python code does, with no intent to touch MD5 at all — is sufficient, because of
+`hashlib.py`'s own eager, import-time constructor-building. In a long-lived gunicorn worker, the
+*first* `import hashlib` anywhere in that worker's lifetime (tap's own code or any dependency's)
+could leave every *subsequent* request on that worker failing an unrelated DRBG-needing operation
+(signing, keygen, passkey verification) until the worker recycles — an intermittent, worker-specific
+failure shape with no obvious link back to its actual cause, and one that doesn't require anyone to
+have written a bug: it is dormant in the stdlib itself under this FIPS configuration. The fix applied
+here (defer `hashlib`'s import past `cryptography`'s own check, and order every required positive
+operation before any negative-control probe) closes the one instance found in tap's own boot
+sequence; it does not protect against the same dormant trigger firing from unrelated application or
+dependency code later in a worker's life. A more durable fix — running negative-control probes,
+wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX` rather than the default global
+one — is open, tracked as a follow-up, not yet built.
 
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 

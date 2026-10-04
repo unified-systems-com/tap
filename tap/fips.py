@@ -29,7 +29,6 @@ Run as the boot gate: ``python -m tap.fips`` — exit 0 on a proven-consistent m
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 
@@ -78,7 +77,19 @@ def _md5_for_security_refused() -> bool:
 
 
 def _approved_python_hash_works() -> None:
-    """Positive control: an approved hash (SHA-256) works AND is OpenSSL-backed."""
+    """Positive control: an approved hash (SHA-256) works AND is OpenSSL-backed.
+
+    Imports ``hashlib`` locally rather than at module scope (tap#933/#931, L18): merely
+    importing the ``hashlib`` *wrapper* module makes CPython eagerly pre-build a constructor
+    for every standard hash name, including MD5, at import time — catching and silently
+    logging any failure (``ERROR:root:code for hash md5 was not found``) rather than raising.
+    Under FIPS that MD5 build attempt is itself a refused fetch, with the same process-context
+    consequence the explicit probe below has. Deferring the import to here, after
+    ``_cryptography_fips_consistent`` has already run, keeps that side effect from happening
+    before the operation that actually needs the context still working.
+    """
+    import hashlib
+
     hashlib.sha256(b"probe").hexdigest()
     module = type(hashlib.sha256()).__module__
     if module != "_hashlib":
@@ -131,16 +142,16 @@ def assert_declared_mode() -> str:
     """
     mode = declared_mode()
     if mode == "1":
-        _approved_python_hash_works()
-        # cryptography's own positive-then-negative check runs BEFORE the raw _hashlib MD5
-        # probe below, not after (tap#933/#931, L18): a correctly-refused MD5 fetch in the
-        # process's default OSSL_LIB_CTX leaves that context unable to satisfy a later,
-        # unrelated DRBG fetch — proven on real CI hardware to be 100% reproducible with the
-        # probe-then-keygen order and 100% absent with keygen-then-probe, independent of
-        # architecture, -m invocation, or any tap-specific code (a 5-line reproduction).
-        # Every required positive operation must complete before any negative-control probe
-        # that can leave the shared context in a refused state.
+        # cryptography's own check runs FIRST, before anything that imports or calls the
+        # `hashlib` wrapper module (tap#933/#931, L18) — including `_approved_python_hash_works`
+        # below, whose own `import hashlib` is itself a refused-MD5-fetch trigger (see its
+        # docstring). A correctly-refused MD5 fetch in the process's default OSSL_LIB_CTX
+        # leaves that context unable to satisfy a later, unrelated DRBG fetch — proven on real
+        # CI hardware to be 100% reproducible with any MD5 touch (explicit or import-time)
+        # before the keygen, and 100% absent with the keygen first, independent of
+        # architecture, -m invocation, or any tap-specific code beyond this ordering.
         _cryptography_fips_consistent(expect_enforced=True)
+        _approved_python_hash_works()
         if not _md5_for_security_refused():
             raise FipsSelfCheckError(
                 "image declares FIPS on (TAP_FIPS_MODE=1) but _hashlib MD5 for security use was "
