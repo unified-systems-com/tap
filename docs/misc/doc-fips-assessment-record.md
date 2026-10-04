@@ -427,18 +427,40 @@ across multiple container restarts. The DRBG failure has nothing to do with the 
 being probed; **the act of correctly refusing an unapproved fetch leaves the context unable to
 satisfy a later, unrelated one**, for the remainder of the process's life.
 
-**The precise trigger is narrower and more surprising than "call MD5 first."** A first reorder of
-`assert_declared_mode()`'s own explicit calls (crypto check before the explicit MD5 probe) did
-**not** fix it on real CI — because `hashlib` (the stdlib *wrapper* module, not `_hashlib`, the raw
-OpenSSL-backed C extension) was still imported at `tap/fips.py`'s module scope, and `hashlib.py`'s
-own module-level code eagerly pre-builds a constructor for every standard hash name, including MD5,
-the instant it is imported — catching and silently logging any failure
-(`ERROR:root:code for hash md5 was not found`) rather than raising. Under FIPS that automatic,
-import-time MD5 build attempt is itself a refused fetch, with the same consequence as the explicit
-probe, and it ran before any of the reordered explicit calls did. The actual fix is deferring
-`import hashlib` itself to run after `cryptography`'s check, not just reordering function calls that
-assumed the import was free. `_hashlib` (the raw C extension `_md5_for_security_refused` already used
-directly) has no such eager behavior — only the `hashlib.py` wrapper does.
+**The precise trigger is narrower, and the damage wider, than "call MD5 first."** Fixing this took
+three passes, each disproven by the next real CI run before being trusted:
+
+1. Reordering `assert_declared_mode()`'s own explicit calls (crypto check before the explicit MD5
+   probe) did **not** fix it — `hashlib` (the stdlib *wrapper* module, not `_hashlib`, the raw
+   OpenSSL-backed C extension) was still imported at `tap/fips.py`'s module scope, and `hashlib.py`'s
+   own module-level code eagerly pre-builds a constructor for every standard hash name, including
+   MD5, the instant it is imported — catching and silently logging any failure
+   (`ERROR:root:code for hash md5 was not found`) rather than raising. That import-time MD5 attempt
+   is itself a refused fetch, and it ran before any of the reordered explicit calls did.
+2. Deferring `import hashlib` to run after `cryptography`'s check **also did not fully fix it** —
+   it fixed the keygen, but the self-check then failed with
+   `AttributeError: module 'hashlib' has no attribute 'sha256'`. `hashlib.py`'s bulk-construction
+   loop processes every standard hash name in one pass; once MD5's refusal corrupts the context
+   mid-loop, **later names in that same loop can also silently fail to register** — including the
+   approved, FIPS-supported SHA-256 this module's own positive control needs. Deferring the import
+   moved *when* the hazard fired, not *whether* it could still take out something needed afterward.
+3. The fix that held: stop using the `hashlib.py` wrapper at all. `_approved_python_hash_works` now
+   uses `_hashlib.new("sha256", ...)` directly, the same "layer that cannot fall back" L5 already
+   mandated for the negative control. `_hashlib` has no bulk-construction loop — only `hashlib.py`
+   does — so nothing in this module imports `hashlib` anywhere, in either branch.
+
+**Why MD5 is refused here at all is itself a Wolfi packaging fact, not purely a FIPS one.**
+Wolfi's new freestanding legacy provider (`openssl-provider-legacy-allowed`, the one gated behind
+`enable-legacy-allowed` — defaulting OFF — by Dimitri Ledkov's 2026-09-16 patch,
+`xnox/dimitrijohnledkov/os-3305-fips-chainguard_legacy_allowed0-defeated-by-cryptography`) registers
+**MD5 alongside MD4** in its digest table. Tap's own `openssl-fips.cnf` never activates `legacy` at
+all — only `fips` and `base` — and `base` supplies no digest algorithms (L15). So under tap's
+specific, deliberate provider set, no active provider implements MD5 at all, for either
+`usedforsecurity=True` or `usedforsecurity=False`: not because Dimitri's gate is closed, but because
+tap never opens the door that gate sits on. Whether MD5 was reachable via a different path before
+Wolfi's openssl-4.0 restructuring (and quietly stopped being so) is not confirmed — this is the one
+open question most worth putting directly to Dimitri, who built the restructuring and would know
+immediately.
 
 This matches a known, closed-wontfix upstream limitation (`openssl/openssl#27691`, "Multiple copies
 of openssl inside the same process need unique copies of loaded modules (fips.so)" — maintainer's own
@@ -460,17 +482,22 @@ own source.
 limited to code that explicitly calls `hashlib.md5()`/`_hashlib.new("md5", ...)`. Merely
 `import hashlib` — an extremely common, otherwise-unremarkable stdlib import that almost any
 nontrivial Python code does, with no intent to touch MD5 at all — is sufficient, because of
-`hashlib.py`'s own eager, import-time constructor-building. In a long-lived gunicorn worker, the
-*first* `import hashlib` anywhere in that worker's lifetime (tap's own code or any dependency's)
-could leave every *subsequent* request on that worker failing an unrelated DRBG-needing operation
-(signing, keygen, passkey verification) until the worker recycles — an intermittent, worker-specific
-failure shape with no obvious link back to its actual cause, and one that doesn't require anyone to
-have written a bug: it is dormant in the stdlib itself under this FIPS configuration. The fix applied
-here (defer `hashlib`'s import past `cryptography`'s own check, and order every required positive
-operation before any negative-control probe) closes the one instance found in tap's own boot
-sequence; it does not protect against the same dormant trigger firing from unrelated application or
-dependency code later in a worker's life. A more durable fix — running negative-control probes,
-wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX` rather than the default global
+`hashlib.py`'s own eager, import-time constructor-building, and the damage is not confined to MD5
+or to later, unrelated calls: other standard names processed later in that *same* import-time loop
+(confirmed here: SHA-256) can come out missing too, so `import hashlib` itself can leave the module
+silently short a FIPS-approved algorithm it should have, in the same statement that imported it. In
+a long-lived gunicorn worker, the *first* `import hashlib` anywhere in that worker's lifetime (tap's
+own code or any dependency's) could leave every *subsequent* request on that worker failing an
+unrelated DRBG-needing operation (signing, keygen, passkey verification) until the worker recycles —
+an intermittent, worker-specific failure shape with no obvious link back to its actual cause, and one
+that doesn't require anyone to have written a bug: it is dormant in the stdlib itself under this FIPS
+configuration. The fix applied here (drop `hashlib` entirely from this module in favor of `_hashlib`,
+and order every required positive operation before the one remaining negative-control probe) closes
+the one instance found in tap's own boot sequence; it does not protect against the same dormant
+trigger firing from unrelated application or dependency code later in a worker's life — those still
+import the ordinary `hashlib` wrapper, as essentially all Python code does. A more durable fix —
+running negative-control probes, wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX`
+rather than the default global
 one — is open, tracked as a follow-up, not yet built.
 
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
