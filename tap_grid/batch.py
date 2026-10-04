@@ -428,6 +428,22 @@ def produced_batches_by_producer(
     return grouped
 
 
+def imported_by(batch_entity_id: uuid.UUID | str) -> list[str]:
+    """The producers holding a live ``imported`` PRODUCED_BATCH edge to one batch.
+
+    At most one, by ``req-grid-edge-produced-batch-claims-4``: a batch is produced by one job. A
+    caller about to record a new ``imported`` claim reads this with the batch's row locked, so the
+    check and its write cannot interleave with another job's.
+    """
+    from tap_grid.models import Edge
+
+    # django-stubs types the live manager as BaseModel's, which has no from_entity_id.
+    rows = Edge.objects.filter(  # type: ignore[misc]
+        edge_type="PRODUCED_BATCH", to_entity_id=batch_entity_id, properties__disposition="imported"
+    ).values_list("from_entity_id", flat=True)
+    return [str(producer) for producer in rows]
+
+
 def produced_batches(producer_entity_id: uuid.UUID | str) -> dict[str, list[str]]:
     """PRODUCED_BATCH targets for one producer, grouped by disposition.
 
