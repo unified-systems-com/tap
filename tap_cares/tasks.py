@@ -95,7 +95,7 @@ def _collapse_claims(produced_batches: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str, str]]) -> list[dict[str, Any]]:
-    """Link each batch the run produced to its job with one PRODUCED_BATCH edge; return refused claims.
+    """Link each batch the run produced to its job with one PRODUCED_BATCH edge; return what did not link.
 
     req-tap-cares-collector-grift-import-6. Called by the run_collector body, the sole
     CollectionJob writer, on both terminal paths and before the terminal patch, from the collector
@@ -104,17 +104,20 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
 
     PRODUCED_BATCH is a plain key (job, batch) (req-grid-edge-produced-batch-claims): repeats
     collapse to one claim per batch, and the edge is found by identity before one is created, so
-    linking twice makes no second edge. At most one job may hold ``imported`` for a batch: each
-    claim locks the batch's row, reads who already holds ``imported``, and writes in the same
-    savepoint, so two jobs' checks cannot interleave. A claim another job already holds is not
-    written; it is returned for the task body to record on the job, which is the loud error
-    the rule asks for, persisted. A later job's ``skipped`` edge to a batch it did not produce is
-    designed behaviour and is written as usual.
+    linking twice makes no second edge. At most one job may hold ``imported`` for a batch: an
+    ``imported`` claim locks the batch's row, reads who already holds ``imported``, and writes in
+    the same savepoint, so two jobs' checks cannot interleave. A claim another job already holds
+    is not written. A later job's ``skipped`` edge to a batch it did not produce is designed
+    behaviour and is written as usual; a ``skipped`` claim has nothing to check, so it locks
+    nothing. Claims are linked in batch-id order, never the order the run reported them, so two
+    jobs locking the same batches take the locks in one order and neither waits on the other.
 
-    The batches themselves landed via ``grift_import`` before this runs, so any other failure
-    is logged per batch and skipped, never crashing an already-committed collection.
+    The batches themselves landed via ``grift_import`` before this runs, so a claim that fails
+    for any other reason is logged and skipped, never crashing an already-committed collection.
+    Every claim that did not become an edge, refused or failed, is returned for the task body to
+    record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@63dfb876a923/630db30f5fde (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@cf2be80823ca/3920541ef602 (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
@@ -127,12 +130,14 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     from tap_grid.services import create_edge, replace_edge, resolve_edge_identity
 
     job_id = str(job.entity_id)
-    refused: list[dict[str, Any]] = []
-    for batch_id, disposition in _collapse_claims(produced_batches).items():
+    unlinked: list[dict[str, Any]] = []
+    for batch_id, disposition in sorted(_collapse_claims(produced_batches).items()):
         try:
             with transaction.atomic():
-                batch_entity = Entity.objects.select_for_update().get(id=batch_id)
-                if disposition == "imported":
+                if disposition != "imported":
+                    batch_entity = Entity.objects.get(id=batch_id)
+                else:
+                    batch_entity = Entity.objects.select_for_update().get(id=batch_id)
                     holders = [producer for producer in imported_by(batch_id) if producer != job_id]
                     if holders:
                         logger.error(
@@ -142,7 +147,9 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                             batch_id,
                             holders,
                         )
-                        refused.append({"batch_entity_id": batch_id, "imported_by": holders})
+                        unlinked.append(
+                            {"code": "PRODUCED_BATCH_CONFLICT", "batch_entity_id": batch_id, "imported_by": holders}
+                        )
                         continue
                 found = resolve_edge_identity("PRODUCED_BATCH", job_id, batch_id, {})
                 if found.found:
@@ -155,30 +162,49 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                     edge_type="PRODUCED_BATCH",
                     properties={"disposition": disposition},
                 )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "[f381] PRODUCED_BATCH edge creation failed: job %s -> batch %s (disposition=%s)",
                 job.entity_id,
                 batch_id,
                 disposition,
             )
-    return refused
+            unlinked.append(
+                {
+                    "code": "PRODUCED_BATCH_LINK_FAILED",
+                    "batch_entity_id": batch_id,
+                    "disposition": disposition,
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                }
+            )
+    return unlinked
 
 
-def _record_refused_claims(instance: Any, refused: list[dict[str, Any]]) -> None:
-    """Record each refused ``imported`` claim on the job: loud, persisted, status unchanged.
+def _record_unlinked_claims(instance: Any, unlinked: list[dict[str, Any]]) -> None:
+    """Record each claim that did not become an edge on the job: loud, persisted, status unchanged.
 
     The entry rides the terminal patch in ``results["error"]``. The job's status does not change,
-    because its data already committed (req-grid-edge-produced-batch-claims-4).
+    because its data already committed (req-grid-edge-produced-batch-claims-4). A refused
+    ``imported`` claim is ``PRODUCED_BATCH_CONFLICT``; a claim that failed for any other reason is
+    ``PRODUCED_BATCH_LINK_FAILED``.
     """
-    for claim in refused:
-        instance.record_error(
-            "4ffa",
-            "PRODUCED_BATCH_CONFLICT",
-            f"Batch {claim['batch_entity_id']} is already held as imported by job(s) "
-            f"{', '.join(claim['imported_by'])}; this job's imported claim was not recorded.",
-            message_data=claim,
-        )
+    for claim in unlinked:
+        data = {key: value for key, value in claim.items() if key != "code"}
+        if claim["code"] == "PRODUCED_BATCH_CONFLICT":
+            instance.record_error(
+                "4ffa",
+                "PRODUCED_BATCH_CONFLICT",
+                f"Batch {claim['batch_entity_id']} is already held as imported by job(s) "
+                f"{', '.join(claim['imported_by'])}; this job's imported claim was not recorded.",
+                message_data=data,
+            )
+        else:
+            instance.record_error(
+                "d874",
+                "PRODUCED_BATCH_LINK_FAILED",
+                f"Batch {claim['batch_entity_id']} ({claim['disposition']}) was not linked to this job: {claim['error']}",
+                message_data=data,
+            )
 
 
 def _safe_summary(exc: BaseException) -> str:
@@ -579,7 +605,7 @@ def _run_collection_job(
             # Link any batches produced before the failure so partial progress stays visible
             # (req-tap-cares-collector-grift-import-6), before the patch so a refused claim rides
             # it. Best-effort per batch, so it never masks the collector failure re-raised below.
-            _record_refused_claims(instance, _link_produced_batches(job, instance._produced_batches))
+            _record_unlinked_claims(instance, _link_produced_batches(job, instance._produced_batches))
             summary = _derive_failure_summary(instance, exc)
             results = instance.results
         else:
@@ -613,7 +639,7 @@ def _run_collection_job(
         # Link each produced batch to the job (req-tap-cares-collector-grift-import-6) in the
         # same transaction as the terminal write, so a refused imported claim is recorded on the
         # job by that write (req-grid-edge-produced-batch-claims-4). Best-effort per batch.
-        _record_refused_claims(instance, _link_produced_batches(job, instance._produced_batches))
+        _record_unlinked_claims(instance, _link_produced_batches(job, instance._produced_batches))
         # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
         # including whatever the collector wrote to self.summary, plus the
         # phase-1 self_test result.

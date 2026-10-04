@@ -9,6 +9,7 @@ is the state the rule guards against.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import Any, ClassVar
 
@@ -63,6 +64,18 @@ class ClaimsAnothersBatch(CollectorBase):
         self._produced_batches.append((self.BATCH, "imported"))
         if self.FAIL:
             raise RuntimeError("fixture: the collector fails after its claims")
+
+
+class ClaimsAMissingBatch(CollectorBase):
+    """Reports a batch that does not exist, so its claim cannot become an edge."""
+
+    def run(self) -> None:
+        self._produced_batches.append((str(uuid.uuid4()), "skipped"))
+
+
+class Silent(CollectorBase):
+    def run(self) -> None:
+        return None
 
 
 def _register(key: str, cls: type[CollectorBase]) -> Collector:
@@ -185,3 +198,63 @@ class TestClaims:
         assert imported_by(batch) == [str(producer.entity_id)]
         (upgraded,) = _edges(job, unclaimed)
         assert upgraded.properties["disposition"] == "imported"
+
+    @SPEC[4]
+    def test_a_claim_that_cannot_be_linked_is_recorded_on_the_job(self, isolate_collector_registry: Any) -> None:
+        job = _run(_register("missing", ClaimsAMissingBatch))  # status unchanged: SUCCESSFUL
+        (failed,) = [e for e in job.results["error"] if e["message_code"] == "PRODUCED_BATCH_LINK_FAILED"]
+        assert failed["message_data"]["disposition"] == "skipped"
+        assert "DoesNotExist" in failed["message_data"]["error"]
+
+    @SPEC[4]
+    def test_two_jobs_claiming_the_same_batches_in_opposite_orders_do_not_deadlock(
+        self, isolate_collector_registry: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each job checks one batch under its row lock, then waits until the other has checked one.
+
+        Locked in the order each run reported them, each job would hold one batch's row while
+        waiting for the other's, a deadlock Postgres breaks by failing one claim. Locked in batch-id
+        order, both start with the same batch: the second waits for the first to commit, then
+        finds both batches held and records two refusals, with nothing failed.
+        """
+        from django.db import transaction
+
+        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_grid import batch as batch_module
+        from tap_grid.batch import create_batch
+        from tap_grid.cascade_corpus.timing import finish, in_thread
+
+        silent = _register("silent", Silent)
+        first_job, second_job = _run(silent), _run(silent)
+        a, b = (str(create_batch(name=f"lock-order {n}", description="fixture").entity_id) for n in "ab")
+        both_checked = threading.Barrier(2, timeout=3)
+        real_imported_by = batch_module.imported_by
+        waited = threading.local()
+
+        def check_then_wait(batch_entity_id: Any) -> list[str]:
+            holders = real_imported_by(batch_entity_id)
+            if not getattr(waited, "once", False):
+                waited.once = True
+                try:
+                    both_checked.wait()
+                except threading.BrokenBarrierError:
+                    pass  # the other job is queued on this one's row lock, which is the point
+            return holders
+
+        monkeypatch.setattr(batch_module, "imported_by", check_then_wait)
+
+        def link(job: CollectionJob, claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
+            with acting_as(get_builtin_actor(COLLECTOR), batch_name="lock order", batch_description="fixture"):
+                with transaction.atomic():  # held to the end, as the terminal transaction holds it
+                    return _link_produced_batches(job, claims)
+
+        first = in_thread(lambda: link(first_job, [(a, "imported"), (b, "imported")]))
+        second = in_thread(lambda: link(second_job, [(b, "imported"), (a, "imported")]))
+        finish(first, second)
+        outcomes = [first[1].value, second[1].value]
+        codes = sorted(entry["code"] for outcome in outcomes for entry in outcome)
+        assert codes == ["PRODUCED_BATCH_CONFLICT", "PRODUCED_BATCH_CONFLICT"], outcomes
+        assert sorted([imported_by(a)[0], imported_by(b)[0]]) in (
+            [str(first_job.entity_id)] * 2,
+            [str(second_job.entity_id)] * 2,
+        ), "one job holds both batches"
