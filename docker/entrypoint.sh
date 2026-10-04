@@ -214,6 +214,27 @@ uv run python -m tap.fips && rc1=0 || rc1=$?
 echo "first -m tap.fips call exit=$rc1"
 uv run python -m tap.fips && rc2=0 || rc2=$?
 echo "second -m tap.fips call exit=$rc2"
+echo "==> DEBUG tap#933: exact fips.py sequence (hashlib.sha256 -> _hashlib md5 probe -> cryptography) as a bare -c script, no -m, no tap package, x3"
+for i in 1 2 3; do
+  uv run python3 -c "
+import hashlib
+hashlib.sha256(b'probe').hexdigest()
+import _hashlib
+try:
+    _hashlib.new('md5', b'probe')
+    print('md5 probe: NOT refused (unexpected)')
+except ValueError:
+    print('md5 probe: refused (expected)')
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import hashes
+try:
+    key = ec.generate_private_key(ec.SECP256R1())
+    key.sign(b'x', ec.ECDSA(hashes.SHA256()))
+    print('run $i: EC keygen+sign OK')
+except Exception as e:
+    print(f'run $i: EC keygen FAILED: {e!r}')
+" || true
+done
 if ! uv run python -m tap.fips; then
     emit_abort fips "FIPS self-check failed: declared mode not enforced (see above); refusing to serve"
     exit 1
