@@ -11,17 +11,29 @@
 # FIPS: this image runs crypto through the free upstream OpenSSL FIPS provider at the version
 # pinned in docker/build-openssl-fips.sh (whether that version is CMVP-validated is derived
 # there, never claimed here — D17), self-built in the `ossl-builder` stage and activated in-image. The mode is
-# selected by a single build flag `ARG TAP_FIPS` (DEFAULT 1 — FIPS is the published artifact;
-# `TAP_FIPS=0` is an explicit, never-silent escape hatch). `cryptography` is built --no-binary
-# against the SYSTEM OpenSSL in BOTH modes (its wheel bundles its own OpenSSL — D7/L9), so the
-# dependency closure is identical and only provider activation differs. A fail-closed boot
-# self-check (`tap.fips`, wired in docker/entrypoint.sh) proves the DECLARED mode is the mode
-# actually enforced, by executing crypto and observing a refusal — it never inspects files,
-# because the FIPS boundary is the OpenSSL config, not the modules directory (L13, D15).
+# selected by a single build flag `ARG TAP_FIPS` (`TAP_FIPS=0` is an explicit, never-silent
+# escape hatch, not a silent default). `cryptography` is built --no-binary against the SYSTEM
+# OpenSSL in BOTH modes (its wheel bundles its own OpenSSL — D7/L9), so the dependency closure
+# is identical and only provider activation differs. A fail-closed boot self-check (`tap.fips`,
+# wired in docker/entrypoint.sh) proves the DECLARED mode is the mode actually enforced, by
+# executing crypto and observing a refusal — it never inspects files, because the FIPS boundary
+# is the OpenSSL config, not the modules directory (L13, D15).
 # Full decision record + re-runnable verification suite: doc-fips-assessment-record.md.
+#
+# DEFAULT IS CURRENTLY 0, DELIBERATELY, NOT 1 (tap#933/#931, L18). Accepting Wolfi's
+# openssl-4.0 migration surfaced a real, reproducible defect: `cryptography`, run in the same
+# process as any `_hashlib`/`hashlib` operation, can leave a LATER, unrelated fetch unable to
+# find an algorithm the active provider genuinely implements — confirmed via three independent
+# trigger paths and a minimal, tap-code-free reproduction, 100% reproducible on real CI
+# hardware, 0% reproducible under QEMU emulation. This is not something tap's own self-check
+# can reorder its way around: the failure isn't limited to refused/negative-control fetches,
+# and research turned up strong circumstantial evidence (`openssl/openssl#26699`, `#24272`,
+# `#30883`, `#29212`) that OpenSSL's newer lock-free provider method-store hashtable is a live
+# source of exactly this symptom shape. Flip back to 1 once that's actually understood or fixed
+# upstream, not before — re-enabling it blind just reintroduces a boot-time defect under load.
 
-# TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
-ARG TAP_FIPS=0 # TEMPORARY tap#933 isolation test — revert to 1 before merge
+# TAP_FIPS is a global build ARG so it can select the final stage below.
+ARG TAP_FIPS=0
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
