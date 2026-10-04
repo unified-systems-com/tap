@@ -33,7 +33,9 @@
 # upstream, not before — re-enabling it blind just reintroduces a boot-time defect under load.
 
 # TAP_FIPS is a global build ARG so it can select the final stage below.
-ARG TAP_FIPS=0
+# TEMPORARY spike (tap#933/#931): flipped to 1 to test a specific hypothesis, not a reversion
+# of the main branch's deliberate TAP_FIPS=0 default.
+ARG TAP_FIPS=1
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
@@ -516,8 +518,11 @@ RUN printf '%s\n' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
 
-# Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
-ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+# TEMPORARY spike (tap#933/#931): CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1 REMOVED to test whether
+# `cryptography`'s own legacy-provider auto-load (which this var normally suppresses, D8) is
+# implicated in the DRBG-fetch-poisoning bug. NOT a security posture change for real use --
+# this is a diagnostic probe only.
+# ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
 
 # Declare the mode machine-legibly (D14); the boot self-check asserts it is actually enforced.
 ENV TAP_FIPS_MODE=1
