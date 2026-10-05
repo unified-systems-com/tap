@@ -155,6 +155,14 @@ jobs:
           # that _hashlib.cpython-314-x86_64-linux-gnu.so links clean against libcrypto.so.4
           # with no undefined symbols of its own).
           sudo make -k altinstall || true
+          # CPython's build smoke-tests _ssl and _hashlib together, aborting the check at
+          # _ssl's failure before it ever reaches _hashlib -- so _hashlib never gets added
+          # to the "good modules" list `sharedinstall` installs from, even though it
+          # compiled and linked successfully (confirmed above). It's sitting right there in
+          # the build tree; install it directly rather than patch CPython's own smoke-test
+          # script, which is out of scope for this spike.
+          sudo install -c -m 755 Modules/_hashlib.cpython-314-x86_64-linux-gnu.so \
+            /opt/python-4ossl/lib/python3.14/lib-dynload/
           ls -la /opt/python-4ossl/bin/python3.14
           /opt/python-4ossl/bin/python3.14 -c "import _hashlib; print('_hashlib imports OK')"
           ldd /opt/python-4ossl/lib/python3.14/lib-dynload/_hashlib*.so | grep -i crypto
