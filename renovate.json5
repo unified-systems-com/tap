@@ -97,6 +97,7 @@
         "python-3.14-dev",
         "postgresql-18-client",
         "postgresql-18-dev",
+        "libpq-18",
       ],
       registryUrls: ["https://packages.wolfi.dev/os?arch=x86_64"],
       groupName: "pinned apk packages (security-relevant, reviewed individually)",

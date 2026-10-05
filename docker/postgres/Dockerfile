@@ -56,21 +56,27 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af
 # image), openssl-3.6 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
 #
-# `openssl-3.6`, not `openssl-4.0` or the bare `openssl` alias — tap#932/#933, L18. Unlike the
-# web image, nothing here needs a version pin beyond the OpenSSL package itself: `libpq-18`
-# (pulled in transitively by `postgresql-16-client`) has NOT cut over to `libcrypto.so.4` at any
-# version checked — only `postgresql-18-dev`'s HEADERS package has, and this image installs no
-# `-dev` packages at all (it is runtime-only, no `cryptography`/psycopg build happens here). A
-# real, non-simulated `apk add` with this exact package set and `openssl-3.6` resolves clean, no
-# conflicts. See Dockerfile (web image) for the full writeup, including the from-scratch
-# bare-Ubuntu reproduction that ruled out the raw version-mismatch as the cause of the actual
-# FIPS self-check failure. The lingering `libssl3`/`libcrypto3` (.so.3) belong to `apk-tools`
-# itself regardless of any of this, and never share a process with postgres.
+# `openssl-3.6`, not `openssl-4.0` or the bare `openssl` alias — tap#932/#933, L18.
+#
+# `libpq-18` is EXPLICITLY PINNED here too, corrected from an earlier, wrong claim in this
+# comment that it "had not cut over" — checked directly, right now, it has: `postgresql-16-client`
+# pulls `libpq-18` transitively, unpinned, which currently resolves to `18.6-r5` and links
+# `libcrypto.so.4`/`libssl.so.4` (confirmed via `strings` on the installed `libpq.so.5`). This
+# image is runtime-only (no `-dev` packages, no `cryptography`/psycopg build here), so this
+# wouldn't poison a Python process the way it did on the web image — but `psql`/`pg_isready`
+# (used by the healthcheck) are real libpq consumers in this same image, so pinning for
+# consistency and to not leave a second, unpinned copy of the same hazard sitting here.
+# A real, non-simulated `apk add` with this exact package set, `libpq-18=18.6-r4` and
+# `openssl-3.6` resolves clean, no conflicts. See Dockerfile (web image) for the full writeup,
+# including the from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
+# the cause of the original FIPS self-check failure. The lingering `libssl3`/`libcrypto3` (.so.3)
+# belong to `apk-tools` itself regardless of any of this, and never share a process with postgres.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     postgresql-16 \
     postgresql-16-client \
     postgresql-16-oci-entrypoint \
+    libpq-18=18.6-r4 \
     gosu \
     openssl-3.6=3.6.5-r1 \
     bash \

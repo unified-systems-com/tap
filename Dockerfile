@@ -107,6 +107,9 @@ WORKDIR /app
 #   - postgresql-18-client/postgresql-18-dev: pg_isready/psql for Django + pg_dump/pg_restore for
 #     the pre-boot pre-migrate snapshot (tap/preboot.py, req-boot-snapshot). Wolfi ships 18.x; a
 #     newer pg_dump dumps the older PG16 server fine.
+#   - libpq-18: the actual shared library (libpq.so.5) psycopg[c]'s compiled extension dynamically
+#     links against. A SEPARATE Wolfi package from postgresql-18-client (which is just the CLI
+#     tools) — named explicitly for exactly the reason below.
 #   - curl: docker/install-tailwindcss.sh; also in-container debugging.
 #   - tzdata: the IANA zoneinfo DB Debian slim shipped implicitly but Wolfi's minimal base
 #     does not; without it Python's zoneinfo cannot resolve settings.TIME_ZONE and boot aborts.
@@ -132,19 +135,31 @@ WORKDIR /app
 # the cause, pointing instead at something specific to Wolfi/Chainguard's own `openssl-4.0`,
 # `python-3.14`, or `libpq` builds).
 #
-# `python-3.14`/`python-3.14-base`/`python-3.14-dev` and `postgresql-18-dev` are EXPLICITLY
-# VERSION-PINNED here, not left floating, because at their current (unpinned) versions they
-# themselves hard-depend on `libcrypto.so.4`/`libssl.so.4` regardless of what OpenSSL package this
-# Dockerfile requests — confirmed directly (apk info / a real `apk add`, not assumed): each cut
-# over to `openssl-4.0` at exactly ONE apk revision ahead of what is pinned below
-# (`python-3.14-base` at `3.14.8_git20261001-r1`; `postgresql-18-dev` at `18.6-r5`). Pinned one
-# revision EARLIER than that keeps every FIPS-relevant consumer in this image — CPython's own
-# `_hashlib`, `cryptography`, libpq — on the SAME OpenSSL 3.6.x line as the self-built FIPS
-# provider, avoiding both the apk file-ownership conflict (openssl-3.x-dev and openssl-4.0-dev own
-# the same unversioned header/lib paths — confirmed via a real, non-simulated `apk add`) and the
-# two-cores-in-one-process hazard tap#931 tracks. `libpq-18` itself (the runtime client library,
-# as opposed to `postgresql-18-dev`'s headers) has NOT cut over at any version checked — only the
-# `-dev` package has — so this is narrower than it may look.
+# `python-3.14`/`python-3.14-base`/`python-3.14-dev`, `postgresql-18-dev`, and `libpq-18` are
+# EXPLICITLY VERSION-PINNED here, not left floating, because at their current (unpinned) versions
+# they themselves hard-depend on `libcrypto.so.4`/`libssl.so.4` regardless of what OpenSSL package
+# this Dockerfile requests — confirmed directly (apk info / a real `apk add`, not assumed): each
+# cuts over to `openssl-4.0` at exactly ONE apk revision ahead of what is pinned below
+# (`python-3.14-base` at `3.14.8_git20261001-r1`; `postgresql-18-dev` AND `libpq-18` both at
+# `18.6-r5`). Pinned one revision EARLIER than that keeps every FIPS-relevant consumer in this
+# image — CPython's own `_hashlib`, `cryptography`, libpq — on the SAME OpenSSL 3.6.x line as the
+# self-built FIPS provider, avoiding both the apk file-ownership conflict (openssl-3.x-dev and
+# openssl-4.0-dev own the same unversioned header/lib paths — confirmed via a real, non-simulated
+# `apk add`) and the two-cores-in-one-process hazard tap#931 tracks.
+#
+# `libpq-18` is the pin that actually mattered most, and missing it the first time around is
+# exactly how this hazard shows up when you are not looking for it: `postgresql-18-client` is
+# just the CLI tools (psql, pg_isready) and does NOT itself ship `libpq.so.5` — that lives in the
+# separate `libpq-18` package, pulled in transitively. Pinning `postgresql-18-client`/
+# `postgresql-18-dev` alone leaves `libpq-18` floating to ITS OWN latest, independently-numbered
+# revision — confirmed directly: with only the CLI/dev packages pinned to `18.6-r4`, `libpq-18`
+# still resolved to `18.6-r5` and linked `libcrypto.so.4`/`libssl.so.4`, while `_hashlib` and
+# `cryptography` in the SAME process used the correctly-pinned `libcrypto.so.3` — two separate
+# OpenSSL cores in one process, exactly as tap#931 describes, and the actual cause of a real
+# `psycopg.OperationalError: ... could not generate nonce` failure at boot (SCRAM's client nonce
+# is a libpq-side RAND draw, a completely different code path from Python's own crypto — L18).
+# Pinning `libpq-18=18.6-r4` explicitly resolves it: confirmed via `strings` on the installed
+# `libpq.so.5`, it then links `libcrypto.so.3`/`libssl.so.3`, matching `_hashlib` exactly.
 #
 # These are REVISION pins, not track pins, and therefore narrower and more likely to need
 # re-verifying on the next apk bump than a plain version pin would be. Track the same way the
@@ -158,6 +173,7 @@ RUN for i in 1 2 3; do \
     git \
     bash \
     postgresql-18-client=18.6-r4 \
+    libpq-18=18.6-r4 \
     curl \
     tzdata \
     openssl-3.6=3.6.5-r1 \
