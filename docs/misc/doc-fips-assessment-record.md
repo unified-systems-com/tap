@@ -620,10 +620,41 @@ re-asked cold:**
   in the image onto an unmaintained build nothing tracks for future CVEs — all to dodge a cause that
   is, as of this entry, still unidentified, so there is no way to confirm the swap would even avoid it.
 
-Status: `TAP_FIPS=0` (tap#933) remains the right call pending either an identified, fixable Wolfi-side
-cause or an upstream fix. Not resumed further this session; next step if picked back up is diffing
-Wolfi's actual `openssl-4.0` package/build against vanilla upstream 4.0.2, not another abstract
-version-pairing test.
+**2026-10-05, later still: resolved, by a different route than the one rejected just above.**
+The rejected idea above was pinning `openssl-3.6` ALONE, which fails because `python-3.14-base`'s
+and `postgresql-18-dev`'s then-*current* (unpinned) versions themselves hard-require
+`openssl-4.0`. Checked directly which apk revision each one actually cuts over at:
+`python-3.14-base` at `3.14.8_git20261001-r1`, `postgresql-18-dev` at `18.6-r5`. Pinning the whole
+closure — `python-3.14`/`python-3.14-base`/`python-3.14-dev`, `postgresql-18-client`/
+`postgresql-18-dev`, and `openssl-3.6`/`openssl-3.6-dev` — one revision EARLIER than each cutover
+keeps every FIPS-relevant consumer on the same OpenSSL 3.6.x line as the self-built FIPS provider.
+Confirmed on real CI hardware: the FIPS self-check passes (`declared mode 1 is consistent —
+ENFORCED`), `TAP_FIPS` is back to its default of `1`.
+
+That fix then surfaced a SECOND, separate bug: `libpq-18` is its own Wolfi package (not bundled
+with `postgresql-18-client`, which is just the CLI tools), and pinning the client/dev packages
+alone left it floating to its own `18.6-r5` cutover — `psycopg`'s SCRAM client nonce generation
+(a libpq-side RAND draw, unrelated to anything Python touches) ran through a wholly separate,
+unconfigured `libcrypto.so.4`, confirmed directly via `strings` on the installed `libpq.so.5`.
+Pinning `libpq-18` to the same revision fixed it. Confirmed end-to-end on the real `cold-boot`
+gate (full migrate → seed → collector cycle → health, GATE GREEN).
+
+The ORIGINAL bug's root cause is still not identified, only sidestepped — tracking it down was
+pursued one step further, not to conclusion. Fetched Chainguard's actual build recipe
+(`wolfi-dev/os`, `openssl-4.0.yaml`): it builds vanilla OpenSSL 4.0.3 with four patches, two
+FIPS-related (`0001-fips-block-HMAC-calculation-with-unapproved-digests.patch`, authored by
+Dimitri Ledkov, explicitly targeting "older nodejs, dotnet, and python" HMAC callers — a strong-
+looking candidate). Built vanilla OpenSSL 4.0.3 with these same four patches applied (confirmed
+applying clean against the real tag) and reran the full bare-Ubuntu repro: 0/20 failed. That rules
+these four patches out as sufficient on their own, on top of everything last night's bare-Ubuntu
+testing already ruled out (vanilla OpenSSL 4.0 as a release line, the version-mismatch itself).
+Remaining candidate, unconfirmed: something concurrency-dependent (consistent with the lock-free
+provider-hashtable race already cited above) that a sequential repro script cannot trigger
+regardless of which OpenSSL build it runs against, only tap's real multi-worker stack.
+
+Status: resolved for the web and DB images (tap#933, this entry), `TAP_FIPS=1` restored as the
+default. Open: the original bug's actual mechanism, if anyone wants to pursue a
+concurrency-realistic reproduction rather than leave it sidestepped.
 
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
