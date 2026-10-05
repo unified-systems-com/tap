@@ -11,9 +11,10 @@
 # FIPS: this image runs crypto through the free upstream OpenSSL FIPS provider at the version
 # pinned in docker/build-openssl-fips.sh (whether that version is CMVP-validated is derived
 # there, never claimed here — D17), self-built in the `ossl-builder` stage and activated in-image. The mode is
-# selected by a single build flag `ARG TAP_FIPS` (`TAP_FIPS=0` is an explicit, never-silent
-# escape hatch, not a silent default). `cryptography` is built --no-binary against the SYSTEM
-# OpenSSL in BOTH modes (its wheel bundles its own OpenSSL — D7/L9), so the dependency closure
+# selected by a single build flag `ARG TAP_FIPS` (DEFAULT 1 — FIPS is the published artifact;
+# `TAP_FIPS=0` is an explicit, never-silent escape hatch, not a silent fallback). `cryptography`
+# is built --no-binary against the SYSTEM OpenSSL in BOTH modes (its wheel bundles its own
+# OpenSSL — D7/L9), so the dependency closure
 # is identical and only provider activation differs. A fail-closed boot self-check (`tap.fips`,
 # wired in docker/entrypoint.sh) proves the DECLARED mode is the mode actually enforced, by
 # executing crypto and observing a refusal — it never inspects files, because the FIPS boundary
@@ -43,7 +44,7 @@
 # than a simple version pin would be, tracked the same way the FIPS provider's own pin is (a
 # deliberate, named pin revisited on real cause, not left to drift silently).
 
-# TAP_FIPS is a global build ARG so it can select the final stage below.
+# TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
 ARG TAP_FIPS=1
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
