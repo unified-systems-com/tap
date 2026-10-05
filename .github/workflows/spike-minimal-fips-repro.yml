@@ -23,7 +23,7 @@ jobs:
           make -j"$(nproc)"
           sudo make install_fips
 
-      - name: Install cryptography from source (before FIPS activation -- same order tap uses: pip install at image-build time, FIPS activated later at container-runtime via env var)
+      - name: "Install cryptography from source, before FIPS activation (matches tap's order: pip install at image-build time, FIPS activated later at container-runtime via env var)"
         run: |
           python3 -m venv /tmp/venv
           /tmp/venv/bin/pip install --no-binary cryptography "cryptography==50.0.0"
