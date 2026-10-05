@@ -372,6 +372,37 @@ class TestAConcurrentWriter:
 
 
 @pytest.mark.django_db
+class TestARolledBackBatchReportsNothing:
+    @SPEC[7]
+    def test_a_failure_at_commit_leaves_no_proposal_reported(
+        self, star: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A batch whose transaction fails as it ends (a deferred constraint at commit) reports no claim."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        from django.db import IntegrityError, transaction
+
+        from tap_grid.grift import importer
+
+        real_atomic = transaction.atomic
+
+        @contextmanager
+        def failing_at_the_end(*args: Any, **kwargs: Any) -> Iterator[None]:
+            with real_atomic(*args, **kwargs):
+                yield
+                raise IntegrityError("a deferred constraint failed at commit")
+
+        monkeypatch.setattr(importer, "transaction", SimpleNamespace(atomic=failing_at_the_end))
+        with _run():
+            result = _import(_claim({"entity_id": star["hub"]}))
+        assert not result.success
+        (batch,) = result.imported_batches
+        assert (batch.authority, batch.edges_proposed, result.counts.edges_proposed) == ([], 0, 0)
+        assert not BatchEvent.objects.filter(event_type=BatchEventType.AUTHORITY_PROPOSED).exists()
+
+
+@pytest.mark.django_db
 class TestAProposalIsARead:
     @SPEC[10]
     def test_an_actor_refused_read_is_refused_the_claim_and_nothing_is_recorded(
@@ -396,3 +427,31 @@ class TestAProposalIsARead:
         assert not result.success
         assert not BatchEvent.objects.filter(event_type=BatchEventType.AUTHORITY_PROPOSED).exists()
         assert Edge.objects.filter(entity_id__in=[star["hub_b"], star["hub_c"]]).count() == 2
+
+    @SPEC[10]
+    @pytest.mark.parametrize("holds_read", [True, False], ids=["holds read", "lacks read"])
+    def test_a_real_actor_needs_read_to_claim(self, star: dict[str, str], holds_read: bool) -> None:
+        """No monkeypatch: an actor holding import and write, with and without read."""
+        from django.contrib.auth.models import Group, Permission
+        from django.contrib.contenttypes.models import ContentType
+
+        from tap_auth import capabilities as caps
+        from tap_auth import sync
+        from tap_auth.models import Capability, User
+
+        sync.sync_auth()
+        held = [caps.IMPORT_GRIFT_CAPABILITY, caps.WRITE_CAPABILITY] + ([caps.READ_CAPABILITY] if holds_read else [])
+        group = Group.objects.create(name=f"t919-{holds_read}")
+        content_type = ContentType.objects.get_for_model(Capability)
+        for capability in held:
+            group.permissions.add(
+                Permission.objects.get(content_type=content_type, codename=caps.codename_for(capability))
+            )
+        actor = User.objects.create_user(username=f"t919-{holds_read}", password="x")
+        actor.groups.add(group)
+
+        with _run():
+            result = _import(_claim({"entity_id": star["hub"]}), actor=actor)
+        assert result.success is holds_read, result.errors
+        proposals = BatchEvent.objects.filter(event_type=BatchEventType.AUTHORITY_PROPOSED, entity_type="edge")
+        assert proposals.count() == (2 if holds_read else 0)

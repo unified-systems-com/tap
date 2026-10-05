@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4f42fb85c091 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f6a9742cd00a (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2887,7 +2887,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/9166bb22373c (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/0c263e34566b (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3619,7 +3619,9 @@ def _execute_grift_batch(
                 edges_proposed = sum(claim["proposed"] for claim in authority)
 
             close_batch(batch)
-            committed = True
+        # Set only once the transaction has committed: a failure at commit (a deferred constraint)
+        # raises out of the block above and leaves this False, so its records are not reported.
+        committed = True
 
     except _BatchFailed:
         # Atomic block already rolled back; clear upsert tracking since none
