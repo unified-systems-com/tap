@@ -514,8 +514,12 @@ RUN printf '%s\n' \
   '[provider_sect]' \
   'fips = fips_sect' \
   'base = base_sect' \
+  'default = default_sect' \
   '' \
   '[base_sect]' \
+  'activate = 1' \
+  '' \
+  '[default_sect]' \
   'activate = 1' \
   '' \
   '[algorithm_sect]' \
