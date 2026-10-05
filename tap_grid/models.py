@@ -1494,6 +1494,10 @@ class BatchEventType(models.TextChoices):
     # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own
     # transaction; entity_id is the edge's provisional id, which no entity has.
     SKIP = "skip", "Skip (edge not written)"
+    # An edge an authority claim would remove (req-grid-reconcile-edge-authority-6). A dry-run
+    # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
+    # each proposal, and on the batch for each claim's outcome.
+    AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
 
 
 class BatchEvent(models.Model):

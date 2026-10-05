@@ -131,6 +131,7 @@ class TestResolution:
 @pytest.mark.django_db
 class TestCompleteKeysOnly:
     @SPEC[3]
+    @pytest.mark.spec("req-grift-edge-identity-surface-2")
     @pytest.mark.parametrize(
         ("endpoint", "code"),
         [
