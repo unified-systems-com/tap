@@ -1,0 +1,207 @@
+name: spike wolfi openssl patch diff
+
+on:
+  push:
+    branches:
+      - spike/wolfi-openssl-patch-diff
+
+jobs:
+  # Last night's bare-Ubuntu repro (spike/minimal-standalone-repro) showed vanilla upstream
+  # OpenSSL 4.0.2 does NOT reproduce the original tap#933/#931 self-check failure
+  # (cryptography + CPython's _hashlib run in sequence, under strict fips+base). This job
+  # tests the one thing that wasn't tested: Chainguard's own openssl-4.0 package is NOT
+  # vanilla upstream -- its real build recipe (wolfi-dev/os, openssl-4.0.yaml) applies four
+  # patches on top of vanilla OpenSSL 4.0.3 source, two explicitly FIPS-related:
+  #   - 0001-fips-block-HMAC-calculation-with-unapproved-digests.patch (Dimitri Ledkov,
+  #     2025-10-20): modifies the legacy HMAC_Init_ex() C API to return failure (0) whenever
+  #     FIPS is globally declared and the fetched digest's provider name is not literally
+  #     "fips" -- commit message explicitly names "older nodejs, dotnet, and python" as the
+  #     callers this targets.
+  #   - 0001-fips-retain-FIPS-140-2-TLSv1.2-connectivity.patch: a TLS1.2 PRF/EMS-check change,
+  #     unrelated to this symptom (no HMAC/RAND/DRBG involvement).
+  #   - 0001-Remove-pre-share-from-default-TLS-groups.patch, 0001-Chainguard-Cryptographic-
+  #     Hardening.patch: broad algorithm-availability restrictions on the `default` provider
+  #     (DH/DSA/SM2/SM3/SM4/ARIA/Camellia/DES/legacy signature schemes removed outright).
+  # This builds the EXACT same vanilla OpenSSL 4.0.3 tag, with these same four patches
+  # applied via the same `patch -p1` Chainguard's own melange recipe uses, and Chainguard's
+  # own ./Configure flag list -- isolating whether THESE PATCHES specifically are what
+  # vanilla-OpenSSL-4.0.2 testing could not have caught.
+  repro-wolfi-patched:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install build deps (OpenSSL + CPython + cryptography build requirements)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential perl curl python3-venv libpq-dev \
+            zlib1g-dev libffi-dev libbz2-dev libreadline-dev libsqlite3-dev liblzma-dev \
+            libncurses-dev uuid-dev tk-dev git libbrotli-dev
+
+      - name: Fetch vanilla OpenSSL 4.0.3 source (the exact tag Chainguard's own recipe builds from)
+        run: |
+          git clone --depth 1 --branch openssl-4.0.3 https://github.com/openssl/openssl openssl-4.0.3-src
+          cd openssl-4.0.3-src
+          git rev-parse HEAD
+
+      - name: Fetch and apply Chainguard's own FOUR openssl-4.0 patches (wolfi-dev/os, openssl-4.0.yaml)
+        run: |
+          cd openssl-4.0.3-src
+          for p in \
+            0001-fips-block-HMAC-calculation-with-unapproved-digests.patch \
+            0001-fips-retain-FIPS-140-2-TLSv1.2-connectivity.patch \
+            0001-Remove-pre-share-from-default-TLS-groups.patch \
+            0001-Chainguard-Cryptographic-Hardening.patch \
+          ; do
+            echo "=== applying ${p} ==="
+            curl -fsSL -o "/tmp/${p}" \
+              "https://raw.githubusercontent.com/wolfi-dev/os/main/openssl-4.0/${p}"
+            patch -p1 < "/tmp/${p}"
+          done
+
+      - name: Build and install the patched OpenSSL 4.0.3 as the SYSTEM OpenSSL, using Chainguard's own Configure flags
+        run: |
+          cd openssl-4.0.3-src
+          perl ./Configure \
+            --prefix=/opt/openssl-4.0 \
+            --libdir=lib \
+            --openssldir=/etc/ssl \
+            enable-brotli \
+            enable-ec_nistp_64_gcc_128 \
+            enable-ktls \
+            enable-pie \
+            no-aria \
+            enable-bf \
+            enable-camellia \
+            enable-cast \
+            no-dtls1 \
+            no-ec_explicit_curves \
+            no-ec2m \
+            no-gost \
+            no-idea \
+            no-integrity-only-ciphers \
+            no-mdc2 \
+            enable-ocb \
+            enable-psk \
+            no-pvkkdf \
+            enable-rc2 \
+            enable-rc4 \
+            enable-rc5 \
+            enable-rmd160 \
+            no-seed \
+            no-sm2 \
+            no-sm2-precomp \
+            enable-sm3 \
+            no-sm4 \
+            enable-srp \
+            no-tls1 \
+            no-tls1_1 \
+            no-weak-ssl-ciphers \
+            no-whirlpool \
+            -Wa,--noexecstack
+          make -j"$(nproc)"
+          sudo make install_sw
+          echo "/opt/openssl-4.0/lib" | sudo tee /etc/ld.so.conf.d/openssl-4.0.conf
+          sudo ldconfig
+          echo "/opt/openssl-4.0/bin" >> "$GITHUB_PATH"
+          /opt/openssl-4.0/bin/openssl version -a
+
+      - name: Build the pinned OpenSSL FIPS provider (same 3.0.22 build tap uses) -- deliberately a DIFFERENT major version than the patched system OpenSSL just installed
+        run: |
+          curl -fsSL -o openssl-3.0.22.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar xzf openssl-3.0.22.tar.gz
+          cd openssl-3.0.22
+          ./Configure enable-fips
+          make -j"$(nproc)"
+          sudo make install_fips
+          find /usr/local -name fips.so
+
+      - name: Build CPython 3.14.8 from source against the patched OpenSSL 4.0.3
+        run: |
+          curl -fsSL -o Python-3.14.8.tar.xz https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz
+          tar xJf Python-3.14.8.tar.xz
+          cd Python-3.14.8
+          ./configure --prefix=/opt/python-4ossl \
+            --with-openssl=/opt/openssl-4.0 \
+            --with-openssl-rpath=auto
+          make -j"$(nproc)" || true
+          sudo make -k altinstall || true
+          sudo install -c -m 755 Modules/_hashlib.cpython-314-x86_64-linux-gnu.so \
+            /opt/python-4ossl/lib/python3.14/lib-dynload/ || true
+          ls -la /opt/python-4ossl/bin/python3.14
+          /opt/python-4ossl/bin/python3.14 -c "import _hashlib; print('_hashlib imports OK')"
+          strings /opt/python-4ossl/lib/python3.14/lib-dynload/_hashlib*.so | grep -E '^libcrypto|^libssl'
+
+      - name: Install cryptography from source against the same patched OpenSSL 4.0.3, before FIPS activation
+        run: |
+          python3 -m venv /tmp/download-venv
+          /tmp/download-venv/bin/pip download --no-binary cryptography --no-deps \
+            -d /tmp/crypto-sdist "cryptography==50.0.0"
+          /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
+            --python-version 3.14 --implementation cp --abi cp314 --only-binary=:all: \
+            "maturin<2,>=1.14.1" cffi pycparser setuptools wheel
+          /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
+          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
+            --find-links /tmp/crypto-sdist cryptography==50.0.0
+          strings /tmp/venv4/lib/python3.14/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -E '^libcrypto|^libssl'
+
+      - name: "fipsinstall + activate fips+base, fips=yes globally -- using the PATCHED system openssl CLI against the 3.0.22-built fips.so, exactly as Dockerfile:438 / Wolfi's own setup does"
+        run: |
+          openssl version -a
+          FIPS_SO="$(sudo find /usr/local -name fips.so | head -1)"
+          echo "fips.so found at: ${FIPS_SO}"
+          sudo openssl fipsinstall -out /tmp/fipsmodule-patched.cnf -module "${FIPS_SO}"
+          printf '%s\n' \
+            'config_diagnostics = 1' \
+            'openssl_conf = openssl_init' \
+            '' \
+            '.include /tmp/fipsmodule-patched.cnf' \
+            '' \
+            '[openssl_init]' \
+            'providers = provider_sect' \
+            'alg_section = algorithm_sect' \
+            '' \
+            '[provider_sect]' \
+            'fips = fips_sect' \
+            'base = base_sect' \
+            '' \
+            '[base_sect]' \
+            'activate = 1' \
+            '' \
+            '[algorithm_sect]' \
+            'default_properties = fips=yes' \
+            | sudo tee /tmp/openssl-fips-patched.cnf
+          echo "OPENSSL_CONF=/tmp/openssl-fips-patched.cnf" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=$(dirname "${FIPS_SO}")" >> "$GITHUB_ENV"
+
+      - name: Confirm the FIPS provider is active (under the patched system openssl)
+        run: openssl list -providers -verbose
+
+      - name: Write the minimal repro script (same sequence as tap's own self-check)
+        run: |
+          cat > /tmp/repro-patched.py <<'PYEOF'
+          from cryptography.hazmat.primitives import hashes
+          from cryptography.hazmat.primitives.asymmetric import ec
+
+          key = ec.generate_private_key(ec.SECP256R1())
+          signature = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
+          key.public_key().verify(signature, b"assertion", ec.ECDSA(hashes.SHA256()))
+          print("cryptography EC keygen+sign+verify: OK")
+
+          import _hashlib
+          digest = _hashlib.new("sha256", b"probe")
+          digest.hexdigest()
+          print("plain _hashlib sha256 fetch: OK, module =", type(digest).__module__)
+          PYEOF
+
+      - name: Run it, 20x fresh -- vanilla OpenSSL 4.0.3 PLUS Chainguard's exact four patches
+        run: |
+          fail=0
+          for i in $(seq 1 20); do
+            echo "=== attempt $i ==="
+            if ! /tmp/venv4/bin/python3.14 /tmp/repro-patched.py; then
+              fail=$((fail+1))
+            fi
+          done
+          echo "=== $fail/20 attempts failed ==="
+          if [ "$fail" -gt 0 ]; then exit 1; fi
