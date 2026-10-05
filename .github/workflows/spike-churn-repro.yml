@@ -1,0 +1,244 @@
+name: spike churn repro
+
+on:
+  push:
+    branches:
+      - spike/churn-repro
+
+jobs:
+  # Every repro so far (last night's vanilla-OpenSSL tests, and the Chainguard-patched-4.0.3
+  # test) ran ONE keygen + ONE hash fetch, in a FRESH process, 20 times -- about as little
+  # churn/concurrency as a test can have. The two REAL observed failures (the self-check,
+  # the SCRAM nonce bug) both happened inside a SINGLE, long-lived boot process touching
+  # crypto many times in a row, not a fresh process per operation. If the underlying cause is
+  # the lock-free provider method-store hashtable already suspected (L18, openssl/openssl#26699),
+  # it may not need true thread/process concurrency to manifest at all -- just enough DISTINCT
+  # algorithm fetches, in one process, to force the hashtable to grow/rehash/evict and expose
+  # a stale-pointer or use-after-free bug. This job isolates that variable: same Chainguard-
+  # patched OpenSSL 4.0.3 build as the last spike (confirmed clean at low volume, 0/20), but
+  # one long-lived Python process doing HUNDREDS of varied crypto operations (different
+  # digests, HMAC, EC, RSA) in a tight loop, instead of 20 single-operation fresh processes.
+  repro-churn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install build deps (OpenSSL + CPython + cryptography build requirements)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential perl curl python3-venv libpq-dev \
+            zlib1g-dev libffi-dev libbz2-dev libreadline-dev libsqlite3-dev liblzma-dev \
+            libncurses-dev uuid-dev tk-dev git libbrotli-dev
+
+      - name: Fetch vanilla OpenSSL 4.0.3 source (the exact tag Chainguard's own recipe builds from)
+        run: |
+          git clone --depth 1 --branch openssl-4.0.3 https://github.com/openssl/openssl openssl-4.0.3-src
+          cd openssl-4.0.3-src
+          git rev-parse HEAD
+
+      - name: Fetch and apply Chainguard's own FOUR openssl-4.0 patches (wolfi-dev/os, openssl-4.0.yaml)
+        run: |
+          cd openssl-4.0.3-src
+          for p in \
+            0001-fips-block-HMAC-calculation-with-unapproved-digests.patch \
+            0001-fips-retain-FIPS-140-2-TLSv1.2-connectivity.patch \
+            0001-Remove-pre-share-from-default-TLS-groups.patch \
+            0001-Chainguard-Cryptographic-Hardening.patch \
+          ; do
+            echo "=== applying ${p} ==="
+            curl -fsSL -o "/tmp/${p}" \
+              "https://raw.githubusercontent.com/wolfi-dev/os/main/openssl-4.0/${p}"
+            patch -p1 < "/tmp/${p}"
+          done
+
+      - name: Build and install the patched OpenSSL 4.0.3 as the SYSTEM OpenSSL, using Chainguard's own Configure flags
+        run: |
+          cd openssl-4.0.3-src
+          perl ./Configure \
+            --prefix=/opt/openssl-4.0 \
+            --libdir=lib \
+            --openssldir=/etc/ssl \
+            enable-brotli \
+            enable-ec_nistp_64_gcc_128 \
+            enable-ktls \
+            enable-pie \
+            no-aria \
+            enable-bf \
+            enable-camellia \
+            enable-cast \
+            no-dtls1 \
+            no-ec_explicit_curves \
+            no-ec2m \
+            no-gost \
+            no-idea \
+            no-integrity-only-ciphers \
+            no-mdc2 \
+            enable-ocb \
+            enable-psk \
+            no-pvkkdf \
+            enable-rc2 \
+            enable-rc4 \
+            enable-rc5 \
+            enable-rmd160 \
+            no-seed \
+            no-sm2 \
+            no-sm2-precomp \
+            enable-sm3 \
+            no-sm4 \
+            enable-srp \
+            no-tls1 \
+            no-tls1_1 \
+            no-weak-ssl-ciphers \
+            no-whirlpool \
+            -Wa,--noexecstack
+          make -j"$(nproc)"
+          sudo make install_sw
+          echo "/opt/openssl-4.0/lib" | sudo tee /etc/ld.so.conf.d/openssl-4.0.conf
+          sudo ldconfig
+          echo "/opt/openssl-4.0/bin" >> "$GITHUB_PATH"
+          /opt/openssl-4.0/bin/openssl version -a
+
+      - name: Build the pinned OpenSSL FIPS provider (same 3.0.22 build tap uses) -- deliberately a DIFFERENT major version than the patched system OpenSSL just installed
+        run: |
+          curl -fsSL -o openssl-3.0.22.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar xzf openssl-3.0.22.tar.gz
+          cd openssl-3.0.22
+          ./Configure enable-fips
+          make -j"$(nproc)"
+          sudo make install_fips
+          find /usr/local -name fips.so
+
+      - name: Build CPython 3.14.8 from source against the patched OpenSSL 4.0.3
+        run: |
+          curl -fsSL -o Python-3.14.8.tar.xz https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz
+          tar xJf Python-3.14.8.tar.xz
+          cd Python-3.14.8
+          ./configure --prefix=/opt/python-4ossl \
+            --with-openssl=/opt/openssl-4.0 \
+            --with-openssl-rpath=auto
+          make -j"$(nproc)" || true
+          sudo make -k altinstall || true
+          sudo install -c -m 755 Modules/_hashlib.cpython-314-x86_64-linux-gnu.so \
+            /opt/python-4ossl/lib/python3.14/lib-dynload/ || true
+          ls -la /opt/python-4ossl/bin/python3.14
+          /opt/python-4ossl/bin/python3.14 -c "import _hashlib; print('_hashlib imports OK')"
+          strings /opt/python-4ossl/lib/python3.14/lib-dynload/_hashlib*.so | grep -E '^libcrypto|^libssl'
+
+      - name: Install cryptography from source against the same patched OpenSSL 4.0.3, before FIPS activation
+        run: |
+          python3 -m venv /tmp/download-venv
+          /tmp/download-venv/bin/pip download --no-binary cryptography --no-deps \
+            -d /tmp/crypto-sdist "cryptography==50.0.0"
+          /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
+            --python-version 3.14 --implementation cp --abi cp314 --only-binary=:all: \
+            "maturin<2,>=1.14.1" cffi pycparser setuptools wheel
+          /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
+          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
+            --find-links /tmp/crypto-sdist cryptography==50.0.0
+          strings /tmp/venv4/lib/python3.14/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -E '^libcrypto|^libssl'
+
+      - name: "fipsinstall + activate fips+base, fips=yes globally -- using the PATCHED system openssl CLI against the 3.0.22-built fips.so, exactly as Dockerfile:438 / Wolfi's own setup does"
+        run: |
+          openssl version -a
+          FIPS_SO="$(sudo find /usr/local -name fips.so | head -1)"
+          echo "fips.so found at: ${FIPS_SO}"
+          sudo openssl fipsinstall -out /tmp/fipsmodule-patched.cnf -module "${FIPS_SO}"
+          printf '%s\n' \
+            'config_diagnostics = 1' \
+            'openssl_conf = openssl_init' \
+            '' \
+            '.include /tmp/fipsmodule-patched.cnf' \
+            '' \
+            '[openssl_init]' \
+            'providers = provider_sect' \
+            'alg_section = algorithm_sect' \
+            '' \
+            '[provider_sect]' \
+            'fips = fips_sect' \
+            'base = base_sect' \
+            '' \
+            '[base_sect]' \
+            'activate = 1' \
+            '' \
+            '[algorithm_sect]' \
+            'default_properties = fips=yes' \
+            | sudo tee /tmp/openssl-fips-patched.cnf
+          echo "OPENSSL_CONF=/tmp/openssl-fips-patched.cnf" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=$(dirname "${FIPS_SO}")" >> "$GITHUB_ENV"
+
+      - name: Confirm the FIPS provider is active (under the patched system openssl)
+        run: openssl list -providers -verbose
+
+      - name: Write the churn repro script -- one long-lived process, hundreds of varied crypto operations
+        run: |
+          cat > /tmp/repro-churn.py <<'PYEOF'
+          """One long-lived process, many distinct algorithm fetches -- tests whether VOLUME
+          and VARIETY of crypto operations (not thread/process concurrency) is enough to
+          expose the suspected lock-free provider method-store hashtable bug (L18,
+          openssl/openssl#26699 and related). Every prior repro used a fresh process per
+          operation; this is the opposite end of that variable.
+          """
+          import sys
+          import traceback
+
+          from cryptography.hazmat.primitives import hashes, hmac
+          from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
+
+          import _hashlib
+
+          ITERATIONS = 2000
+          RSA_EVERY = 50  # RSA keygen is expensive; do it periodically, not every iteration
+
+          def do_iteration(i: int) -> None:
+              # EC keygen + sign + verify -- fresh key every time, like tap's own self-check.
+              key = ec.generate_private_key(ec.SECP256R1())
+              sig = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
+              key.public_key().verify(sig, b"assertion", ec.ECDSA(hashes.SHA256()))
+
+              # Several DIFFERENT digests via plain _hashlib -- the exact layer tap's own
+              # self-check uses, deliberately varied (not just sha256 every time) to stress
+              # the method-store's lookup/insert path across more distinct algorithm names.
+              for name in ("sha256", "sha384", "sha512", "sha3_256", "sha3_512"):
+                  d = _hashlib.new(name, b"probe")
+                  d.hexdigest()
+
+              # HMAC via cryptography (a genuinely different code path than _hashlib's own
+              # digest fetch, and the exact API the Chainguard HMAC-blocking patch targets).
+              h = hmac.HMAC(b"0123456789abcdef", hashes.SHA256())
+              h.update(b"probe")
+              h.finalize()
+
+              # EC with a different curve + different hash, for more algorithm-name variety.
+              key2 = ec.generate_private_key(ec.SECP384R1())
+              sig2 = key2.sign(b"assertion", ec.ECDSA(hashes.SHA384()))
+              key2.public_key().verify(sig2, b"assertion", ec.ECDSA(hashes.SHA384()))
+
+              if i % RSA_EVERY == 0:
+                  rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                  rsa_sig = rsa_key.sign(
+                      b"assertion",
+                      padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                      hashes.SHA256(),
+                  )
+                  rsa_key.public_key().verify(
+                      rsa_sig,
+                      b"assertion",
+                      padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                      hashes.SHA256(),
+                  )
+
+          for i in range(1, ITERATIONS + 1):
+              try:
+                  do_iteration(i)
+              except Exception:
+                  print(f"=== FAILED at iteration {i}/{ITERATIONS} ===", file=sys.stderr)
+                  traceback.print_exc()
+                  sys.exit(1)
+              if i % 100 == 0:
+                  print(f"iteration {i}/{ITERATIONS}: OK so far")
+
+          print(f"=== all {ITERATIONS} iterations completed with no failure ===")
+          PYEOF
+
+      - name: Run it -- ONE long-lived process, 2000 varied iterations (vanilla OpenSSL 4.0.3 PLUS Chainguard's exact four patches)
+        run: /tmp/venv4/bin/python3.14 /tmp/repro-churn.py
