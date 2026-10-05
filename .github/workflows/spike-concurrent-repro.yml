@@ -1,0 +1,292 @@
+name: spike concurrent repro
+
+on:
+  push:
+    branches:
+      - spike/concurrent-repro
+
+jobs:
+  # Both the churn spike (one long-lived process, 2000 varied iterations, 0/2000 failures)
+  # and the low-volume spike (20 fresh single-op processes, 0/20 failures) came back clean
+  # against the Chainguard-patched OpenSSL 4.0.3 build. That rules out volume/variety WITHOUT
+  # concurrency. The two things never actually tested: real THREAD-level concurrency sharing
+  # one OSSL_LIB_CTX/provider store in a single process, and real PROCESS-level concurrency --
+  # several interpreters independently doing FIPS-provider fetches at the same moment, which
+  # is what a multi-worker gunicorn boot (or any concurrent container start) actually looks
+  # like. This spike does BOTH at once: each process runs several threads hammering crypto
+  # operations concurrently, and several such processes are launched simultaneously (not
+  # sequentially) for several rounds, to maximize the chance of hitting a genuine race in the
+  # suspected lock-free provider method-store hashtable (L18, openssl/openssl#26699 and
+  # related).
+  repro-concurrent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Install build deps (OpenSSL + CPython + cryptography build requirements)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential perl curl python3-venv libpq-dev \
+            zlib1g-dev libffi-dev libbz2-dev libreadline-dev libsqlite3-dev liblzma-dev \
+            libncurses-dev uuid-dev tk-dev git libbrotli-dev
+
+      - name: Fetch vanilla OpenSSL 4.0.3 source (the exact tag Chainguard's own recipe builds from)
+        run: |
+          git clone --depth 1 --branch openssl-4.0.3 https://github.com/openssl/openssl openssl-4.0.3-src
+          cd openssl-4.0.3-src
+          git rev-parse HEAD
+
+      - name: Fetch and apply Chainguard's own FOUR openssl-4.0 patches (wolfi-dev/os, openssl-4.0.yaml)
+        run: |
+          cd openssl-4.0.3-src
+          for p in \
+            0001-fips-block-HMAC-calculation-with-unapproved-digests.patch \
+            0001-fips-retain-FIPS-140-2-TLSv1.2-connectivity.patch \
+            0001-Remove-pre-share-from-default-TLS-groups.patch \
+            0001-Chainguard-Cryptographic-Hardening.patch \
+          ; do
+            echo "=== applying ${p} ==="
+            curl -fsSL -o "/tmp/${p}" \
+              "https://raw.githubusercontent.com/wolfi-dev/os/main/openssl-4.0/${p}"
+            patch -p1 < "/tmp/${p}"
+          done
+
+      - name: Build and install the patched OpenSSL 4.0.3 as the SYSTEM OpenSSL, using Chainguard's own Configure flags
+        run: |
+          cd openssl-4.0.3-src
+          perl ./Configure \
+            --prefix=/opt/openssl-4.0 \
+            --libdir=lib \
+            --openssldir=/etc/ssl \
+            enable-brotli \
+            enable-ec_nistp_64_gcc_128 \
+            enable-ktls \
+            enable-pie \
+            no-aria \
+            enable-bf \
+            enable-camellia \
+            enable-cast \
+            no-dtls1 \
+            no-ec_explicit_curves \
+            no-ec2m \
+            no-gost \
+            no-idea \
+            no-integrity-only-ciphers \
+            no-mdc2 \
+            enable-ocb \
+            enable-psk \
+            no-pvkkdf \
+            enable-rc2 \
+            enable-rc4 \
+            enable-rc5 \
+            enable-rmd160 \
+            no-seed \
+            no-sm2 \
+            no-sm2-precomp \
+            enable-sm3 \
+            no-sm4 \
+            enable-srp \
+            no-tls1 \
+            no-tls1_1 \
+            no-weak-ssl-ciphers \
+            no-whirlpool \
+            -Wa,--noexecstack
+          make -j"$(nproc)"
+          sudo make install_sw
+          echo "/opt/openssl-4.0/lib" | sudo tee /etc/ld.so.conf.d/openssl-4.0.conf
+          sudo ldconfig
+          echo "/opt/openssl-4.0/bin" >> "$GITHUB_PATH"
+          /opt/openssl-4.0/bin/openssl version -a
+
+      - name: Build the pinned OpenSSL FIPS provider (same 3.0.22 build tap uses) -- deliberately a DIFFERENT major version than the patched system OpenSSL just installed
+        run: |
+          curl -fsSL -o openssl-3.0.22.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar xzf openssl-3.0.22.tar.gz
+          cd openssl-3.0.22
+          ./Configure enable-fips
+          make -j"$(nproc)"
+          sudo make install_fips
+          find /usr/local -name fips.so
+
+      - name: Build CPython 3.14.8 from source against the patched OpenSSL 4.0.3
+        run: |
+          curl -fsSL -o Python-3.14.8.tar.xz https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz
+          tar xJf Python-3.14.8.tar.xz
+          cd Python-3.14.8
+          ./configure --prefix=/opt/python-4ossl \
+            --with-openssl=/opt/openssl-4.0 \
+            --with-openssl-rpath=auto
+          make -j"$(nproc)" || true
+          sudo make -k altinstall || true
+          sudo install -c -m 755 Modules/_hashlib.cpython-314-x86_64-linux-gnu.so \
+            /opt/python-4ossl/lib/python3.14/lib-dynload/ || true
+          ls -la /opt/python-4ossl/bin/python3.14
+          /opt/python-4ossl/bin/python3.14 -c "import _hashlib; print('_hashlib imports OK')"
+          strings /opt/python-4ossl/lib/python3.14/lib-dynload/_hashlib*.so | grep -E '^libcrypto|^libssl'
+
+      - name: Install cryptography from source against the same patched OpenSSL 4.0.3, before FIPS activation
+        run: |
+          python3 -m venv /tmp/download-venv
+          /tmp/download-venv/bin/pip download --no-binary cryptography --no-deps \
+            -d /tmp/crypto-sdist "cryptography==50.0.0"
+          /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
+            --python-version 3.14 --implementation cp --abi cp314 --only-binary=:all: \
+            "maturin<2,>=1.14.1" cffi pycparser setuptools wheel
+          /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
+          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
+            --find-links /tmp/crypto-sdist cryptography==50.0.0
+          strings /tmp/venv4/lib/python3.14/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -E '^libcrypto|^libssl'
+
+      - name: "fipsinstall + activate fips+base, fips=yes globally -- using the PATCHED system openssl CLI against the 3.0.22-built fips.so, exactly as Dockerfile:438 / Wolfi's own setup does"
+        run: |
+          openssl version -a
+          FIPS_SO="$(sudo find /usr/local -name fips.so | head -1)"
+          echo "fips.so found at: ${FIPS_SO}"
+          sudo openssl fipsinstall -out /tmp/fipsmodule-patched.cnf -module "${FIPS_SO}"
+          printf '%s\n' \
+            'config_diagnostics = 1' \
+            'openssl_conf = openssl_init' \
+            '' \
+            '.include /tmp/fipsmodule-patched.cnf' \
+            '' \
+            '[openssl_init]' \
+            'providers = provider_sect' \
+            'alg_section = algorithm_sect' \
+            '' \
+            '[provider_sect]' \
+            'fips = fips_sect' \
+            'base = base_sect' \
+            '' \
+            '[base_sect]' \
+            'activate = 1' \
+            '' \
+            '[algorithm_sect]' \
+            'default_properties = fips=yes' \
+            | sudo tee /tmp/openssl-fips-patched.cnf
+          echo "OPENSSL_CONF=/tmp/openssl-fips-patched.cnf" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=$(dirname "${FIPS_SO}")" >> "$GITHUB_ENV"
+
+      - name: Confirm the FIPS provider is active (under the patched system openssl)
+        run: openssl list -providers -verbose
+
+      - name: Write the concurrent repro script -- threads within a process, sharing one OSSL_LIB_CTX / provider store
+        run: |
+          cat > /tmp/repro-concurrent.py <<'PYEOF'
+          """Several threads in ONE process, all doing varied crypto fetches concurrently
+          against the same default OSSL_LIB_CTX / provider method store. Tests the genuine
+          thread-concurrency variant of the suspected lock-free hashtable bug (L18,
+          openssl/openssl#26699), which neither the low-volume nor the high-volume
+          single-threaded repros could exercise.
+          """
+          import os
+          import sys
+          import threading
+          import traceback
+
+          from cryptography.hazmat.primitives import hashes, hmac
+          from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
+
+          import _hashlib
+
+          THREADS = int(os.environ.get("REPRO_THREADS", "6"))
+          ITERATIONS = int(os.environ.get("REPRO_ITERATIONS", "120"))
+          RSA_EVERY = 40
+
+          errors = []
+          errors_lock = threading.Lock()
+
+          def do_iteration(i: int) -> None:
+              key = ec.generate_private_key(ec.SECP256R1())
+              sig = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
+              key.public_key().verify(sig, b"assertion", ec.ECDSA(hashes.SHA256()))
+
+              for name in ("sha256", "sha384", "sha512", "sha3_256", "sha3_512"):
+                  d = _hashlib.new(name, b"probe")
+                  d.hexdigest()
+
+              h = hmac.HMAC(b"0123456789abcdef", hashes.SHA256())
+              h.update(b"probe")
+              h.finalize()
+
+              key2 = ec.generate_private_key(ec.SECP384R1())
+              sig2 = key2.sign(b"assertion", ec.ECDSA(hashes.SHA384()))
+              key2.public_key().verify(sig2, b"assertion", ec.ECDSA(hashes.SHA384()))
+
+              if i % RSA_EVERY == 0:
+                  rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                  rsa_sig = rsa_key.sign(
+                      b"assertion",
+                      padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                      hashes.SHA256(),
+                  )
+                  rsa_key.public_key().verify(
+                      rsa_sig,
+                      b"assertion",
+                      padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                      hashes.SHA256(),
+                  )
+
+          def worker(thread_id: int) -> None:
+              for i in range(1, ITERATIONS + 1):
+                  try:
+                      do_iteration(i)
+                  except Exception:
+                      with errors_lock:
+                          errors.append((thread_id, i, traceback.format_exc()))
+                      return
+
+          threads = [threading.Thread(target=worker, args=(t,)) for t in range(THREADS)]
+          for t in threads:
+              t.start()
+          for t in threads:
+              t.join()
+
+          if errors:
+              for thread_id, i, tb in errors:
+                  print(f"=== FAILED thread {thread_id} at iteration {i} (pid={os.getpid()}) ===", file=sys.stderr)
+                  print(tb, file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: {THREADS} threads x {ITERATIONS} iterations, no failure (pid={os.getpid()})")
+          PYEOF
+
+      - name: Write the launcher -- several such processes started SIMULTANEOUSLY, for several rounds
+        run: |
+          cat > /tmp/run-concurrent.sh <<'SHEOF'
+          #!/usr/bin/env bash
+          set -u
+          ROUNDS=10
+          PROCS=8
+          total_fail=0
+          total_launches=0
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "=== round ${round}/${ROUNDS}: launching ${PROCS} processes simultaneously (each ${REPRO_THREADS:-6} threads x ${REPRO_ITERATIONS:-120} iterations) ==="
+            pids=()
+            for p in $(seq 1 "$PROCS"); do
+              /tmp/venv4/bin/python3.14 /tmp/repro-concurrent.py > "/tmp/out-${round}-${p}.log" 2>&1 &
+              pids+=($!)
+            done
+            round_fail=0
+            for idx in "${!pids[@]}"; do
+              p=$((idx + 1))
+              if ! wait "${pids[$idx]}"; then
+                round_fail=$((round_fail + 1))
+                echo "--- round ${round} process ${p} FAILED, log follows ---"
+                cat "/tmp/out-${round}-${p}.log"
+                echo "--- end log ---"
+              fi
+            done
+            total_fail=$((total_fail + round_fail))
+            total_launches=$((total_launches + PROCS))
+            echo "=== round ${round} done: ${round_fail}/${PROCS} processes failed ==="
+          done
+          echo "=== TOTAL: ${total_fail} failed process-runs out of ${total_launches} launches ==="
+          if [ "${total_fail}" -gt 0 ]; then
+            exit 1
+          fi
+          SHEOF
+          chmod +x /tmp/run-concurrent.sh
+
+      - name: Run it -- 10 rounds x 8 simultaneous processes x 6 threads x 120 iterations (vanilla OpenSSL 4.0.3 PLUS Chainguard's exact four patches)
+        timeout-minutes: 25
+        run: /tmp/run-concurrent.sh
