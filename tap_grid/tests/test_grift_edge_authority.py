@@ -348,6 +348,29 @@ class TestTheFence:
         assert claim["reason"] == "no_read_boundary"
 
 
+@pytest.mark.django_db(transaction=True)
+class TestAConcurrentWriter:
+    @SPEC[7]
+    @SPEC[8]
+    def test_an_edge_created_at_the_anchor_while_a_claim_is_judged_is_in_the_record(self, star: dict[str, str]) -> None:
+        """A writer holding the anchor creates an edge there: the claim waits for it, then records it.
+
+        Without the anchor lock the claim would read its scope while the writer is mid-flight, and an
+        edge committed between that read and the claim's commit would be in no record at all.
+        """
+        from tap_grid.cascade_corpus.timing import contend
+
+        with _run():
+            holder, claimant = contend(
+                uuid.UUID(star["hub"]),
+                lambda: _link(_edge(star["hub"], star["d"]))[0],
+                lambda: _import(_claim({"entity_id": star["hub"]})),
+            )
+        late = holder.value
+        assert _proposals(claimant.value)[late]["outcome"] == "rejected_stale"
+        assert _proposed(claimant.value) == {star["hub_b"], star["hub_c"]}
+
+
 @pytest.mark.django_db
 class TestAProposalIsARead:
     @SPEC[10]

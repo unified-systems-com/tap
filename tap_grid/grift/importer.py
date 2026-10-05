@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0bb4812c9e1c (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4f42fb85c091 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -4494,10 +4494,13 @@ def _apply_authority_claims(
     batch but this one created, updated or linked after the run opened, this run's other batches
     included, is ``rejected_stale``.
 
+    Every claimed anchor is locked before any scope is read, so the record is the whole scope: an
+    edge created concurrently at an anchor either committed before the read or waits for this batch.
+
     Raises ``_BatchFailed`` for two claims over one scope, and for an anchor key that names more
     than one node. Computing proposals reads the grid, so ``grid.read`` is authorised first.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@80ed4f1f3b46/fbf55bf43232 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@c4551f3f9ef9/6489bf991327 (derivation) — the one
         place a claim's scope, its asserted set and its proposals are derived, fenced and recorded.
     """
     from tap_auth import policy
@@ -4559,6 +4562,18 @@ def _apply_authority_claims(
             first_at[scope] = idx
     if failed:
         raise _BatchFailed()
+
+    # Hold every claimed anchor before reading any scope. An edge is created only under a lock on
+    # both its endpoints, so no edge can join a scope between the read below and this batch's
+    # commit: a concurrent create either committed first and is read, or waits for this batch.
+    # One lock set in id order, so two batches claiming the same anchors in opposite orders never
+    # wait on each other (the lesson of Issue# 943 - tap).
+    list(
+        Entity.objects.select_for_update()
+        .filter(pk__in=sorted({uuid.UUID(found) for found in resolved if found is not None}))
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
 
     written = {
         e["entity"]["entity_id"]
