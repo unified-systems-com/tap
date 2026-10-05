@@ -1,6 +1,7 @@
 """Tests for tap_grid.services — the canonical mutation API."""
 
 import uuid
+from typing import Any
 
 import pytest
 from tap_plugin.grid_fixtures.models import ConstrainedSource
@@ -707,6 +708,75 @@ class TestResolveEntity:
 
 
 @pytest.mark.django_db
+class TestEntityLiveness:
+    """req-grid-service-read-direct-4: one read says, for every id asked, live, tombstoned or missing.
+
+    Issue# 966 - tap: a producer checking the ids it is about to send had only
+    ``resolve_entity``, one query per id.
+    """
+
+    @staticmethod
+    def _spine_reads(captured: list[dict[str, str]]) -> list[str]:
+        table = Entity._meta.db_table
+        return [query["sql"] for query in captured if f'"{table}"' in query["sql"]]
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_every_id_is_answered_in_one_spine_read(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.services import delete_edge_by_entity, entity_liveness
+
+        live = uuid.UUID(str(create_node("grid_fixtures__constrained_source", {"name": "Live"}).entity_id))
+        retired = uuid.UUID(str(create_node("grid_fixtures__constrained_source", {"name": "Gone"}).entity_id))
+        assert delete_node(retired).success
+        sources = [make_spine_entity("grid_fixtures__constrained_source") for _ in range(2)]
+        targets = [make_spine_entity("grid_fixtures__constrained_target") for _ in range(2)]
+        live_edge = create_edge(sources[0], targets[0], "CONSTRAINED_LINK__grid_fixtures").entity_id
+        retired_edge = create_edge(sources[1], targets[1], "CONSTRAINED_LINK__grid_fixtures").entity_id
+        assert delete_edge_by_entity(retired_edge).success
+        missing = uuid.uuid7()
+
+        with CaptureQueriesContext(connection) as queries:
+            answer = entity_liveness([str(live), retired, live_edge, str(retired_edge), missing, live])
+
+        assert answer == {
+            live: "live",
+            retired: "tombstoned",
+            live_edge: "live",
+            retired_edge: "tombstoned",
+            missing: "missing",
+        }
+        assert len(self._spine_reads(queries.captured_queries)) == 1
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_an_empty_input_reads_nothing(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.services import entity_liveness
+
+        with CaptureQueriesContext(connection) as queries:
+            assert entity_liveness([]) == {}
+        assert self._spine_reads(queries.captured_queries) == []
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_a_target_that_is_not_an_id_is_refused_before_any_read(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.exceptions import ServiceValidationError
+        from tap_grid.services import entity_liveness
+
+        # A single id passed bare would otherwise be read as a collection of characters.
+        refusals: tuple[Any, ...] = (["not-a-uuid"], [uuid.uuid7(), 42], str(uuid.uuid7()), uuid.uuid7())
+        for refused in refusals:
+            with CaptureQueriesContext(connection) as queries, pytest.raises(ServiceValidationError):
+                entity_liveness(refused)
+            assert self._spine_reads(queries.captured_queries) == []
+
+
+@pytest.mark.django_db
 class TestDiscoveryFunctions:
     """req-grid-service-read-discovery: list and describe node/edge types.
 
@@ -778,6 +848,7 @@ class TestDiscoveryFunctions:
         assert "grid_fixtures__constrained_source" in caps.node_types
         assert "create_node" in caps.write_verbs
         assert "get_node" in caps.read_functions
+        assert "entity_liveness" in caps.read_functions
 
 
 # ===========================================================================
@@ -977,7 +1048,7 @@ class TestEntityVersion:
 class TestPublicReadGate:
     """The public entity-spine read API gates on grid.read (req-tap-auth-policy).
 
-    resolve_entity / get_node / get_edge / get_object are the spine's read
+    resolve_entity / entity_liveness / get_node / get_edge / get_object are the spine's read
     gateway — every above-service caller routes through them. Each authorizes
     grid.read in the decorator, before any DB work. This is the regression lock
     for the 2026-07-02 read-gap closure: before it these four were ungated, so a
@@ -1002,7 +1073,7 @@ class TestPublicReadGate:
         from tap_auth import policy
         from tap_auth.errors import CapabilityDenied
         from tap_grid.caller_context import set_caller_context
-        from tap_grid.services import get_edge, get_node, get_object, resolve_entity
+        from tap_grid.services import entity_liveness, get_edge, get_node, get_object, resolve_entity
 
         ctx = self._write_only_ctx()
         # Sanity: the actor holds write but NOT read — so a read denial below is
@@ -1018,3 +1089,5 @@ class TestPublicReadGate:
         for read_fn in (resolve_entity, get_node, get_edge, get_object):
             with pytest.raises(CapabilityDenied):
                 read_fn(uuid.uuid4())
+        with pytest.raises(CapabilityDenied):
+            entity_liveness([uuid.uuid4()])
