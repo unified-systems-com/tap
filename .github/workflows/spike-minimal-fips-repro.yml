@@ -177,6 +177,11 @@ jobs:
           python3 -m venv /tmp/download-venv
           /tmp/download-venv/bin/pip download --no-binary cryptography --no-deps \
             -d /tmp/crypto-sdist "cryptography==50.0.0"
+          # cryptography's build backend is maturin (its pyproject.toml build-system.requires);
+          # pip's build isolation needs it (and cryptography's own runtime deps cffi/pycparser)
+          # available locally too, same reason as the sdist itself.
+          /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
+            "maturin<2,>=1.14.1" cffi pycparser
           /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
           OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
             --find-links /tmp/crypto-sdist cryptography==50.0.0
