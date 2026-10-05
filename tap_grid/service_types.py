@@ -248,6 +248,11 @@ class EdgeTypeDescription:
     property_schema: dict[str, Any] | None = None
 
 
+# What `entity_liveness` says about one id: on the spine and not retired, on the spine and
+# retired, or not on the spine at all.
+EntityLiveness = Literal["live", "tombstoned", "missing"]
+
+
 @dataclass
 class ServiceCapabilities:
     """Top-level discovery description for the TAP service layer.

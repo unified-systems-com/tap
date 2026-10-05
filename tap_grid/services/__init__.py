@@ -19,7 +19,7 @@ Every write goes through write_batch. The Entity-level helpers that wrote the sp
 
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
@@ -63,6 +63,7 @@ from tap_grid.service_types import (
     BatchWriteResult,
     EdgeIdentityResolution,
     EdgeTypeDescription,
+    EntityLiveness,
     IdentityResolution,
     NodeTypeDescription,
     ServiceCapabilities,
@@ -115,6 +116,7 @@ __all__ = [
     "find_edge_by_identity",
     # Read API (grid.read)
     "resolve_entity",
+    "entity_liveness",
     "get_node",
     "get_edge",
     "get_object",
@@ -1467,6 +1469,54 @@ def resolve_entity(target: str | uuid.UUID, *, caller_context: CallerContext | N
     return _load_entity_or_raise(entity_id)
 
 
+@requires_capability(READ_CAPABILITY, operation="entity_liveness")
+def entity_liveness(
+    targets: Iterable[str | uuid.UUID], *, caller_context: CallerContext | None = None
+) -> dict[uuid.UUID, EntityLiveness]:
+    """Say, for each entity id, whether it is live, tombstoned or missing, in one query.
+
+    The bulk form of asking ``resolve_entity`` about each id: a producer checking the ids it is
+    about to send makes one database round trip, not one per id (Issue# 966 - tap). Every
+    requested id is in the answer, so an id that never existed reads ``"missing"``: never as
+    retired, and never as left out. Liveness lives on the Entity spine, so nodes and edges are
+    answered alike.
+
+    Args:
+        targets: Entity UUIDs (str or uuid.UUID). Duplicates collapse.
+
+    Returns:
+        Each requested id, as a ``uuid.UUID``, mapped to ``"live"``, ``"tombstoned"`` or
+        ``"missing"``. An empty input reads nothing and returns ``{}``.
+
+    Raises:
+        ServiceValidationError: If ``targets`` is a single id rather than a collection, or any
+            target is not a UUID. Nothing is read.
+    """
+    if isinstance(targets, str | uuid.UUID):
+        raise ServiceValidationError("targets must be a collection of ids, not a single id.")
+    ids: set[uuid.UUID] = set()
+    for position, target in enumerate(targets):
+        try:
+            entity_id = _coerce_uuid(target)
+        except ValueError:
+            entity_id = None
+        if entity_id is None:
+            raise ServiceValidationError(f"targets[{position}] is not a valid UUID.")
+        ids.add(entity_id)
+    if not ids:
+        return {}
+    retired_at = dict(Entity.objects.filter(pk__in=ids).values_list("pk", "deleted_at"))
+    answer: dict[uuid.UUID, EntityLiveness] = {}
+    for entity_id in ids:
+        if entity_id not in retired_at:
+            answer[entity_id] = "missing"
+        elif retired_at[entity_id] is None:
+            answer[entity_id] = "live"
+        else:
+            answer[entity_id] = "tombstoned"
+    return answer
+
+
 @requires_capability(WRITE_CAPABILITY, operation="resolve_identity")
 def resolve_identity(
     type_slug: str,
@@ -1971,6 +2021,7 @@ def describe_service_capabilities(*, caller_context: CallerContext | None = None
             "get_node",
             "get_edge",
             "resolve_entity",
+            "entity_liveness",
             "list_node_types",
             "describe_node_type",
             "list_edge_types",
