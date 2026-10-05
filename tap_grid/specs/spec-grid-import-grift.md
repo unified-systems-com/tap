@@ -382,7 +382,7 @@ Targets that pass these checks proceed to their removal verb, which carries `ent
 
 ### Reporting
 
-The import result should expose removal counts and issues separately enough that callers can distinguish removal outcomes from upsert outcomes.
+The import result should expose removal counts and issues separately enough that callers can distinguish removal outcomes from upsert outcomes. A batch's counts describe what it committed: they are cleared when its transaction rolls back, and only then. A permissive batch that skips a dangling edge commits, so its removals are counted, and the skip is a warning, not an error (Issue# 962 - tap; `tap_grid/tests/test_grift_lock_order.py::TestAPermissiveBatchCountsWhatItCommitted`).
 
 Recommended count fields:
 

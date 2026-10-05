@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f6a9742cd00a (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2973f9ad9a90 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -44,7 +44,7 @@ from tap_grid.services import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Iterable
 
 
 GRIFT_VERSION = "0"
@@ -2887,7 +2887,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/0c263e34566b (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/42d34ce86462 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3018,6 +3018,9 @@ def _execute_grift_batch(
             # transaction and the verb's lock, so resolution and creation commit
             # together (req-grid-entity-natural-key-13). A found row's id replaces the
             # provisional one the preflight minted, everywhere this batch names it.
+            # Every identity lock the batch will take, in one order: node keys first (an edge's key
+            # needs its endpoints' final ids), each kind sorted (Issue# 943 - tap).
+            _take_identity_locks(_ref_node_lock_keys(batch_container, final_refs))
             if final_refs:
                 substitutions = _resolve_ref_identities(
                     batch_container,
@@ -3044,6 +3047,10 @@ def _execute_grift_batch(
                 dangling_edge_ids=dangling_edge_ids,
                 dangling_edge_mode=dangling_edge_mode,
             )
+
+            # Then every edge lock: ref edges, keyless duplicate checks and deletes by identity
+            # together, sorted, so no two batches take any of them in opposite orders.
+            _take_identity_locks(_edge_lock_keys(batch_container, final_refs, dangling_edge_ids, parsed_removals, ctx))
 
             # Edges are found by their type's declared identity, after the nodes, so every
             # endpoint is final (req-grid-edge-identity). A found edge's id replaces the
@@ -3670,11 +3677,18 @@ def _execute_grift_batch(
         authority = []
         edges_proposed = 0
 
-    errors_count = sum(
-        1
-        for i in issues
-        if i.code in ("execution_failed", "sweep_strict_aborted", "removal_execution_failed") or i.code in _ERROR_CODES
-    )
+    def is_error(issue: GriftIssue) -> bool:
+        # The document-level classification's permissive carve-out (`_is_error` in
+        # `_grift_import_impl`): a dangling edge skipped in permissive mode is a warning, and the
+        # batch committed (Issue# 962 - tap).
+        if issue.code == "dangling_edge" and dangling_edge_mode == "permissive":
+            return False
+        return (
+            issue.code in ("execution_failed", "sweep_strict_aborted", "removal_execution_failed")
+            or issue.code in _ERROR_CODES
+        )
+
+    errors_count = sum(1 for i in issues if is_error(i))
     warnings_count = sum(
         1
         for i in issues
@@ -3689,8 +3703,10 @@ def _execute_grift_batch(
 
     # On rollback the removal counters are stale (the work didn't persist).
     # `_BatchFailed` clears upserted_entities above for the same reason;
-    # mirror that for removal stats so they don't lie about partial success.
-    if any(i.code in _ERROR_CODES for i in issues) or sweep_strict_aborted:
+    # mirror that for removal stats so they don't lie about partial success. Keyed on the
+    # rollback itself, not on an error code being present: a permissive dangling edge is an
+    # issue whose batch committed, so its removals did persist (Issue# 962 - tap).
+    if not committed:
         edges_deleted = 0
         nodes_deleted = 0
         edges_purged = 0
@@ -3741,6 +3757,96 @@ def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
     if declared is None or isinstance(declared, Keyless):
         return None
     return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))
+
+
+def _take_identity_locks(keys: Iterable[str]) -> None:
+    """Take each identity lock a batch is about to need, once, in one canonical order (Issue# 943 - tap).
+
+    The identity verbs lock as they look up, in the order they meet the batch's objects. Two
+    batches naming the same relationships in opposite orders would then each hold one lock while
+    waiting for the other's, and Postgres would fail one of them. Taken here first, sorted by key,
+    every batch acquires the locks it shares with another in the same order. Advisory transaction
+    locks are re-entrant within a session, so each verb's own lock call then returns at once.
+    """
+    with connection.cursor() as cursor:
+        for key in sorted(set(keys)):
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+
+
+def _ref_node_lock_keys(batch_container: dict[str, Any], refs: dict[str, str]) -> list[str]:
+    """The identity lock key of every ref node of the batch whose type declares a natural key."""
+    ref_ids = set(refs.values())
+    return [
+        key
+        for node_obj in batch_container.get("nodes", [])
+        if node_obj["entity"]["entity_id"] in ref_ids
+        for key in [_explicit_identity_key(node_obj)]
+        if key is not None
+    ]
+
+
+def _edge_lock_keys(
+    batch_container: dict[str, Any],
+    refs: dict[str, str],
+    dangling_edge_ids: set[str],
+    parsed_removals: _ParsedRemovalSections | None,
+    ctx: CallerContext,
+) -> list[str]:
+    """The lock key of every edge identity the batch will look up, with its endpoints final.
+
+    The same set the verbs lock: a ref edge of a declared type, a keyless edge's duplicate check,
+    and each delete by identity. An edge whose key is incomplete, or whose endpoint did not
+    resolve, takes no lock here; its own step refuses or skips it as before.
+    """
+    from tap_grid.edge_identity import edge_identity_values, edge_lock_key, get_edge_identity, incomplete_paths
+
+    ref_ids = set(refs.values())
+    keys: list[str] = []
+
+    def add(edge_type: str, from_id: Any, to_id: Any, values: dict[str, object]) -> None:
+        if from_id is None or to_id is None or incomplete_paths(values):
+            return
+        try:
+            keys.append(edge_lock_key(edge_type, from_id, to_id, values))
+        except ValueError:
+            return
+
+    for edge_obj in batch_container.get("edges", []):
+        envelope_id = edge_obj["entity"]["entity_id"]
+        payload = edge_obj["edge"]
+        identity = get_edge_identity(payload["edge_type"])
+        if envelope_id in dangling_edge_ids or identity is None:
+            continue
+        if identity.keyless or envelope_id in ref_ids:
+            values = edge_identity_values(identity, payload.get("properties") or {})
+            add(payload["edge_type"], payload.get("from_entity_id"), payload.get("to_entity_id"), values)
+
+    targets = parsed_removals.deletes_edge_identities if parsed_removals is not None else []
+    if targets:
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_removal_identity")
+        batch_keys = _batch_node_keys(batch_container)
+        for target in targets:
+            try:
+                source = _removal_endpoint_id(target.endpoints["from"], batch_keys, ctx)
+                sink = _removal_endpoint_id(target.endpoints["to"], batch_keys, ctx)
+            except AmbiguousIdentity:
+                continue  # the delete's own step reports the ambiguity
+            add(target.edge_type, source, sink, dict(target.discriminators))
+    return keys
+
+
+def _removal_endpoint_id(endpoint: dict[str, Any], batch_keys: dict[str, list[str]], ctx: CallerContext) -> str | None:
+    """A delete-by-identity endpoint's entity id: given, or found by key (this batch first, then the grid)."""
+    from tap_grid.registry import get_model_class
+
+    if "entity_id" in endpoint:
+        return str(endpoint["entity_id"])
+    model_cls: Any = get_model_class(endpoint["entity_type"])
+    properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
+    return _find_node_by_key(endpoint["entity_type"], properties, batch_keys, ctx)
 
 
 def _resolve_ref_identities(
@@ -4064,7 +4170,7 @@ def _resolve_removal_identities(
     order of their lock keys, not the document's, so two batches ending overlapping relationships
     take those locks in one order and never each hold one while waiting for the other's.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/5baf02cc1901 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/1fe1eb71af7a (derivation) — the
         resolution of a delete by identity: the live match at execution, missing by on_missing,
         ambiguity and duplicates refused, under grid.read and the identity lock.
 
@@ -4075,7 +4181,6 @@ def _resolve_removal_identities(
     from tap_auth import policy
     from tap_auth.capabilities import READ_CAPABILITY
     from tap_grid.edge_identity import edge_lock_key
-    from tap_grid.registry import get_model_class
 
     targets = parsed_removals.deletes_edge_identities
     if not targets:
@@ -4116,11 +4221,7 @@ def _resolve_removal_identities(
         return False
 
     def endpoint_id(endpoint: dict[str, Any]) -> str | None:
-        if "entity_id" in endpoint:
-            return str(endpoint["entity_id"])
-        model_cls: Any = get_model_class(endpoint["entity_type"])
-        properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
-        return _find_node_by_key(endpoint["entity_type"], properties, batch_keys, ctx)
+        return _removal_endpoint_id(endpoint, batch_keys, ctx)
 
     located: list[tuple[str, _ParsedIdentityRemoval, str, str]] = []  # (lock key, target, from, to)
     for target in targets:
@@ -4238,7 +4339,7 @@ def _resolve_edge_identities(
     switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
     a read of the grid, so the import authorises ``grid.read`` first (``-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/185c91e3f9f1 (enforcement) — the importer
+    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/185c91e3f9f1 (enforcement) — the importer
         step that applies edge identity to a batch: which edges are looked up, the in-batch and
         keyless duplicate rules, the read authorisation, and the warn-mode switch for
         undeclared types (acceptance -5, -6, -9, -13).
