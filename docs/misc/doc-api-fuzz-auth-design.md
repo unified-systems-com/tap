@@ -110,7 +110,7 @@ headers. Zero new auth code.**
    nothing in the API mutates the session or the user's password, so
    `_auth_user_hash` stays valid too).
 4. **Canary before fuzzing (the honesty check)**: `curl -fsS -H "Cookie: sessionid=$KEY"
-   "$base/api/v1/entities/"` must return 200. This is what prevents the silent failure
+   "$base/api/v1/entity-types/"` must return 200 (it was `/api/v1/entities/` until that router was removed, Issue# 957 - tap). This is what prevents the silent failure
    mode this whole design worries about — an "authenticated" pass that is actually
    fuzzing 401s. Fail the step loudly if the canary isn't 200.
 5. **Authenticated schemathesis pass** (in addition to, not instead of, the existing
@@ -174,7 +174,7 @@ that's a feature (it hunts serialization 5xxs on adversarial stored data), and
    `manage.py shell < tap_web/skills/drive-browser/mint_session.py`, parse `SESSIONKEY=`;
    curl the passkey login page into a cookie jar, extract `csrftoken`. Effort: S.
 3. **Workflow: canary + authenticated pass** (~25 lines): 200-canary on
-   `/api/v1/entities/` (fail loud), authed `uvx schemathesis run` with the two `-H`
+   `/api/v1/entity-types/` (fail loud), authed `uvx schemathesis run` with the two `-H`
    headers, tee to `schemathesis-auth.log`, second upload-artifact. Keep
    `continue-on-error: true` (report-only until fuzz-2). Effort: S/M (~1-2 h — CI
    iteration + verifying the current schemathesis CLI header flag).

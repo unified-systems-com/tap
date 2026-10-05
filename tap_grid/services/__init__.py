@@ -7,14 +7,14 @@ Public write API:
   patch_node()         — partial update (PATCH semantics)
   replace_node()       — full replacement (PUT semantics)
   delete_node()        — delete a node and its Entity spine
-  create_edge()        — create an Edge between two entities (also the compat wrapper)
+  create_edge()        — create an Edge between two entities, returning the Edge
   patch_edge()         — partial update of edge properties
   replace_edge()       — full replacement of edge properties
-  delete_edge()        — delete an edge (also the compat wrapper)
+  delete_edge_by_entity() — tombstone an edge
 
-Backward-compatible low-level helpers (kept for existing callers):
-  create_entity(), update_entity(), delete_entity(),
-  update_edge_properties()
+Every write goes through write_batch. The Entity-level helpers that wrote the spine directly
+(create_entity, update_entity, delete_entity, update_edge_properties, delete_edge) were removed
+(Issue# 957 - tap): they skipped the batch, provenance, history and the per-type gates.
 """
 
 import logging
@@ -126,13 +126,8 @@ __all__ = [
     "list_edge_types",
     "describe_edge_type",
     "describe_service_capabilities",
-    # Backward-compatible low-level helpers (grid.write / grid.delete)
-    "create_entity",
-    "update_entity",
-    "delete_entity",
+    # The edge create that returns the Edge (grid.write)
     "create_edge",
-    "update_edge_properties",
-    "delete_edge",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1984,60 +1979,12 @@ def describe_service_capabilities(*, caller_context: CallerContext | None = None
     )
 
 
-# ---------------------------------------------------------------------------
-# Legacy backward-compatible helpers (kept for existing callers)
-# ---------------------------------------------------------------------------
-
-
-@requires_capability(WRITE_CAPABILITY, operation="create_entity")
-def create_entity(
-    entity_type: str,
-    name: str = "",
-    *,
-    caller_context: CallerContext | None = None,
-    **kwargs: Any,
-) -> Entity:
-    """Create a new Entity.
-
-    .. deprecated::
-        Bare Entity creation bypasses the typed write pipeline. Prefer
-        ``create_node(type_slug, payload)`` for all typed domain objects.
-        This function is kept for backward compatibility and will be removed
-        once all callers are migrated.
-    """
-    return Entity.objects.create(
-        entity_type=entity_type,
-        name=name,
-        **kwargs,
-    )
-
-
-@requires_capability(WRITE_CAPABILITY, operation="update_entity")
-def update_entity(entity: Entity, *, caller_context: CallerContext | None = None, **kwargs: Any) -> Entity:
-    """Update an existing Entity's fields.
-
-    .. deprecated::
-        Prefer the typed write pipeline (``patch_node``) for domain objects.
-    """
-    for field_name, value in kwargs.items():
-        setattr(entity, field_name, value)
-    entity.save(update_fields=list(kwargs.keys()) + ["updated_at"])
-    return entity
-
-
-@requires_capability(DELETE_CAPABILITY, operation="delete_entity")
-def delete_entity(entity: Entity, *, caller_context: CallerContext | None = None) -> None:
-    """Delete an Entity. Cascades to edges and domain objects."""
-    entity.delete()
-
-
 @requires_capability(WRITE_CAPABILITY, operation="create_edge")
 def create_edge(
     from_entity: Entity,
     to_entity: Entity,
     edge_type: str,
     properties: dict[str, Any] | None = None,
-    name: str = "",
     *,
     caller_context: CallerContext | None = None,
     batch_name: str | None = None,
@@ -2045,10 +1992,12 @@ def create_edge(
 ) -> Edge:
     """Create an Edge between two entities.
 
-    The backing Entity for the Edge is auto-created by Edge.save().
-    An optional name overrides the auto-generated label on that Entity; it names
-    the edge, not the batch — ``batch_name`` / ``batch_description`` name the batch
-    this call mints (req-grid-service-batch-caller-name).
+    The backing Entity for the Edge is auto-created by Edge.save(), named from the endpoints and
+    the type (``Edge.get_name``). ``batch_name`` / ``batch_description`` name the batch this call
+    mints (req-grid-service-batch-caller-name). An edge's name is derived today, and the spine
+    re-syncs it on every save, so the old ``name`` parameter never survived the next save and was a
+    second write outside the batch; it was removed (Issue# 957 - tap). Carrying a declared edge name
+    is Issue# 743 - tap, and would ride the pipeline's own write.
 
     Raises InvalidEdgeError if either endpoint is itself an edge, or if the
     edge violates topology constraints.
@@ -2061,7 +2010,7 @@ def create_edge(
     propagation, and the ``link`` provenance recorded by the pipeline's
     ``_record_provenance`` (no separate best-effort BatchEvent). The topology and
     edge-constraint pre-checks below run first so the legacy ``InvalidEdgeError``
-    contract is preserved for callers (e.g. the edges API) that catch it; the
+    contract is preserved for callers that catch it; the
     nono (edge-as-endpoint) check precedes constraint validation. An internal-only
     edge type is refused here (req-grid-edge-internal); subsystem code uses
     ``_create_edge_internal``.
@@ -2071,7 +2020,6 @@ def create_edge(
         to_entity,
         edge_type,
         properties,
-        name,
         caller_context=caller_context,
         batch_name=batch_name,
         batch_description=batch_description,
@@ -2083,7 +2031,6 @@ def _create_edge(
     to_entity: Entity,
     edge_type: str,
     properties: dict[str, Any] | None = None,
-    name: str = "",
     *,
     caller_context: CallerContext | None = None,
     batch_name: str | None = None,
@@ -2126,55 +2073,18 @@ def _create_edge(
         detail = "; ".join(e.message for e in errors) or "edge creation failed"
         raise EdgePropertyValidationError(detail)
 
-    edge = cast(Edge, Edge.objects.select_related("entity").get(entity_id=result.entity_id))
-
-    if name:
-        edge.entity.name = name
-        edge.entity.save(update_fields=["name", "updated_at"])
-
-    return edge
+    return cast(Edge, Edge.objects.select_related("entity").get(entity_id=result.entity_id))
 
 
 def _refuse_internal_edge_object(edge_type: str, verb: str) -> None:
-    """The internal-only edge gate for the helpers that take and return Edge objects
+    """The internal-only edge gate for ``create_edge``, which takes and returns Edge objects
     (req-grid-edge-internal-3).
 
-    The pipeline's refusal, raised as ``InvalidEdgeError``: the refusal these helpers' callers
-    already handle (the edges API turns it into a 400), where the pipeline verbs return
-    ``unsupported_operation``. ``create_edge`` is also refused by the pipeline;
-    ``update_edge_properties`` and ``delete_edge`` write through the ORM, so this is their only gate.
+    The pipeline's refusal, raised as ``InvalidEdgeError``: the refusal ``create_edge``'s callers
+    already handle, where the pipeline verbs return ``unsupported_operation``. The pipeline refuses
+    the write too; raising first keeps ``create_edge``'s one error contract.
     """
     try:
         _refuse_internal_edge_type(edge_type, verb, internal_only_bypass=False)
     except ServiceUnsupportedOperationError as exc:
         raise InvalidEdgeError(str(exc)) from exc
-
-
-@requires_capability(WRITE_CAPABILITY, operation="update_edge_properties")
-def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
-    """Update an Edge's properties payload.
-
-    Validates the new properties against the registered schema for the edge
-    type (via Edge.save()) before persisting. Raises EdgePropertyValidationError
-    if the payload is invalid.
-
-    Args:
-        edge: The Edge instance to update.
-        properties: The new properties dict to assign.
-
-    Returns:
-        The updated Edge instance.
-    """
-    _refuse_internal_edge_object(edge.edge_type, "update_edge_properties")
-    edge.properties = properties
-    edge.save(update_fields=["properties"])
-    return edge
-
-
-@requires_capability(DELETE_CAPABILITY, operation="delete_edge")
-def delete_edge(edge: Edge, *, caller_context: CallerContext | None = None) -> None:
-    """Delete an Edge and its backing Entity."""
-    _refuse_internal_edge_object(edge.edge_type, "delete_edge")
-    # Deleting the backing Entity cascades to the Edge via OneToOne,
-    # but we go through the Entity to keep the pattern consistent.
-    edge.entity.delete()

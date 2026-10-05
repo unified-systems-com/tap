@@ -478,12 +478,13 @@ class TestTheFence:
         """Codex on PR# 653 - tap: a transfer ends an EDGE, and an edge re-created after the
         record was derived leaves a ``link`` event on the edge and no update on the child — so
         the edge is fenced on its own event, and the fresh edge survives."""
-        from tap_grid.services import create_edge, delete_edge
+        from tap_grid.services import create_edge, delete_edge_by_entity
 
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
         old = Edge.objects.get(from_entity_id=graph.p.pk, to_entity_id=graph.c[2].pk, edge_type=CONTAINS)
         with batch("test.reconcile.relink"):  # another writer re-creates P's edge into c3 and commits
-            delete_edge(old)
+            ended = delete_edge_by_entity(old.entity_id, reason="operator")
+            assert ended.success, ended.errors
             create_edge(graph.p, graph.c[2], CONTAINS)
         fresh = Edge.objects.get(from_entity_id=graph.p.pk, to_entity_id=graph.c[2].pk, edge_type=CONTAINS)
         assert fresh.entity_id != old.entity_id

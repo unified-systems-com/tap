@@ -13,7 +13,7 @@ from tap_grid.constraints import (
 from tap_grid.exceptions import EdgePropertyValidationError
 from tap_grid.models import BaseModel, Edge, Entity, EntityType
 from tap_grid.registry import get_model_class, register_entity_type, resolve_entity
-from tap_grid.services import create_entity
+from tap_grid.tests.support import make_spine_entity
 
 
 class TestBaseModelDisplayNameContract:
@@ -53,18 +53,18 @@ class TestBaseModel:
     """Existing tests — verify the explicit-entity path still works (req-grid-entity-base-4)."""
 
     def test_character_inherits_basemodel_fields(self):
-        entity = create_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
+        entity = make_spine_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
         character = ConstrainedSource.objects.create(entity=entity, description="A hobbit from the Shire.")
         assert character.entity == entity
 
     def test_reverse_relation(self):
         """entity.constrainedsource gives the ConstrainedSource for that entity."""
-        entity = create_entity("grid_fixtures__constrained_source", name="Gandalf")
+        entity = make_spine_entity("grid_fixtures__constrained_source", name="Gandalf")
         character = ConstrainedSource.objects.create(entity=entity, description="A wizard.")
         assert entity.constrainedsource == character
 
     def test_location_works_the_same(self):
-        entity = create_entity("grid_fixtures__constrained_target", name="The Shire")
+        entity = make_spine_entity("grid_fixtures__constrained_target", name="The Shire")
         location = ConstrainedTarget.objects.create(entity=entity, description="A peaceful land.")
         assert entity.constrainedtarget == location
 
@@ -107,8 +107,8 @@ class TestBaseModelAutoCreation:
 
     def test_edge_auto_creates_entity_with_name(self):
         """Edge.get_name() generates a label from its endpoints and type."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = Edge.objects.create(from_entity=a, to_entity=b, edge_type="CONSTRAINED_LINK__grid_fixtures")
         assert edge.entity.entity_type == "edge"
         assert str(a.pk) in edge.entity.name
@@ -122,13 +122,13 @@ class TestBaseModelEntityConfirmation:
 
     def test_explicit_entity_with_correct_type_is_accepted(self):
         """Passing an entity with the right entity_type saves cleanly."""
-        entity = create_entity("grid_fixtures__constrained_source", name="Explicit")
+        entity = make_spine_entity("grid_fixtures__constrained_source", name="Explicit")
         character = ConstrainedSource.objects.create(entity=entity, description="Explicit entity path.")
         assert character.entity == entity
 
     def test_explicit_entity_with_wrong_type_raises(self):
         """Passing an entity whose entity_type doesn't match raises ValueError."""
-        wrong_entity = create_entity("grid_fixtures__constrained_target", name="Wrong type")
+        wrong_entity = make_spine_entity("grid_fixtures__constrained_target", name="Wrong type")
         with pytest.raises(ValueError, match="entity_type does not match"):
             ConstrainedSource.objects.create(entity=wrong_entity, description="Should fail.")
 
@@ -162,8 +162,8 @@ class TestEntityResolve:
     @pytest.mark.spec("req-grid-entity-resolve-4")
     def test_resolve_returns_edge(self):
         """entity.resolve() works for edge entities (req-grid-entity-resolve-4)."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = Edge.objects.create(from_entity=a, to_entity=b, edge_type="CONSTRAINED_LINK__grid_fixtures")
         resolved = edge.entity.resolve()
         assert isinstance(resolved, Edge)
@@ -180,7 +180,7 @@ class TestEntityResolve:
     @pytest.mark.spec("req-grid-entity-resolve-3")
     def test_resolve_unregistered_type_raises(self):
         """Resolving an unknown entity_type raises KeyError (req-grid-entity-resolve-3)."""
-        entity = create_entity("unknown_type_xyz")
+        entity = make_spine_entity("unknown_type_xyz")
         with pytest.raises(KeyError, match="unknown_type_xyz"):
             entity.resolve()
 
@@ -217,7 +217,7 @@ class TestEdgeEndpointValidation:
         """Edge with a non-existent from_entity_id raises ValueError (endpoints-1)."""
         import uuid
 
-        to_entity = create_entity("grid_fixtures__constrained_source")
+        to_entity = make_spine_entity("grid_fixtures__constrained_source")
         edge = Edge(from_entity_id=uuid.uuid7(), to_entity=to_entity, edge_type="TEST")
         with pytest.raises(ValueError, match="from_entity"):
             edge.save()
@@ -226,7 +226,7 @@ class TestEdgeEndpointValidation:
         """Edge with a non-existent to_entity_id raises ValueError (endpoints-2)."""
         import uuid
 
-        from_entity = create_entity("grid_fixtures__constrained_source")
+        from_entity = make_spine_entity("grid_fixtures__constrained_source")
         edge = Edge(from_entity=from_entity, to_entity_id=uuid.uuid7(), edge_type="TEST")
         with pytest.raises(ValueError, match="to_entity"):
             edge.save()
@@ -235,7 +235,7 @@ class TestEdgeEndpointValidation:
         """A failed endpoint check leaves no orphaned Entity row on the spine (endpoints-3)."""
         import uuid
 
-        to_entity = create_entity("grid_fixtures__constrained_source")
+        to_entity = make_spine_entity("grid_fixtures__constrained_source")
         count_before = Entity.objects.count()
         edge = Edge(from_entity_id=uuid.uuid7(), to_entity=to_entity, edge_type="TEST")
         with pytest.raises(ValueError):
@@ -246,11 +246,11 @@ class TestEdgeEndpointValidation:
 @pytest.mark.django_db
 class TestEntityStr:
     def test_with_name(self):
-        entity = create_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
+        entity = make_spine_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
         assert str(entity) == "Frodo Baggins (grid_fixtures__constrained_source)"
 
     def test_without_name(self):
-        entity = create_entity("grid_fixtures__constrained_source")
+        entity = make_spine_entity("grid_fixtures__constrained_source")
         assert str(entity) == f"grid_fixtures__constrained_source:{entity.pk}"
 
 
@@ -273,8 +273,8 @@ class TestEdgePropertyValidation:
             "PROP_EDGE",
             {"type": "object", "required": ["label"], "properties": {"label": {"type": "string"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge(from_entity=a, to_entity=b, edge_type="PROP_EDGE", properties={"label": "ok"})
         edge.save()
         assert edge.pk is not None
@@ -285,8 +285,8 @@ class TestEdgePropertyValidation:
             "PROP_EDGE_STRICT",
             {"type": "object", "required": ["count"], "properties": {"count": {"type": "integer"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge(from_entity=a, to_entity=b, edge_type="PROP_EDGE_STRICT", properties={"count": "bad"})
         with pytest.raises(EdgePropertyValidationError):
             edge.save()
@@ -297,8 +297,8 @@ class TestEdgePropertyValidation:
             "PROP_EDGE_ORPHAN",
             {"type": "object", "required": ["x"], "properties": {"x": {"type": "integer"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         count_before = Entity.objects.count()
         edge = Edge(from_entity=a, to_entity=b, edge_type="PROP_EDGE_ORPHAN", properties={})
         with pytest.raises(EdgePropertyValidationError):
@@ -311,8 +311,8 @@ class TestEdgePropertyValidation:
             "PROP_EDGE_UPDATE",
             {"type": "object", "properties": {"note": {"type": "string"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge.objects.create(from_entity=a, to_entity=b, edge_type="PROP_EDGE_UPDATE", properties={})
         edge.properties = {"note": "updated"}
         edge.save(update_fields=["properties"])
@@ -325,8 +325,8 @@ class TestEdgePropertyValidation:
             "PROP_EDGE_UPDATE_FAIL",
             {"type": "object", "properties": {"note": {"type": "string"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge.objects.create(
             from_entity=a, to_entity=b, edge_type="PROP_EDGE_UPDATE_FAIL", properties={"note": "ok"}
         )
@@ -336,8 +336,8 @@ class TestEdgePropertyValidation:
 
     def test_no_schema_allows_any_properties(self):
         """When no schema is registered, any properties are accepted (properties-6, properties-7)."""
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge(from_entity=a, to_entity=b, edge_type="NO_SCHEMA_EDGE", properties={"anything": [1, None]})
         edge.save()
         assert edge.pk is not None
@@ -365,29 +365,29 @@ class TestEntityTombstoneFilters:
         Entity.objects.filter(pk=entity.pk).update(deleted_at=timezone.now())
 
     def test_default_manager_returns_both_live_and_tombstoned(self):
-        live = create_entity("grid_fixtures__constrained_source", name="Live")
-        dead = create_entity("grid_fixtures__constrained_source", name="Dead")
+        live = make_spine_entity("grid_fixtures__constrained_source", name="Live")
+        dead = make_spine_entity("grid_fixtures__constrained_source", name="Dead")
         self._tombstone(dead)
         pks = set(Entity.objects.filter(pk__in=[live.pk, dead.pk]).values_list("pk", flat=True))
         assert pks == {live.pk, dead.pk}
 
     def test_live_filter_excludes_tombstoned(self):
-        live = create_entity("grid_fixtures__constrained_source", name="Live")
-        dead = create_entity("grid_fixtures__constrained_source", name="Dead")
+        live = make_spine_entity("grid_fixtures__constrained_source", name="Live")
+        dead = make_spine_entity("grid_fixtures__constrained_source", name="Dead")
         self._tombstone(dead)
         pks = set(Entity.objects.live().filter(pk__in=[live.pk, dead.pk]).values_list("pk", flat=True))
         assert pks == {live.pk}
 
     def test_tombstoned_filter_excludes_live(self):
-        live = create_entity("grid_fixtures__constrained_source", name="Live")
-        dead = create_entity("grid_fixtures__constrained_source", name="Dead")
+        live = make_spine_entity("grid_fixtures__constrained_source", name="Live")
+        dead = make_spine_entity("grid_fixtures__constrained_source", name="Dead")
         self._tombstone(dead)
         pks = set(Entity.objects.tombstoned().filter(pk__in=[live.pk, dead.pk]).values_list("pk", flat=True))
         assert pks == {dead.pk}
 
     def test_filters_chain_with_normal_queryset_operations(self):
-        a = create_entity("grid_fixtures__constrained_source", name="Aragorn")
-        b = create_entity("grid_fixtures__constrained_source", name="Boromir")
+        a = make_spine_entity("grid_fixtures__constrained_source", name="Aragorn")
+        b = make_spine_entity("grid_fixtures__constrained_source", name="Boromir")
         self._tombstone(b)
         names = set(
             Entity.objects.live()

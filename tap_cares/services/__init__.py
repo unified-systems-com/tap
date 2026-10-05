@@ -361,7 +361,7 @@ def _open_lifecycle_batch(
     """
     from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
 
-    # `create_batch` reaches `create_entity`, which resolves its actor from the
+    # `create_batch` reaches the batch spine write, which resolves its actor from the
     # ambient context rather than from an argument. Bind the collector actor
     # there too, so the batch's backing Entity is attributed to the same actor
     # `ctx` names — not to whoever happened to be bound by the surface that

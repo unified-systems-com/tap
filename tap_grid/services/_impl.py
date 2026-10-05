@@ -29,6 +29,7 @@ from tap_grid.caller_context import (
 )
 from tap_grid.constraints import validate_edge as _validate_edge_constraint
 from tap_grid.exceptions import (
+    EdgePropertyValidationError,
     InvalidEdgeError,
     ServiceAuthzError,
     ServiceCascadeTooLargeError,
@@ -1026,9 +1027,13 @@ def _execute_write_pipeline(
         ServiceUnsupportedOperationError,
         ServiceCascadeTooLargeError,
         ServiceInvalidReasonError,
+        EdgePropertyValidationError,
     ) as exc:
         code_map = {
             ServiceValidationError: "validation_error",
+            # An edge's properties failed its type's schema (req-grid-edge-properties-8): a
+            # caller's input error, reported as one, never an unhandled pipeline failure.
+            EdgePropertyValidationError: "validation_error",
             ServiceConstraintError: "constraint_violation",
             ServiceNotFoundError: "not_found",
             ServiceAuthzError: "authz_failure",

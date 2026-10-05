@@ -72,7 +72,6 @@ req-grid-keystone-spine-home
 req-grid-node-constraints
 req-grid-node-display
 req-grid-node-model
-req-grid-node-service
 req-grid-registry
 req-grid-registry-admin
 req-grid-registry-entity

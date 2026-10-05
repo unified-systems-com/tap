@@ -19,9 +19,10 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
+from tap_auth.capabilities import WRITE_CAPABILITY
+from tap_auth.enforcement import requires_capability
 from tap_grid.context import get_batch_id
 from tap_grid.history import get_history_user
-from tap_grid.services import create_entity
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -120,10 +121,7 @@ def create_batch(
             name=resolved_name,
         )
     else:
-        entity = create_entity(
-            entity_type="batch",
-            name=resolved_name,
-        )
+        entity = _create_batch_spine(resolved_name)
 
     return Batch.objects.create(
         entity=entity,
@@ -134,6 +132,20 @@ def create_batch(
         description_json=description_json,
         metadata=metadata or {},
     )
+
+
+@requires_capability(WRITE_CAPABILITY, operation="create_batch")
+def _create_batch_spine(name: str) -> Entity:
+    """The backing Entity of a batch that names no id of its own.
+
+    A batch is the pipeline's own bookkeeping and cannot live inside a batch, so its spine row is
+    written here rather than through ``write_batch``. Gated with ``grid.write``, as the general
+    Entity helper it replaces was (Issue# 957 - tap); a batch given an id joins a write that is
+    already authorised and takes the other path.
+    """
+    from tap_grid.models import Entity
+
+    return Entity.objects.create(entity_type="batch", name=name)
 
 
 def close_batch(batch: Batch) -> Batch:

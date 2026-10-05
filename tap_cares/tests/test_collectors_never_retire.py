@@ -22,8 +22,8 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
     {
         "delete_node",
         "delete_edge_by_entity",
-        "delete_entity",
-        "purge_entity",
+        "purge_node",
+        "purge_edge",
         "reconcile",
         "arm_run_for_tests",
         "write_batch",
@@ -38,9 +38,7 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
 )
 #: A verb spelled as a string reaches the pipeline through WriteOperation(verb=...): forbidden too;
 #: so is the run-configuration key, the stamp that arms a run.
-FORBIDDEN_STRINGS: frozenset[str] = frozenset(
-    {"delete_node", "delete_edge", "delete_entity", "purge", "reconcile_config"}
-)
+FORBIDDEN_STRINGS: frozenset[str] = frozenset({"delete_node", "delete_edge", "purge", "reconcile_config"})
 FORBIDDEN_ATTRIBUTES: frozenset[str] = frozenset({"deleted_at"})
 
 

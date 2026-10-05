@@ -13,9 +13,6 @@ tap/tests/test_plugin_deps.py:var-annotated:3
 tap/tests/test_ratchet.py:no-untyped-call:4
 tap/tests/test_runtime_secrets.py:type-arg:3
 tap/tests/test_secret_leak_scan.py:type-arg:1
-tap_api/routers/edges.py:arg-type:2
-tap_api/routers/edges.py:misc:3
-tap_api/routers/edges.py:return-value:1
 tap_api/tests/test_searches.py:no-untyped-call:4
 tap_auth/tests/test_adapter.py:no-untyped-call:9
 tap_auth/tests/test_adapter.py:type-arg:4
