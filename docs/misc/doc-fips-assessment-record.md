@@ -565,6 +565,66 @@ point to anything fixable from tap's side. The fixes already landed in this modu
 split, dropping `hashlib.py`) remain correct and worth keeping; they just are not, and were never
 going to be, a fix for the underlying OpenSSL behavior itself.
 
+**2026-10-05, later the same day: a from-scratch, Docker-free, Wolfi-free, tap-free reproduction —
+run on real GitHub Actions x86_64 hardware, bare Ubuntu, no containers at all — rules out two more
+candidate explanations, and points the remaining suspicion at Wolfi's own build rather than at
+vanilla OpenSSL 4.0 or at the version mismatch itself.**
+
+1. **Same-major-version control.** Self-built 3.0.22 FIPS provider (identical to tap's pin), activated
+   against Ubuntu's own stock system OpenSSL (3.0.13 — same major line), `cryptography==50.0.0` built
+   `--no-binary` against it, the exact `_cryptography_positive_control` + `_approved_python_hash_works`
+   sequence, 20 fresh processes. **0/20 failed.** FIPS confirmed genuinely active (`openssl list
+   -providers -verbose` showing `fips`/`base`, both `status: active`) throughout.
+2. **The version-mismatch hypothesis, tested directly.** This Dockerfile (line ~40-41) asserts "a
+   certified `fips.so` is binary-compatible with any later libcrypto" as the reason the 3.0.22 pin is
+   safe to run under Wolfi's newer system OpenSSL — and Dockerfile:438 runs `fipsinstall` with
+   whichever `openssl` CLI the `base` stage's apk packages provide, now `openssl-4.0`. Built a real,
+   vanilla-upstream OpenSSL **4.0.2** (the exact version Wolfi's `openssl-4.0` apk package ships,
+   confirmed via `apk info -a openssl-4.0` → `4.0.2-r0`) from openssl.org's own release tarball — no
+   Wolfi, no patches, nothing but the public source — as the system library. Self-built the same
+   3.0.22 FIPS provider, ran `fipsinstall` with the **4.0.2** CLI against it (reproducing Dockerfile:438
+   exactly), and built both `cryptography` and a from-source CPython 3.14.8 (so `_hashlib` itself links
+   against `libcrypto.so.4`, not Ubuntu's stock `.so.3`) against that same 4.0.2 install. Same code
+   sequence, 20 fresh processes. **0/20 failed.** `fips` (3.0.22) and `base` (4.0.2) both confirmed
+   `status: active` simultaneously.
+
+**Taken together: a generic, vanilla build of exactly this version pairing — OpenSSL 4.0.2 host
+library, self-built 3.0.22 FIPS provider, `fipsinstall`'d by the 4.0.2 CLI — does not reproduce the
+failure.** The real tap stack (Wolfi's base image, Wolfi's actual `openssl-4.0` apk package, the real
+Dockerfile) has reproduced it reliably across six separate variants in this investigation. The
+remaining candidate, by elimination rather than direct confirmation, is something specific to how
+Wolfi/Chainguard build their own `openssl-4.0` package (or possibly their own `python-3.14`/`libpq`
+builds) — not a defect in OpenSSL 4.0 as a release line, and not the major-version pairing in the
+abstract. Wolfi is already known to carry at least one downstream patch in this exact area
+(`CHAINGUARD_LEGACY_ALLOWED`, and Dimitri Ledkov's 2026-09-16 patch gating the legacy provider further)
+— this has not yet been diffed against vanilla upstream to confirm it (or something else) is the
+actual cause; that is the open next step, not yet started.
+
+**Two adjacent ideas considered and rejected the same night, both worth recording so they are not
+re-asked cold:**
+
+- **Pin tap's own system OpenSSL to Wolfi's `openssl-3.6` track instead of the floating `openssl`/
+  `openssl-dev` alias that migrated to `openssl-4.0`.** Not viable — confirmed by a real (non-simulate)
+  `apk add`, not assumed: Wolfi's current `python-3.14-base`/`libpq-18` packages transitively
+  hard-require `openssl-4.0-dev` regardless of what tap itself requests, and `openssl-3.6-dev`/
+  `openssl-4.0-dev` own the same unversioned paths (`/usr/include/openssl/*.h`, `/usr/lib/libcrypto.so`,
+  pkgconfig files) — a real file-ownership conflict (~140 files), not a soft dependency clash. This was
+  already recorded in this Dockerfile's own comment (lines ~117-125) from an earlier pass; it should
+  have been reread fully before resurfacing the idea.
+- **Hand-replace Chainguard's `openssl-4.0` binaries on the host with a vanilla-built OpenSSL 4.0.**
+  Rejected again (consistent with an earlier-session ruling). Wolfi's `python-3.14-base`/`libpq-18`/
+  `libcurl-openssl4` are compiled and tested against *Chainguard's* `openssl-4.0` build specifically;
+  swapping the shared libs underneath them recreates the tap#931 two-cores-in-one-process hazard
+  invisibly instead of avoiding it, desyncs `apk`'s own file database (next `apk upgrade` either stomps
+  the swap back or starts failing confusingly), and forks the single most compliance-significant binary
+  in the image onto an unmaintained build nothing tracks for future CVEs — all to dodge a cause that
+  is, as of this entry, still unidentified, so there is no way to confirm the swap would even avoid it.
+
+Status: `TAP_FIPS=0` (tap#933) remains the right call pending either an identified, fixable Wolfi-side
+cause or an upstream fix. Not resumed further this session; next step if picked back up is diffing
+Wolfi's actual `openssl-4.0` package/build against vanilla upstream 4.0.2, not another abstract
+version-pairing test.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |
