@@ -281,7 +281,26 @@ fi
 # against an as-yet-unmigrated DB; it creates the table via the schema editor
 # independently of migration state.
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
-uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
+# DIAGNOSTIC SPIKE (tap#933, L18): postgres's own pg_strong_random() retries
+# RAND_status()/RAND_poll() only 8 times with NO delay between attempts before
+# calling RAND_bytes() regardless (src/port/pg_strong_random.c) -- if FIPS-mode
+# DRBG seeding genuinely takes real wall-clock time on this platform/under this
+# provider config (documented upstream: openssl/openssl#24665, a core
+# contributor states seeding "can take a long time" on some platforms), that
+# instant retry loop never gives it a chance. Testing whether real delay
+# between attempts clears "could not generate nonce" -- NOT a candidate
+# production retry design, just answering transient-race vs. permanent.
+cachetable_ok=0
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if uv run python manage.py createcachetable; then
+    cachetable_ok=1
+    echo "==> createcachetable succeeded on attempt ${attempt}"
+    break
+  fi
+  echo "==> createcachetable attempt ${attempt}/10 failed, sleeping 3s before retry..."
+  sleep 3
+done
+[ "$cachetable_ok" = 1 ] || { emit_abort migrate "createcachetable failed after 10 attempts with 3s backoff"; exit 1; }
 
 echo "==> Running database migrations..."
 # The canonical fatal spot for a core->plugin-dep import leak (req-dev-validation-lean-boot):
