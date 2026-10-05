@@ -88,3 +88,131 @@ jobs:
           done
           echo "=== $fail/20 attempts failed ==="
           if [ "$fail" -gt 0 ]; then exit 1; fi
+
+  # Negative control above (same-major-version system OpenSSL) did NOT reproduce: 0/20.
+  # This job isolates the one variable that control couldn't test: tap's actual Dockerfile
+  # (fips-1 stage, line ~438) runs `openssl fipsinstall` with WOLFI'S SYSTEM `openssl` CLI --
+  # now the openssl-4.0 apk package (confirmed 4.0.2-r0 via `apk info -a openssl-4.0`,
+  # SONAME libcrypto.so.4/libssl.so.4, a major bump from the 3.x line) -- against a fips.so
+  # module that is still built from OpenSSL 3.0.22. Dockerfile:40-41 states the explicit
+  # design assumption this is supposed to satisfy: "a certified fips.so is binary-compatible
+  # with any LATER libcrypto". This job tests that assumption directly: same self-built
+  # 3.0.22 fips.so, but fipsinstall'd AND run at FIPS-activation time under a real OpenSSL
+  # 4.0.2 system install (built from the same openssl.org release tarball/signature scheme,
+  # matching Wolfi's own package), with cryptography and a from-source CPython both built
+  # against that same 4.0.2 install -- no Wolfi, no Docker, still bare Ubuntu.
+  repro-version-mismatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install build deps (OpenSSL + CPython + cryptography build requirements)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential perl curl python3-venv libpq-dev \
+            zlib1g-dev libffi-dev libbz2-dev libreadline-dev libsqlite3-dev liblzma-dev \
+            libncurses-dev uuid-dev tk-dev
+
+      - name: Build and install OpenSSL 4.0.2 as the SYSTEM OpenSSL (the exact version Wolfi's openssl-4.0 apk package ships, confirmed via apk info -a openssl-4.0)
+        run: |
+          curl -fsSL -o openssl-4.0.2.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-4.0.2/openssl-4.0.2.tar.gz
+          tar xzf openssl-4.0.2.tar.gz
+          cd openssl-4.0.2
+          ./Configure --prefix=/opt/openssl-4.0 --libdir=lib
+          make -j"$(nproc)"
+          sudo make install_sw
+          echo "/opt/openssl-4.0/lib" | sudo tee /etc/ld.so.conf.d/openssl-4.0.conf
+          sudo ldconfig
+          echo "/opt/openssl-4.0/bin" >> "$GITHUB_PATH"
+          /opt/openssl-4.0/bin/openssl version -a
+
+      - name: Build the pinned OpenSSL FIPS provider (same 3.0.22 build tap uses) -- deliberately a DIFFERENT major version than the system OpenSSL just installed
+        run: |
+          curl -fsSL -o openssl-3.0.22.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar xzf openssl-3.0.22.tar.gz
+          cd openssl-3.0.22
+          ./Configure enable-fips
+          make -j"$(nproc)"
+          sudo make install_fips
+          find /usr/local -name fips.so
+
+      - name: Build CPython 3.14.8 from source against OpenSSL 4.0.2, so _hashlib links to libcrypto.so.4 (matching Wolfi's python-3.14 package, not Ubuntu's stock libcrypto.so.3)
+        run: |
+          curl -fsSL -o Python-3.14.8.tar.xz https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz
+          tar xJf Python-3.14.8.tar.xz
+          cd Python-3.14.8
+          ./configure --prefix=/opt/python-4ossl \
+            --with-openssl=/opt/openssl-4.0 \
+            --with-openssl-rpath=auto
+          make -j"$(nproc)"
+          sudo make altinstall
+          /opt/python-4ossl/bin/python3.14 -c "import ssl; print('ssl module build:', ssl.OPENSSL_VERSION)"
+          ldd /opt/python-4ossl/lib/python3.14/lib-dynload/_hashlib*.so | grep -i crypto
+
+      - name: Install cryptography from source against the same OpenSSL 4.0.2, before FIPS activation (matches tap's build-time/runtime split)
+        run: |
+          /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
+          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-binary cryptography "cryptography==50.0.0"
+          ldd /tmp/venv4/lib/python3.14/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -i crypto
+
+      - name: "fipsinstall + activate fips+base, fips=yes globally -- using the SYSTEM (4.0.2) openssl CLI against the 3.0.22-built fips.so, exactly as Dockerfile:438 does"
+        run: |
+          openssl version -a
+          FIPS_SO="$(sudo find /usr/local -name fips.so | head -1)"
+          echo "fips.so found at: ${FIPS_SO}"
+          sudo openssl fipsinstall -out /tmp/fipsmodule-mismatch.cnf -module "${FIPS_SO}"
+          printf '%s\n' \
+            'config_diagnostics = 1' \
+            'openssl_conf = openssl_init' \
+            '' \
+            '.include /tmp/fipsmodule-mismatch.cnf' \
+            '' \
+            '[openssl_init]' \
+            'providers = provider_sect' \
+            'alg_section = algorithm_sect' \
+            '' \
+            '[provider_sect]' \
+            'fips = fips_sect' \
+            'base = base_sect' \
+            '' \
+            '[base_sect]' \
+            'activate = 1' \
+            '' \
+            '[algorithm_sect]' \
+            'default_properties = fips=yes' \
+            | sudo tee /tmp/openssl-fips-mismatch.cnf
+          echo "OPENSSL_CONF=/tmp/openssl-fips-mismatch.cnf" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=$(dirname "${FIPS_SO}")" >> "$GITHUB_ENV"
+
+      - name: Confirm the FIPS provider is active (under the 4.0.2 system openssl)
+        run: openssl list -providers -verbose
+
+      - name: Write the minimal repro script
+        run: |
+          cat > /tmp/repro-mismatch.py <<'PYEOF'
+          from cryptography.hazmat.primitives import hashes
+          from cryptography.hazmat.primitives.asymmetric import ec
+
+          key = ec.generate_private_key(ec.SECP256R1())
+          signature = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
+          key.public_key().verify(signature, b"assertion", ec.ECDSA(hashes.SHA256()))
+          print("cryptography EC keygen+sign+verify: OK")
+
+          import _hashlib
+          digest = _hashlib.new("sha256", b"probe")
+          digest.hexdigest()
+          print("plain _hashlib sha256 fetch: OK, module =", type(digest).__module__)
+          PYEOF
+
+      - name: Run it, 20x fresh -- same code, system OpenSSL deliberately a major version ahead of the FIPS module
+        run: |
+          fail=0
+          for i in $(seq 1 20); do
+            echo "=== attempt $i ==="
+            if ! /tmp/venv4/bin/python3.14 /tmp/repro-mismatch.py; then
+              fail=$((fail+1))
+            fi
+          done
+          echo "=== $fail/20 attempts failed ==="
+          if [ "$fail" -gt 0 ]; then exit 1; fi
