@@ -8,19 +8,23 @@ on:
 jobs:
   repro:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: spike-minimal-fips-repro
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: docker build -t fips-repro spike-minimal-fips-repro
-      - name: Run 20x fresh (in case this is intermittent, not deterministic)
+      - name: Build (once)
+        run: docker compose build
+      - name: Run via docker compose 20x fresh (db running concurrently)
         run: |
           fail=0
           for i in $(seq 1 20); do
             echo "=== attempt $i ==="
-            if ! docker run --rm fips-repro; then
+            if ! docker compose up --abort-on-container-exit --exit-code-from web; then
               fail=$((fail+1))
             fi
+            docker compose down -v
           done
           echo "=== $fail/20 attempts failed ==="
           if [ "$fail" -gt 0 ]; then exit 1; fi
