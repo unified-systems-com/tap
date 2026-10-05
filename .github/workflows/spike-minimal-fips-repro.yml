@@ -179,8 +179,12 @@ jobs:
             -d /tmp/crypto-sdist "cryptography==50.0.0"
           # cryptography's build backend is maturin (its pyproject.toml build-system.requires);
           # pip's build isolation needs it (and cryptography's own runtime deps cffi/pycparser)
-          # available locally too, same reason as the sdist itself.
+          # available locally too, same reason as the sdist itself. --python-version/--implementation/
+          # --abi target OUR python3.14, not the system python3.12 invoking this pip (the previous
+          # attempt downloaded a cp312 cffi wheel, which maturin's own build-dep resolution then
+          # rejected as incompatible).
           /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
+            --python-version 3.14 --implementation cp --abi cp314 --only-binary=:all: \
             "maturin<2,>=1.14.1" cffi pycparser
           /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
           OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
