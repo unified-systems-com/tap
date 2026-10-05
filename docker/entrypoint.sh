@@ -280,6 +280,35 @@ fi
 # itself has `requires_system_checks = []`, so it runs no checks and is safe
 # against an as-yet-unmigrated DB; it creates the table via the schema editor
 # independently of migration state.
+echo "==> DIAGNOSTIC SPIKE (tap#933, L18): comparing libcrypto resolution between _hashlib and libpq..."
+uv run python3 -c '
+import _hashlib, subprocess
+print("_hashlib module file:", _hashlib.__file__)
+subprocess.run(["ldd", _hashlib.__file__])
+' || echo "_hashlib diagnostic failed (non-fatal)"
+echo "---"
+uv run python3 -c '
+import psycopg, subprocess
+print("psycopg module file:", psycopg.__file__)
+print("psycopg pq module/impl:", psycopg.pq.__impl__ if hasattr(psycopg.pq, "__impl__") else "unknown")
+try:
+    import psycopg_c
+    print("psycopg_c module file:", psycopg_c.__file__)
+    subprocess.run(["ldd", psycopg_c.__file__])
+except ImportError as e:
+    print("psycopg_c import failed:", e)
+    try:
+        import psycopg_binary
+        print("psycopg_binary module file:", psycopg_binary.__file__)
+        subprocess.run(["ldd", psycopg_binary.__file__])
+    except ImportError as e2:
+        print("psycopg_binary import failed too:", e2)
+' || echo "psycopg diagnostic failed (non-fatal)"
+echo "---"
+echo "system libcrypto.so.3 resolution:"
+find / -xdev -name "libcrypto.so.3" 2>/dev/null -exec ls -la {} \;
+echo "==> End diagnostic. Continuing boot normally."
+
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
 uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
 
