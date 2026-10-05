@@ -38,7 +38,8 @@ def test_mode_1_passes_when_enforced(monkeypatch) -> None:
     monkeypatch.setattr(fips, "declared_mode", lambda: "1")
     monkeypatch.setattr(fips, "_approved_python_hash_works", lambda: None)
     monkeypatch.setattr(fips, "_md5_for_security_refused", lambda: True)  # refused → enforced
-    monkeypatch.setattr(fips, "_cryptography_fips_consistent", lambda *, expect_enforced: None)
+    monkeypatch.setattr(fips, "_cryptography_positive_control", lambda *, expect_enforced: None)
+    monkeypatch.setattr(fips, "_cryptography_md5_refused", lambda: None)
     assert fips.assert_declared_mode() == "1"
 
 
@@ -54,7 +55,7 @@ def test_mode_1_aborts_when_md5_not_refused(monkeypatch) -> None:
 def test_mode_0_passes_when_not_enforced(monkeypatch) -> None:
     monkeypatch.setattr(fips, "declared_mode", lambda: "0")
     monkeypatch.setattr(fips, "_md5_for_security_refused", lambda: False)  # md5 works → non-FIPS
-    monkeypatch.setattr(fips, "_cryptography_fips_consistent", lambda *, expect_enforced: None)
+    monkeypatch.setattr(fips, "_cryptography_positive_control", lambda *, expect_enforced: None)
     assert fips.assert_declared_mode() == "0"
 
 
