@@ -1,0 +1,381 @@
+# TAP Project Configuration
+# =============================================================================
+# This file defines the project metadata and dependencies for UV/pip.
+# UV reads this file to create and manage the virtual environment.
+
+[project]
+name = "tap"
+version = "0.2.2"
+description = "The Analogy Platform - a graph-based systems mastery platform"
+readme = "README.md"
+# SPDX identifier (PEP 639). The authoritative text is the LICENSE file at the repo
+# root; NOTICE carries the attribution required for the third-party assets vendored
+# into the source tree. This field is the machine-legible declaration of the same fact.
+license = "Apache-2.0"
+requires-python = ">=3.14"
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+# Core dependencies needed to run the application.
+# Add new dependencies with: docker compose exec web uv add <package>
+# Remove with: docker compose exec web uv remove <package>
+dependencies = [
+    # MAJOR-BOUND POLICY (2026-08-09, the PR #20 mypy lesson): every dep whose
+    # major version is either a RULER (its output is asserted by guards/gates:
+    # mypy, black, ruff, pytest+plugins, jsonschema, lark) or a MIGRATION
+    # (framework/infra behavior: django, ninja, psycopg, auth stack, queue) is
+    # bounded below its next major, so majors arrive as their own deliberate
+    # Renovate PR — never inside a routine lockfile refresh. Named exceptions:
+    # cryptography (major-per-release versioning — a bound would starve security
+    # fixes; changes surface loudly via the FIPS boot self-check + Dependabot
+    # alerts) and types-* stubs (no meaningful majors).
+    # Web Framework
+    # Django 6 includes built-in background tasks (django.tasks) and CSP support
+    "django>=6.0,<7",
+    # API Framework
+    # Django Ninja provides fast, type-hinted API development with OpenAPI docs
+    # Similar to FastAPI but designed for Django
+    "django-ninja>=1.5,<2",
+    # Database
+    # psycopg3 is the modern PostgreSQL adapter (psycopg2 is legacy).
+    # The `[c]` extra builds psycopg's C speedups against the SYSTEM libpq (which links the
+    # system OpenSSL carrying our FIPS provider), NOT the `[binary]` wheel's PRIVATE bundled
+    # libpq+OpenSSL. This is the psycopg analog of cryptography --no-binary (D7/L9): OPENSSL_CONF
+    # is process-global, so under TAP_FIPS=1 the bundled OpenSSL is forced to load a FIPS config
+    # it cannot satisfy (no matching fips.so/MAC) and SCRAM auth hard-fails with "could not
+    # generate nonce" at boot. Linking the system libpq routes SCRAM's RNG through the validated
+    # FIPS DRBG instead. Needs pg_config + libpq headers (postgresql-dev) at build (see Dockerfile).
+    "psycopg[c]>=3.2,<4",
+    # Configuration
+    # Parses DATABASE_URL environment variable into Django's DATABASES dict
+    # <4 not <3: the lock was already on 3.x (an earlier bump wave) — bounds
+    # encode the CURRENT major, they never rewind one that's proven in.
+    "dj-database-url>=2.2,<4",
+    # History Tracking
+    # django-simple-history provides audit trail for model changes
+    "django-simple-history>=3.4,<4",
+    "jsonschema>=4.26.0,<5",
+    "lark>=1.3.1,<2",
+    "croniter>=6.2.2,<7",
+    "steady-queue>=0.2.0,<0.3",
+    # NOTE: plugin-owned third-party deps are NOT listed here — they live in the
+    # owning plugin's pyproject.toml and resolve via the workspace `members`
+    # entries below (the github_core PyYAML pattern). `boto3` → aws_core,
+    # `sigstore` → sigstore_core, `PyYAML` → github_core.
+    # Authentication (core tap_auth) — core tap_* apps are NOT separate packages
+    # (unlike the plugins noted above), so their third-party deps must live here in
+    # the root project; there is no per-app dependency list to scope them to.
+    # django-allauth is the auth / social-login framework tap_auth builds on. The
+    # [socialaccount] extra pulls what allauth's OpenID-Connect provider imports at
+    # startup — pyjwt[crypto] + oauthlib (+ requests) — which used to arrive only
+    # transitively (so a minimal profile crashed at allauth ready() on a missing
+    # `jwt`). Declaring the extra, rather than pinning pyjwt/oauthlib ourselves,
+    # keeps those deps owned by allauth — the thing that actually imports them.
+    "django-allauth[socialaccount]>=65,<66",
+    # requests is a DIRECT dependency of core tap_auth — the Google OIDC provider
+    # (tap_auth/providers/google_oidc.py) and tap_auth/middleware.py import it at
+    # module load. Declared explicitly rather than relied on transitively (it used
+    # to arrive only via a plugin's deps): a minimal / headless profile that omits
+    # the AWS/etc. plugins would otherwise fail to import auth at startup — caught
+    # cold-booting boot/gryphon.boot.json. A future slim/headless install may move
+    # the auth stack to an optional extra so headless instances drop it entirely
+    # (req-tap-plugin-arch-slim-install).
+    "requests>=2.34.2,<3",
+    "webauthn>=3,<4",
+    # Serving stack (specs/spec-tap-serving.md). Both are PURE PYTHON and introduce no
+    # cryptographic provider — neither ships a native extension, links OpenSSL, or carries
+    # its own crypto (req-tap-serving-server-crypto-1). MIGRATION-bounded below their next
+    # major: what serves requests and what serves static are infrastructure behaviour, so a
+    # major arrives as its own deliberate Renovate PR, never inside a lockfile refresh.
+    #
+    # gunicorn with SYNC workers, chosen over granian precisely because granian is Rust and
+    # would pull ring/aws-lc-rs into the cryptographic boundary for throughput nothing is
+    # asking for.
+    "gunicorn>=26,<27",
+    # whitenoise WITHOUT the [brotli] extra, deliberately: the extra is a C extension, and
+    # gzip-vs-brotli on 660K of JS+CSS does not justify adding a native dependency to the
+    # crypto-BOM conversation (req-tap-serving-server-crypto-2).
+    "whitenoise>=6.11,<7",
+]
+
+# -----------------------------------------------------------------------------
+# Development Dependencies
+# -----------------------------------------------------------------------------
+# Tools used during development but not needed in production.
+# Grouped under [dev] so they can be excluded in production builds.
+[dependency-groups]
+# Bare-runner CI tooling: `uv sync --frozen --no-install-project --only-group ci-tooling`
+# gives a job exactly these, locked in uv.lock (versions AND hashes), without the core's
+# venv. Consumers — keep every one working when this group changes:
+#   - .github/workflows/plugin-ci.yml: the harness resolver + `validate_plugin --strict`,
+#     and `validate_plugin --repo` (`repo-scope` job — PyYAML: without a parser the pin and
+#     nightly-shape checks fail as inconclusive, req-tap-plugin-validate-repo-6);
+#   - .github/workflows/publish-images.yml (`sbom` job) + plugin-release-sbom.yml
+#     (`release-sbom` job): scripts/sbom/* (jsonschema + referencing) — never
+#     `pip install` a second copy of the version (tap#507).
+# Bounds mirror what core already resolves; the lock is the pin.
+ci-tooling = [
+    "jsonschema>=4.26,<5",
+    "packaging>=26,<27",
+    "pyyaml>=6,<7",
+]
+dev = [
+    # Code Formatting
+    # Black is the uncompromising Python formatter - no config debates
+    "black>=24.0,<27",
+    # Linting
+    # Ruff is a fast Python linter written in Rust, replaces flake8/isort/etc
+    "ruff>=0.16,<0.17",
+    # Type Checking
+    # Mypy catches type errors before runtime
+    # django-stubs provides type hints for Django's internals
+    # MINOR-bounded, not just major-bounded: mypy's emitted error set shifts on
+    # MINORS too (1.19->1.20 = 1 new finding, 2.3 major = 6; PR #20, 2026-08-09),
+    # and the baseline ratchet asserts that set. Every mypy step arrives as its
+    # own Renovate range-bump PR with a deliberate fix-vs-baseline triage —
+    # never inside a routine lockfile refresh. (Same treatment as ruff, whose
+    # 0.x bound achieves this naturally.)
+    "mypy>=2.3,<2.4",
+    "django-stubs>=6,<7",
+    # Testing
+    # pytest is the modern Python test framework
+    # pytest-django integrates pytest with Django's test utilities
+    "pytest>=8.3,<10",
+    "pytest-django>=4.9,<5",
+    # Parallel test execution — per-worker test DBs (does not violate the
+    # shared-DB single-invocation rule); the highest-ROI lever for the
+    # DB-bound suite (req-dev-validation-suite-tiers).
+    "pytest-xdist>=3.6,<4",
+    # Duration-balanced test sharding (`--splits N --group G`, reads `.test_durations`).
+    # Its one consumer, the parked free-runner sharding of the all-plugins lane, was
+    # retired with the plugin union (tap#638); nothing invokes it today. Dropping it is
+    # a lockfile change, left to its own reviewed PR.
+    "pytest-split>=0.9,<0.12",
+    # Test Data Generation
+    # Factory Boy creates test fixtures declaratively (better than raw fixtures)
+    "factory-boy>=3.3",
+    # Branch-coverage measurement for the Gryphon executor ratchet
+    # (scripts/gryphon-coverage-ratchet, req-gridkin-executor-branch-coverage)
+    "coverage>=7.14.3",
+    "pyyaml>=6,<7",
+]
+
+# -----------------------------------------------------------------------------
+# uv Workspace
+# -----------------------------------------------------------------------------
+# Intentionally EMPTY. Plugin installation is profile-driven via the pre-boot
+# `install` section (tap/preboot.py editable-installs only the plugins a boot
+# profile declares+enables), NOT uv workspace membership — which would install
+# every plugin regardless of profile and contradict the reconciliation guard's
+# "undeclared code must not load". Each plugin still owns its Tier-0 deps in its
+# own plugins/<slug>/pyproject.toml; those resolve at (editable) install time and
+# are not pinned in this root uv.lock during the monorepo transition (pinned
+# reproducibility arrives with wheelhouse/git/index sources). This superseded the
+# explicit-members model in the package-mode migration (74b71fdc). See
+# tap_plugins/specs/spec-tap-plugin-architecture.md req-tap-plugin-arch-python-deps.
+
+[tool.uv]
+# Build `cryptography` from source (its sdist) against the SYSTEM OpenSSL rather than
+# installing the PyPI wheel. The wheel statically bundles its OWN OpenSSL, which ignores
+# the image's system FIPS provider config entirely — so webauthn/PyJWT would silently do
+# non-FIPS crypto no matter how the container is configured (doc-fips-assessment-record.md
+# L9/D7, req-cicd-base-image-lifecycle-5/-6). This applies in BOTH FIPS and non-FIPS builds
+# on purpose: the dependency closure and the system-OpenSSL linkage are then identical and
+# ONLY provider activation differs between modes — otherwise the non-FIPS lane passes on a
+# bundled-OpenSSL wheel and FIPS breaks at the far end of the pipeline. The source build
+# needs a Rust + C toolchain and OpenSSL headers, carried by the image (see Dockerfile).
+no-binary-package = ["cryptography"]
+# Major-bound for key TRANSITIVES (same policy as the direct-deps block above;
+# constraint-dependencies bounds without declaring a direct dependency).
+constraint-dependencies = ["pydantic<3"]
+# Floor the BUILD backends uv fetches when compiling sdists (the --no-binary FIPS
+# builds above). These land in the image's wheel-cache seed, so a vulnerable build
+# backend there is a Trivy finding on the published artifact even though it is not
+# a runtime dependency. wheel>=0.46.2 clears CVE-2026-24049. A setuptools>=83 floor
+# (CVE-2026-59890 + vendored jaraco.context CVE-2026-23949) is NOT applicable:
+# psycopg-c 3.3.4 (latest) hard-pins `setuptools == 80.3.1` in build-system.requires,
+# making any floor above it unsatisfiable — risk stays open, build-time-only exposure,
+# until psycopg-c lifts the pin. Re-add the floor when it does.
+build-constraint-dependencies = ["wheel>=0.46.2"]
+
+[tool.uv.workspace]
+members = []
+
+# -----------------------------------------------------------------------------
+# Tool Configuration
+# -----------------------------------------------------------------------------
+
+[tool.black]
+line-length = 120
+target-version = ["py314"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.per-file-target-version]
+# Host-run modules are held to python 3.12 (tap/host_syntax_floor.py: HOST_SYNTAX_FLOOR), and
+# the FORMATTER has to know that too. Without these entries `ruff format` rewrites
+# `except (A, B):` into PEP 758's `except A, B:` — valid on the container's 3.14, an
+# import-time SyntaxError on the 3.12 a runner or a developer laptop may have. That is not a
+# hypothetical: it is how the parentheses came BACK after being added by hand, silently, in the
+# same commit that added them.
+#
+# This list is hand-written because pyproject cannot compute one, which is exactly the
+# staleness the floor checker replaced its own hand-written list to escape. So it is held to the
+# derivation by a test rather than by discipline:
+# tap/tests/test_host_syntax_floor.py::test_the_formatter_target_matches_the_derived_host_set
+# fails the moment a module becomes host-run without its entry here.
+".githooks/precommit_secret_scan.py" = "py312"
+"docker/seed_manifest.py" = "py312"
+"scripts/release_cve_gate.py" = "py312"
+"scripts/rewrite_synthetic_uuids.py" = "py312"
+"scripts/sbom/declared_cdx.py" = "py312"
+"scripts/sbom/sarif_locate.py" = "py312"
+"tap/bom_inputs.py" = "py312"
+"tap/boot_pointer.py" = "py312"
+"tap/boot_records.py" = "py312"
+"tap/dev_workspace.py" = "py312"
+"tap/git_invocation.py" = "py312"
+"tap/git_pin.py" = "py312"
+"tap/host_syntax_floor.py" = "py312"
+"tap/install_credentials.py" = "py312"
+"tap/plugin_release.py" = "py312"
+"tap/ratchet.py" = "py312"
+"tap/secrets_root.py" = "py312"
+"tap/spec_trace.py" = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort (import sorting)
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "DJ",     # flake8-django
+]
+ignore = [
+    "E501",   # line too long (black handles this)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The Entity/Edge/BaseModel spine groups its methods by concern for legibility
+# rather than by Django's style-guide sequence. DJ012 is a purely stylistic
+# ordering rule; enforcing it here would churn load-bearing model code for zero
+# behavioral gain, so it is scoped off for this one file.
+"tap_grid/models.py" = ["DJ012"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tap", "tap_grid", "tap_plugins", "tap_api", "tap_web", "tap_viz", "tap_flip", "tap_ai"]
+
+[tool.mypy]
+python_version = "3.14"
+plugins = ["mypy_django_plugin.main"]
+strict = true
+# Relax some strict settings for pragmatic development
+allow_untyped_decorators = true
+allow_subclassing_any = true
+# Package-mode plugins live under plugins/<slug>/tap_plugin/<slug>/ AND are installed
+# (editable) as the PEP 420 namespace package `tap_plugin.<slug>`. Without this,
+# `mypy .` walks that source a SECOND time under the path-derived name
+# `plugins.<slug>.tap_plugin...`, colliding with the install ("Source file found
+# twice") and aborting the run. Excluding the source dir makes mypy resolve each
+# plugin once, via its install, under its true `tap_plugin.<slug>` identity. Each
+# plugin ships a `py.typed` marker (PEP 561) so it is analyzed, not skipped.
+# NOTE: plugin *tests* now live INSIDE this excluded tree (tap_plugin/<slug>/tests/,
+# so they ride in the wheel — see tap.plugin_testing), so mypy no longer type-checks
+# plugin test files. Accepted trade: test files carried only tolerated/baselined
+# errors and running them is the real signal; un-excluding just the tests would
+# reintroduce the "found twice" double-walk. Plugin package code is still analyzed
+# via its `tap_plugin.<slug>` install identity.
+# `_dev-plugins/` holds editable dev-plugin checkouts for `spawn --dev-plugins`
+# (spec-dev-plugin-workspace.md) — a developer's own git clones, analyzed via their
+# install identity like any plugin, never as core source. `tap_plugins/tests/fixtures/
+# <name>/tap_plugin/` is the in-tree validate_plugin fixture plugin — same story: it is
+# installed under its `tap_plugin.<slug>` identity, so exclude the source walk to avoid
+# the "found twice under different module names" double-walk.
+exclude = '(^|/)(plugins/[^/]+/tap_plugin/|_dev-plugins/|tap_plugins/tests/fixtures/[^/]+/tap_plugin/)'
+
+[[tool.mypy.overrides]]
+module = ["*.tests.*", "conftest"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = ["simple_history", "simple_history.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["botocore", "botocore.*", "boto3", "boto3.*", "jsonschema", "jsonschema.*", "sigstore", "sigstore.*", "allauth", "allauth.*", "playwright", "playwright.*"]
+ignore_missing_imports = true
+
+# Third-party runtime deps that ship no type stubs / py.typed marker (the async task
+# stack + cron parser). Same class as the block above; not first-party, so we mute the
+# unresolved-import noise rather than annotate someone else's package.
+[[tool.mypy.overrides]]
+module = ["steady_queue.*", "django.tasks", "django.tasks.*", "croniter", "croniter.*"]
+ignore_missing_imports = true
+
+# gunicorn ships no py.typed. Imported in exactly one place — the serving test that
+# partitions gunicorn's own KNOWN_SETTINGS registry against docker/gunicorn.conf.py
+# (req-tap-serving-server-5). Reading the registry from the INSTALLED package is the point:
+# a list copied into the test would not notice a release adding a setting.
+[[tool.mypy.overrides]]
+module = ["gunicorn", "gunicorn.*"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "tap.settings"
+
+[tool.pytest.ini_options]
+# Tests use tap/test_settings.py so TASKS["default"]["BACKEND"] is
+# ImmediateBackend regardless of what the dev/prod tap/settings.py sets it
+# to. See spec-tap-cares-task-backend.md req-tap-cares-task-backend-test-settings.
+DJANGO_SETTINGS_MODULE = "tap.test_settings"
+# `pythonpath` makes the repo root importable BEFORE plugin loading, which is
+# what lets addopts' `-p tap.pytest_harness` import under invocations that do
+# not add the cwd to sys.path (e.g. `uv run pytest --pyargs ...`).
+pythonpath = ["."]
+# NO `testpaths`. pytest discovers every test file from the repo root, minus
+# `norecursedirs` (.venv, node_modules, build, dist, dot-dirs) and the explicit
+# `--ignore`s below. This is deliberately an IGNORE-list, not an ALLOW-list.
+# An allow-list (`testpaths = [app, app, ...]`) is fail-OPEN over a scattered
+# per-app layout: a new app's tests are silently uncollected until someone
+# remembers to add its dir — which is exactly how the 2026-07-01 login
+# regression shipped green (tap_auth / tap_boot / tap_cares tests existed but
+# were never in the gate). Discovery fails SAFE: a new test dir is collected
+# automatically; dropping coverage requires an active `--ignore`, and every drop
+# is enforced-visible by the collection-completeness guard
+# (tap/tests/test_collection_completeness.py, req-dev-validation-collection-complete).
+python_files = ["test_*.py", "*_test.py"]
+# Intentional, justified coverage exclusions — MIRROR each in the completeness
+# guard's `_IGNORED_DIRS`, or the guard fails. `-m 'not live_fetch'` defers the
+# opt-in network tests. `--ignore=_dev-plugins` drops the editable plugin-REPO
+# checkouts that `spawn --dev-plugins` clones into this worktree: they are working
+# copies of other repositories, gated by their own repo CI and by release-plugin.sh,
+# and collecting them would make the core lane depend on which plugins a developer
+# happens to have checked out. (The core suites' fixtures live in the neutral
+# grid_fixtures plugin, installed like any other.)
+# `-p tap.pytest_harness` loads the TAP test harness (caller context, auth
+# seeding, write hatch) as a REAL pytest plugin in every invocation mode. It
+# lived in the root conftest until 2026-08-09, when pytest 9.1 stopped loading
+# rootdir conftests for `--pyargs`-resolved packages — silently stripping the
+# harness from `pytest --pyargs tap_plugin.<slug>` (plugin-ci lane 2's exact
+# invocation) and failing every plugin DB test with MissingActor. addopts is
+# the right carrier: this configfile is provably read under --pyargs (it is
+# how DJANGO_SETTINGS_MODULE reaches those runs), and the root project is a
+# virtual (non-installed) uv project, so a pytest11 entry point cannot register.
+# Guarded by tap/tests/test_pytest_harness_invocation.py (req-tap-test-fixtures-4).
+addopts = "-v --tb=short -m 'not live_fetch' --ignore=_dev-plugins -p tap.pytest_harness"
+markers = [
+    "no_registry_isolation: opt out of search runner registry isolation between tests",
+    "spec: link a test to one or more spec acceptance criteria by ACID",
+    "cascade_corpus: one known-answer cascade scenario from tap_grid/cascade_corpus (Issue# 578 - tap); run with `-m cascade_corpus`",
+    "batch_corpus: one known-answer GRIFT import scenario from tap_grid/batch_corpus (Issue# 603 - tap); run with `-m batch_corpus`",
+    "live_fetch: opt-in integration tests that hit real network upstreams; skipped by default",
+    "enforce_write_guard: opt out of the autouse unguarded_write() hatch so the write backstop is live in this test",
+    "smoke: high-signal canary subset — failure predicts broad downstream failure (req-dev-validation-canary-tier); run with `-m smoke`",
+]
