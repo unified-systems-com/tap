@@ -20,20 +20,31 @@
 # is the OpenSSL config, not the modules directory (L13, D15).
 # Full decision record + re-runnable verification suite: doc-fips-assessment-record.md.
 #
-# DEFAULT IS CURRENTLY 0, DELIBERATELY, NOT 1 (tap#933/#931, L18). Accepting Wolfi's
-# openssl-4.0 migration surfaced a real, reproducible defect: `cryptography`, run in the same
-# process as any `_hashlib`/`hashlib` operation, can leave a LATER, unrelated fetch unable to
-# find an algorithm the active provider genuinely implements — confirmed via three independent
-# trigger paths and a minimal, tap-code-free reproduction, 100% reproducible on real CI
-# hardware, 0% reproducible under QEMU emulation. This is not something tap's own self-check
-# can reorder its way around: the failure isn't limited to refused/negative-control fetches,
-# and research turned up strong circumstantial evidence (`openssl/openssl#26699`, `#24272`,
-# `#30883`, `#29212`) that OpenSSL's newer lock-free provider method-store hashtable is a live
-# source of exactly this symptom shape. Flip back to 1 once that's actually understood or fixed
-# upstream, not before — re-enabling it blind just reintroduces a boot-time defect under load.
+# DEFAULT IS BACK TO 1, RE-ENABLED HERE PENDING CI CONFIRMATION (tap#933/#931, L18). Accepting
+# Wolfi's floating `openssl`/`openssl-dev` migration to the `openssl-4.0` package family
+# surfaced a real, reproducible defect: `cryptography`, run in the same process as any
+# `_hashlib`/`hashlib` operation, can leave a LATER, unrelated fetch unable to find an algorithm
+# the active provider genuinely implements — confirmed via three independent trigger paths and a
+# minimal, tap-code-free reproduction, 100% reproducible on real CI hardware. A from-scratch,
+# Docker-free, Wolfi-free bare-Ubuntu reproduction (2026-10-05, L18) then ruled out the
+# version-mismatch itself: a vanilla-upstream OpenSSL 4.0.2 host library paired with this same
+# self-built 3.0.22 FIPS provider does NOT reproduce the failure, which points at something
+# specific to Wolfi/Chainguard's own `openssl-4.0` build (or their `python-3.14`/`libpq` builds),
+# not at OpenSSL 4.0 as a release line.
+#
+# The actual fix below: the apk packages below are each pinned to the LAST revision confirmed
+# (by direct `apk info`/real `apk add` testing, not assumed) to depend on `libcrypto3`/`libssl3`
+# (the 3.6.x line) rather than `openssl-4.0`'s `libcrypto.so.4`/`libssl.so.4` — `python-3.14-base`
+# and `postgresql-18-dev` each cut over at exactly ONE revision ahead of what is pinned here.
+# This keeps every FIPS-relevant consumer in this image (CPython's own `_hashlib`, `cryptography`,
+# libpq) on the SAME major OpenSSL line as the self-built 3.0.22 FIPS provider — the condition a
+# clean bare-Ubuntu test (L18) already confirmed does not reproduce the failure, 20/20. These are
+# revision pins, not a track pin: narrower and more likely to need re-verifying on any apk bump
+# than a simple version pin would be, tracked the same way the FIPS provider's own pin is (a
+# deliberate, named pin revisited on real cause, not left to drift silently).
 
 # TAP_FIPS is a global build ARG so it can select the final stage below.
-ARG TAP_FIPS=0
+ARG TAP_FIPS=1
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
@@ -87,79 +98,75 @@ WORKDIR /app
 # System-level runtime binaries — named, itemized attack-surface line-items
 # (req-cicd-base-image-lifecycle-3), kept current by the auto-patch loop (-1).
 #   Runtime:
-#   - python-3.14: the interpreter (Wolfi ships /usr/bin/python -> python3 -> python3.14).
+#   - python-3.14/python-3.14-base/python-3.14-dev: the interpreter (Wolfi ships /usr/bin/python
+#     -> python3 -> python3.14).
 #   - git: uv shells out to it for git-source package-mode plugin installs (req-boot-install-section).
 #     Wolfi's git porcelain in /usr/libexec/git-core are shell scripts needing sed/grep — both
 #     present via busybox on wolfi-base (verified), so no extra apk (assessment record L3).
 #   - bash: docker/entrypoint.sh is a bash script.
-#   - postgresql-client: pg_isready/psql for Django + pg_dump/pg_restore for the pre-boot
-#     pre-migrate snapshot (tap/preboot.py, req-boot-snapshot). Wolfi ships 18.x; a newer
-#     pg_dump dumps the older PG16 server fine.
+#   - postgresql-18-client/postgresql-18-dev: pg_isready/psql for Django + pg_dump/pg_restore for
+#     the pre-boot pre-migrate snapshot (tap/preboot.py, req-boot-snapshot). Wolfi ships 18.x; a
+#     newer pg_dump dumps the older PG16 server fine.
 #   - curl: docker/install-tailwindcss.sh; also in-container debugging.
 #   - tzdata: the IANA zoneinfo DB Debian slim shipped implicitly but Wolfi's minimal base
 #     does not; without it Python's zoneinfo cannot resolve settings.TIME_ZONE and boot aborts.
-#   - openssl-4.0: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also
+#   - openssl-3.6: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also
 #     debugging. NAMED explicitly, not the bare `openssl` alias — see below.
 #   Build toolchain for `cryptography` --no-binary (D7 — applies in BOTH FIPS modes, so it lives
 #   here in base, not in the FIPS stage): the sdist compiles a Rust + C extension against the
 #   system OpenSSL headers at `uv sync` time (dev installs at runtime, not image build).
 #   - build-base: gcc/make/libc headers.
 #   - rust: cargo + rustc for cryptography's Rust extension.
-#   - openssl-4.0-dev: system OpenSSL headers cryptography links against.
+#   - openssl-3.6-dev: system OpenSSL headers cryptography links against.
 #   - pkgconf: pkg-config, used by the build to locate OpenSSL.
-#   - python-3.14-dev: Python.h for the C extension.
-#   - postgresql-dev: pg_config + libpq headers so psycopg's `[c]` extra builds against the
-#     SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the `[binary]`
-#     wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (see pyproject.toml).
+#   - postgresql-18-dev also provides pg_config + libpq headers so psycopg's `[c]` extra builds
+#     against the SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the
+#     `[binary]` wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (pyproject.toml).
 #
-# `openssl-4.0`/`openssl-4.0-dev`, not the bare `openssl`/`openssl-dev` names — tap#932/#933.
-# Wolfi started shipping this as a second, parallel package family. `python-3.14-base` and
-# `libpq-18` (pulled in by `postgresql-client`/`postgresql-dev`) already hard-depend on
-# so:libcrypto.so.4/so:libssl.so.4 regardless of what we request — Wolfi's own base packages
-# have moved, not something this Dockerfile can opt out of. Naming the bare `openssl-dev`
-# alongside that is what caused the actual incident: requesting the 3.x family for OURSELVES
-# while Python/libpq independently required the 4.x family produced a real `apk` conflict
-# (both try to own the same header/lib paths) and, even where it didn't conflict, would have
-# left tap's own `cryptography`/psycopg build on a DIFFERENT OpenSSL core than Python's own
-# `_ssl` module and libpq — the two-cores-in-one-process hazard tap#931 tracks, which broke
-# SCRAM auth outright for another shop hitting the identical Wolfi/Postgres combination.
+# `openssl-3.6`/`openssl-3.6-dev`, not `openssl-4.0`/`openssl-4.0-dev` or the bare `openssl`/
+# `openssl-dev` floating alias — tap#932/#933, L18. The bare alias migrating to the `openssl-4.0`
+# family is what broke this the first time; naming `openssl-4.0` explicitly (tried next) traded
+# that for a reproducible FIPS self-check failure (`cryptography` + CPython's own `_hashlib`, run
+# in sequence in one process, under the FIPS provider — see L18 for the full investigation,
+# including a from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
+# the cause, pointing instead at something specific to Wolfi/Chainguard's own `openssl-4.0`,
+# `python-3.14`, or `libpq` builds).
 #
-# This is SAFE for FIPS, verified directly rather than assumed: the FIPS provider's own ABI is
-# a stable boundary OpenSSL deliberately keeps independent of the general library ABI — "a FIPS
-# provider built from any validated version may be used together with an OpenSSL library built
-# from any supported release from OpenSSL 3.0 onwards ... including future major release
-# series" (openssl/openssl README-FIPS.md). Confirmed empirically too: built this image through
-# `fips-1` with openssl-4.0 requested exactly as below, and `openssl fipsinstall` ran its full
-# self-test battery (every KAT, PCT, and DRBG check) against the UNCHANGED, already-validated
-# provider (`docker/build-openssl-fips.sh`'s pin is untouched) and printed INSTALL PASSED. The
-# provider itself never gets rebuilt against 4.0 source — that would actually drop the CMVP
-# validation (the cert is for a specific compiled artifact); what moves is the surrounding
-# libcrypto/libssl the already-validated provider loads into, exactly as the design intends.
+# `python-3.14`/`python-3.14-base`/`python-3.14-dev` and `postgresql-18-dev` are EXPLICITLY
+# VERSION-PINNED here, not left floating, because at their current (unpinned) versions they
+# themselves hard-depend on `libcrypto.so.4`/`libssl.so.4` regardless of what OpenSSL package this
+# Dockerfile requests — confirmed directly (apk info / a real `apk add`, not assumed): each cut
+# over to `openssl-4.0` at exactly ONE apk revision ahead of what is pinned below
+# (`python-3.14-base` at `3.14.8_git20261001-r1`; `postgresql-18-dev` at `18.6-r5`). Pinned one
+# revision EARLIER than that keeps every FIPS-relevant consumer in this image — CPython's own
+# `_hashlib`, `cryptography`, libpq — on the SAME OpenSSL 3.6.x line as the self-built FIPS
+# provider, avoiding both the apk file-ownership conflict (openssl-3.x-dev and openssl-4.0-dev own
+# the same unversioned header/lib paths — confirmed via a real, non-simulated `apk add`) and the
+# two-cores-in-one-process hazard tap#931 tracks. `libpq-18` itself (the runtime client library,
+# as opposed to `postgresql-18-dev`'s headers) has NOT cut over at any version checked — only the
+# `-dev` package has — so this is narrower than it may look.
 #
-# `libssl3`/`libcrypto3` (.so.3) still land in the image regardless of any of this — confirmed
-# (2026-10-03) they're required by `apk-tools` itself, baked into every Wolfi base image before
-# any `RUN apk add` here executes, not by anything this Dockerfile requests. `apk` runs as its
-# own standalone process at build time (and for any ad-hoc invocation); it never shares a
-# process with gunicorn/Django/psycopg, so it is outside the single-core invariant that matters.
-#
-# Pinned to a specific version, not left floating on the bare family name, so a bump stays a
-# deliberate, reviewed act — the Renovate `apk` datasource rule (renovate.json5) proposes the
-# next one instead of this silently drifting onto whatever Wolfi ships next.
+# These are REVISION pins, not track pins, and therefore narrower and more likely to need
+# re-verifying on the next apk bump than a plain version pin would be. Track the same way the
+# FIPS provider's own pin is tracked: a deliberate, named pin, revisited for a real reason (apk
+# fails to resolve, Wolfi EOLs the 3.6 track, or a CVE in these exact packages), never silently
+# bumped to "whatever's current" without re-checking the SONAME each depends on.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
-    python-3.14 \
+    python-3.14=3.14.8_git20261001-r0 \
+    python-3.14-base=3.14.8_git20261001-r0 \
     git \
     bash \
-    postgresql-client \
+    postgresql-18-client=18.6-r4 \
     curl \
     tzdata \
-    openssl-4.0=4.0.3-r2 \
+    openssl-3.6=3.6.5-r1 \
     build-base \
     rust \
-    openssl-4.0-dev=4.0.3-r2 \
+    openssl-3.6-dev=3.6.5-r1 \
     pkgconf \
-    python-3.14-dev \
-    postgresql-dev \
+    python-3.14-dev=3.14.8_git20261001-r0 \
+    postgresql-18-dev=18.6-r4 \
       ; then break; fi; \
       echo "apk add failed (attempt $i/3)" >&2; \
       if [ "$i" -eq 3 ]; then exit 1; fi; \
