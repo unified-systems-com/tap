@@ -16,13 +16,13 @@ class TestVersionEndpoint:
 @pytest.mark.django_db
 class TestUnversionedRedirect:
     def test_redirects_to_v1(self, client):
-        response = client.get("/api/entities/", follow=False)
+        response = client.get("/api/entity-types/", follow=False)
         assert response.status_code == 302
-        assert response["Location"] == "/api/v1/entities/"
+        assert response["Location"] == "/api/v1/entity-types/"
 
 
 @pytest.mark.django_db
 class TestAuthEnforced:
     def test_unauthenticated_rejected(self, client):
-        response = client.get("/api/v1/entities/")
+        response = client.get("/api/v1/entity-types/")
         assert response.status_code == 401

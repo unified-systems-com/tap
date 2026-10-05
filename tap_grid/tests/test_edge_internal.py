@@ -39,12 +39,10 @@ from tap_grid.services import (
     _replace_edge_internal,
     create_edge,
     create_node,
-    delete_edge,
     delete_edge_by_entity,
     delete_node,
     patch_edge,
     replace_edge,
-    update_edge_properties,
     write_batch,
 )
 from tap_grid.tests.test_grift import _batch_container, _batch_entity_id, _minimal_doc
@@ -183,20 +181,6 @@ class TestTheGenericVerbsRefuse:
         edge.entity.refresh_from_db()
         assert edge.properties == {"disposition": "skipped"}
         assert edge.entity.deleted_at is None
-
-    @SPEC[3]
-    @CLAIMS_5
-    def test_the_edge_object_helpers_refuse(self) -> None:
-        """``update_edge_properties`` and ``delete_edge`` write through the ORM; this is their gate."""
-        _, batch, edge = _produced("skipped")
-        with pytest.raises(InvalidEdgeError, match="internal-only"):
-            update_edge_properties(edge, {"disposition": "imported"})
-        with pytest.raises(InvalidEdgeError, match="internal-only"):
-            delete_edge(edge)
-
-        stored = Edge.objects.get(pk=edge.pk)
-        assert stored.properties == {"disposition": "skipped"}
-        assert Entity.objects.get(pk=edge.entity_id).deleted_at is None
 
     @CLAIMS_5
     def test_no_generic_writer_adds_a_second_imported_holder(self) -> None:

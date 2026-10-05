@@ -202,18 +202,16 @@ Status: `Implemented`
 Implemented in `tap_grid/services.py`. The `create_edge()` function was updated to remove manual Entity pre-creation in favor of `Edge.save()` auto-creation per `req-grid-entity-base-5`. Retroactively specified here.
 
 #### Implementation
-`tap_grid/services.py` is the canonical mutation API for edges. All application code that creates or deletes edges should go through these functions rather than direct ORM calls, so that constraint validation is guaranteed and FLIP can be wired in at these call sites without changing callers.
+`tap_grid/services` is the canonical mutation API for edges. Every edge write goes through the write pipeline (`write_batch` and the verbs built on it), never a direct ORM call, so constraint validation, the batch, provenance and history are guaranteed.
 
-**`create_edge(from_entity, to_entity, edge_type, properties=None, display_name="")`**:
+**`create_edge(from_entity, to_entity, edge_type, properties=None, *, caller_context=None, batch_name=None, batch_description=None)`**:
 1. Calls `validate_edge(from_entity.entity_type, to_entity.entity_type, edge_type)` — raises `InvalidEdgeError` on violation.
-2. Creates the edge via `Edge.objects.create(...)` — `Edge.save()` auto-creates the backing Entity.
-3. If `display_name` is provided, updates `edge.entity.display_name` on the backing Entity.
-4. Returns the created `Edge` instance.
+2. Writes the edge through `write_batch` (the `create_edge` verb); `Edge.save()` auto-creates the backing Entity, named from the endpoints and the type.
+3. Returns the created `Edge` instance.
 
-`create_edge()` takes full `Entity` instances (not IDs) so that `entity_type` is available for constraint validation without an extra DB query.
+`create_edge()` takes full `Entity` instances (not IDs) so that `entity_type` is available for constraint validation without an extra DB query. Edge updates and deletes are the pipeline verbs `patch_edge`, `replace_edge` and `delete_edge_by_entity` (a tombstone with a reason, `spec-grid-service-delete`).
 
-**`delete_edge(edge)`**:
-- Deletes via `edge.entity.delete()`. Cascades to the `Edge` row through the `OneToOneField`. Going through the Entity rather than the Edge directly keeps the deletion pattern consistent with `delete_entity()`.
+The `display_name` override and the object-taking `delete_edge(edge)` were removed (Issue# 957 - tap). An edge's name is derived today and re-synced on every save, so the override never survived the next save, and setting it meant a second write outside the batch. A declared edge name that survives is Issue# 743 - tap, and would ride the pipeline's own write. `delete_edge(edge)` hard-deleted the row outside the pipeline.
 
 #### Development
 
@@ -223,12 +221,11 @@ Implemented in `tap_grid/services.py`. The `create_edge()` function was updated 
 | --- | --- | :---: | --- | --- |
 | req-grid-edge-service-1 | Validates Before Write | Implemented | `create_edge()` calls `validate_edge()` before any DB write; `InvalidEdgeError` propagates to the caller with no DB side effects. | |
 | req-grid-edge-service-2 | Returns Created Edge | Implemented | `create_edge()` returns the `Edge` instance with its backing Entity populated. | |
-| req-grid-edge-service-3 | Display Name Override | Implemented | If `display_name` is provided to `create_edge()`, the backing Entity's `display_name` is updated after creation. | |
-| req-grid-edge-service-4 | delete_edge Cascades via Entity | Implemented | `delete_edge()` deletes through `edge.entity.delete()`, which cascades to the Edge row. | |
+| req-grid-edge-service-3 | Display Name Override | Deprecated | If `display_name` is provided to `create_edge()`, the backing Entity's `display_name` is updated after creation. | Removed, Issue# 957 - tap: an edge's name is derived (`Edge.get_name`) and re-synced on every save, so the override did not survive, and it was a second write outside the batch. A declared edge name is Issue# 743 - tap. |
+| req-grid-edge-service-4 | delete_edge Cascades via Entity | Deprecated | `delete_edge()` deletes through `edge.entity.delete()`, which cascades to the Edge row. | Removed, Issue# 957 - tap: a hard delete outside the pipeline. Edges are tombstoned by `delete_edge_by_entity`. |
 
 #### Future
-Once FLIP is active, `create_edge()` and `delete_edge()` should record provenance events. The integration point is already identified; no call-site changes will be needed.
-Consider an `update_edge_properties()` service function for mutating edge properties without recreating the edge.
+Edge writes record provenance through the pipeline. Property updates are `patch_edge` / `replace_edge`.
 
 
 ### No Edges Between Edges
@@ -281,7 +278,7 @@ Edge types may define a `property_schema` JSON Schema in registered app `edge_ty
 This schema lives in registered `edge_types` declarations and is not sourced from `EntityType` storage.
 
 #### Status Details
-Implemented in `tap_grid/constraints.py` (`_EDGE_PROPERTY_SCHEMA_REGISTRY`, `register_edge_property_schema`, `get_edge_property_schema`, `validate_edge_properties`), `tap_grid/models.py` (`Edge.save()`), `tap_grid/services.py` (`update_edge_properties()`), and `tap_plugins/base.py` (`_register_edge_constraints()`). Tests in `tap_grid/tests/test_constraints.py` under `TestEdgePropertySchemaRegistry` and `TestValidateEdgeProperties`, `tap_grid/tests/test_models.py` under `TestEdgePropertyValidation`, and `tap_grid/tests/test_services.py` under `TestUpdateEdgeProperties`.
+Implemented in `tap_grid/constraints.py` (`_EDGE_PROPERTY_SCHEMA_REGISTRY`, `register_edge_property_schema`, `get_edge_property_schema`, `validate_edge_properties`), `tap_grid/models.py` (`Edge.save()`), the write pipeline's edge update path (`patch_edge` / `replace_edge`; `update_edge_properties()` was removed, Issue# 957 - tap), and `tap_plugins/base.py` (`_register_edge_constraints()`). Tests in `tap_grid/tests/test_constraints.py` under `TestEdgePropertySchemaRegistry` and `TestValidateEdgeProperties`, `tap_grid/tests/test_models.py` under `TestEdgePropertyValidation`, and `tap_grid/tests/test_services.py` under `TestUpdateEdgeProperties` (now through `patch_edge` / `replace_edge`).
 
 #### Implementation
 **Schema declaration source**
@@ -351,7 +348,7 @@ Property validation should be implemented as a standalone validation step that c
 | req-grid-edge-properties-5 | Validate on Update | Implemented | Edge property payloads are validated against registry-provided schema on every edge property update when a schema is defined for the edge type. | |
 | req-grid-edge-properties-6 | Missing Schema Skips Validation | Implemented | If an edge type has no registered schema, property validation is not executed. | To be narrowed by `req-grid-edge-schema-required`: skip-validation will apply only to edges carrying no properties. |
 | req-grid-edge-properties-7 | Any JSON Allowed Without Schema | Implemented | When no schema is registered for an edge type, `properties` may be any valid JSON value. | To be superseded by `req-grid-edge-schema-required`: non-empty `properties` without a schema becomes an error. |
-| req-grid-edge-properties-8 | Dedicated Validation Error | Implemented | Schema validation failures raise `EdgePropertyValidationError` rather than `InvalidEdgeError`. | |
+| req-grid-edge-properties-8 | Dedicated Validation Error | Implemented | Schema validation failures raise `EdgePropertyValidationError` rather than `InvalidEdgeError`. | `create_edge` raises it; through the pipeline verbs (`patch_edge`, `replace_edge`, `write_batch`) the failure is reported as `validation_error`, not as an unhandled `internal_error` (Issue# 957 - tap). `tap_grid/tests/test_services.py::TestUpdateEdgeProperties::test_invalid_properties_are_refused`. |
 | req-grid-edge-properties-9 | Schema Author Controls Strictness | Implemented | The system does not impose default `additionalProperties`; strictness is determined by each schema definition. | |
 
 #### Future

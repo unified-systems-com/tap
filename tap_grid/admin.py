@@ -18,8 +18,31 @@ from tap_grid.models import Batch, BatchEvent, Edge, Entity, EntityType
 from tap_grid.registry import Registry, ScopedRegistry, meta_registry
 
 
+class ReadOnlyGraphAdmin:
+    """Admin shows graph rows and never writes them (req-tap-auth-policy-6, Issue# 957 - tap).
+
+    A graph row changes only through the service layer's write pipeline, which records its batch,
+    provenance and history. The write guard already refuses admin's single-object saves and deletes.
+    Its "delete selected" action deleted a queryset below the guard and left no record. So no add,
+    no change, no delete and no bulk actions: superuser break-glass covers accounts and auth
+    objects, not the grid.
+    """
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def get_actions(self, request: HttpRequest) -> dict[str, Any]:
+        return {}
+
+
 @admin.register(Batch)
-class BatchAdmin(SimpleHistoryAdmin):
+class BatchAdmin(ReadOnlyGraphAdmin, SimpleHistoryAdmin):
     """Admin for Batch model with history support."""
 
     list_display = ["entity", "status", "source", "actor", "started_at", "closed_at"]
@@ -62,7 +85,7 @@ class BatchEventAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 
 @admin.register(Entity)
-class EntityAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class EntityAdmin(ReadOnlyGraphAdmin, admin.ModelAdmin):  # type: ignore[type-arg]
     list_display = ["id", "entity_type", "name", "created_at"]
     list_filter = ["entity_type", "created_at"]
     search_fields = ["name", "entity_type"]
@@ -78,7 +101,7 @@ class EntityTypeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 
 @admin.register(Edge)
-class EdgeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class EdgeAdmin(ReadOnlyGraphAdmin, admin.ModelAdmin):  # type: ignore[type-arg]
     list_display = ["id", "from_entity", "edge_type", "to_entity"]
     list_filter = ["edge_type"]
     search_fields = ["edge_type"]

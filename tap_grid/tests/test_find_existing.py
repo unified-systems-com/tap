@@ -22,7 +22,8 @@ from django.core.exceptions import ImproperlyConfigured
 
 from tap_grid.models import BaseModel, Batch, natural_key_index_name
 from tap_grid.natural_key import KEYLESS, AmbiguousIdentity, Keyless
-from tap_grid.services import create_node, delete_node, update_entity
+from tap_grid.service_types import WriteOperation
+from tap_grid.services import create_node, delete_node, write_batch
 
 _PANEL_FIELDS: dict[str, Any] = {"name": "Identity", "view": "tap_web/panels/identity.html"}
 
@@ -71,11 +72,23 @@ class TestFindExisting:
         assert Panel.find_existing(slug="retired") is None
 
     def test_dimensions_do_not_participate(self) -> None:
-        """-10: a node whose dimensions changed between two runs still finds itself."""
+        """-10: a node stamped with dimensions other than its type's defaults (another run's
+        perspective) still finds itself: the search filters on the declared key alone."""
         from tap_web.models import Panel
 
-        made = _panel("moved-perspective")
-        update_entity(made.entity, dimensions={"tap.web": "somewhere-else", "collected.from": "a-second-path"})
+        dimensions = {"tap.web": "somewhere-else", "collected.from": "a-second-path"}
+        op = WriteOperation(
+            verb="create_node",
+            type_slug="panel",
+            payload={"slug": "moved-perspective", **_PANEL_FIELDS},
+            dimensions=dimensions,
+        )
+        written = write_batch([op])
+        assert written.success, written.errors
+        made = Panel.objects.get(entity_id=written.results[0].entity_id)
+        assert made.entity.dimensions == {**Panel.DEFAULT_DIMENSIONS, **dimensions}
+        assert made.entity.dimensions != Panel.DEFAULT_DIMENSIONS
+
         found = Panel.find_existing(slug="moved-perspective")
         assert found is not None
         assert found.entity_id == made.entity_id
