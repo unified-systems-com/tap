@@ -26,8 +26,9 @@ The predicate (`enforce_managed_read`) is capability-based, matching the existin
 backstops rather than tracking "was authorize() called":
 
 - **bypass active** → allow. `unguarded_read()` is the explicit escape hatch for
-  sanctioned direct-ORM consumers below/around the service boundary (admin,
-  management commands, low-level model tests, internal maintenance).
+  sanctioned direct-ORM consumers below/around the service boundary (management
+  commands, low-level model tests, internal maintenance). Django admin is not one:
+  it authorizes `grid.read` like any other web surface (req-tap-auth-policy-6).
 - **no CallerContext at all** (`get_caller_context() is None`) → allow. This is
   the out-of-scope infrastructure zone that CLAUDE.md sanctions for direct ORM
   (migrations, `manage.py shell`, ad-hoc commands). A real request always carries
@@ -80,10 +81,10 @@ def unguarded_read() -> Iterator[None]:
     """Suspend the TAP-managed read backstop for the wrapped block.
 
     For sanctioned direct-ORM consumers below/around the service boundary only —
-    admin, management commands, low-level model tests, internal maintenance.
-    NOT for above-service-layer application code: web views and API routes must
-    authorize `grid.read` (which flows an actor that holds it into the context),
-    not reach for this hatch.
+    management commands, low-level model tests, internal maintenance.
+    NOT for above-service-layer application code: web views, Django admin and API
+    routes must authorize `grid.read` (which flows an actor that holds it into the
+    context), not reach for this hatch.
     """
     token = _read_guard_bypass.set(True)
     try:

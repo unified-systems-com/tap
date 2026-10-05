@@ -7,7 +7,7 @@ from tap_viz.models import Layout
 
 
 @admin.register(Layout)
-class LayoutAdmin(ReadOnlyGraphAdmin, admin.ModelAdmin):  # type: ignore[type-arg]
+class LayoutAdmin(ReadOnlyGraphAdmin):
     """Admin interface for Layout model."""
 
     list_display = ["name", "entity_id"]
