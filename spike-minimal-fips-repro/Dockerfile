@@ -59,5 +59,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d
 RUN uv venv /venv --python python3.14 \
  && uv pip install --python /venv --no-binary cryptography "cryptography==50.0.0"
 
-COPY repro.py /repro.py
-CMD ["/venv/bin/python3", "/repro.py"]
+WORKDIR /app
+COPY repro_mod.py /app/repro_mod.py
+ENV VIRTUAL_ENV=/venv
+ENV PATH="/venv/bin:${PATH}"
+# Matches tap's own entrypoint.sh invocation style exactly: `uv run python -m <module>`,
+# not a bare interpreter call -- a variable never isolated on its own in the investigation.
+CMD ["uv", "run", "--no-project", "python", "-m", "repro_mod"]
