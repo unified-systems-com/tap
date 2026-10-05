@@ -169,8 +169,17 @@ jobs:
 
       - name: Install cryptography from source against the same OpenSSL 4.0.2, before FIPS activation (matches tap's build-time/runtime split)
         run: |
+          # Our custom-built python3.14 has no working _ssl (deliberately -- it's irrelevant
+          # to this test), so ITS pip can't fetch anything over HTTPS. Download the sdist
+          # with the system python's working pip/ssl first, then build+install it locally
+          # (no network needed) with the target interpreter, so the Rust/C extension still
+          # links against the OpenSSL 4.0.2 we actually want to test against.
+          python3 -m venv /tmp/download-venv
+          /tmp/download-venv/bin/pip download --no-binary cryptography --no-deps \
+            -d /tmp/crypto-sdist "cryptography==50.0.0"
           /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
-          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-binary cryptography "cryptography==50.0.0"
+          OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
+            --find-links /tmp/crypto-sdist cryptography==50.0.0
           ldd /tmp/venv4/lib/python3.14/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -i crypto
 
       - name: "fipsinstall + activate fips+base, fips=yes globally -- using the SYSTEM (4.0.2) openssl CLI against the 3.0.22-built fips.so, exactly as Dockerfile:438 does"
