@@ -1505,7 +1505,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@6f5a16b5dd9d/38bc29892d93 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@91817a01cb5a/38bc29892d93 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
@@ -1619,7 +1619,7 @@ def resolve_edge_identity(
     it found (an id, or every candidate), so a caller that may write but not read is refused here
     whoever calls it, not only when the importer remembers to ask (``req-grid-edge-identity-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/60d4179c54e3 (derivation) — the one place
+    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/60d4179c54e3 (derivation) — the one place
         a relationship's declared identity becomes the id written under: incomplete-key refusal,
         the lock before any read, the bound search among live edges and the assignment on a
         miss all happen here, inside the caller's transaction.
