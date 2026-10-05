@@ -61,8 +61,11 @@ from tap_cares.exceptions import GriftRejectedError
 # this file, enforced by the repo-wide site-uniqueness test).
 _SITE_GRIFT_REJECTED = "4613"
 _SITE_GRIFT_EDGES_SKIPPED = "7381"
+_SITE_EDGE_AUTHORITY = "a19a"
 #: How many skipped edges a run record lists by event id; the count is always exact.
 _SKIPS_RECORDED = 100
+#: How many authority claims a run record lists; the counts are always exact.
+_CLAIMS_RECORDED = 100
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "collection_job_results.schema.json"
 _SCHEMA: dict[str, Any] = load_schema(_SCHEMA_PATH)
@@ -366,6 +369,41 @@ class CollectorBase(ABC):
                             "unresolved": s["unresolved"],
                         }
                         for s in skips[:_SKIPS_RECORDED]
+                    ],
+                },
+            )
+
+        # Authority claims are a dry-run: the run record counts what they would remove and names each
+        # claim's batch event, so the proposals can be checked by hand before anything applies them
+        # (req-grid-reconcile-edge-authority-7).
+        claims = [claim for b in result.imported_batches for claim in b.authority]
+        if claims:
+            proposed = sum(c["proposed"] for c in claims)
+            stale = sum(c["rejected_stale"] for c in claims)
+            not_claimed = sum(1 for c in claims if c["outcome"] == "not_claimed")
+            self.record_info(
+                _SITE_EDGE_AUTHORITY,
+                "EDGE_AUTHORITY_PROPOSED",
+                f"{len(claims)} authority claim(s) would remove {proposed} edge(s); {stale} proposal(s) were "
+                f"rejected as stale and {not_claimed} claim(s) proposed nothing. Dry-run: no edge was removed.",
+                message_data={
+                    "claims": len(claims),
+                    "proposed": proposed,
+                    "rejected_stale": stale,
+                    "not_claimed": not_claimed,
+                    "claim_records": [
+                        {
+                            "event_id": c["event_id"],
+                            "edge_type": c["edge_type"],
+                            "anchor_entity_id": c["anchor_entity_id"],
+                            "direction": c["direction"],
+                            "read": c["read"],
+                            "outcome": c["outcome"],
+                            "reason": c["reason"],
+                            "proposed": c["proposed"],
+                            "rejected_stale": c["rejected_stale"],
+                        }
+                        for c in claims[:_CLAIMS_RECORDED]
                     ],
                 },
             )
