@@ -507,6 +507,64 @@ running negative-control probes, wherever this pattern exists, in a dedicated th
 rather than the default global
 one — is open, tracked as a follow-up, not yet built.
 
+**2026-10-05 follow-up (same day): the "refused fetch poisons" framing above is too narrow — three
+more spikes, each a real, build-verified negative result, converge on something broader.**
+
+1. **Not about which file delivers the config.** Rebuilt `fips`+`base` activation by editing Wolfi's
+   actual `/etc/ssl/openssl.cnf` in place (preserving its `.include ca.cnf` and `[ssl_module]`/
+   `[crypto_policy]` RFC-9325 TLS policy — a bigger, previously undiscovered loss from the
+   separate-file approach than L14 recorded on its own) instead of pointing `OPENSSL_CONF` at a
+   separate file. Identical failure, same line, same exception.
+2. **Not `cryptography`'s own legacy-provider auto-load.** Removed `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1`
+   (which normally suppresses `cryptography`'s own explicit `legacy`-provider load, D8). Identical
+   failure.
+3. **Not `cryptography`'s unconditional `default`-provider load either — read directly from
+   `cryptography`'s own Rust source** (`src/rust/src/lib.rs:107`, pinned version 50.0.0): it
+   unconditionally calls `provider::Provider::load(None, "default")` at import time, into the same
+   shared global context, with no suppression flag anywhere. History traced directly from pyca/
+   cryptography's own commits: this exact line was added 2024-02-15
+   (`pyca/cryptography#10390`, "fix provider loading take two") as a workaround for a provider-loading
+   quirk even *then* ("the machinery in providers is sufficiently complex that we are just going to
+   load the default provider explicitly"), though the underlying "load both legacy and default
+   explicitly" pattern is older still — that commit's own words, "this matches our behavior
+   pre-rust," place it at cryptography's original OpenSSL 3.0 adoption, circa 2021-2022. Patched this
+   exact line to make it skippable via a new `CRYPTOGRAPHY_OPENSSL_NO_DEFAULT` env var (mirroring the
+   existing `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` gate — the shape of fix `cryptography` would plausibly
+   accept upstream, not a destructive removal), built the patched `cryptography` from source (git tag
+   `50.0.0`, matching tap's exact pin; reused the SAME apk packages tap's own `--no-binary` build
+   already needs — `rust`, `build-base`, `openssl-4.0-dev`, `pkgconf`, `python-3.14-dev` — no new
+   system packages), and installed it over the stock PyPI build at container startup. `cryptography`'s
+   own EC keygen still succeeded cleanly with the `default` provider genuinely not loaded (confirmed:
+   boot log shows `CRYPTOGRAPHY_OPENSSL_NO_DEFAULT=1` and the patch applied) — proving `fips`+`base`
+   alone are sufficient for that operation — and the self-check still failed identically right after,
+   at `_approved_python_hash_works`'s plain `_hashlib.new("sha256", ...)`.
+
+**That third result is the important one, and it rules out "refused fetch" as the necessary condition
+at all.** By this point in the investigation, `_cryptography_positive_control` and
+`_cryptography_md5_refused` were already split into separate functions (per the fix above), so this
+specific run exercised `cryptography`'s EC keygen with **zero MD5 touches anywhere** in the process
+before the failure — no explicit probe, no `hashlib.py` import, nothing refused. A clean, successful
+`cryptography` operation, followed by a separate, plain `_hashlib` fetch for an algorithm the active
+provider genuinely supports, was sufficient on its own. (This exact zero-MD5 two-step sequence was
+only tested against the *patched* `cryptography` build; it was not independently re-verified against
+the stock build in isolation, since every earlier stock-build test paired the keygen with an MD5
+touch somewhere. Given the patch only *removes* a provider load, it would be a surprising inversion
+for that removal to be what newly exposes the failure, but this specific gap is named rather than
+quietly assumed away.)
+
+**Revised understanding:** the trigger is not "a refused fetch poisons a later one." It is closer to
+"two independent OpenSSL-touching code paths in one process — `cryptography`'s Rust/`openssl`-crate
+bindings, and CPython's own `_hashlib` C extension, a completely different binding layer into the same
+`libcrypto` — running in sequence is sufficient," independent of which providers are configured, which
+algorithm is refused, or whether anything is refused at all. This is a *stronger* fit for the OpenSSL
+provider method-store hashtable race already cited above (`openssl/openssl#26699` and related): it
+needs no unusual provider configuration or refused-fetch edge case to explain, only two separate
+consumers initializing against the same shared, still-actively-patched (confirmed 2026 bug fixes)
+hashtable. All three results above are real, build-verified negatives, not guesses — and none of them
+point to anything fixable from tap's side. The fixes already landed in this module (the ordering
+split, dropping `hashlib.py`) remain correct and worth keeping; they just are not, and were never
+going to be, a fix for the underlying OpenSSL behavior itself.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |
