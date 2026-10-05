@@ -44,7 +44,7 @@
 # deliberate, named pin revisited on real cause, not left to drift silently).
 
 # TAP_FIPS is a global build ARG so it can select the final stage below.
-ARG TAP_FIPS=1
+ARG TAP_FIPS=0
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
