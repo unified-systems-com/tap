@@ -26,7 +26,9 @@ jobs:
       - name: Activate fips+base, fips=yes globally (system OpenSSL, nothing Wolfi-specific)
         run: |
           openssl version -a
-          sudo openssl fipsinstall -out /tmp/fipsmodule.cnf -module /usr/local/lib/ossl-modules/fips.so
+          FIPS_SO="$(sudo find /usr/local -name fips.so | head -1)"
+          echo "fips.so found at: ${FIPS_SO}"
+          sudo openssl fipsinstall -out /tmp/fipsmodule.cnf -module "${FIPS_SO}"
           printf '%s\n' \
             'config_diagnostics = 1' \
             'openssl_conf = openssl_init' \
