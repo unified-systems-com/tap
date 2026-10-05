@@ -185,7 +185,7 @@ jobs:
           # rejected as incompatible).
           /tmp/download-venv/bin/pip download -d /tmp/crypto-sdist \
             --python-version 3.14 --implementation cp --abi cp314 --only-binary=:all: \
-            "maturin<2,>=1.14.1" cffi pycparser
+            "maturin<2,>=1.14.1" cffi pycparser setuptools wheel
           /opt/python-4ossl/bin/python3.14 -m venv /tmp/venv4
           OPENSSL_DIR=/opt/openssl-4.0 /tmp/venv4/bin/pip install --no-index \
             --find-links /tmp/crypto-sdist cryptography==50.0.0
