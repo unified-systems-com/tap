@@ -23,6 +23,11 @@ jobs:
           make -j"$(nproc)"
           sudo make install_fips
 
+      - name: Install cryptography from source (before FIPS activation -- same order tap uses: pip install at image-build time, FIPS activated later at container-runtime via env var)
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --no-binary cryptography "cryptography==50.0.0"
+
       - name: Activate fips+base, fips=yes globally (system OpenSSL, nothing Wolfi-specific)
         run: |
           openssl version -a
@@ -50,15 +55,10 @@ jobs:
             'default_properties = fips=yes' \
             | sudo tee /tmp/openssl-fips.cnf
           echo "OPENSSL_CONF=/tmp/openssl-fips.cnf" >> "$GITHUB_ENV"
-          echo "OPENSSL_MODULES=/usr/local/lib/ossl-modules" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=$(dirname "${FIPS_SO}")" >> "$GITHUB_ENV"
 
       - name: Confirm the FIPS provider is active
         run: openssl list -providers -verbose
-
-      - name: Install cryptography from source against the system OpenSSL
-        run: |
-          python3 -m venv /tmp/venv
-          /tmp/venv/bin/pip install --no-binary cryptography "cryptography==50.0.0"
 
       - name: Write the minimal repro script
         run: |
