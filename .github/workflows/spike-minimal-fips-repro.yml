@@ -9,22 +9,80 @@ jobs:
   repro:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: spike-minimal-fips-repro
     steps:
-      - uses: actions/checkout@v4
-      - name: Build (once)
-        run: docker compose build
-      - name: Run via docker compose 20x fresh (db running concurrently)
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential perl curl python3-venv libpq-dev
+
+      - name: Build the pinned OpenSSL FIPS provider (same version tap uses)
+        run: |
+          curl -fsSL -o openssl.tar.gz \
+            https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar xzf openssl.tar.gz
+          cd openssl-3.0.22
+          ./Configure enable-fips
+          make -j"$(nproc)"
+          sudo make install_fips
+
+      - name: Activate fips+base, fips=yes globally (system OpenSSL, nothing Wolfi-specific)
+        run: |
+          openssl version -a
+          sudo openssl fipsinstall -out /tmp/fipsmodule.cnf -module /usr/local/lib/ossl-modules/fips.so
+          printf '%s\n' \
+            'config_diagnostics = 1' \
+            'openssl_conf = openssl_init' \
+            '' \
+            '.include /tmp/fipsmodule.cnf' \
+            '' \
+            '[openssl_init]' \
+            'providers = provider_sect' \
+            'alg_section = algorithm_sect' \
+            '' \
+            '[provider_sect]' \
+            'fips = fips_sect' \
+            'base = base_sect' \
+            '' \
+            '[base_sect]' \
+            'activate = 1' \
+            '' \
+            '[algorithm_sect]' \
+            'default_properties = fips=yes' \
+            | sudo tee /tmp/openssl-fips.cnf
+          echo "OPENSSL_CONF=/tmp/openssl-fips.cnf" >> "$GITHUB_ENV"
+          echo "OPENSSL_MODULES=/usr/local/lib/ossl-modules" >> "$GITHUB_ENV"
+
+      - name: Confirm the FIPS provider is active
+        run: openssl list -providers -verbose
+
+      - name: Install cryptography from source against the system OpenSSL
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --no-binary cryptography "cryptography==50.0.0"
+
+      - name: Write the minimal repro script
+        run: |
+          cat > /tmp/repro.py <<'PYEOF'
+          from cryptography.hazmat.primitives import hashes
+          from cryptography.hazmat.primitives.asymmetric import ec
+
+          key = ec.generate_private_key(ec.SECP256R1())
+          signature = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
+          key.public_key().verify(signature, b"assertion", ec.ECDSA(hashes.SHA256()))
+          print("cryptography EC keygen+sign+verify: OK")
+
+          import _hashlib
+          digest = _hashlib.new("sha256", b"probe")
+          digest.hexdigest()
+          print("plain _hashlib sha256 fetch: OK, module =", type(digest).__module__)
+          PYEOF
+
+      - name: Run it, 20x fresh, no Docker, no Wolfi, no tap -- just Python
         run: |
           fail=0
           for i in $(seq 1 20); do
             echo "=== attempt $i ==="
-            if ! docker compose up --abort-on-container-exit --exit-code-from web; then
+            if ! /tmp/venv/bin/python3 /tmp/repro.py; then
               fail=$((fail+1))
             fi
-            docker compose down -v
           done
           echo "=== $fail/20 attempts failed ==="
           if [ "$fail" -gt 0 ]; then exit 1; fi
