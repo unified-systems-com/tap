@@ -85,7 +85,14 @@ jobs:
             done
             if [ "$ok" != 1 ]; then
               echo "=== [$PROJECT] FAILED (never became healthy / aborted) ==="
+              echo "--- docker compose ps ---"
+              docker compose --env-file .env ps -a
+              echo "--- web logs ---"
               docker compose --env-file .env logs web | tail -200
+              echo "--- db logs ---"
+              docker compose --env-file .env logs db | tail -100
+              echo "--- dmesg tail (OOM-killer check) ---"
+              sudo dmesg 2>/dev/null | tail -50
             fi
             echo "=== [$PROJECT] tearing down ==="
             docker compose --env-file .env down -v --remove-orphans
@@ -96,10 +103,20 @@ jobs:
 
       - name: Sanity check -- one full stack, confirm it boots healthy (matching the real gate's normal green outcome)
         run: |
+          set +e
           /tmp/boot-one-stack.sh sanity 18000 15432 /tmp/sanity.log
           status=$?
+          set -e
           cat /tmp/sanity.log
           exit $status
+
+      - name: Upload sanity log (always, so a failure here is never lost to runner teardown)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanity-log
+          path: /tmp/sanity.log
+          if-no-files-found: ignore
 
       - name: Write the multi-stack concurrency launcher
         run: |
@@ -108,7 +125,8 @@ jobs:
           set -u
           ROUNDS="${1:-8}"
           STACKS="${2:-6}"
-          OUTDIR="$(mktemp -d)"
+          OUTDIR="/tmp/stack-logs"
+          mkdir -p "${OUTDIR}"
           echo "logs: ${OUTDIR}"
           total_fail=0
           total_launches=0
@@ -149,3 +167,11 @@ jobs:
       - name: Run it -- 8 rounds x 6 simultaneous full compose stacks (48 real cold-boot stack boots)
         timeout-minutes: 40
         run: /tmp/run-stacks.sh 8 6
+
+      - name: Upload stack logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-logs
+          path: /tmp/stack-logs
+          if-no-files-found: ignore
