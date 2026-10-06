@@ -1,0 +1,97 @@
+name: spike concurrent repro real image amd64
+
+on:
+  push:
+    branches:
+      - spike/concurrent-repro-real-amd64
+
+jobs:
+  # The exact same container-concurrency test as the local run, but on REAL x86_64 hardware
+  # instead of a local Apple Silicon (aarch64) Docker Desktop VM -- the local run (240/240
+  # clean) was caught, after the fact, to have built and run entirely on arm64, while the
+  # original tap#933 failure was observed on GitHub Actions ubuntu-latest (x86_64) runners.
+  # OpenSSL's FIPS provider and the suspected lock-free method-store hashtable path both have
+  # architecture-specific code (AES-NI/AVX fast paths on x86_64 vs ARM crypto extensions on
+  # aarch64), so a clean result on the wrong architecture is not evidence of anything. This
+  # repeats the identical test -- build the REAL tap-web image at the exact commit
+  # (1440c383) that first pinned openssl-4.0 explicitly and reproduced tap#933/#931 in CI,
+  # then launch many real containers simultaneously for several rounds, each running the
+  # REAL docker/entrypoint.sh boot sequence (cache-seed, uv sync, FIPS self-check) -- on
+  # native x86_64, this time.
+  repro-concurrent-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm native architecture (must be x86_64, not emulated)
+        run: |
+          uname -m
+          docker version --format '{{.Server.Arch}}'
+
+      - name: Build the real tap-web image at this exact commit (FIPS on, openssl-4.0 pinned explicitly -- the original tap#933 state)
+        run: |
+          docker build --progress=plain --target final --build-arg TAP_FIPS=1 \
+            -t tap-badpins-repro:1440c383-amd64 .
+          docker inspect tap-badpins-repro:1440c383-amd64 --format '{{.Architecture}}/{{.Os}}'
+
+      - name: Write the self-check-only script -- the real docker/entrypoint.sh, verbatim, through the FIPS self-check only (no DB-dependent steps)
+        run: |
+          sed -n '1,177p' docker/entrypoint.sh > /tmp/self-check-only.sh
+          echo 'echo "ALL_CHECKS_OK (pid $$)"' >> /tmp/self-check-only.sh
+          diff <(sed -n '1,177p' docker/entrypoint.sh) <(sed -n '1,177p' /tmp/self-check-only.sh) && echo "verbatim match confirmed"
+
+      - name: Sanity check -- one container, confirm it boots and the self-check runs (expect PASS, matching the local single-container result)
+        run: |
+          docker run --rm -e TAP_FIPS_MODE=1 \
+            -v /tmp/self-check-only.sh:/tmp/self-check-only.sh:ro \
+            tap-badpins-repro:1440c383-amd64 bash /tmp/self-check-only.sh
+
+      - name: Write the concurrency launcher -- many real containers, launched simultaneously, several rounds
+        run: |
+          cat > /tmp/run-concurrent-tap.sh <<'SHEOF'
+          #!/usr/bin/env bash
+          set -u
+          IMAGE="$1"
+          ROUNDS="${2:-15}"
+          PROCS="${3:-12}"
+          OUTDIR="$(mktemp -d)"
+          echo "logs: ${OUTDIR}"
+          total_fail=0
+          total_launches=0
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "=== round ${round}/${ROUNDS}: launching ${PROCS} real tap-web containers simultaneously ==="
+            pids=()
+            for p in $(seq 1 "$PROCS"); do
+              docker run --rm --name "tap-repro-${round}-${p}" \
+                -e TAP_FIPS_MODE=1 \
+                -v /tmp/self-check-only.sh:/tmp/self-check-only.sh:ro \
+                "$IMAGE" bash /tmp/self-check-only.sh \
+                > "${OUTDIR}/out-${round}-${p}.log" 2>&1 &
+              pids+=($!)
+            done
+            round_fail=0
+            for idx in "${!pids[@]}"; do
+              p=$((idx + 1))
+              if ! wait "${pids[$idx]}"; then
+                round_fail=$((round_fail + 1))
+                echo "--- round ${round} container ${p} FAILED, log follows ---"
+                cat "${OUTDIR}/out-${round}-${p}.log"
+                echo "--- end log ---"
+              fi
+            done
+            total_fail=$((total_fail + round_fail))
+            total_launches=$((total_launches + PROCS))
+            echo "=== round ${round} done: ${round_fail}/${PROCS} containers failed ==="
+          done
+          echo "=== TOTAL: ${total_fail} failed container-runs out of ${total_launches} launches ==="
+          echo "logs kept at: ${OUTDIR}"
+          if [ "${total_fail}" -gt 0 ]; then
+            exit 1
+          fi
+          SHEOF
+          chmod +x /tmp/run-concurrent-tap.sh
+
+      - name: Run it -- 15 rounds x 12 simultaneous real containers (180 real boots) on native x86_64
+        timeout-minutes: 30
+        run: /tmp/run-concurrent-tap.sh tap-badpins-repro:1440c383-amd64 15 12
