@@ -76,10 +76,15 @@ tap_clear_if_other_image() {
   [[ -f "$manifest" ]] || return 0
   image_id="$(sha256sum "$manifest" | cut -d' ' -f1)"
   stamp="$(cat "$cache/.tap-image-id" 2>/dev/null || true)"
-  if [[ -n "$(ls -A "$cache" 2>/dev/null)" && "$stamp" != "$image_id" ]]; then
-    echo "==> uv cache and venv were built for a different image (stamp ${stamp:-none}, this image ${image_id:0:12}); clearing both..." >&2
+  # Any stamp other than this image's, an empty cache included, means the venv cannot be
+  # vouched for: a venv volume can outlive a cache volume (`docker volume rm` of one, a
+  # compose edit), and `uv sync` would keep its old cryptography against an empty cache too.
+  if [[ "$stamp" != "$image_id" ]]; then
+    if [[ -n "$(ls -A "$cache" 2>/dev/null)" || -n "$(ls -A "$venv" 2>/dev/null)" ]]; then
+      echo "==> uv cache and venv are not stamped for this image (stamp ${stamp:-none}, this image ${image_id:0:12}); clearing both..." >&2
+    fi
     # Contents only: both are volume mount points and cannot be removed themselves.
-    find "$cache" -mindepth 1 -delete
+    if [[ -d "$cache" ]]; then find "$cache" -mindepth 1 -delete; fi
     if [[ -d "$venv" ]]; then find "$venv" -mindepth 1 -delete; fi
   fi
   printf '%s\n' "$image_id"

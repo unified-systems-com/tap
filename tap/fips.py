@@ -161,7 +161,12 @@ def openssl_cores(maps_text: str) -> set[str]:
     cores = set()
     for line in maps_text.splitlines():
         fields = line.split()
-        if len(fields) >= 6 and "/libcrypto.so" in fields[-1]:
+        if len(fields) < 6:
+            continue
+        name = fields[-1].rsplit("/", 1)[-1]
+        # The system's `libcrypto.so.3`, and the hashed names a wheel bundles its own copy
+        # under (`libcrypto-1a2b3c.so.3`, auditwheel's convention): either is a core.
+        if name.startswith(("libcrypto.so", "libcrypto-")) and ".so" in name:
             cores.add(fields[-1])
     return cores
 
@@ -193,8 +198,12 @@ def _assert_single_openssl_core(maps_text: str | None = None) -> None:
         try:
             with open("/proc/self/maps", encoding="utf-8") as handle:
                 maps_text = handle.read()
-        except OSError:
-            return  # no /proc (a non-Linux host running the tests); the image always has it.
+        except OSError as exc:
+            # Fail closed: this runs only under a FIPS declaration, and an unreadable maps file
+            # would turn the check into a pass. The image always has /proc; tests pass the text in.
+            raise FipsSelfCheckError(
+                f"cannot read /proc/self/maps ({exc}), so a second OpenSSL core cannot be ruled out."
+            ) from exc
     cores = openssl_cores(maps_text)
     if len(cores) > 1:
         raise FipsSelfCheckError(

@@ -93,12 +93,13 @@ def test_a_cache_stamped_by_this_image_is_kept(tmp_path: Path) -> None:
     assert (tmp_path / "venv" / "lib" / "cryptography.so").exists()
 
 
-def test_an_empty_cache_is_left_for_the_seed_step(tmp_path: Path) -> None:
-    """A fresh volume has nothing to distrust; the seed step fills and stamps it."""
+def test_a_stale_venv_is_cleared_even_when_the_cache_is_empty(tmp_path: Path) -> None:
+    """A venv volume can outlive its cache volume; with nothing stamped, its packages are unvouched."""
     manifest = _setup(tmp_path, stamp=None, cached=False)
     _run(tmp_path, manifest)
 
-    assert (tmp_path / "venv" / "lib" / "cryptography.so").exists()
+    assert list((tmp_path / "venv").iterdir()) == []
+    assert (tmp_path / "cache").is_dir()
 
 
 def test_an_image_without_a_manifest_wipes_nothing(tmp_path: Path) -> None:

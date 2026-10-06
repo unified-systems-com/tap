@@ -202,7 +202,7 @@ L17), and libpq linked to a different OpenSSL than Python (tap#933's libpq-18).
 So `tap.fips` checks the outcome rather than any one cause. Under `TAP_FIPS_MODE=1`, before any
 crypto runs, it imports every library that does crypto in the process (`_hashlib`,
 `cryptography`'s bindings, `psycopg`; importing maps them without exercising them), reads
-`/proc/self/maps`, and emits `TAP-ABORT` naming every libcrypto path if there is more than one.
+`/proc/self/maps`, and emits `TAP-ABORT` naming every libcrypto path if there is more than one. A path counts by its file name: the system's `libcrypto.so.N` and the hashed `libcrypto-<hash>.so.N` a wheel bundles its own copy under (auditwheel's convention) are both cores. An unreadable maps file is a refusal too, never a pass.
 It runs first because, in the two-core case, the first positive control is exactly what dies, with
 an error that points nowhere near the cause.
 
@@ -212,6 +212,7 @@ an error that points nowhere near the cause.
 | --- | --- | :---: | --- | --- |
 | req-fips-single-openssl-core-1 | Two cores refuse to boot | Implemented | With two distinct libcrypto paths mapped, the self-check raises naming both, and the entrypoint emits `TAP-ABORT`. | `tap/tests/test_fips.py` |
 | req-fips-single-openssl-core-2 | Checked before any crypto | Implemented | The check runs before the first positive control; with two cores, no crypto operation is attempted. | |
+| req-fips-single-openssl-core-4 | Bundled copies and unreadable maps refuse | Implemented | A `libcrypto-<hash>.so.N` bundled by a wheel counts as a core; an unreadable `/proc/self/maps` raises rather than passing. | Review of tap#977 |
 | req-fips-single-openssl-core-3 | One library, one core | Implemented | Several mapped segments of one library count as one core, so a healthy process passes. | Live check: one core in all five running dev stacks, 2026-10-06 |
 
 ### Operator Waivers

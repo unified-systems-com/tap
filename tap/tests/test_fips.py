@@ -93,6 +93,10 @@ _ONE_CORE = (
     "7f0000700000-7f0000800000 rw-p 00000000 00:00 0 \n"
 )
 _TWO_CORES = _ONE_CORE + "7f0000900000-7f0000a00000 r-xp 00000000 00:2a 789 /usr/lib/libcrypto.so.3\n"
+_BUNDLED = _ONE_CORE + (
+    "7f0000900000-7f0000a00000 r-xp 00000000 00:2a 790 "
+    "/app/.venv/lib/python3.14/site-packages/cryptography.libs/libcrypto-1a2b3c4d.so.3\n"
+)
 
 
 @pytest.mark.spec("req-fips-single-openssl-core-3")
@@ -128,3 +132,29 @@ def test_the_core_check_runs_before_any_crypto(monkeypatch) -> None:
     with pytest.raises(fips.FipsSelfCheckError, match="two cores"):
         fips.assert_declared_mode()
     assert calls == ["cores"]
+
+
+@pytest.mark.spec("req-fips-single-openssl-core-4")
+def test_a_wheel_bundling_its_own_openssl_is_a_second_core() -> None:
+    """auditwheel names a bundled copy `libcrypto-<hash>.so.N`; the L17 road must be caught too."""
+    cores = fips.openssl_cores(_BUNDLED)
+    assert len(cores) == 2
+    with pytest.raises(fips.FipsSelfCheckError, match="libcrypto-1a2b3c4d"):
+        fips._assert_single_openssl_core(_BUNDLED)
+
+
+@pytest.mark.spec("req-fips-single-openssl-core-4")
+def test_an_unreadable_maps_file_fails_closed(monkeypatch) -> None:
+    """Under a FIPS declaration, not being able to look is not a pass."""
+    import builtins
+
+    real_open = builtins.open
+
+    def _deny(path, *args, **kwargs):
+        if path == "/proc/self/maps":
+            raise PermissionError("denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", _deny)
+    with pytest.raises(fips.FipsSelfCheckError, match="cannot read /proc/self/maps"):
+        fips._assert_single_openssl_core()
