@@ -62,6 +62,7 @@ jobs:
           for i in $(seq 1 30); do
             echo "=== attempt ${i}/30 ==="
             if ! docker run --rm \
+              --user "$(id -u):0" \
               -e TAP_FIPS_MODE=1 \
               -v /tmp/self-check-only.sh:/tmp/self-check-only.sh:ro \
               -v "${{ runner.temp }}/uv-cache:/home/nonroot/.cache/uv" \
