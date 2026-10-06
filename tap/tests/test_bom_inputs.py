@@ -21,7 +21,6 @@ from tap.bom_inputs import (
     BOM_EXCLUSIONS,
     BOM_INPUTS,
     RESOLUTION_INPUTS,
-    hashfiles_expression,
     is_bom_input,
     record_source_paths,
 )
@@ -240,18 +239,13 @@ def test_real_records_editable_paths_resolve() -> None:
     )
 
 
-_HASHFILES = re.compile(r"hashFiles\(([^)]*)\)")
-
-
-def test_workflow_cache_keys_hash_exactly_the_declared_resolution_inputs() -> None:
-    """The generated fragment, checked: every uv-cache key in the workflows hashes RESOLUTION_INPUTS."""
-    expected = hashfiles_expression()
-    seen = 0
+def test_no_workflow_restores_a_uv_cache_across_runs() -> None:
+    """tap#933: a uv cache keyed on the lockfile alone outlived the image and served a wheel
+    compiled against a different OpenSSL. Each lane now boots on a fresh volume seeded from its
+    own image; this fails if a cross-run uv cache comes back."""
+    offenders = []
     for wf in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
-        for line in wf.read_text().splitlines():
-            if "uv-ci-" not in line:
-                continue
-            for args in _HASHFILES.findall(line):
-                seen += 1
-                assert args.strip() == expected, f"{wf.name}: hashFiles({args}) != hashFiles({expected})"
-    assert seen >= 3, "expected the uv-cache keys in core-ci (line + cold-boot) and api-fuzz"
+        text = wf.read_text()
+        if "uv-ci-" in text or "TAP_CI_UV_CACHE" in text or re.search(r"path:.*uv-cache", text):
+            offenders.append(wf.name)
+    assert offenders == [], f"workflows restoring a uv cache across runs: {offenders}"
