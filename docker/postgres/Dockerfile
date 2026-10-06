@@ -132,6 +132,12 @@ FROM base AS fips-0
 ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
+# TAP_FIPS_ACTIVATION is meaningless when FIPS is off; see the web Dockerfile's matching
+# aliases for why these exist (keeps the final stage's selection a single-level ARG
+# template, which is what test_container_healthcheck.py's ancestry walker resolves).
+FROM fips-0 AS fips-0-legacy
+FROM fips-0 AS fips-0-system
+
 # ============================================================================
 # fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
@@ -175,6 +181,8 @@ RUN printf '%s\n' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+ENV TAP_FIPS_MODE=1
+LABEL org.tap.fips="true"
 
 # ============================================================================
 # fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
@@ -185,15 +193,11 @@ FROM fips-1-base AS fips-1-system
 COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
 RUN sh /opt/ossl/activate-fips-system-wide.sh
 
-# ============================================================================
-# fips-1 — select the activation mechanism by TAP_FIPS_ACTIVATION (default "system")
-# ============================================================================
-FROM fips-1-${TAP_FIPS_ACTIVATION} AS fips-1
-
 ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
 # ============================================================================
-# final — select the variant by the build flag (default fips-1)
+# final — select the variant by TAP_FIPS and (when FIPS is on) TAP_FIPS_ACTIVATION, in
+# ONE templated FROM (see the fips-0-legacy/fips-0-system aliases above for why).
 # ============================================================================
-FROM fips-${TAP_FIPS} AS final
+FROM fips-${TAP_FIPS}-${TAP_FIPS_ACTIVATION} AS final

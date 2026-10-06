@@ -504,6 +504,14 @@ FROM app AS fips-0
 ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
+# TAP_FIPS_ACTIVATION is meaningless when FIPS is off; these are trivial aliases so the
+# final stage below can select on both ARGs with ONE templated FROM (test_container_
+# healthcheck.py's ancestry walker resolves exactly one level of ARG templating, so a
+# second one -- e.g. a reunifying `fips-1` stage selected by TAP_FIPS_ACTIVATION -- is
+# invisible to it; this keeps the whole selection a single-level template instead).
+FROM fips-0 AS fips-0-legacy
+FROM fips-0 AS fips-0-system
+
 # ============================================================================
 # fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
@@ -559,6 +567,13 @@ RUN printf '%s\n' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
 
+# Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
+ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+
+# Declare the mode machine-legibly (D14); the boot self-check asserts it is actually enforced.
+ENV TAP_FIPS_MODE=1
+LABEL org.tap.fips="true"
+
 # ============================================================================
 # fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
 # /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level default (no OPENSSL_CONF
@@ -573,22 +588,15 @@ FROM fips-1-base AS fips-1-system
 COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
 RUN sh /opt/ossl/activate-fips-system-wide.sh
 
-# ============================================================================
-# fips-1 — select the activation mechanism by TAP_FIPS_ACTIVATION (default "system")
-# ============================================================================
-FROM fips-1-${TAP_FIPS_ACTIVATION} AS fips-1
-
-# Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
-
-# Declare the mode machine-legibly (D14); the boot self-check asserts it is actually enforced.
 ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
 # ============================================================================
-# final — select the variant by the build flag (default fips-1)
+# final — select the variant by TAP_FIPS and (when FIPS is on) TAP_FIPS_ACTIVATION, in
+# ONE templated FROM (see the fips-0-legacy/fips-0-system aliases above for why).
 # ============================================================================
-FROM fips-${TAP_FIPS} AS final
+FROM fips-${TAP_FIPS}-${TAP_FIPS_ACTIVATION} AS final
 
 # The serving stage runs unprivileged (tap#754). Declared HERE and not in `app`, because
 # the fips-1 stage in between runs `openssl fipsinstall`, which writes /etc/ssl — a
