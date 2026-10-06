@@ -733,6 +733,31 @@ digest fetches, not yet traced to a specific patch or upstream change). Both are
 and the second is reproducible enough, to be worth raising with Wolfi/Chainguard directly rather
 than left to the next person who hits either one cold.
 
+**2026-10-06: correction to the "two cores" framing, found while chasing one more variable (closed,
+no new lead).** Tried to recover the original run's exact `uv` wheel cache to test whether a
+`cryptography` extension compiled against a *different* OpenSSL than the one it runs against could
+explain either failure — GitHub's `actions/cache` entry for the original run's exact key
+(confirmed from its own log) no longer exists (a real restore attempt returned "Cache not found"
+even on the broadest fallback prefix), so the literal bytes are gone and that specific comparison
+can't be made. Substituted the closest buildable test: extracted the `cryptography` wheel the
+shipped (`openssl-3.6`) image compiles for itself — confirmed linked against `libcrypto.so.3`/
+`libssl.so.3` — and force-installed it into the `openssl-4.0`-pinned image in place of its own
+correctly-matched build. It imported and ran a full EC keygen with no error of any kind. While
+investigating why `.so.3` was even loadable on an "`openssl-4.0`-pinned" image, found that
+`libcrypto3-3.6.4-r8`/`libssl3-3.6.4-r8` (present because `apk-tools` and `libldap` still require
+the old SONAME) is **not** a second, independent OpenSSL build — its own apk metadata declares it
+depends on `openssl-4.0-libcrypto`, i.e. it is Chainguard's own compatibility shim exposing the
+legacy `.so.3` name while forwarding to the same `openssl-4.0` engine underneath. So an
+`openssl-4.0`-pinned image is not literally running two separate cores side by side the way the
+"two cores in one process" framing above (and tap#931's own title) implies for this case — it is
+one core, exposed under two SONAMEs for backward compatibility. (The *psycopg*/`libpq-18` SCRAM
+failure earlier in this record is a different, confirmed-genuine instance of two real, independent
+cores — `libpq-18` linking the real `.so.4` while Python/`cryptography` were still on a real,
+independently-built `.so.3`; that finding stands unchanged.) This correction and the cross-built
+wheel result are both negative evidence, not positive leads — recorded so the next person does not
+re-pursue either. Closed, by operator decision, with the original DRBG failure's mechanism
+unresolved.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |
