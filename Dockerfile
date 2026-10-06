@@ -577,11 +577,12 @@ LABEL org.tap.fips="true"
 # ============================================================================
 # fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
 # /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level default (no OPENSSL_CONF
-# needed). The TLS version floor (TLSv1.2-1.3) and the ca.cnf include are kept; the
-# post-quantum/hybrid/MLDSA policy and the legacy-provider config are deleted, not
-# preserved -- see docker/activate-fips-system-wide.sh for why (a hand-maintained
-# cipher-suite allowlist on top of the provider boundary is redundant with it, and the
-# unmodified policy broke every outbound TLS connection outright when tested).
+# needed). The TLS version floor, the stock AEAD cipher suites, and the ca.cnf include
+# are kept; only the post-quantum/hybrid/MLDSA directives and the legacy-provider config
+# are deleted -- see docker/activate-fips-system-wide.sh for exactly what and why
+# (verified directly, including a real cipher-suite-list regression an earlier version
+# of this script had and review caught: deleting the suite list too, not just the
+# PQC/MLDSA directives, let TLS 1.2 fall back to legacy static-RSA/SHA-1 suites).
 # ============================================================================
 FROM fips-1-base AS fips-1-system
 
