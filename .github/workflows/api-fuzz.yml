@@ -97,6 +97,16 @@ jobs:
           restore-keys: |
             uv-ci-core_dev-
             uv-ci-
+      # See the matching step in core-ci.yml: on a cache MISS, actions/cache leaves the
+      # destination path nonexistent, Docker then auto-creates the bind-mount target
+      # root-owned on first container use, and the nonroot web container's own "Seeding uv
+      # cache from image" step fails closed with Permission denied on every file, looping
+      # until the health-check timeout. Pre-create + chown so cache hit and miss both start
+      # from the same state.
+      - name: Ensure the uv-cache dir exists and is runner-owned before the container mounts it
+        run: |
+          mkdir -p "${{ runner.temp }}/uv-cache"
+          sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache"
       - name: Boot the core_dev profile
         run: |
           docker compose --env-file .env up -d
