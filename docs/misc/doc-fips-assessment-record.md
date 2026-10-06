@@ -755,8 +755,85 @@ failure earlier in this record is a different, confirmed-genuine instance of two
 cores — `libpq-18` linking the real `.so.4` while Python/`cryptography` were still on a real,
 independently-built `.so.3`; that finding stands unchanged.) This correction and the cross-built
 wheel result are both negative evidence, not positive leads — recorded so the next person does not
-re-pursue either. Closed, by operator decision, with the original DRBG failure's mechanism
-unresolved.
+re-pursue either.
+
+**2026-10-06, reopened and resolved: the mechanism above is wrong in one respect — the cache WAS
+the variable, just not recoverable the way this entry tried to recover it.** A separate session
+(bom-bom) picked the thread back up independently and found what this entry's own uv-cache spike
+missed: that spike's 30/30-clean result never actually tested a stale wheel, because its cache was
+always a genuine miss (confirmed in its own log: "Cache not found for input keys..."), which routes
+through the SAME in-image reseed path every other repro in this record used. The real variable is
+`core-ci.yml`'s `actions/cache` key itself — `hashFiles('uv.lock', 'pyproject.toml', ...)`, nothing
+about the Dockerfile or the image's system OpenSSL — combined with broad fallback `restore-keys`
+and branch-scoped storage. On the original failing run that cache had a full exact hit (confirmed
+in its own log: "Cache hit for: uv-ci-core_ci-7b57402a...", 310MB restored), so the entrypoint's
+own in-image, manifest-verified seed step never ran at all; `uv sync` installed directly from
+whatever the actions-cache already contained.
+
+Tested directly, not assumed: the apk-metadata provenance trick used earlier in this entry (build
+commit + build timestamp per package, `/lib/apk/db/installed`) was first turned on `libcrypto3`
+itself to check whether it was a real independent OpenSSL 3.6 build or (as first guessed, and
+initially reported as such — a real error, corrected below) a compatibility shim forwarding to
+`openssl-4.0-libcrypto`. Direct binary inspection (`readelf -d` NEEDED entries, file size, `strings`
+version banners, `nm -D --defined-only` symbol counts) settled it: `libcrypto.so.3` is a genuine,
+independent, full OpenSSL 3.6.4 build — 5.3MB, ~5800 real symbols, no dependency on `.so.4` at the
+binary level at all. The apk package's own `D:` dependency line naming `openssl-4.0-libcrypto` is a
+*packaging* relationship (shared config/legacy-provider wiring), not evidence of symbol forwarding
+— an assumption this record itself got wrong on the first pass and is recording the correction for.
+
+With a genuine second core confirmed reachable, the reproduction became direct: force-installed a
+`cryptography` wheel actually compiled against the real `openssl-3.6` line into the broken
+(`openssl-4.0`-pinned) image's venv, then ran the *exact* call order `tap.fips.assert_declared_mode()`
+runs for `TAP_FIPS_MODE=1` — `hashlib.sha256()` then `_hashlib.new("md5", ...)` (both via CPython's
+own `_hashlib`, linked to the system's real `.so.4`), immediately followed by `cryptography`'s EC
+P-256 keygen+sign+verify (now forced onto the real, separate `.so.3` via the stale wheel). First
+attempt, deterministic:
+
+```
+step 1 (hashlib.sha256 via _hashlib): OK
+step 2 (md5 refused): OK (UnsupportedDigestmodError)
+step 3 FAILED: InternalError: ... error:0308010C:digital envelope routines:inner_evp_generic_fetch:
+unsupported:crypto/evp/evp_fetch.c:376:Global default library context, Algorithm (CTR-DRBG : 108),
+Properties (<null>), error:12000090:random number generator:rand_new_drbg:unable to fetch drbg:
+crypto/rand/rand_lib.c:664:
+```
+
+Character-for-character the same error as the original 2026-10-03 failure, including the exact
+crash point (the first statement of the `cryptography`-based positive control, reached only after
+both `_hashlib` checks already passed — matching the original traceback precisely). **This is the
+confirmed root cause, not a candidate:** two genuinely independent OpenSSL cores (a real 3.6.4 and
+a real 4.0.2) in one process, triggered by a CI wheel cache whose key has no awareness of which
+image it is feeding. It explains everything the earlier entries above could not: why the original
+run failed on all three consecutive boot attempts (the same stale cache served every restart) and
+why roughly 450 reproduction attempts since — including against the provably bit-identical apk
+package — never reproduced it even once (every rebuild got a freshly, correctly matched wheel; none
+ever hit a non-empty, stale actions-cache restore).
+
+**This PR's own fix (`fecbbd13`) worked, but partly for the wrong reason.** Pinning the whole
+OpenSSL-touching closure back to the `openssl-3.6` line also happens to re-align the system library
+with whatever 3.6-built wheels might still be cached — a different, accidental reason the symptom
+went away, not proof the cache-key gap is closed. A future pin combination that moves the system
+OpenSSL again, without also addressing the cache key, could reopen this exact failure mode.
+
+Follow-on work (George's ruling, 2026-10-06, folded into closing tap#933 so the investigation closes
+with it, not just the symptom):
+- **Hands-on, in progress (bom-bom):** delete the CI `actions/cache` uv-cache mechanism rather than
+  re-key it; add an image-identity stamp (the seed manifest hash is the natural choice) that the
+  entrypoint checks at boot, wiping both the uv cache and `/app/.venv` on mismatch before reseeding
+  — covers CI, dev stacks, and self-hosters upgrading the image, not just this one pipeline; add a
+  boot-time guard in `tap.fips` that reads `/proc/self/maps` after the self-check's imports and
+  `TAP-ABORT`s if more than one distinct `libcrypto`/`libssl` is mapped, naming both paths — catches
+  this failure mode plus L17 (a bundled OpenSSL) and the `libpq-18` class in one place.
+- **Spec-only, no code yet (tap#975 / PR#976):** build the Python dependency closure into the image
+  at build time instead of boot time, for every artifact that is supposed to be immutable — closes
+  this class of drift at the root (what ships is what was tested, unconditionally) rather than
+  hardening the boot-time path against it. Has to explicitly address why this is not simply
+  reverting an earlier decision (`req-cicd-build-once-artifact`'s "a cp-seeded venv proved uv-hostile
+  on the CI runner", 2026-08-09) rather than repeating it.
+- **Separate, already verified end-to-end (PR#974):** activate FIPS by editing Wolfi's stock
+  `/etc/ssl/openssl.cnf` in place instead of displacing it via `OPENSSL_CONF` — restores the RFC 9325
+  TLS hardening the current override mechanism silently discards, orthogonal to the cache-key bug
+  above but found in the same investigation.
 
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 

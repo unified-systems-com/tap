@@ -71,12 +71,19 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af
 # including the from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
 # the cause of the original FIPS self-check failure. The lingering `libssl3`/`libcrypto3` (.so.3)
 # belong to `apk-tools` itself regardless of any of this, and never share a process with postgres.
+#
+# `krb5-libs` pinned for the same reason as the web image (see Dockerfile there for the full
+# writeup): `libpq.so.5` links GSSAPI/Kerberos support unconditionally, and `krb5-libs`'s own
+# crypto backend (`libk5crypto.so.3`) floats to `openssl-4.0` independently of `libpq-18`'s own
+# pin. Pinning for the same consistency reason as `libpq-18` above, not a confirmed live hazard
+# in this specific image (no Python process here to poison), one revision before its own cutover.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     postgresql-16 \
     postgresql-16-client \
     postgresql-16-oci-entrypoint \
     libpq-18=18.6-r4 \
+    krb5-libs=1.22.2-r4 \
     gosu \
     openssl-3.6=3.6.5-r1 \
     bash \
