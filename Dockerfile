@@ -47,6 +47,15 @@
 # TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
 ARG TAP_FIPS=1
 
+# How FIPS is activated, independent of whether it is on at all (TAP_FIPS above). DEFAULT
+# "system": edits Wolfi's own stock /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level
+# default and the file's own RFC 9325 TLS hardening policy ([ssl_module] -> crypto_policy) is
+# preserved rather than silently discarded. "legacy" is the original mechanism (a separate
+# generated file + OPENSSL_CONF override) kept as an instant rollback with no code change if the
+# system-wide approach surfaces a problem the legacy one did not have. See
+# docker/activate-fips-system-wide.sh and doc-fips-assessment-record.md for the decision record.
+ARG TAP_FIPS_ACTIVATION=system
+
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
 # OpenSSL FIPS compile) on the first CI build of each day — and silently changed the FIPS
@@ -496,9 +505,9 @@ ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
 # ============================================================================
-# fips-1 — FIPS variant (default, TAP_FIPS=1)
+# fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
-FROM app AS fips-1
+FROM app AS fips-1-base
 
 # Drop our pinned provider into the base's ossl-modules dir.
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
@@ -507,6 +516,16 @@ COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modul
 # exact bytes). It MUST run in the final image (D5); it also proves binary-compat, since the
 # base's modern `openssl` loads + self-tests our pinned module (D4).
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+
+# ============================================================================
+# fips-1-legacy — the ORIGINAL activation mechanism: a separate generated file + an
+# OPENSSL_CONF override. Kept as TAP_FIPS_ACTIVATION=legacy, an instant rollback with no
+# code change, in case the system-wide mechanism below surfaces a problem this one did not
+# have. See docs/misc/doc-fips-assessment-record.md for why "system" is now the default:
+# this mechanism silently discards Wolfi's own RFC 9325 TLS hardening policy (its own
+# [openssl_init] never sets ssl_conf), because it REPLACES openssl.cnf instead of editing it.
+# ============================================================================
+FROM fips-1-base AS fips-1-legacy
 
 # openssl.cnf activating the strict `fips` + `base` provider set with fips=yes globally.
 # ORDER IS LOAD-BEARING (L1): `openssl_conf` must be in the default (pre-section) block. The
@@ -539,6 +558,25 @@ RUN printf '%s\n' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+
+# ============================================================================
+# fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
+# /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level default (no OPENSSL_CONF
+# needed). The TLS version floor (TLSv1.2-1.3) and the ca.cnf include are kept; the
+# post-quantum/hybrid/MLDSA policy and the legacy-provider config are deleted, not
+# preserved -- see docker/activate-fips-system-wide.sh for why (a hand-maintained
+# cipher-suite allowlist on top of the provider boundary is redundant with it, and the
+# unmodified policy broke every outbound TLS connection outright when tested).
+# ============================================================================
+FROM fips-1-base AS fips-1-system
+
+COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+RUN sh /opt/ossl/activate-fips-system-wide.sh
+
+# ============================================================================
+# fips-1 — select the activation mechanism by TAP_FIPS_ACTIVATION (default "system")
+# ============================================================================
+FROM fips-1-${TAP_FIPS_ACTIVATION} AS fips-1
 
 # Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1

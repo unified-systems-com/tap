@@ -22,6 +22,11 @@
 
 ARG TAP_FIPS=1
 
+# How FIPS is activated, independent of whether it is on at all (TAP_FIPS above). See the
+# web Dockerfile's matching ARG and docker/activate-fips-system-wide.sh for the full
+# rationale; both images share the same script and the same decision record (§5.4).
+ARG TAP_FIPS_ACTIVATION=system
+
 # ============================================================================
 # ossl-builder — compile the pinned OpenSSL FIPS provider (fips.so)
 # ============================================================================
@@ -128,15 +133,22 @@ ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
 # ============================================================================
-# fips-1 — FIPS variant (default, TAP_FIPS=1)
+# fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
-FROM base AS fips-1
+FROM base AS fips-1-base
 
 # Drop our pinned provider into the base's ossl-modules dir, then fipsinstall it
 # in-image (self-tests + integrity MAC). Postgres links the SYSTEM libcrypto for TLS +
 # cryptohash, so it inherits the activated provider with no rebuild (§5.4).
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+
+# ============================================================================
+# fips-1-legacy — the ORIGINAL activation mechanism (separate generated file +
+# OPENSSL_CONF). Kept as TAP_FIPS_ACTIVATION=legacy; see the web Dockerfile's matching
+# stage and docs/misc/doc-fips-assessment-record.md for why "system" is now the default.
+# ============================================================================
+FROM fips-1-base AS fips-1-legacy
 
 # Strict fips + base provider set, fips=yes globally. Order is load-bearing (openssl_conf
 # before the .include, else it is swallowed into [fips_sect] and nothing activates — L1);
@@ -163,6 +175,21 @@ RUN printf '%s\n' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+
+# ============================================================================
+# fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
+# /etc/ssl/openssl.cnf in place. See docker/activate-fips-system-wide.sh.
+# ============================================================================
+FROM fips-1-base AS fips-1-system
+
+COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+RUN sh /opt/ossl/activate-fips-system-wide.sh
+
+# ============================================================================
+# fips-1 — select the activation mechanism by TAP_FIPS_ACTIVATION (default "system")
+# ============================================================================
+FROM fips-1-${TAP_FIPS_ACTIVATION} AS fips-1
+
 ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
