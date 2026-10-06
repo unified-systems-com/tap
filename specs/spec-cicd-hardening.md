@@ -480,21 +480,27 @@ Still open under this RID: promoting the *same bytes* through deploy environment
 idea (bake the migrated DB into the image), and product release versioning (semver for the
 app, not just plugins).
 
-**Proposed addendum — the dependency closure itself is not yet part of "the artifact"
-(`req-cicd-build-once-artifact-2`, tap#975).** "Build once" above covers the OS layer,
-FIPS provider, and base packages — every image-build input. The Python dependency
-closure is the one thing still assembled AFTER the image is built: `uv sync
---all-packages` runs in `docker/entrypoint.sh` on every container start, against whatever
-the uv-cache volume (or, in CI, GitHub's `actions/cache`) happens to contain at that
-moment — a cache keyed only on `uv.lock`/`pyproject.toml` content, with no awareness of
-which image (which system OpenSSL, which base digest) it is being synced into. Found
-while closing out tap#933/#931 (`doc-fips-assessment-record.md` L18): a branch-scoped
-cache hit served a `cryptography` wheel `--no-binary`-compiled against a system OpenSSL
-major version the image had since moved off of, producing two independent OpenSSL cores
-in one process — confirmed as the actual root cause, reproduced exactly. CI's green
-checkmark proved that *a* `uv sync` succeeded, not that *the published image's own*
-dependency closure was what got tested — a gap the same shape as every other thing this
-RID already closed for the OS layer.
+### Build The Dependency Closure Into The Artifact
+
+RID: `req-cicd-build-once-artifact-2`
+
+Status: `Proposed`
+
+Trace: `non-python` — Dockerfile, docker/entrypoint.sh, docker-compose.yml, docker-compose.ci.yml
+
+**"Build once" above covers the OS layer, FIPS provider, and base packages — every
+image-build input. The Python dependency closure is the one thing still assembled AFTER
+the image is built.** `uv sync --all-packages` runs in `docker/entrypoint.sh` on every
+container start, against whatever the uv-cache volume (or, in CI, GitHub's
+`actions/cache`) happens to contain at that moment — a cache keyed only on
+`uv.lock`/`pyproject.toml` content, with no awareness of which image (which system
+OpenSSL, which base digest) it is being synced into. Found while closing out tap#933/#931
+(`doc-fips-assessment-record.md` L18): a branch-scoped cache hit served a `cryptography`
+wheel `--no-binary`-compiled against a system OpenSSL major version the image had since
+moved off of, producing two independent OpenSSL cores in one process — confirmed as the
+actual root cause, reproduced exactly. CI's green checkmark proved that *a* `uv sync`
+succeeded, not that *the published image's own* dependency closure was what got tested —
+a gap the same shape as every other thing this RID already closed for the OS layer.
 
 **Proposed:** fold Python dependency installation into the image build for every
 artifact that is supposed to be immutable (the published image, and anything CI boots
@@ -521,6 +527,18 @@ code lands:
   distinction `deps-warm` already avoids today for the opposite reason (it deliberately
   does NOT want its venv to persist). No `cp` of a venv across paths; `uv` creates it once,
   where it will actually run.
+- **That build stage MUST derive from the exact same base-image digest and the exact same
+  OS/OpenSSL packages as the final runtime stage it feeds — enforced, not assumed.** This
+  is the invariant tap#933's own root cause violated, and a spec that fixes where the venv
+  gets created without also fixing what it gets compiled against would let a future
+  Dockerfile refactor reproduce the identical two-cores failure while still technically
+  conforming to every other bullet here (raised in review of PR#976, correctly: creating
+  the venv at the right *path* says nothing about which *libraries* it was linked
+  against). Concretely: the dependency-build stage's `FROM` must resolve to the same
+  stage (or an argument-identical sibling of it) as the runtime stage — never a
+  separately-pinned or separately-dated base — and CI must assert this ancestry the same
+  way `tap/tests/test_container_healthcheck.py` already asserts the `HEALTHCHECK`-owning
+  stage's ancestry for every selectable final target, not merely document it in prose.
 - For the published image and any CI lane that boots from it: do not mount a volume over
   that path at all. The container runs directly against what the image shipped — "build
   once, promote the artifact" now covers the full closure, and CI testing the image tests
