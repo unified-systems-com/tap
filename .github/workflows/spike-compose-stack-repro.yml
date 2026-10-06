@@ -1,0 +1,151 @@
+name: spike compose stack repro
+
+on:
+  push:
+    branches:
+      - spike/compose-stack-repro
+
+jobs:
+  # Every repro so far isolated ONE container running the FIPS self-check in isolation
+  # (docker/entrypoint.sh up through the self-check only, no DB). The original tap#933
+  # failure happened inside the REAL `core_ci cold-boot` gate, which brings up the FULL
+  # docker-compose stack (web + db, real migrations, real health-check polling) via
+  # `docker compose --env-file .env up -d` -- a heavier, more realistic boot than an
+  # isolated container. This spike runs that exact real stack, built from the exact commit
+  # that first reproduced tap#933 (1440c383 -- openssl-4.0 pinned explicitly, confirmed via
+  # apk package provenance metadata to be the BIT-IDENTICAL artifact the original failure
+  # used: same build commit, same build timestamp 2026-10-02T17:32:56Z, on native x86_64),
+  # many times, with several stacks running simultaneously per round for real host-level
+  # contention across full stacks (not just isolated containers).
+  repro-compose-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      TAP_BOOT_PROFILE: core_ci
+      TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm native architecture
+        run: uname -m
+
+      - name: Provide empty secrets root
+        run: |
+          rm -f tap_secrets
+          mkdir -p tap_secrets
+
+      - name: Align the container uid with the runner (built image runs as nonroot)
+        run: |
+          uid="$(id -u)"
+          if [ "$uid" -eq 0 ]; then
+            echo "::error::Runner is uid 0; refusing."
+            exit 1
+          fi
+          echo "TAP_USER=$uid:0" >> "$GITHUB_ENV"
+
+      - name: Build the real web image exactly as the real gate does (ci-web-image action)
+        uses: ./.github/actions/ci-web-image
+
+      - name: Pre-pull the db image once (shared read-only layer across all stacks)
+        run: docker pull ghcr.io/unified-systems-com/tap-db:latest
+
+      - name: Write the per-stack boot-and-check script
+        run: |
+          cat > /tmp/boot-one-stack.sh <<'SHEOF'
+          #!/usr/bin/env bash
+          # Boots ONE full compose stack (web+db) under a unique project name/ports, polls
+          # for health or TAP-ABORT exactly as core_ci's own cold-boot job does, then tears
+          # down. Args: <project-name> <web-port> <postgres-port> <log-file>
+          set -u
+          PROJECT="$1"
+          WEBPORT="$2"
+          PGPORT="$3"
+          LOG="$4"
+          export COMPOSE_PROJECT_NAME="$PROJECT"
+          export WEB_PORT="$WEBPORT"
+          export POSTGRES_PORT="$PGPORT"
+
+          {
+            echo "=== [$PROJECT] up -d ==="
+            docker compose --env-file .env up -d
+            ok=0
+            for i in $(seq 1 50); do
+              if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
+                echo "=== [$PROJECT] ABORTED (TAP-ABORT sentinel) ==="
+                docker compose --env-file .env logs web
+                break
+              fi
+              if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+                echo "=== [$PROJECT] healthy after ~$((i * 3))s ==="
+                ok=1
+                break
+              fi
+              sleep 3
+            done
+            if [ "$ok" != 1 ]; then
+              echo "=== [$PROJECT] FAILED (never became healthy / aborted) ==="
+              docker compose --env-file .env logs web | tail -200
+            fi
+            echo "=== [$PROJECT] tearing down ==="
+            docker compose --env-file .env down -v --remove-orphans
+            exit $((1 - ok))
+          } > "$LOG" 2>&1
+          SHEOF
+          chmod +x /tmp/boot-one-stack.sh
+
+      - name: Sanity check -- one full stack, confirm it boots healthy (matching the real gate's normal green outcome)
+        run: |
+          /tmp/boot-one-stack.sh sanity 18000 15432 /tmp/sanity.log
+          status=$?
+          cat /tmp/sanity.log
+          exit $status
+
+      - name: Write the multi-stack concurrency launcher
+        run: |
+          cat > /tmp/run-stacks.sh <<'SHEOF'
+          #!/usr/bin/env bash
+          set -u
+          ROUNDS="${1:-8}"
+          STACKS="${2:-6}"
+          OUTDIR="$(mktemp -d)"
+          echo "logs: ${OUTDIR}"
+          total_fail=0
+          total_launches=0
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "=== round ${round}/${ROUNDS}: launching ${STACKS} full compose stacks simultaneously ==="
+            pids=()
+            for s in $(seq 1 "$STACKS"); do
+              project="r${round}s${s}"
+              webport=$((19000 + round * 100 + s))
+              pgport=$((16000 + round * 100 + s))
+              /tmp/boot-one-stack.sh "$project" "$webport" "$pgport" "${OUTDIR}/${project}.log" &
+              pids+=($!)
+            done
+            round_fail=0
+            for idx in "${!pids[@]}"; do
+              if ! wait "${pids[$idx]}"; then
+                round_fail=$((round_fail + 1))
+              fi
+            done
+            total_fail=$((total_fail + round_fail))
+            total_launches=$((total_launches + STACKS))
+            echo "=== round ${round} done: ${round_fail}/${STACKS} stacks failed ==="
+            if [ "${round_fail}" -gt 0 ]; then
+              for f in "${OUTDIR}"/r${round}s*.log; do
+                echo "--- log: ${f} ---"
+                cat "${f}"
+              done
+            fi
+          done
+          echo "=== TOTAL: ${total_fail} failed stack-boots out of ${total_launches} launches ==="
+          echo "logs kept at: ${OUTDIR}"
+          if [ "${total_fail}" -gt 0 ]; then
+            exit 1
+          fi
+          SHEOF
+          chmod +x /tmp/run-stacks.sh
+
+      - name: Run it -- 8 rounds x 6 simultaneous full compose stacks (48 real cold-boot stack boots)
+        timeout-minutes: 40
+        run: /tmp/run-stacks.sh 8 6
