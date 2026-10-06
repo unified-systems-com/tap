@@ -162,6 +162,21 @@ WORKDIR /app
 # Pinning `libpq-18=18.6-r4` explicitly resolves it: confirmed via `strings` on the installed
 # `libpq.so.5`, it then links `libcrypto.so.3`/`libssl.so.3`, matching `_hashlib` exactly.
 #
+# `krb5-libs` is the THIRD, previously-unnoticed vector for this exact hazard, found by
+# bisecting a real two-OpenSSL-cores detection in a live process (bom-bom's Q92a boot guard):
+# `libpq.so.5` links GSSAPI/Kerberos support unconditionally (`libgssapi_krb5.so.2` ->
+# `libkrb5.so.3` -> `libk5crypto.so.3`), and `libk5crypto.so.3`'s OWN crypto backend links
+# directly against whichever OpenSSL `krb5-libs` itself was built against — independent of
+# libpq-18's own pin, since krb5-libs is a wholly separate apk package
+# (`apk info --rdepends krb5-libs` names `libpq-18`, `libcurl-openssl4`, and
+# `postgresql-18-base` as its requirers). Confirmed directly: with every OTHER pin in place,
+# `libk5crypto.so.3` still resolved to `openssl-4.0`'s `libcrypto.so.4`, while everything
+# else in the same process (including `libpq.so.5` itself) correctly used `.so.3` — two real
+# cores in one process, this time via a code path (GSSAPI auth support postgres connections
+# never use) nobody had reason to look at until the boot guard caught it live. Pinning
+# `krb5-libs=1.22.2-r4` resolves it: confirmed via a real, non-simulated `apk add` that this
+# revision depends on `libcrypto.so.3`/`libssl.so.3`, one revision before its own cutover.
+#
 # These are REVISION pins, not track pins, and therefore narrower and more likely to need
 # re-verifying on the next apk bump than a plain version pin would be. Track the same way the
 # FIPS provider's own pin is tracked: a deliberate, named pin, revisited for a real reason (apk
@@ -175,6 +190,7 @@ RUN for i in 1 2 3; do \
     bash \
     postgresql-18-client=18.6-r4 \
     libpq-18=18.6-r4 \
+    krb5-libs=1.22.2-r4 \
     curl \
     tzdata \
     openssl-3.6=3.6.5-r1 \

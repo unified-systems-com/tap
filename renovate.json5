@@ -98,6 +98,7 @@
         "postgresql-18-client",
         "postgresql-18-dev",
         "libpq-18",
+        "krb5-libs",
       ],
       registryUrls: ["https://packages.wolfi.dev/os?arch=x86_64"],
       groupName: "pinned apk packages (security-relevant, reviewed individually)",
