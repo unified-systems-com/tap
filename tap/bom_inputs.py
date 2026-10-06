@@ -11,9 +11,10 @@ moved". This module is the one declaration; every consumer derives from it:
 
 * ``scripts/change-tier`` pipes the diff through ``--classify`` for the ``boot`` tier
   (``req-dev-validation-product-line-lanes-9``);
-* the workflows' uv-cache keys hash exactly :data:`RESOLUTION_INPUTS`, and a guard
-  (``tap/tests/test_bom_inputs.py``) proves each ``hashFiles(...)`` matches — YAML
-  cannot read this file at expression time, so the fragment is generated-and-checked;
+* the workflows once keyed a cross-run uv cache on :data:`RESOLUTION_INPUTS` alone. That
+  set leaves out the image, so the cache served a wheel compiled against the previous
+  image's OpenSSL (tap#933), and CI no longer caches uv across runs at all
+  (``req-cicd-supply-chain-provenance-5``);
 * ``promote-to-main.sh`` reads the same tier locally.
 
 Host-runnable and stdlib-only on purpose: ``change-tier`` runs on a bare runner and on a
@@ -28,7 +29,7 @@ import json
 import sys
 from pathlib import Path
 
-# Paths whose change means the resolved dependency set may differ (the uv-cache key).
+# Paths whose change means the resolved dependency set may differ.
 RESOLUTION_INPUTS: tuple[str, ...] = (
     "uv.lock",
     "pyproject.toml",
@@ -150,11 +151,6 @@ def is_bom_input(path: str, repo_root: Path | None = None) -> bool:
     return False
 
 
-def hashfiles_expression(inputs: tuple[str, ...] = RESOLUTION_INPUTS) -> str:
-    """The exact ``hashFiles(...)`` argument list a workflow must use for the uv-cache key."""
-    return ", ".join(f"'{p}'" for p in inputs)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tap.bom_inputs", description="the BOM inputs, declared once")
     parser.add_argument(
@@ -163,14 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root", type=Path, default=Path.cwd(), help="repo root whose boot records name editable paths (default: cwd)"
     )
-    parser.add_argument(
-        "--hashfiles", action="store_true", help="print the hashFiles(...) argument list for the uv-cache key"
-    )
     parser.add_argument("--list", action="store_true", help="print every declared BOM input pattern")
     args = parser.parse_args(argv)
-    if args.hashfiles:
-        print(hashfiles_expression())
-        return 0
     if args.list:
         for pattern in BOM_INPUTS:
             print(pattern)
