@@ -47,6 +47,15 @@
 # TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
 ARG TAP_FIPS=1
 
+# How FIPS is activated, independent of whether it is on at all (TAP_FIPS above). DEFAULT
+# "system": edits Wolfi's own stock /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level
+# default and the file's own RFC 9325 TLS hardening policy ([ssl_module] -> crypto_policy) is
+# preserved rather than silently discarded. "legacy" is the original mechanism (a separate
+# generated file + OPENSSL_CONF override) kept as an instant rollback with no code change if the
+# system-wide approach surfaces a problem the legacy one did not have. See
+# docker/activate-fips-system-wide.sh and doc-fips-assessment-record.md for the decision record.
+ARG TAP_FIPS_ACTIVATION=system
+
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
 # OpenSSL FIPS compile) on the first CI build of each day — and silently changed the FIPS
@@ -511,10 +520,18 @@ FROM app AS fips-0
 ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
+# TAP_FIPS_ACTIVATION is meaningless when FIPS is off; these are trivial aliases so the
+# final stage below can select on both ARGs with ONE templated FROM (test_container_
+# healthcheck.py's ancestry walker resolves exactly one level of ARG templating, so a
+# second one -- e.g. a reunifying `fips-1` stage selected by TAP_FIPS_ACTIVATION -- is
+# invisible to it; this keeps the whole selection a single-level template instead).
+FROM fips-0 AS fips-0-legacy
+FROM fips-0 AS fips-0-system
+
 # ============================================================================
-# fips-1 — FIPS variant (default, TAP_FIPS=1)
+# fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
-FROM app AS fips-1
+FROM app AS fips-1-base
 
 # Drop our pinned provider into the base's ossl-modules dir.
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
@@ -523,6 +540,16 @@ COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modul
 # exact bytes). It MUST run in the final image (D5); it also proves binary-compat, since the
 # base's modern `openssl` loads + self-tests our pinned module (D4).
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+
+# ============================================================================
+# fips-1-legacy — the ORIGINAL activation mechanism: a separate generated file + an
+# OPENSSL_CONF override. Kept as TAP_FIPS_ACTIVATION=legacy, an instant rollback with no
+# code change, in case the system-wide mechanism below surfaces a problem this one did not
+# have. See docs/misc/doc-fips-assessment-record.md for why "system" is now the default:
+# this mechanism silently discards Wolfi's own RFC 9325 TLS hardening policy (its own
+# [openssl_init] never sets ssl_conf), because it REPLACES openssl.cnf instead of editing it.
+# ============================================================================
+FROM fips-1-base AS fips-1-legacy
 
 # openssl.cnf activating the strict `fips` + `base` provider set with fips=yes globally.
 # ORDER IS LOAD-BEARING (L1): `openssl_conf` must be in the default (pre-section) block. The
@@ -564,9 +591,29 @@ ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
 # ============================================================================
-# final — select the variant by the build flag (default fips-1)
+# fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
+# /etc/ssl/openssl.cnf in place, so FIPS is the actual OS-level default (no OPENSSL_CONF
+# needed). The TLS version floor, the stock AEAD cipher suites, and the ca.cnf include
+# are kept; only the post-quantum/hybrid/MLDSA directives and the legacy-provider config
+# are deleted -- see docker/activate-fips-system-wide.sh for exactly what and why
+# (verified directly, including a real cipher-suite-list regression an earlier version
+# of this script had and review caught: deleting the suite list too, not just the
+# PQC/MLDSA directives, let TLS 1.2 fall back to legacy static-RSA/SHA-1 suites).
 # ============================================================================
-FROM fips-${TAP_FIPS} AS final
+FROM fips-1-base AS fips-1-system
+
+COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+RUN sh /opt/ossl/activate-fips-system-wide.sh
+
+ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+ENV TAP_FIPS_MODE=1
+LABEL org.tap.fips="true"
+
+# ============================================================================
+# final — select the variant by TAP_FIPS and (when FIPS is on) TAP_FIPS_ACTIVATION, in
+# ONE templated FROM (see the fips-0-legacy/fips-0-system aliases above for why).
+# ============================================================================
+FROM fips-${TAP_FIPS}-${TAP_FIPS_ACTIVATION} AS final
 
 # The serving stage runs unprivileged (tap#754). Declared HERE and not in `app`, because
 # the fips-1 stage in between runs `openssl fipsinstall`, which writes /etc/ssl — a
