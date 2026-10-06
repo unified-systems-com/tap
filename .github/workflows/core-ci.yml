@@ -73,16 +73,8 @@ jobs:
           rm -f tap_secrets
           mkdir -p tap_secrets
 
-      - name: Point the uv cache at an out-of-tree dir (runner temp)
-        # $RUNNER_TEMP is outside the workspace, so the container's `.:/app` mount
-        # never sweeps the persisted cache into the scanned repo tree (the
-        # secret-pattern guard walks /app). Set via $GITHUB_ENV in a run step, NOT a
-        # job-level `env:` — the `runner` context is unavailable at job level, and
-        # referencing it there is an invalid-workflow error (no jobs even schedule).
-        run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
-
       # The lane writes into the bind-mounted checkout (boot record, pytest caches, lane
-      # summary) and into the uv-cache host bind. On Linux those writes are refused unless
+      # summary) and into the uv_cache volume. On Linux those writes are refused unless
       # the container uid owns the path — and THIS lane builds the image when the Dockerfile
       # inputs change (.github/actions/ci-web-image is pull-first, build-fallback), so it is
       # running the image that declares `USER nonroot`. Compose defaults the override to
@@ -106,27 +98,6 @@ jobs:
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
 
-      - name: Restore uv cache (wheels + plugin git-installs)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-core_ci-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
-          restore-keys: |
-            uv-ci-core_ci-
-            uv-ci-
-      # On a cache HIT the restored dir is already owned by the runner uid (the end-of-job
-      # chown below ran before it was saved, last time). On a cache MISS actions/cache
-      # leaves the path nonexistent, so Docker auto-creates the bind-mount target on first
-      # use — root-owned, since that is Docker's default for a host path that does not yet
-      # exist. The container writes as nonroot, so the mount is unwritable and
-      # "Seeding uv cache from image" fails closed with Permission denied on every file,
-      # looping until the health-check timeout. Only a genuine cache miss exposes this
-      # (first run ever, or an evicted/deleted cache entry), which is why it has not fired
-      # before. Pre-create + chown unconditionally so both cases start from the same state.
-      - name: Ensure the uv-cache dir exists and is runner-owned before the container mounts it
-        run: |
-          mkdir -p "${{ runner.temp }}/uv-cache"
-          sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache"
       # Boot THIS line's profile (preboot installs exactly that profile's plugins).
       - name: Boot the core_ci profile
         env:
@@ -180,10 +151,6 @@ jobs:
       - name: Dump web logs on failure
         if: failure()
         run: docker compose --env-file .env logs web | tail -200
-      - name: Make uv cache saveable (container wrote it as root)
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true
-
   cold-boot:
     # Boots `core_ci` (core + the fixture plugins) and runs scripts/gate over it. The
     # tier rules (which diffs run it, which may skip it) live with the caller.
@@ -205,13 +172,8 @@ jobs:
         run: |
           rm -f tap_secrets
           mkdir -p tap_secrets
-      - name: Point the uv cache at an out-of-tree dir (runner temp)
-        # See the `line` job above: $RUNNER_TEMP is outside the workspace (out of the
-        # scanned /app tree); set via $GITHUB_ENV, not job-level `env:`, because the
-        # `runner` context is unavailable at job level.
-        run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
       # The lane writes into the bind-mounted checkout (boot record, pytest caches, lane
-      # summary) and into the uv-cache host bind. On Linux those writes are refused unless
+      # summary) and into the uv_cache volume. On Linux those writes are refused unless
       # the container uid owns the path — and THIS lane builds the image when the Dockerfile
       # inputs change (.github/actions/ci-web-image is pull-first, build-fallback), so it is
       # running the image that declares `USER nonroot`. Compose defaults the override to
@@ -234,22 +196,6 @@ jobs:
 
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
-      - name: Restore uv cache (wheels + plugin git-installs)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-core_ci-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
-          restore-keys: |
-            uv-ci-core_ci-
-            uv-ci-
-      # See the matching step in the `line` job above: on a cache MISS, Docker auto-creates
-      # the bind-mount target root-owned, and the nonroot container's "Seeding uv cache from
-      # image" fails closed with Permission denied on every file. Pre-create + chown so both
-      # cache hit and miss start from the same state.
-      - name: Ensure the uv-cache dir exists and is runner-owned before the container mounts it
-        run: |
-          mkdir -p "${{ runner.temp }}/uv-cache"
-          sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache"
       - name: Boot the core_ci profile
         run: |
           docker compose --env-file .env up -d
@@ -275,6 +221,3 @@ jobs:
       - name: Dump web logs on failure
         if: failure()
         run: docker compose --env-file .env logs web | tail -200
-      - name: Make uv cache saveable (container wrote it as root)
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true

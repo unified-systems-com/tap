@@ -53,6 +53,40 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME:-/root}/.cache/uv}"
 # else, and the copy died with `cp: can't create directory '/root/.cache/uv/'` — restarting
 # forever. The new image prepares this path already, so this is a no-op there.
 mkdir -p "${UV_CACHE_DIR}" 2>/dev/null || true
+
+# Built-for-another-image check (tap#933). The uv cache and the /app/.venv volume both outlive
+# the image: a compose project keeps them across `pull`, and they hold packages compiled
+# AGAINST THAT IMAGE'S system OpenSSL (cryptography, psycopg[c]). `uv sync` sees cryptography
+# 50.0.0 already installed and keeps it, even though it was compiled for the previous image.
+# After Wolfi moved to OpenSSL 4.0 that put a 3.6-built cryptography beside a 4.0 CPython: two
+# OpenSSL cores, one fips.so, and "unable to fetch drbg" at the FIPS self-check.
+#
+# So the seed step stamps the cache with the identity of the image that filled it, and every
+# boot compares. The identity is the seed manifest's hash: the manifest lists every compiled
+# wheel's bytes, so any rebuild of those wheels (a new OpenSSL, a new Python) changes it. On a
+# mismatch, or a non-empty cache with no stamp at all (filled before this check existed), both
+# the cache and the venv are emptied, and the seed step below refills them from this image.
+# An image with no manifest (legacy) has no identity to compare, so nothing is wiped.
+#
+# tap_clear_if_other_image <seed manifest> <uv cache dir> <venv dir>
+#   Prints this image's identity (empty for an image with no manifest), after emptying the
+#   cache and venv when they carry a different image's stamp, or none at all.
+tap_clear_if_other_image() {
+  local manifest="$1" cache="$2" venv="$3" image_id="" stamp
+  [[ -f "$manifest" ]] || return 0
+  image_id="$(sha256sum "$manifest" | cut -d' ' -f1)"
+  stamp="$(cat "$cache/.tap-image-id" 2>/dev/null || true)"
+  if [[ -n "$(ls -A "$cache" 2>/dev/null)" && "$stamp" != "$image_id" ]]; then
+    echo "==> uv cache and venv were built for a different image (stamp ${stamp:-none}, this image ${image_id:0:12}); clearing both..." >&2
+    # Contents only: both are volume mount points and cannot be removed themselves.
+    find "$cache" -mindepth 1 -delete
+    if [[ -d "$venv" ]]; then find "$venv" -mindepth 1 -delete; fi
+  fi
+  printf '%s\n' "$image_id"
+}
+_tap_image_stamp="${UV_CACHE_DIR}/.tap-image-id"
+_tap_image_id="$(tap_clear_if_other_image /opt/uv-cache-seed.manifest.json "${UV_CACHE_DIR}" /app/.venv)"
+
 if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
   if [[ -d /opt/uv-cache-seed && -f /opt/uv-cache-seed.manifest.json ]]; then
     # Verifier is taken from the TREE when running under the dev bind mount is
@@ -67,6 +101,7 @@ if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
       # a dead container. Ownership of the copy is ours by construction (we created it);
       # what has to survive is the BYTES, which the manifest verified above.
       cp -r /opt/uv-cache-seed/. "${UV_CACHE_DIR}/"
+      printf '%s\n' "${_tap_image_id}" > "${_tap_image_stamp}"
     else
       emit_abort seed-verify "wheel-cache seed does not match its build-time manifest (see above) — image corruption or tamper; refusing to seed or serve"
       exit 1

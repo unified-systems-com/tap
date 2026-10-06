@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
+| mapped | 9 |
 | unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -20,3 +20,4 @@
 | `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
 | `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
 | `req-fips-pin-currency` | Partial | Tested | — | `req-fips-pin-currency-2`, `req-fips-pin-currency-3`, `req-fips-pin-currency-8` |
+| `req-fips-single-openssl-core` | Implemented | Tested | — | `req-fips-single-openssl-core-1`, `req-fips-single-openssl-core-2`, `req-fips-single-openssl-core-3` |

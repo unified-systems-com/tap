@@ -64,6 +64,7 @@ roles, and is the reason a plugin can never exempt itself:
 | req-fips-crypto-bom-ci | [Per-Commit CI Gate](#per-commit-ci-gate) | Implemented | The gate over the installed environment (in CI, `core_ci`: core + the fixture plugins), per-commit. `tap/tests/test_crypto_bom.py`. |
 | req-fips-crypto-bom-conformance | [Per-Plugin Conformance](#per-plugin-conformance) | Implemented | Authoring-time report of a plugin's crypto posture + declaration verification. `validate_plugin` `crypto-providers` check. |
 | req-fips-crypto-bom-system-gate | [Boot-Time System Gate](#boot-time-system-gate) | Implemented | Global validation at boot under `TAP_FIPS_MODE=1`: core + every plugin, TAP-ABORT on an unwaived non-validated provider. `python -m tap.crypto_bom --gate`. |
+| req-fips-single-openssl-core | [One OpenSSL Core Per Process](#one-openssl-core-per-process) | Implemented | Under `TAP_FIPS_MODE=1` the boot self-check refuses to start if more than one libcrypto is loaded in the process, before any crypto runs |
 | req-fips-crypto-bom-waivers | [Operator Waivers](#operator-waivers) | Implemented | The justified escape valve: boot-profile `fips_waivers`, deployment-controlled, mandatory reason, surfaced. |
 | req-fips-crypto-bom-waiver-ownership | [Waivers Match Ownership, Not Path Fragments](#waivers-match-ownership-not-path-fragments) | Proposed | A `plugin:` waiver resolves through the installed distribution that OWNS the artifact (RECORD → dist → the plugin whose closure pulled it), never a path-segment string match; a shared dependency has a SET of owners and the match is membership; unmatched waivers are reported; attribution rides every finding. |
 | req-fips-crypto-bom-jvm | [JVM-Arrival Tripwire](#jvm-arrival-tripwire) | Implemented | Java is out of scope, but its arrival (runtime/executable/jar/bridge dist) fails the gate loudly — jars are not ELF, so nothing else catches it. |
@@ -183,6 +184,35 @@ but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees 
 | req-fips-crypto-bom-system-gate-1 | Gate wired after the self-check | Implemented | `python -m tap.crypto_bom --gate` runs in `docker/entrypoint.sh` after the `tap.fips` self-check. | |
 | req-fips-crypto-bom-system-gate-2 | FIPS-on refuses on non-validated | Implemented | With `TAP_FIPS_MODE=1`, any non-validated provider without an operator waiver emits `TAP-ABORT` and the instance refuses to serve. | |
 | req-fips-crypto-bom-system-gate-3 | FIPS-off is a no-op | Implemented | With FIPS mode off the gate does nothing — a non-FIPS deployment may use non-FIPS crypto. | |
+
+### One OpenSSL Core Per Process
+----
+RID: `req-fips-single-openssl-core`
+
+Status: `Implemented`
+
+Two libcrypto builds loaded into one process both read the FIPS config and both load the one
+`fips.so`, whose static state a second loader cannot use (openssl/openssl#27691). Nothing fails at
+load time; the damage surfaces later and somewhere else. In tap#933 the first symptom was
+`rand_new_drbg: unable to fetch drbg` inside an EC keygen, after a CI uv cache served a
+`cryptography` wheel compiled against OpenSSL 3.6 into an image whose CPython uses OpenSSL 4.0.
+The same collision has other roads: a dependency that bundles its own OpenSSL (assessment record
+L17), and libpq linked to a different OpenSSL than Python (tap#933's libpq-18).
+
+So `tap.fips` checks the outcome rather than any one cause. Under `TAP_FIPS_MODE=1`, before any
+crypto runs, it imports every library that does crypto in the process (`_hashlib`,
+`cryptography`'s bindings, `psycopg`; importing maps them without exercising them), reads
+`/proc/self/maps`, and emits `TAP-ABORT` naming every libcrypto path if there is more than one.
+It runs first because, in the two-core case, the first positive control is exactly what dies, with
+an error that points nowhere near the cause.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-single-openssl-core-1 | Two cores refuse to boot | Implemented | With two distinct libcrypto paths mapped, the self-check raises naming both, and the entrypoint emits `TAP-ABORT`. | `tap/tests/test_fips.py` |
+| req-fips-single-openssl-core-2 | Checked before any crypto | Implemented | The check runs before the first positive control; with two cores, no crypto operation is attempted. | |
+| req-fips-single-openssl-core-3 | One library, one core | Implemented | Several mapped segments of one library count as one core, so a healthy process passes. | Live check: one core in all five running dev stacks, 2026-10-06 |
 
 ### Operator Waivers
 ----

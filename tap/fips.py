@@ -152,6 +152,60 @@ def _cryptography_md5_refused() -> None:
     )
 
 
+def openssl_cores(maps_text: str) -> set[str]:
+    """Return the distinct libcrypto files mapped into a process, from its ``/proc/<pid>/maps`` text.
+
+    One path per OpenSSL *core*: every segment of one library shares one path, so two paths
+    mean two independent OpenSSL engines in one process.
+    """
+    cores = set()
+    for line in maps_text.splitlines():
+        fields = line.split()
+        if len(fields) >= 6 and "/libcrypto.so" in fields[-1]:
+            cores.add(fields[-1])
+    return cores
+
+
+def _assert_single_openssl_core(maps_text: str | None = None) -> None:
+    """Refuse to boot if more than one OpenSSL core is loaded (tap#933 root cause).
+
+    Two libcrypto builds in one process both read the FIPS config and both load the one
+    ``fips.so``, whose static state a second loader cannot use (openssl/openssl#27691). The
+    failure then surfaces much later and far away, e.g. ``rand_new_drbg: unable to fetch
+    drbg`` in an unrelated keygen. tap#933 hit it from a uv cache that served a
+    ``cryptography`` wheel compiled against OpenSSL 3.6 into an image whose CPython uses 4.0.
+    The same collision has other roads: a dependency bundling its own OpenSSL (L17), or libpq
+    linked to a different OpenSSL than Python (tap#933's libpq-18). So this checks the
+    outcome, not any one cause.
+
+    Every library that does crypto in this process is IMPORTED first, which maps it without
+    running any crypto; that has to come before the first positive control, because in the
+    two-core case that control is exactly what dies.
+    """
+    if maps_text is None:
+        import _hashlib  # noqa: F401 - CPython's OpenSSL binding.
+
+        for module in ("cryptography.hazmat.bindings._rust", "psycopg"):
+            try:
+                __import__(module)
+            except ImportError:
+                continue  # absent here; the positive controls below report what matters.
+        try:
+            with open("/proc/self/maps", encoding="utf-8") as handle:
+                maps_text = handle.read()
+        except OSError:
+            return  # no /proc (a non-Linux host running the tests); the image always has it.
+    cores = openssl_cores(maps_text)
+    if len(cores) > 1:
+        raise FipsSelfCheckError(
+            f"{len(cores)} OpenSSL libraries are loaded in one process ({', '.join(sorted(cores))}); "
+            "under FIPS they share one fips.so and break each other. A package was built against "
+            "a different OpenSSL than this image's Python: a stale uv cache or venv volume from an "
+            "older image, or a wheel bundling its own OpenSSL. Clear the venv and uv_cache "
+            "volumes and reboot."
+        )
+
+
 def assert_declared_mode() -> str:
     """Prove the declared FIPS mode is the mode actually enforced, or raise.
 
@@ -159,6 +213,9 @@ def assert_declared_mode() -> str:
     """
     mode = declared_mode()
     if mode == "1":
+        # Before any crypto runs: in the two-core case the first positive control is what dies,
+        # with an error that points nowhere near the cause.
+        _assert_single_openssl_core()
         # ALL positive controls run first, THEN all negative ones (tap#933/#931, L18): a
         # correctly-refused MD5 fetch in the process's default OSSL_LIB_CTX leaves that context
         # unable to satisfy a LATER, unrelated fetch from anything — CTR-DRBG, SHA-256, any of
