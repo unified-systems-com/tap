@@ -1,0 +1,78 @@
+name: spike uv cache repro
+
+on:
+  push:
+    branches:
+      - spike/uv-cache-repro
+
+jobs:
+  # Every repro so far used a uv cache seeded from THIS image's own baked
+  # /opt/uv-cache-seed (docker/entrypoint.sh's own fallback path, which only fires on an
+  # EMPTY cache volume). The ORIGINAL tap#933 failing run did NOT take that path: its
+  # `actions/cache` step (core_ci.yml line ~113, key
+  # `uv-ci-core_ci-${{ hashFiles('uv.lock','pyproject.toml','boot/*.boot.json','**/boot/*.boot.json') }}`)
+  # got a FULL EXACT cache hit (confirmed in the original job log: "Cache hit for:
+  # uv-ci-core_ci-7b57402a3927d7ec0f8978de744d70aab1f8fcc8e7881a62a94f15e13521c8ff", 310MB
+  # restored) -- meaning its UV_CACHE_DIR was NON-empty when the entrypoint ran, so the
+  # in-image seed step was SKIPPED, and `uv sync` ran directly against a wheel cache
+  # persisted by GitHub's actions/cache service from some EARLIER workflow run -- not the
+  # wheels this specific image baked into itself at build time. That cache key depends only
+  # on uv.lock/pyproject.toml/boot files, NOT on which OpenSSL the image was built against,
+  # so it is possible for a `cryptography` wheel built against a DIFFERENT host OpenSSL to
+  # be served here. This spike restores that EXACT SAME cache entry (same commit -> same
+  # hashFiles() -> same key) and runs the self-check repeatedly against it, instead of the
+  # image's own baked seed, to test whether this uncontrolled variable matters.
+  repro-uv-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm native architecture
+        run: uname -m
+
+      - name: Build the real web image exactly as the real gate does (ci-web-image action)
+        uses: ./.github/actions/ci-web-image
+
+      - name: Restore the EXACT SAME uv cache the original failing run used (same commit -> same hash -> same key)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-ci-core_ci-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
+          restore-keys: |
+            uv-ci-core_ci-
+            uv-ci-
+
+      - name: Report cache outcome (hit/miss, size) -- this is the variable under test
+        run: |
+          echo "cache-hit output: ${{ steps.cache.outputs.cache-hit }}"
+          du -sh "${{ runner.temp }}/uv-cache" 2>/dev/null || echo "(cache dir empty or absent)"
+          ls -la "${{ runner.temp }}/uv-cache" 2>/dev/null | head -20 || true
+
+      - name: Write the self-check-only script (real docker/entrypoint.sh, verbatim, through the FIPS self-check only)
+        run: |
+          sed -n '1,177p' docker/entrypoint.sh > /tmp/self-check-only.sh
+          echo 'echo "ALL_CHECKS_OK (pid $$)"' >> /tmp/self-check-only.sh
+
+      - name: Run it -- 30 SEQUENTIAL fresh containers, all sharing the SAME restored GH-Actions uv-cache dir (exactly as the real gate's one container does, just repeated)
+        run: |
+          mkdir -p "${{ runner.temp }}/uv-cache"
+          fail=0
+          for i in $(seq 1 30); do
+            echo "=== attempt ${i}/30 ==="
+            if ! docker run --rm \
+              -e TAP_FIPS_MODE=1 \
+              -v /tmp/self-check-only.sh:/tmp/self-check-only.sh:ro \
+              -v "${{ runner.temp }}/uv-cache:/home/nonroot/.cache/uv" \
+              tap-web:ci bash /tmp/self-check-only.sh; then
+              fail=$((fail+1))
+              echo "=== attempt ${i} FAILED ==="
+            fi
+          done
+          echo "=== TOTAL: ${fail}/30 attempts failed, against the GH-Actions-cache-restored uv cache ==="
+          if [ "${fail}" -gt 0 ]; then exit 1; fi
+
+      - name: Make uv cache saveable (container wrote as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true
