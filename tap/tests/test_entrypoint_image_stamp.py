@@ -31,6 +31,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _run_full(tmp: Path, manifest: Path) -> subprocess.CompletedProcess[str]:
+    match = _FUNCTION.search(ENTRYPOINT.read_text(encoding="utf-8"))
+    assert match, "tap_clear_if_other_image() not found in docker/entrypoint.sh"
+    fn = tmp / "fn.sh"
+    fn.write_text(match.group(0) + "\n", encoding="utf-8")
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"; tap_clear_if_other_image "$2" "$3" "$4"', "_",
+         str(fn), str(manifest), str(tmp / "cache"), str(tmp / "venv")],
+        capture_output=True, text=True, check=True,
+    )
+
+
 def _run(tmp: Path, manifest: Path) -> str:
     match = _FUNCTION.search(ENTRYPOINT.read_text(encoding="utf-8"))
     assert match, "tap_clear_if_other_image() not found in docker/entrypoint.sh"
@@ -110,3 +122,33 @@ def test_an_image_without_a_manifest_wipes_nothing(tmp_path: Path) -> None:
     assert out == ""
     assert (tmp_path / "cache" / "wheels" / "cryptography.whl").exists()
     assert (tmp_path / "venv" / "lib" / "cryptography.so").exists()
+
+
+def test_a_stamp_that_is_not_a_digest_clears_and_is_never_logged(tmp_path: Path) -> None:
+    """The stamp sits in a volume: arbitrary text in it counts as no stamp and never reaches the log."""
+    manifest = _setup(tmp_path, stamp="sensitive-test-value\x1b[31m")
+    result = _run_full(tmp_path, manifest)
+
+    assert "sensitive-test-value" not in result.stderr
+    assert list((tmp_path / "venv").iterdir()) == []
+
+
+def test_a_symlinked_stamp_is_not_followed(tmp_path: Path) -> None:
+    """A symlink pointing at a real digest elsewhere is still no stamp; the volumes are cleared."""
+    manifest = _setup(tmp_path, stamp=None)
+    target = tmp_path / "elsewhere"
+    target.write_text(_image_id(manifest) + "\n", encoding="utf-8")
+    (tmp_path / "cache" / ".tap-image-id").symlink_to(target)
+
+    _run(tmp_path, manifest)
+
+    assert list((tmp_path / "venv").iterdir()) == []
+
+
+def test_a_valid_foreign_stamp_is_logged_as_a_short_prefix_only(tmp_path: Path) -> None:
+    """Even a well-formed digest from another image is logged as 12 characters, not in full."""
+    manifest = _setup(tmp_path, stamp="a" * 64)
+    result = _run_full(tmp_path, manifest)
+
+    assert "stamp aaaaaaaaaaaa," in result.stderr
+    assert "a" * 13 not in result.stderr

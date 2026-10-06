@@ -186,6 +186,13 @@ def _assert_single_openssl_core(maps_text: str | None = None) -> None:
     Every library that does crypto in this process is IMPORTED first, which maps it without
     running any crypto; that has to come before the first positive control, because in the
     two-core case that control is exactly what dies.
+
+    Bounded: this sees cores that are mapped as their own file. An OpenSSL linked *statically*
+    into an extension maps as that extension (`_rust.abi3.so`) and is invisible here. TAP builds
+    `cryptography` and `psycopg` from source against the system OpenSSL (D7/L9), and a
+    `cryptography` carrying its own non-FIPS copy would compute MD5, which
+    `_cryptography_md5_refused` refuses; any other native crypto is the crypto-BOM gate's
+    (`tap.crypto_bom`, ELF fingerprints), which runs right after this self-check.
     """
     if maps_text is None:
         import _hashlib  # noqa: F401 - CPython's OpenSSL binding.

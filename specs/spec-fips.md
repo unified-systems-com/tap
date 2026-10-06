@@ -203,6 +203,8 @@ So `tap.fips` checks the outcome rather than any one cause. Under `TAP_FIPS_MODE
 crypto runs, it imports every library that does crypto in the process (`_hashlib`,
 `cryptography`'s bindings, `psycopg`; importing maps them without exercising them), reads
 `/proc/self/maps`, and emits `TAP-ABORT` naming every libcrypto path if there is more than one. A path counts by its file name: the system's `libcrypto.so.N` and the hashed `libcrypto-<hash>.so.N` a wheel bundles its own copy under (auditwheel's convention) are both cores. An unreadable maps file is a refusal too, never a pass.
+
+**What it cannot see.** A core linked *statically* into an extension maps as that extension, not as a libcrypto file, so this check is blind to it by construction. TAP builds `cryptography` and `psycopg` from source against the system OpenSSL (assessment record D7/L9); a `cryptography` carrying its own non-FIPS copy would still compute MD5, which the self-check's negative control refuses; and other native crypto is `req-fips-crypto-bom-system-gate`'s job, by ELF fingerprint. Whether that gate distinguishes a second, static OpenSSL inside one extension from the system library is not established here.
 It runs first because, in the two-core case, the first positive control is exactly what dies, with
 an error that points nowhere near the cause.
 

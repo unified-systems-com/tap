@@ -75,13 +75,22 @@ tap_clear_if_other_image() {
   local manifest="$1" cache="$2" venv="$3" image_id="" stamp
   [[ -f "$manifest" ]] || return 0
   image_id="$(sha256sum "$manifest" | cut -d' ' -f1)"
-  stamp="$(cat "$cache/.tap-image-id" 2>/dev/null || true)"
+  # The stamp lives in a volume, so it is untrusted input: accept only a regular file holding
+  # exactly one sha256 hex digest. Anything else (a symlink, other text) counts as no stamp,
+  # which clears both volumes, and is never echoed into the logs.
+  stamp=""
+  if [[ -f "$cache/.tap-image-id" && ! -L "$cache/.tap-image-id" ]]; then
+    stamp="$(head -c 65 "$cache/.tap-image-id" 2>/dev/null | tr -d '\n')"
+    [[ "$stamp" =~ ^[0-9a-f]{64}$ ]] || stamp=""
+  fi
   # Any stamp other than this image's, an empty cache included, means the venv cannot be
   # vouched for: a venv volume can outlive a cache volume (`docker volume rm` of one, a
   # compose edit), and `uv sync` would keep its old cryptography against an empty cache too.
   if [[ "$stamp" != "$image_id" ]]; then
     if [[ -n "$(ls -A "$cache" 2>/dev/null)" || -n "$(ls -A "$venv" 2>/dev/null)" ]]; then
-      echo "==> uv cache and venv are not stamped for this image (stamp ${stamp:-none}, this image ${image_id:0:12}); clearing both..." >&2
+      local label="none"
+      [[ -n "$stamp" ]] && label="${stamp:0:12}"
+      echo "==> uv cache and venv are not stamped for this image (stamp ${label}, this image ${image_id:0:12}); clearing both..." >&2
     fi
     # Contents only: both are volume mount points and cannot be removed themselves.
     if [[ -d "$cache" ]]; then find "$cache" -mindepth 1 -delete; fi
