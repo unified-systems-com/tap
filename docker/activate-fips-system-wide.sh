@@ -21,12 +21,21 @@
 #   DELETED outright, not left as inert leftovers -- we never activate
 #   `legacy`/`default` under strict FIPS (provider_sect names fips+base only),
 #   so it is dead config in a FIPS posture file, which is worse than no config.
-# - `Groups` and `SignatureAlgorithms` (post-quantum/hybrid/MLDSA) and the
-#   unused `DTLS.*` bounds (TAP is an HTTPS app) are DELETED. Tested directly:
-#   pairing the unmodified values with strict fips+base broke EVERY outbound
-#   TLS connection outright (`SSL_CTX_new_ex: error in system default config`,
-#   `SSL_CONF_cmd: bad value` naming exactly these two directives) -- not a
-#   degradation, a hard failure.
+# - `Groups` and `SignatureAlgorithms` (post-quantum/hybrid/MLDSA) are DELETED.
+#   Tested directly: pairing the unmodified values with strict fips+base broke
+#   EVERY outbound TLS connection outright (`SSL_CTX_new_ex: error in system
+#   default config`, `SSL_CONF_cmd: bad value` naming exactly these two
+#   directives) -- not a degradation, a hard failure.
+# - `DTLS.MaxProtocol`/`DTLS.MinProtocol` are KEPT, reversing an earlier version
+#   of this script that deleted them as "unused, TAP is an HTTPS app" -- true of
+#   TAP's own code, but not of the library underneath it: Wolfi's `openssl-4.0`
+#   recipe passes `no-dtls1` at Configure time, which removes DTLS1.0 from the
+#   binary entirely, but the `openssl-3.6` line this image actually runs
+#   (`openssl.yaml` on `wolfi-dev/os`) carries no such flag -- DTLS1.0 is
+#   genuinely compiled in, so this config-level floor is load-bearing here, not
+#   redundant documentation of something already true. Never implicated in the
+#   Groups/SignatureAlgorithms breakage above (single lines, not continuation
+#   blocks, no PQC/hybrid content), so there was never a reason to delete them.
 # - `Ciphersuites` and `CipherString` are KEPT. They were never implicated in
 #   the breakage above, and deleting them anyway (an earlier version of this
 #   script did) was a real mistake caught in review: `default_properties =
@@ -73,6 +82,7 @@ require 'SignatureAlgorithms = \'
 require 'Ciphersuites = TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256'
 require 'CipherString = \'
 require 'DTLS.MaxProtocol = DTLSv1.2'
+require 'DTLS.MinProtocol = DTLSv1.2'
 require 'CHAINGUARD_LEGACY_ALLOWED = 1'
 
 awk '
@@ -106,8 +116,8 @@ awk '
 
   # Not-FIPS-module-compatible crypto_policy directives: delete the directive
   # line and every backslash-continued line that follows it (Groups,
-  # SignatureAlgorithms span several), or the single line (DTLS.*).
-  # Ciphersuites/CipherString are KEPT -- see the module header for why.
+  # SignatureAlgorithms span several). Ciphersuites/CipherString/DTLS.* are
+  # KEPT -- see the module header for why.
   /^Groups = / || /^SignatureAlgorithms = / {
     in_continuation = 1
     if ($0 !~ /\\$/) in_continuation = 0
@@ -115,8 +125,6 @@ awk '
   }
   in_continuation && /\\$/  { next }
   in_continuation           { in_continuation = 0; next }
-  /^DTLS\.MaxProtocol = /   { next }
-  /^DTLS\.MinProtocol = /   { next }
 
   # The comment above [crypto_policy] documented the PQC/hybrid/MLDSA/EdDSA/
   # brainpool support this script just deleted -- leaving it would be false
@@ -154,6 +162,8 @@ require 'TLS.MinProtocol = TLSv1.2'
 require 'TLS.MaxProtocol = TLSv1.3'
 require 'Ciphersuites = TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256'
 require 'CipherString = \'
+require 'DTLS.MaxProtocol = DTLSv1.2'
+require 'DTLS.MinProtocol = DTLSv1.2'
 require_absent 'legacy = legacy_sect'
 require_absent 'CHAINGUARD_LEGACY_ALLOWED = 1'
 require_absent '[legacy_sect]'
@@ -161,7 +171,6 @@ require_absent '[default_sect]'
 require_absent '[default]'
 require_absent 'Groups = \'
 require_absent 'SignatureAlgorithms = \'
-require_absent 'DTLS.MaxProtocol = DTLSv1.2'
 require_absent '# As per RFC 9325, equivalent to:'
 
 echo "=== ${CNF} after system-wide FIPS activation ==="
