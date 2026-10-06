@@ -835,6 +835,32 @@ with it, not just the symptom):
   TLS hardening the current override mechanism silently discards, orthogonal to the cache-key bug
   above but found in the same investigation.
 
+**2026-10-06, a third two-cores vector found and fixed, by the new boot guard doing exactly its
+job.** bom-bom's `/proc/self/maps` guard (the Q92a item above) fired against this branch's own
+already-"fixed" image, fresh cache, no stale-wheel involvement: `/usr/lib/libcrypto.so.3` and
+`/usr/lib/libcrypto.so.4` both mapped in the same process. Bisected per-module (fresh process
+each, checking `/proc/self/maps` after one bare import): `_hashlib`, `_ssl`, and
+`cryptography.hazmat.bindings._rust` all clean, `.so.3` only. `import psycopg` alone adds
+`.so.4` — no corresponding `.so.4` libssl, a direct pull, not a natural TLS NEEDED link. Traced
+the actual chain: `libpq.so.5` links GSSAPI/Kerberos support unconditionally
+(`libgssapi_krb5.so.2` → `libkrb5.so.3` → `libk5crypto.so.3`), and `libk5crypto.so.3`'s own
+crypto backend links directly against whichever OpenSSL `krb5-libs` itself was built against —
+a wholly separate apk package from `libpq-18` (`apk info --rdepends krb5-libs` names `libpq-18`,
+`libcurl-openssl4`, and `postgresql-18-base` as its requirers), so pinning `libpq-18` alone never
+touched it. `krb5-libs-1.22.2-r5` (current, unpinned) depends on `so:libcrypto.so.4`/
+`so:libssl.so.4`; a real, non-simulated `apk add` confirms `1.22.2-r4` — one revision earlier,
+the same pattern as every other pin in this entry — depends on `so:libcrypto.so.3`/
+`so:libssl.so.3` instead. Pinned in both images; `renovate.json5` now tracks all seven names.
+Verified end-to-end: rebuilt, reran the exact bisection, `import psycopg` now shows only
+`.so.3`/`libpq.so.5.18` in `/proc/self/maps`, `.so.4` gone entirely.
+
+The pattern across all three vectors (`python-3.14-base`/`postgresql-18-dev`, `libpq-18`,
+`krb5-libs`) is the same: Wolfi migrates dependents to `openssl-4.0` piecemeal, package by
+package, with no single signal naming every affected package at once — each one was found only
+by a failure (or, this time, a proactive guard) exercising the exact code path that package's
+crypto backend sits on. There is no guarantee this is now the last one; the boot guard existing
+at all is the actual fix for the class, not any specific pin.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |
