@@ -652,9 +652,86 @@ Remaining candidate, unconfirmed: something concurrency-dependent (consistent wi
 provider-hashtable race already cited above) that a sequential repro script cannot trigger
 regardless of which OpenSSL build it runs against, only tap's real multi-worker stack.
 
+**2026-10-05/06, concurrency-realistic reproduction attempted and exhausted, still clean.**
+Pursued the "only tap's real multi-worker stack can trigger it" theory directly, in increasing
+order of fidelity, each confirmed via direct log verification rather than a trusted green
+checkmark: (1) the same sequential repro, 2000 varied iterations (EC P-256/P-384, five digests,
+HMAC, periodic RSA) in one long-lived process — 0/2000 failed; (2) real thread concurrency
+sharing one `OSSL_LIB_CTX` combined with real process concurrency, 10 rounds × 8 simultaneous
+processes × 6 threads × 120 iterations — 0/80 process-launches failed; (3) the real `tap-web`
+image itself, at the exact commit that first reproduced tap#933, run through the real
+`docker/entrypoint.sh` boot sequence up to and including the FIPS self-check, 15 rounds × 16 (then
+12) simultaneous containers on native x86_64 — 0/240 then 0/180 failed. Step (3)'s artifact was
+confirmed **bit-identical** to the one the original failure used, not merely same-version: apk
+embeds the build commit and build timestamp in package metadata
+(`/lib/apk/db/installed`'s `c:`/`t:` fields), and `openssl-4.0=4.0.3-r2` on both the original
+failing run and every rebuild here carries the same commit (`e234d8396cff3e7b940dfe7b5b463f14dfa3bae7`)
+and the same build timestamp (`2026-10-02T17:32:56Z`), confirmed identically on aarch64 and
+x86_64 — ruling out "Wolfi silently rebuilt the same version string" as an explanation. The CI
+runner image was also confirmed identical (`ubuntu-24.04`, release `ubuntu24/20260927.320`,
+runner `2.337.0`) on both the original run and these reruns. Across roughly 450 attempts against
+the provably identical artifact, identical runner, and the correct architecture, the original
+self-check failure did not reproduce once — despite having failed on *every one* of three
+consecutive boot attempts in the original run. That contradiction (deterministic once, silent on
+every later attempt against identical bits) is recorded here unresolved; it was not chased further
+after the second finding below was found by the same effort.
+
+**2026-10-06: a second, independent, fully deterministic defect found while pursuing the above —
+not the same bug, and not a race at all.** Every container/concurrency test above used a
+self-check-only harness (replicating `docker/entrypoint.sh` only through the FIPS self-check, to
+avoid needing a live database) — which meant none of them ever reached `createcachetable`
+(`docker/entrypoint.sh:284`), a step that runs unconditionally on every real boot, in every
+profile, after the self-check and pre-boot stage. Running the real `docker compose` stack
+(web+db) all the way through for the first time surfaced this immediately, on the first attempt,
+with no concurrency needed:
+
+```
+web-1  | ==> Provisioning the DatabaseCache table (createcachetable)...
+web-1  |   File "/app/.venv/lib/python3.14/site-packages/django/core/cache/backends/filebased.py", line 10, in <module>
+web-1  |     from hashlib import md5
+web-1  | ImportError: cannot import name 'md5' from 'hashlib' (/usr/lib/python3.14/hashlib.py)
+web-1  | ImportError: Couldn't import Django. Are you sure it's installed and available on your PYTHONPATH environment variable?
+web-1  | TAP-ABORT: migrate: createcachetable failed
+```
+
+Mechanism: Django's file-based cache backend does `from hashlib import md5` unconditionally at
+import time, for cache-key hashing — a non-security use. Under openssl-4.0's FIPS configuration,
+`hashlib.md5` is not merely refused when *called* (the documented, intended FIPS behavior) — it is
+**absent from the module's namespace entirely**, because CPython's `hashlib.py` bootstrap loop
+even fails the `usedforsecurity=False` escape hatch
+(`_hashlib.new("md5", usedforsecurity=False)` itself raises `UnsupportedDigestmodError`), so the
+name is never bound. Any code anywhere in the dependency closure — not just Django, not just
+TAP — that imports `md5` by name unconditionally will crash identically; this is not scoped to
+one cache backend.
+
+Checked, and ruled out, two specific candidates before leaving the mechanism open: Chainguard's
+`0001-fips-block-HMAC-calculation-with-unapproved-digests.patch` only instruments
+`HMAC_Init_ex`, nothing in a bare digest-fetch path. Their
+`0001-Chainguard-Cryptographic-Hardening.patch` does touch the `default` provider's digest table,
+but only removes the combined `MD5_SHA1` entry (`PROV_NAMES_MD5_SHA1`) used by legacy TLS —
+plain `PROV_NAMES_MD5` stays registered in the diff. Neither explains why the
+`usedforsecurity=False` fetch itself fails; the actual mechanism (something in how OpenSSL 4.0's
+`default` provider or its property matching handles a non-security-flagged MD5 fetch
+differently than 3.6.x does) was not traced further.
+
+Reproduced twice, independently, confirming it is deterministic and architecture-independent:
+once via GitHub Actions on native x86_64 (the `core_ci cold-boot`-equivalent compose stack, first
+attempt), once locally on arm64 (Apple Silicon, Docker Desktop) against the same image. Confirmed
+**absent** on the shipped fix (`openssl-3.6` pinned): the identical real compose stack, same
+`TAP_BOOT_PROFILE=core_ci`, same `createcachetable` step, run against the fixed branch's image —
+`createcachetable` succeeded, migrations ran, and the full health check came back green on every
+FIPS-relevant check.
+
 Status: resolved for the web and DB images (tap#933, this entry), `TAP_FIPS=1` restored as the
-default. Open: the original bug's actual mechanism, if anyone wants to pursue a
-concurrency-realistic reproduction rather than leave it sidestepped.
+default, and confirmed clean of both known defects (the original self-check failure and this
+`createcachetable`/`hashlib.md5` failure) — because both are specific to Wolfi's `openssl-4.0`
+line and the fix stays off it entirely. Open: the original bug's actual mechanism (now backed by
+~450 failed reproduction attempts against the bit-identical artifact, including real
+container-level concurrency on native x86_64) and this second bug's actual mechanism (likely an
+OpenSSL 4.0 behavior change in `default`-provider property matching for non-security-flagged
+digest fetches, not yet traced to a specific patch or upstream change). Both are concrete enough,
+and the second is reproducible enough, to be worth raising with Wolfi/Chainguard directly rather
+than left to the next person who hits either one cold.
 
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
