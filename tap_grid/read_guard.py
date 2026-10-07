@@ -40,9 +40,10 @@ backstops rather than tracking "was authorize() called":
   `policy.can` re-check). Otherwise fail closed via `assert_read_authorized`,
   which emits the loud security log and raises `UnguardedOperation`.
 
-Not covered here (named open edges): `Entity` reads (separate manager, pervasive
-internally, and the Entity API already carries its own gate) and the ctx-None
-infrastructure zone above. See req-tap-auth-orm-read-backstop.
+`Entity` (the spine) and the simple_history tables of every classified model are
+guarded too, since Issue# 963 - tap: the spine's exemption rested on an Entity API
+that no longer exists, and history is graph data. Not covered here (named open
+edge): the ctx-None infrastructure zone above. See req-tap-auth-orm-read-backstop.
 """
 
 from __future__ import annotations
@@ -183,11 +184,9 @@ def _guarded_regex() -> re.Pattern[str]:
     """Compiled alternation matching a quoted guarded-table identifier in SQL.
 
     The guarded set comes from the shared single source of truth
-    (`tap_grid.grid_tables.read_guarded_tables`): every concrete `BaseModel`
-    table plus `EntityType` (the type/plugin catalog — not a BaseModel, so
-    invisible to Layer 1). `Entity` (`tap_entity`) is deliberately excluded:
-    its reads are pervasive below the service boundary and the Entity API
-    already carries its own gate. Computed once and cached — the model set is
+    (`tap_grid.grid_tables.read_guarded_tables`): every classified table — every
+    concrete `BaseModel` table, the `Entity` spine and the `EntityType` catalog —
+    and the history table of each. Computed once and cached — the model set is
     fixed at process start.
     """
     global _guarded_regex_cache

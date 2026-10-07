@@ -449,13 +449,15 @@ table is **skipped with a loud WARNING** naming the table. Not-granting is the f
 direction (unreadable, never over-exposed) — the same reason Alembic filters against
 *reflected* DB state rather than trusting the class layer.
 
-**The one deliberate consumer asymmetry, pinned.** `Entity` is granted to the search role
-(the executor always reads the spine) but is exempt from the ORM read backstop (its reads are
-pervasive below the service boundary and the Entity API carries its own gate — the named open
-edge of `req-tap-auth-orm-read-backstop`). This is a per-model policy of the read-guard
-consumer, expressed against the model class (never a string), and the resulting relationship
-— **grant set == read-guarded set ∪ {Entity's table}** — is pinned by a guard test so an edit
-to either consumer that breaks the relationship fails loudly.
+**The consumer relationship, pinned.** The ORM read backstop guards every classified table,
+`Entity` included, plus the simple_history table of each classified model: a graph row's history
+is graph data, and the `Historical*` models carry no classification of their own. The search role
+is granted the classified tables only; it reads no history. The resulting relationship,
+**grant set == read-guarded set − history tables**, is pinned by a guard test so an edit to either
+consumer that breaks it fails loudly. Until Issue# 963 - tap, `Entity` was exempt from the read
+backstop on the ground that the Entity API carried its own gate. That API was removed in
+Issue# 957 - tap, and a full-suite run with the spine guarded broke no production path, so the
+exemption was dropped.
 
 Named alternative deliberately deferred (`req-sec-honest-risk`): moving grid tables into a
 dedicated PostgreSQL schema would make the grant one statement (`GRANT … ON ALL TABLES IN
@@ -472,7 +474,7 @@ auto-grant future non-grid tables — fail-open).
 | req-grid-table-classification.sec-2 | One Derivation, Every Consumer | Implemented | The read backstop, the search-role grant, and any future table-scope consumer derive their sets from the single shared module (`tap_grid/grid_tables.py`); none holds its own list or re-types a table name. | Kills the #1 audit finding. |
 | req-grid-table-classification.sec-3 | A BaseModel Can Never Claim Spine | Implemented | `BaseModel.__init_subclass__` rejects any `GRID_TABLE_ROLE` declaration in a subclass body (including redundant `"domain"`) with `ImproperlyConfigured` at class-definition time. | Declare-vs-decide; self-exemption closed at the chokepoint. |
 | req-grid-table-classification.sec-4 | Explicit Classification Is Core-Only | Implemented | The derivation honors an explicit `GRID_TABLE_ROLE` only on `tap_grid`-owned models; any other declarer (incl. non-BaseModel plugin models) is a fail-closed error + `security` Flaw at derivation time. | Closes the door `__init_subclass__` cannot see. |
-| req-grid-table-classification.sec-5 | Consumer Relationship Pinned | Implemented | A guard test pins grant set == read-guarded set ∪ {`Entity`'s table}, and that the spine set is exactly {`Entity`, `EntityType`} — changing either is a deliberate, reviewed spec+test change. | The Entity asymmetry stays visible, never drifts silently. |
+| req-grid-table-classification.sec-5 | Consumer Relationship Pinned | Implemented | A guard test pins grant set == read-guarded set − history tables (the read guard covers every classified table, `Entity` included, and each classified model's simple_history table; the search role is granted the classified tables only), and that the spine set is exactly {`Entity`, `EntityType`} — changing either is a deliberate, reviewed spec+test change. | The relationship stays visible, never drifts silently. The `Entity` read-guard exemption ended with Issue# 963 - tap. |
 | req-grid-table-classification.sec-6 | Grant Reconciles Against Existing Tables | Implemented | Provisioning grants only classified tables that exist in the database; a classified-but-absent table is skipped with a loud WARNING naming it, never an abort and never a silent drop. | Fail-safe direction: not-granted = unreadable. |
 
 #### Future

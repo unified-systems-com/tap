@@ -304,6 +304,15 @@ class EntityQuerySet(_GuardedWriteQuerySet["Entity"]):
     def _queryset_row_types(self) -> Callable[[], Iterable[str]] | None:
         return lambda: self.values_list("entity_type", flat=True).distinct()
 
+    def _fetch_all(self) -> None:
+        # Read backstop, Layer 1, as on BaseModelQuerySet: a spine read re-checks grid.read
+        # (req-tap-auth-orm-read-backstop; the spine's exemption ended with Issue# 963 - tap).
+        if self._result_cache is None:
+            from tap_grid.read_guard import enforce_managed_read
+
+            enforce_managed_read(f"orm read {self.model._meta.label}")
+        super()._fetch_all()
+
 
 EntityManager = models.Manager.from_queryset(EntityQuerySet)
 
