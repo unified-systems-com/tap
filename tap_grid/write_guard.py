@@ -70,17 +70,29 @@ BELOW_PIPELINE_WRITERS: dict[str, str] = {
     "scheduler_cursor": "the scheduler's own cursors on a Schedule: the claim of a due slot and the enable stamp",
 }
 
-# The writes each named writer may make, as (operation, model label). A Batch save also updates
-# the batch's own spine row through a queryset, so the batch and bookkeeping writers carry it.
-BELOW_PIPELINE_WRITES: dict[str, frozenset[tuple[str, str]]] = {
-    "batch": frozenset(
-        {("save", "tap_grid.Entity"), ("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}
-    ),
-    "purge": frozenset({("queryset delete", "tap_grid.Entity")}),
-    "sweep_purge": frozenset({("queryset delete", "tap_grid.Entity")}),
-    "bookkeeping": frozenset({("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}),
-    "spine_sync": frozenset({("queryset update", "tap_grid.Entity")}),
-    "scheduler_cursor": frozenset({("queryset update", "tap_cares.Schedule")}),
+# The writes each named writer may make: (operation, model label) mapped to the fields it may
+# write there (Issue# 980 - tap). A save is checked against its ``update_fields``, and creating a
+# row is allowed only where ``ROW_INSERT`` is listed; a queryset update is checked against its
+# keyword arguments; a delete writes no fields. No writer may change ``entity_type``.
+ROW_INSERT = "<insert>"
+# The spine fields a BaseModel save keeps in step on its own Entity row (`BaseModel.save`).
+_SPINE_SYNC_FIELDS = frozenset({"updated_at", "version", "name"})
+BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
+    "batch": {
+        ("save", "tap_grid.Entity"): frozenset({ROW_INSERT}),
+        ("save", "tap_grid.Batch"): frozenset(
+            {ROW_INSERT, "status", "closed_at", "error_message", "name", "description"}
+        ),
+        ("queryset update", "tap_grid.Entity"): _SPINE_SYNC_FIELDS,
+    },
+    "purge": {("queryset delete", "tap_grid.Entity"): frozenset()},
+    "sweep_purge": {("queryset delete", "tap_grid.Entity"): frozenset()},
+    "bookkeeping": {
+        ("save", "tap_grid.Batch"): frozenset({"metadata"}),
+        ("queryset update", "tap_grid.Entity"): _SPINE_SYNC_FIELDS,
+    },
+    "spine_sync": {("queryset update", "tap_grid.Entity"): frozenset({"name", "dimensions", "updated_at"})},
+    "scheduler_cursor": {("queryset update", "tap_cares.Schedule"): frozenset({"last_schedule_fired", "enabled_at"})},
 }
 
 # Writers that may touch spine (`tap_grid.Entity`) rows of these entity types only. A writer
@@ -257,12 +269,20 @@ def unguarded_write() -> Iterator[None]:
 
 
 def _writer_permits(
-    writer: str, operation: str, model_label: str, row_types: Callable[[], Iterable[str]] | None
+    writer: str,
+    operation: str,
+    model_label: str,
+    row_types: Callable[[], Iterable[str]] | None,
+    fields: Iterable[str] | None,
+    inserting: bool,
 ) -> bool:
     """True iff the named ``writer`` may make this write under the gates open now."""
     if not _writer_gates()[writer].intersection(_open_gates.get()):
         return False
-    if (operation, model_label) not in BELOW_PIPELINE_WRITES[writer]:
+    allowed_fields = BELOW_PIPELINE_WRITES[writer].get((operation, model_label))
+    if allowed_fields is None:
+        return False
+    if not _fields_permitted(operation, allowed_fields, fields, inserting):
         return False
     allowed_types = BELOW_PIPELINE_ENTITY_TYPES.get(writer)
     if allowed_types is None or model_label != "tap_grid.Entity":
@@ -271,14 +291,34 @@ def _writer_permits(
     return row_types is not None and set(row_types()) <= allowed_types
 
 
+def _fields_permitted(
+    operation: str, allowed_fields: frozenset[str], fields: Iterable[str] | None, inserting: bool
+) -> bool:
+    """True iff the write touches only fields its writer may write (Issue# 980 - tap)."""
+    if operation in {"delete", "queryset delete"}:
+        return True
+    if inserting:
+        return ROW_INSERT in allowed_fields
+    if fields is None:
+        # A save with no update_fields writes every column: no named writer may do that.
+        return False
+    written = set(fields)
+    return "entity_type" not in written and written <= allowed_fields - {ROW_INSERT}
+
+
 def enforce_service_write(
-    operation: str, model_label: str, *, row_types: Callable[[], Iterable[str]] | None = None
+    operation: str,
+    model_label: str,
+    *,
+    row_types: Callable[[], Iterable[str]] | None = None,
+    fields: Iterable[str] | None = None,
+    inserting: bool = False,
 ) -> None:
     """Fail closed if a graph-row write is happening outside the pipeline.
 
     Passes iff the pipeline's scope is open; or a named below-pipeline writer is open that
-    permits this write (its operation and model, and for a type-held writer the rows' entity
-    types) under a gate it accepts; or the test hatch is open (and not closed by a gated body).
+    permits this write (its operation, model and fields, and for a type-held writer the rows'
+    entity types) under a gate it accepts; or the test hatch is open (and not closed by a gated body).
     Otherwise raises `UnguardedOperation` — a defect (some code mutated the grid by direct ORM
     instead of the pipeline), not a user-facing denial.
 
@@ -288,12 +328,15 @@ def enforce_service_write(
         model_label: The model written, e.g. ``tap_grid.Entity``.
         row_types: For spine rows, a callable returning the entity types written. Called only
             when a type-held named writer is open.
+        fields: The fields written: a save's ``update_fields``, a queryset update's keyword
+            arguments. None for a save that writes every column.
+        inserting: True when the write creates the row.
     """
     detail = f"{operation} {model_label}"
     if _write_guard_bypass.get() or _service_write_active.get():
         return
     writer = _below_pipeline_writer.get()
-    if writer is not None and _writer_permits(writer, operation, model_label, row_types):
+    if writer is not None and _writer_permits(writer, operation, model_label, row_types, fields, inserting):
         return
 
     from tap.flaws import report_service_layer_bypass

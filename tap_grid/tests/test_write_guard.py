@@ -23,7 +23,9 @@ from django.test import RequestFactory, override_settings
 from tap_auth.capabilities import ALL_CAPABILITY_NAMES, READ_CAPABILITY, WRITE_CAPABILITY
 from tap_auth.enforcement import requires_capability
 from tap_auth.errors import UnguardedOperation
-from tap_grid.models import Entity, Search
+from tap_cares.models import Schedule
+from tap_grid.batch import create_batch
+from tap_grid.models import Batch, Entity, Search
 from tap_grid.services import create_node, delete_node
 from tap_grid.write_guard import (
     BELOW_PIPELINE_ENTITY_TYPES,
@@ -146,6 +148,17 @@ def _under_grid_read(writer: str, write: Callable[[], object]) -> object:
 def _under_run_scheduler(writer: str, write: Callable[[], object]) -> object:
     with below_pipeline_write(writer):
         return write()
+
+
+@requires_capability("grid.import_grift", operation="test_write_guard.under_import_grift")
+def _under_import_grift(writer: str, write: Callable[[], object]) -> object:
+    with below_pipeline_write(writer):
+        return write()
+
+
+@requires_capability(WRITE_CAPABILITY, operation="test_write_guard.make_batch")
+def _make_batch(name: str) -> Batch:
+    return create_batch(name=name)
 
 
 def _batch_spine(name: str) -> Entity:
@@ -271,3 +284,53 @@ def test_every_named_writer_has_a_reason_writes_and_registered_gates():
         assert BELOW_PIPELINE_WRITES[writer], writer
         assert gates[writer], writer
         assert gates[writer] <= set(ALL_CAPABILITY_NAMES), (writer, gates[writer] - set(ALL_CAPABILITY_NAMES))
+
+
+# --- a named writer writes only the fields it is named for (Issue# 980 - tap) ----
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_named_writer_updates_only_the_fields_it_is_named_for():
+    with pytest.raises(UnguardedOperation, match="queryset update tap_cares.Schedule"):
+        _under_run_scheduler(
+            "scheduler_cursor", lambda: Schedule.objects.filter(pk=uuid.uuid4()).update(**{"name": "x"})
+        )
+    _under_run_scheduler(
+        "scheduler_cursor", lambda: Schedule.objects.filter(pk=uuid.uuid4()).update(**{"enabled_at": None})
+    )
+    with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+        _under_import_grift("spine_sync", lambda: Entity.objects.filter(pk=uuid.uuid4()).update(version=7))
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_no_named_writer_changes_a_rows_entity_type():
+    spine = _batch_spine(f"typed-{uuid.uuid4()}")
+    with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+        _under_grid_write("bookkeeping", lambda: Entity.objects.filter(pk=spine.pk).update(entity_type="test"))
+    spine.refresh_from_db()
+    assert spine.entity_type == "batch"
+    for writer, writes in BELOW_PIPELINE_WRITES.items():
+        for target, fields in writes.items():
+            assert "entity_type" not in fields, (writer, target)
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_named_writer_saves_only_the_fields_it_is_named_for():
+    batch = _make_batch(f"fields-{uuid.uuid4()}")
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write("batch", lambda: batch.save(update_fields=["metadata"]))
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write("bookkeeping", lambda: batch.save(update_fields=["status"]))
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write("bookkeeping", lambda: batch.save())
+    batch.metadata = {"note": "bookkept"}
+    _under_grid_write("bookkeeping", lambda: batch.save(update_fields=["metadata"]))
+    batch.refresh_from_db()
+    assert batch.metadata == {"note": "bookkept"}
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_only_a_writer_named_for_inserts_creates_a_row():
+    spine = _batch_spine(f"insert-{uuid.uuid4()}")
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write("bookkeeping", lambda: Batch(entity=spine, name="not bookkeeping's", source="test").save())
