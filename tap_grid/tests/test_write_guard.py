@@ -13,6 +13,8 @@ as in production. Every other test keeps the hatch, which stops at a gated body.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 from django.contrib import admin
@@ -24,7 +26,9 @@ from tap_auth.errors import UnguardedOperation
 from tap_grid.models import Entity, Search
 from tap_grid.services import create_node, delete_node
 from tap_grid.write_guard import (
+    BELOW_PIPELINE_ENTITY_TYPES,
     BELOW_PIPELINE_WRITERS,
+    BELOW_PIPELINE_WRITES,
     _writer_gates,
     below_pipeline_write,
     service_write_scope,
@@ -126,16 +130,27 @@ def _gated_direct_create(name: str) -> Entity:
     return Entity.objects.create(entity_type="test", name=name)
 
 
-@requires_capability(WRITE_CAPABILITY, operation="test_write_guard.gated_named_writer")
-def _gated_named_write(writer: str, name: str) -> Entity:
+@requires_capability(WRITE_CAPABILITY, operation="test_write_guard.under_grid_write")
+def _under_grid_write(writer: str, write: Callable[[], object]) -> object:
     with below_pipeline_write(writer):
-        return Entity.objects.create(entity_type="test", name=name)
+        return write()
 
 
-@requires_capability(READ_CAPABILITY, operation="test_write_guard.read_gated_batch_writer")
-def _read_gated_batch_write(name: str) -> Entity:
-    with below_pipeline_write("batch"):
-        return Entity.objects.create(entity_type="test", name=name)
+@requires_capability(READ_CAPABILITY, operation="test_write_guard.under_grid_read")
+def _under_grid_read(writer: str, write: Callable[[], object]) -> object:
+    with below_pipeline_write(writer):
+        return write()
+
+
+@requires_capability("cares.run_scheduler", operation="test_write_guard.under_run_scheduler")
+def _under_run_scheduler(writer: str, write: Callable[[], object]) -> object:
+    with below_pipeline_write(writer):
+        return write()
+
+
+def _batch_spine(name: str) -> Entity:
+    """A batch's spine row, written the way the batch writer writes it."""
+    return cast(Entity, _under_grid_write("batch", lambda: Entity.objects.create(entity_type="batch", name=name)))
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
@@ -192,24 +207,53 @@ def test_admin_bulk_delete_fails_closed_at_runtime():
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
-def test_a_named_writer_under_a_gate_it_accepts_passes():
-    made = _gated_named_write("batch", f"named-{uuid.uuid4()}")
-    assert made.pk is not None
+def test_a_named_writer_making_its_own_write_under_a_gate_it_accepts_passes():
+    spine = _batch_spine(f"named-{uuid.uuid4()}")
+    assert spine.pk is not None
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
 def test_a_named_writer_with_no_gate_fails_closed():
     """The name says why a write skips the pipeline; it never says who may make it."""
     with below_pipeline_write("batch"), pytest.raises(UnguardedOperation, match="open gates: \\[\\]"):
-        Entity.objects.create(entity_type="test", name=f"ungated-{uuid.uuid4()}")
+        Entity.objects.create(entity_type="batch", name=f"ungated-{uuid.uuid4()}")
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
 def test_a_named_writer_under_a_gate_it_does_not_accept_fails_closed():
+    entity = _node("wrong-gate")
     with pytest.raises(UnguardedOperation, match="unguarded write"):
-        _gated_named_write("purge", f"wrong-gate-{uuid.uuid4()}")
+        _under_grid_write("purge", lambda: Entity.objects.filter(pk=entity.pk).delete())
+    assert Entity.objects.filter(pk=entity.pk).exists()
     with pytest.raises(UnguardedOperation, match="unguarded write"):
-        _read_gated_batch_write(f"read-gate-{uuid.uuid4()}")
+        _under_grid_read("batch", lambda: Entity.objects.create(entity_type="batch", name=f"read-{uuid.uuid4()}"))
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_named_writer_cannot_make_a_write_it_is_not_named_for():
+    """A writer's name binds what it may write, not only who may open it: "batch" cannot
+    create an arbitrary node, and the scheduler's cursor cannot delete a spine row."""
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Entity"):
+        _under_grid_write(
+            "batch", lambda: Entity.objects.create(entity_type="test", name=f"not-a-batch-{uuid.uuid4()}")
+        )
+    entity = _node("not-a-cursor")
+    with pytest.raises(UnguardedOperation, match="queryset delete tap_grid.Entity"):
+        _under_run_scheduler("scheduler_cursor", lambda: Entity.objects.filter(pk=entity.pk).delete())
+    assert Entity.objects.filter(pk=entity.pk).exists()
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_type_held_writer_touches_only_its_own_spine_rows():
+    node = _node("not-bookkeeping")
+    with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+        _under_grid_write("bookkeeping", lambda: Entity.objects.filter(pk=node.pk).update(name="renamed"))
+    node.refresh_from_db()
+    assert node.name == "not-bookkeeping"
+    spine = _batch_spine(f"bookkept-{uuid.uuid4()}")
+    _under_grid_write("bookkeeping", lambda: Entity.objects.filter(pk=spine.pk).update(name="bookkept"))
+    spine.refresh_from_db()
+    assert spine.name == "bookkept"
 
 
 def test_an_unknown_writer_name_is_refused():
@@ -218,10 +262,12 @@ def test_an_unknown_writer_name_is_refused():
             pass
 
 
-def test_every_named_writer_has_a_reason_and_registered_gates():
+def test_every_named_writer_has_a_reason_writes_and_registered_gates():
     gates = _writer_gates()
-    assert set(gates) == set(BELOW_PIPELINE_WRITERS)
+    assert set(gates) == set(BELOW_PIPELINE_WRITERS) == set(BELOW_PIPELINE_WRITES)
+    assert set(BELOW_PIPELINE_ENTITY_TYPES) <= set(BELOW_PIPELINE_WRITERS)
     for writer, reason in BELOW_PIPELINE_WRITERS.items():
         assert reason.strip(), writer
+        assert BELOW_PIPELINE_WRITES[writer], writer
         assert gates[writer], writer
         assert gates[writer] <= set(ALL_CAPABILITY_NAMES), (writer, gates[writer] - set(ALL_CAPABILITY_NAMES))

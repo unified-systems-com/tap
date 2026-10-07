@@ -6,6 +6,7 @@ Design philosophy: See DESIGN.md in this directory.
 
 import hashlib
 import uuid
+from collections.abc import Callable, Iterable
 from typing import Any, ClassVar, TypeVar
 
 import jsonschema
@@ -260,25 +261,31 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
     check at all (Issue# 959 - tap). Each now calls ``enforce_service_write`` first.
     """
 
-    def _guard(self, operation: str) -> None:
+    def _guard(self, operation: str, row_types: Callable[[], Iterable[str]] | None = None) -> None:
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write(f"queryset {operation} {self.model._meta.label}")
+        enforce_service_write(f"queryset {operation}", self.model._meta.label, row_types=row_types)
+
+    def _queryset_row_types(self) -> Callable[[], Iterable[str]] | None:
+        """The entity types this queryset's rows carry, read only if a type-held writer asks."""
+        return None
 
     def update(self, **kwargs: Any) -> int:
-        self._guard("update")
+        self._guard("update", self._queryset_row_types())
         return super().update(**kwargs)
 
     def delete(self) -> tuple[int, dict[str, int]]:
-        self._guard("delete")
+        self._guard("delete", self._queryset_row_types())
         return super().delete()
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[_ModelT]:
-        self._guard("bulk_create")
+        objs = list(objs)
+        self._guard("bulk_create", lambda: [getattr(o, "entity_type", "") for o in objs])
         return super().bulk_create(objs, *args, **kwargs)
 
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
-        self._guard("bulk_update")
+        objs = list(objs)
+        self._guard("bulk_update", lambda: [getattr(o, "entity_type", "") for o in objs])
         return super().bulk_update(objs, fields, *args, **kwargs)
 
 
@@ -293,6 +300,9 @@ class EntityQuerySet(_GuardedWriteQuerySet["Entity"]):
 
     def tombstoned(self) -> EntityQuerySet:
         return self.filter(deleted_at__isnull=False)
+
+    def _queryset_row_types(self) -> Callable[[], Iterable[str]] | None:
+        return lambda: self.values_list("entity_type", flat=True).distinct()
 
 
 EntityManager = models.Manager.from_queryset(EntityQuerySet)
@@ -435,14 +445,14 @@ class Entity(models.Model):
         """
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write("save tap_grid.Entity")
+        enforce_service_write("save", "tap_grid.Entity", row_types=lambda: (self.entity_type,))
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Delete the Entity (cascades to edges + domain rows) — service layer only."""
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write("delete tap_grid.Entity")
+        enforce_service_write("delete", "tap_grid.Entity", row_types=lambda: (self.entity_type,))
         return super().delete(*args, **kwargs)
 
 
@@ -1013,7 +1023,7 @@ class BaseModel(models.Model):
         # from a view/panel/command fails closed. Layer 1 of the write guard.
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write(f"save {self._meta.label}")
+        enforce_service_write("save", self._meta.label)
 
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
@@ -1103,7 +1113,7 @@ class BaseModel(models.Model):
         """
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write(f"delete {self._meta.label}")
+        enforce_service_write("delete", self._meta.label)
         return super().delete(*args, **kwargs)
 
 

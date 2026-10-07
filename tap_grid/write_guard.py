@@ -47,15 +47,17 @@ import contextlib
 import contextvars
 import logging
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
 # The writers that write graph rows below the pipeline, each for a reason the pipeline
 # cannot carry. Closed: `below_pipeline_write` refuses any other name, so a new one is a
 # reviewed edit here and in req-tap-auth-write-batch-routing, never a call-site invention.
-# A named writer passes the guard only while a gate it accepts is open (`_writer_gates`):
-# the name says why the write skips the pipeline, the gate says who may make it.
+# A named writer passes the guard only for the writes it exists for (`BELOW_PIPELINE_WRITES`,
+# and `BELOW_PIPELINE_ENTITY_TYPES` for the spine rows it may touch), and only while a gate it
+# accepts is open (`_writer_gates`): the name says why the write skips the pipeline and what it
+# may write, the gate says who may make it.
 BELOW_PIPELINE_WRITERS: dict[str, str] = {
     "batch": "a batch's own spine row and its open/close bookkeeping: a batch cannot be written in a batch",
     "purge": "the DEBUG-only hard purge, which removes rows the pipeline only tombstones",
@@ -66,6 +68,27 @@ BELOW_PIPELINE_WRITERS: dict[str, str] = {
         "the replace in the same batch carries the version bump and the update event"
     ),
     "scheduler_cursor": "the scheduler's own cursors on a Schedule: the claim of a due slot and the enable stamp",
+}
+
+# The writes each named writer may make, as (operation, model label). A Batch save also updates
+# the batch's own spine row through a queryset, so the batch and bookkeeping writers carry it.
+BELOW_PIPELINE_WRITES: dict[str, frozenset[tuple[str, str]]] = {
+    "batch": frozenset(
+        {("save", "tap_grid.Entity"), ("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}
+    ),
+    "purge": frozenset({("queryset delete", "tap_grid.Entity")}),
+    "sweep_purge": frozenset({("queryset delete", "tap_grid.Entity")}),
+    "bookkeeping": frozenset({("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}),
+    "spine_sync": frozenset({("queryset update", "tap_grid.Entity")}),
+    "scheduler_cursor": frozenset({("queryset update", "tap_cares.Schedule")}),
+}
+
+# Writers that may touch spine (`tap_grid.Entity`) rows of these entity types only. A writer
+# not listed here may touch any type its writes allow (purge, sweep_purge and spine_sync act on
+# whatever node or edge they were asked about).
+BELOW_PIPELINE_ENTITY_TYPES: dict[str, frozenset[str]] = {
+    "batch": frozenset({"batch"}),
+    "bookkeeping": frozenset({"batch"}),
 }
 
 
@@ -233,22 +256,44 @@ def unguarded_write() -> Iterator[None]:
         _write_guard_bypass.reset(token)
 
 
-def enforce_service_write(detail: str) -> None:
+def _writer_permits(
+    writer: str, operation: str, model_label: str, row_types: Callable[[], Iterable[str]] | None
+) -> bool:
+    """True iff the named ``writer`` may make this write under the gates open now."""
+    if not _writer_gates()[writer].intersection(_open_gates.get()):
+        return False
+    if (operation, model_label) not in BELOW_PIPELINE_WRITES[writer]:
+        return False
+    allowed_types = BELOW_PIPELINE_ENTITY_TYPES.get(writer)
+    if allowed_types is None or model_label != "tap_grid.Entity":
+        return True
+    # A writer held to some entity types must be able to show the rows are of those types.
+    return row_types is not None and set(row_types()) <= allowed_types
+
+
+def enforce_service_write(
+    operation: str, model_label: str, *, row_types: Callable[[], Iterable[str]] | None = None
+) -> None:
     """Fail closed if a graph-row write is happening outside the pipeline.
 
-    Passes iff the pipeline's scope is open; or a named below-pipeline writer is open under
-    a gate that writer accepts; or the test hatch is open (and not closed by a gated body).
-    Otherwise raises `UnguardedOperation` — a defect (some code mutated the grid by direct
-    ORM instead of the pipeline), not a user-facing denial.
+    Passes iff the pipeline's scope is open; or a named below-pipeline writer is open that
+    permits this write (its operation and model, and for a type-held writer the rows' entity
+    types) under a gate it accepts; or the test hatch is open (and not closed by a gated body).
+    Otherwise raises `UnguardedOperation` — a defect (some code mutated the grid by direct ORM
+    instead of the pipeline), not a user-facing denial.
 
     Args:
-        detail: The write site (e.g. ``save tap_web.Panel``), woven into the
-            failure message so the offending direct write is locatable.
+        operation: The write: ``save``, ``delete``, or ``queryset update`` / ``queryset delete``
+            / ``queryset bulk_create`` / ``queryset bulk_update``.
+        model_label: The model written, e.g. ``tap_grid.Entity``.
+        row_types: For spine rows, a callable returning the entity types written. Called only
+            when a type-held named writer is open.
     """
+    detail = f"{operation} {model_label}"
     if _write_guard_bypass.get() or _service_write_active.get():
         return
     writer = _below_pipeline_writer.get()
-    if writer is not None and _writer_gates()[writer].intersection(_open_gates.get()):
+    if writer is not None and _writer_permits(writer, operation, model_label, row_types):
         return
 
     from tap.flaws import report_service_layer_bypass
@@ -268,7 +313,8 @@ def enforce_service_write(detail: str) -> None:
         f"through write_batch (or a service verb that calls it), which carries batch scope, "
         f"FLIP, provenance and the per-operation capability backstop. A permission gate is "
         f"not a write scope. A writer that must sit below the pipeline is one of the named "
-        f"BELOW_PIPELINE_WRITERS in tap_grid.write_guard, open under a gate it accepts "
-        f"(writer: {_below_pipeline_writer.get()!r}; open gates: {list(_open_gates.get())!r}).",
+        f"BELOW_PIPELINE_WRITERS in tap_grid.write_guard, writing only what it is named for, "
+        f"under a gate it accepts (writer: {_below_pipeline_writer.get()!r}; "
+        f"open gates: {list(_open_gates.get())!r}).",
         callsite=detail,
     )
