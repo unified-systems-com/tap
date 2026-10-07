@@ -486,7 +486,11 @@ RID: `req-cicd-build-once-artifact-2`
 
 Status: `Proposed`
 
-Trace: `non-python` — Dockerfile, docker/entrypoint.sh, docker-compose.yml, docker-compose.ci.yml
+Trace: `non-python` — docker/entrypoint.sh
+
+(the grammar takes one path; `uv sync --all-packages` running there today is this proposal's
+starting point — Dockerfile, docker-compose.yml and docker-compose.ci.yml are the other
+build-time surfaces it would touch, named in the prose below)
 
 **"Build once" above covers the OS layer, FIPS provider, and base packages — every
 image-build input. The Python dependency closure is the one thing still assembled AFTER
