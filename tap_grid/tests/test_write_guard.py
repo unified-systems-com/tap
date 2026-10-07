@@ -394,6 +394,22 @@ def test_an_upsert_is_checked_as_the_update_it_can_be(monkeypatch: pytest.Monkey
                 unique_fields=["id"],
             ),
         )
+    # The same upsert with its options passed by position, which Django accepts.
+    with pytest.raises(UnguardedOperation, match="queryset bulk_create tap_grid.Entity"):
+        _under_grid_write(
+            "batch",
+            lambda: Entity.objects.bulk_create(
+                [Entity(id=spine.pk, entity_type="batch", name="upserted")], None, False, True, ["name"], ["id"]
+            ),
+        )
+    # An upsert naming no fields is refused by the guard, as an update without fields is.
+    with pytest.raises(UnguardedOperation, match="queryset bulk_create tap_grid.Entity"):
+        _under_grid_write(
+            "batch",
+            lambda: Entity.objects.bulk_create(
+                [Entity(id=spine.pk, entity_type="batch", name="upserted")], update_conflicts=True, unique_fields=["id"]
+            ),
+        )
     spine.refresh_from_db()
     assert spine.name != "upserted"
     made = _under_grid_write(

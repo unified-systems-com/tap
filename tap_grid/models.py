@@ -5,6 +5,7 @@ Design philosophy: See DESIGN.md in this directory.
 """
 
 import hashlib
+import inspect
 import uuid
 from collections.abc import Callable, Iterable
 from typing import Any, ClassVar, TypeVar
@@ -262,6 +263,9 @@ def _is_forced_insert(save_kwargs: dict[str, Any]) -> bool:
     return bool(save_kwargs.get("force_insert"))
 
 
+_BULK_CREATE_SIGNATURE = inspect.signature(models.QuerySet.bulk_create)
+
+
 class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
     """Queryset writes on a graph table pass the write guard, as instance writes do.
 
@@ -303,12 +307,16 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[_ModelT]:
         objs = list(objs)
-        if kwargs.get("update_conflicts"):
+        # Django takes these options by position as well as by name; bind them as it will, so an
+        # upsert passed positionally is still seen as one.
+        options = _BULK_CREATE_SIGNATURE.bind(self, objs, *args, **kwargs).arguments
+        if options.get("update_conflicts"):
             # An upsert updates existing rows: checked as the update it can be, by its fields.
+            # One naming no fields is refused, as an update without fields is.
             self._guard(
                 "bulk_create",
                 lambda: [getattr(o, "entity_type", "") for o in objs],
-                fields=kwargs.get("update_fields") or (),
+                fields=options.get("update_fields"),
             )
         else:
             self._guard("bulk_create", lambda: [getattr(o, "entity_type", "") for o in objs], inserting=True)
