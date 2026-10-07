@@ -252,6 +252,16 @@ def clamp_to_fields(text: str, *fields: tuple[type[models.Model], str]) -> str:
 _ModelT = TypeVar("_ModelT", bound=models.Model)
 
 
+def _is_forced_insert(save_kwargs: dict[str, Any]) -> bool:
+    """True iff this save can only insert: ``force_insert``, as ``QuerySet.create`` passes.
+
+    ``_state.adding`` is not enough: a fresh instance carrying an existing row's id is still
+    "adding", and ``save(force_update=True)`` on it updates that row (Issue# 980 - tap). The write
+    guard lets a named writer create rows only on a save that cannot touch an existing one.
+    """
+    return bool(save_kwargs.get("force_insert"))
+
+
 class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
     """Queryset writes on a graph table pass the write guard, as instance writes do.
 
@@ -293,7 +303,15 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[_ModelT]:
         objs = list(objs)
-        self._guard("bulk_create", lambda: [getattr(o, "entity_type", "") for o in objs], inserting=True)
+        if kwargs.get("update_conflicts"):
+            # An upsert updates existing rows: checked as the update it can be, by its fields.
+            self._guard(
+                "bulk_create",
+                lambda: [getattr(o, "entity_type", "") for o in objs],
+                fields=kwargs.get("update_fields") or (),
+            )
+        else:
+            self._guard("bulk_create", lambda: [getattr(o, "entity_type", "") for o in objs], inserting=True)
         return super().bulk_create(objs, *args, **kwargs)
 
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
@@ -472,7 +490,7 @@ class Entity(models.Model):
             "tap_grid.Entity",
             row_types=lambda: (self.entity_type,),
             fields=kwargs.get("update_fields"),
-            inserting=self._state.adding,
+            inserting=_is_forced_insert(kwargs),
         )
         super().save(*args, **kwargs)
 
@@ -1052,7 +1070,7 @@ class BaseModel(models.Model):
         from tap_grid.write_guard import enforce_service_write
 
         enforce_service_write(
-            "save", self._meta.label, fields=kwargs.get("update_fields"), inserting=self._state.adding
+            "save", self._meta.label, fields=kwargs.get("update_fields"), inserting=_is_forced_insert(kwargs)
         )
 
         skip_validation: bool = kwargs.pop("skip_validation", False)

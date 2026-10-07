@@ -31,6 +31,7 @@ from tap_grid.write_guard import (
     BELOW_PIPELINE_ENTITY_TYPES,
     BELOW_PIPELINE_WRITERS,
     BELOW_PIPELINE_WRITES,
+    ROW_INSERT,
     _writer_gates,
     below_pipeline_write,
     service_write_scope,
@@ -334,3 +335,48 @@ def test_only_a_writer_named_for_inserts_creates_a_row():
     spine = _batch_spine(f"insert-{uuid.uuid4()}")
     with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
         _under_grid_write("bookkeeping", lambda: Batch(entity=spine, name="not bookkeeping's", source="test").save())
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_writer_named_for_inserts_cannot_overwrite_a_row_by_reusing_its_id():
+    """A fresh instance carrying an existing id is still "adding"; saving it can update that row.
+    Only a forced insert counts as creating a row."""
+    node = _node("existing")
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Entity"):
+        _under_grid_write(
+            "batch", lambda: Entity(id=node.pk, entity_type="batch", name="overwritten").save(force_update=True)
+        )
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Entity"):
+        _under_grid_write("batch", lambda: Entity(id=node.pk, entity_type="batch", name="overwritten").save())
+    node.refresh_from_db()
+    assert (node.entity_type, node.name) == ("grid_fixtures__node", "existing")
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_an_upsert_is_checked_as_the_update_it_can_be(monkeypatch: pytest.MonkeyPatch):
+    """bulk_create(update_conflicts=True) updates existing rows, so it needs the fields, not just
+    the right to insert. No shipped writer may bulk-create; this one is granted inserts only."""
+    import tap_grid.write_guard as write_guard
+
+    grants = {
+        **write_guard.BELOW_PIPELINE_WRITES["batch"],
+        ("queryset bulk_create", "tap_grid.Entity"): frozenset({ROW_INSERT}),
+    }
+    monkeypatch.setitem(write_guard.BELOW_PIPELINE_WRITES, "batch", grants)
+    spine = _batch_spine(f"upsert-{uuid.uuid4()}")
+    with pytest.raises(UnguardedOperation, match="queryset bulk_create tap_grid.Entity"):
+        _under_grid_write(
+            "batch",
+            lambda: Entity.objects.bulk_create(
+                [Entity(id=spine.pk, entity_type="batch", name="upserted")],
+                update_conflicts=True,
+                update_fields=["name"],
+                unique_fields=["id"],
+            ),
+        )
+    spine.refresh_from_db()
+    assert spine.name != "upserted"
+    made = _under_grid_write(
+        "batch", lambda: Entity.objects.bulk_create([Entity(entity_type="batch", name=f"bulk-{uuid.uuid4()}")])
+    )
+    assert made
