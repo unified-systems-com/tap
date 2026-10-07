@@ -480,6 +480,90 @@ Still open under this RID: promoting the *same bytes* through deploy environment
 idea (bake the migrated DB into the image), and product release versioning (semver for the
 app, not just plugins).
 
+### Build The Dependency Closure Into The Artifact
+
+RID: `req-cicd-build-once-artifact-2`
+
+Status: `Proposed`
+
+Trace: `non-python` — docker/entrypoint.sh
+
+(the grammar takes one path; `uv sync --all-packages` running there today is this proposal's
+starting point — Dockerfile, docker-compose.yml and docker-compose.ci.yml are the other
+build-time surfaces it would touch, named in the prose below)
+
+**"Build once" above covers the OS layer, FIPS provider, and base packages — every
+image-build input. The Python dependency closure is the one thing still assembled AFTER
+the image is built.** `uv sync --all-packages` runs in `docker/entrypoint.sh` on every
+container start, against whatever the uv-cache volume (or, in CI, GitHub's
+`actions/cache`) happens to contain at that moment — a cache keyed only on
+`uv.lock`/`pyproject.toml` content, with no awareness of which image (which system
+OpenSSL, which base digest) it is being synced into. Found while closing out tap#933/#931
+(`doc-fips-assessment-record.md` L18): a branch-scoped cache hit served a `cryptography`
+wheel `--no-binary`-compiled against a system OpenSSL major version the image had since
+moved off of, producing two independent OpenSSL cores in one process — confirmed as the
+actual root cause, reproduced exactly. CI's green checkmark proved that *a* `uv sync`
+succeeded, not that *the published image's own* dependency closure was what got tested —
+a gap the same shape as every other thing this RID already closed for the OS layer.
+
+**Proposed:** fold Python dependency installation into the image build for every
+artifact that is supposed to be immutable (the published image, and anything CI boots
+from it), and confine install-at-boot to the one case that genuinely needs it — the dev
+inner loop, where a bind-mounted checkout's code changes must take effect without a
+rebuild, and `uv.lock` itself can change between one `git pull` and the next without a
+new image existing yet to carry it.
+
+This cannot be "just move the `uv sync` call into the Dockerfile" — that was tried
+once already and is why today's design looks the way it does. The venv and the uv cache
+are both runtime-mounted named volumes (`spec-dev-multisession.md`): whatever a build
+stage writes under `/app/.venv` or `$UV_CACHE_DIR` is invisible at container start,
+hidden by the volume mount. `deps-warm` already runs `uv sync --frozen` at build time
+today, but only to produce the wheel *cache* seed (`/opt/uv-cache-seed`) — its own venv
+is discarded, deliberately, because **"a cp-seeded venv proved uv-hostile on the CI
+runner" (2026-08-09)**: copying a venv built at one path into another broke assumptions
+`uv` itself makes about the venv it manages (absolute paths recorded in `pyvenv.cfg` and
+activation scripts, and/or `uv`'s own environment-identity bookkeeping). Any design here
+has to not re-create that failure. Candidate shape, to be worked out in full before any
+code lands:
+
+- A build stage runs `uv sync --all-packages --frozen` and creates the venv **in place,
+  at its real final runtime path** (not a different build-time path later copied) — the
+  distinction `deps-warm` already avoids today for the opposite reason (it deliberately
+  does NOT want its venv to persist). No `cp` of a venv across paths; `uv` creates it once,
+  where it will actually run.
+- **That build stage MUST derive from the exact same base-image digest and the exact same
+  OS/OpenSSL packages as the final runtime stage it feeds — enforced, not assumed.** This
+  is the invariant tap#933's own root cause violated, and a spec that fixes where the venv
+  gets created without also fixing what it gets compiled against would let a future
+  Dockerfile refactor reproduce the identical two-cores failure while still technically
+  conforming to every other bullet here (raised in review of PR#976, correctly: creating
+  the venv at the right *path* says nothing about which *libraries* it was linked
+  against). Concretely: the dependency-build stage's `FROM` must resolve to the same
+  stage (or an argument-identical sibling of it) as the runtime stage — never a
+  separately-pinned or separately-dated base — and CI must assert this ancestry the same
+  way `tap/tests/test_container_healthcheck.py` already asserts the `HEALTHCHECK`-owning
+  stage's ancestry for every selectable final target, not merely document it in prose.
+- For the published image and any CI lane that boots from it: do not mount a volume over
+  that path at all. The container runs directly against what the image shipped — "build
+  once, promote the artifact" now covers the full closure, and CI testing the image tests
+  the thing that gets published, not a boot-time reconstruction of it.
+- For the dev stack (`docker-compose.yml`, bind-mounted source tree): keep the existing
+  named-volume-over-`/app/.venv` + boot-time `uv sync` behavior exactly as it is today.
+  Live-editing requires it, and nothing here should regress `spec-dev-multisession.md`'s
+  per-session isolation story.
+- Key the image's own build cache (not a separate `actions/cache` layer) on the base
+  image digest plus `uv.lock`/`pyproject.toml` — so a dependency-only bump doesn't
+  recompile anything whose actual inputs (OS packages, OpenSSL) have not changed, and so
+  a change to EITHER axis invalidates the cache instead of silently serving stale bytes
+  for the one that changed. This directly closes the gap tap#933's root cause exploited:
+  a cache key blind to which image it is feeding.
+
+Separate from, and not blocking, Q92a's work on the current boot-time path (the CI
+`actions/cache` removal, the image-identity stamp, the two-OpenSSL boot guard) — that
+hardens the existing design against the same root cause without waiting on this one;
+this spec is the longer-term fix that removes the boot-time install from the trusted
+(CI/production) path entirely.
+
 ### Sign Artifacts, Emit SBOM
 
 RID: `req-cicd-supply-chain-provenance`

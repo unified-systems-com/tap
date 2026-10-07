@@ -5,7 +5,7 @@
 | Bucket | Count |
 | --- | ---: |
 | mapped | 5 |
-| excluded | 7 |
+| excluded | 8 |
 | unbuilt | 3 |
 | 0-ACID (payable) | 0 |
 
@@ -18,6 +18,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-cicd-base-image-sourcing` | non-python |  | docker/postgres/Dockerfile |
 | `req-cicd-branch-protection` | external |  | GitHub repository rulesets (protect-default-branches, main-required-checks) |
 | `req-cicd-build-once-artifact` | non-python | ⚠ | .github/workflows/publish-images.yml |
+| `req-cicd-build-once-artifact-2` | non-python |  | docker/entrypoint.sh |
 | `req-cicd-dep-automation` | non-python | ⚠ | renovate.json5 |
 | `req-cicd-product-releases` | non-python |  | release-please-config.json |
 | `req-cicd-release-artifacts` | process |  | org release convention; the mechanical tag parsing is |
