@@ -409,6 +409,458 @@ in a place the hashing audit never looked.* The fail-closed boot self-check (D15
 health probe are the backstops that turn a future regression of this class into an immediate,
 explained boot failure rather than a mystery.
 
+### L18 — A refused negative-control fetch can poison the process for later, unrelated crypto ⚠️
+
+Found 2026-10 (tap#933/#931), while accepting Wolfi's `openssl-4.0` package migration: the boot
+self-check (D15) started failing `cryptography`'s P-256 keygen — the webauthn/passkey path itself,
+not MD5 — with `error:12000090:random number generator:rand_new_drbg:unable to fetch drbg` in the
+process's **default** `OSSL_LIB_CTX`. 100% reproducible on real GitHub Actions hardware; 0%
+reproducible across every local repro tried (native aarch64, QEMU-emulated amd64, a genuinely fresh
+`uv sync`, the real `docker compose` stack) — architecture, `-m` vs `-c` invocation, import-time
+package side effects, and gunicorn's fork model were each tested and ruled out in turn.
+
+Isolated to a 5-line reproduction with no `tap` code involved at all: `hashlib.sha256()` (a positive
+control), then `_hashlib.new("md5", ...)` (correctly refused — the intended L5 negative-control
+probe), then `cryptography`'s EC keygen. That order fails every time on real hardware. Reversing it —
+the keygen first, the MD5 probe after — passes every time, same hardware, same config, verified
+across multiple container restarts. The DRBG failure has nothing to do with the hashing boundary
+being probed; **the act of correctly refusing an unapproved fetch leaves the context unable to
+satisfy a later, unrelated one**, for the remainder of the process's life.
+
+**The precise trigger is narrower, and the damage wider, than "call MD5 first."** Fixing this took
+three passes, each disproven by the next real CI run before being trusted:
+
+1. Reordering `assert_declared_mode()`'s own explicit calls (crypto check before the explicit MD5
+   probe) did **not** fix it — `hashlib` (the stdlib *wrapper* module, not `_hashlib`, the raw
+   OpenSSL-backed C extension) was still imported at `tap/fips.py`'s module scope, and `hashlib.py`'s
+   own module-level code eagerly pre-builds a constructor for every standard hash name, including
+   MD5, the instant it is imported — catching and silently logging any failure
+   (`ERROR:root:code for hash md5 was not found`) rather than raising. That import-time MD5 attempt
+   is itself a refused fetch, and it ran before any of the reordered explicit calls did.
+2. Deferring `import hashlib` to run after `cryptography`'s check **also did not fully fix it** —
+   it fixed the keygen, but the self-check then failed with
+   `AttributeError: module 'hashlib' has no attribute 'sha256'`. `hashlib.py`'s bulk-construction
+   loop processes every standard hash name in one pass; once MD5's refusal corrupts the context
+   mid-loop, **later names in that same loop can also silently fail to register** — including the
+   approved, FIPS-supported SHA-256 this module's own positive control needs. Deferring the import
+   moved *when* the hazard fired, not *whether* it could still take out something needed afterward.
+3. Dropping `hashlib.py` fixed the import-time hazard, but a fourth real-CI run then failed with
+   the exact same symptom shape from a **third** source: `_cryptography_positive_control`'s own
+   MD5 negative control (`hashes.Hash(hashes.MD5())`) ran right after its own successful keygen,
+   inside the same function — and poisoned the context for `_approved_python_hash_works`, which
+   ran immediately afterward. The refusal doesn't care that ITS OWN positive control already
+   succeeded; it still breaks the NEXT caller's fetch, whoever that is. The fix that finally held:
+   split that function into `_cryptography_positive_control` and `_cryptography_md5_refused`, and
+   order the ENTIRE self-check as every positive control first, then every negative one, with no
+   function anywhere running both. Three separate code paths — `hashlib.py`'s own import,
+   `_hashlib.new("md5", ...)`, and `cryptography`'s `hashes.MD5()` — all reproduce the identical
+   mechanism, confirming it is the refused fetch itself, not any one API's particular implementation.
+
+**Why MD5 is refused here at all is itself a Wolfi packaging fact, not purely a FIPS one.**
+Wolfi's new freestanding legacy provider (`openssl-provider-legacy-allowed`, the one gated behind
+`enable-legacy-allowed` — defaulting OFF — by Dimitri Ledkov's 2026-09-16 patch,
+`xnox/dimitrijohnledkov/os-3305-fips-chainguard_legacy_allowed0-defeated-by-cryptography`) registers
+**MD5 alongside MD4** in its digest table. Tap's own `openssl-fips.cnf` never activates `legacy` at
+all — only `fips` and `base` — and `base` supplies no digest algorithms (L15). So under tap's
+specific, deliberate provider set, no active provider implements MD5 at all, for either
+`usedforsecurity=True` or `usedforsecurity=False`: not because Dimitri's gate is closed, but because
+tap never opens the door that gate sits on. Whether MD5 was reachable via a different path before
+Wolfi's openssl-4.0 restructuring (and quietly stopped being so) is not confirmed — this is the one
+open question most worth putting directly to Dimitri, who built the restructuring and would know
+immediately.
+
+This matches a known, closed-wontfix upstream limitation (`openssl/openssl#27691`, "Multiple copies
+of openssl inside the same process need unique copies of loaded modules (fips.so)" — maintainer's own
+words: "there is some static state in `fips.so` itself that is modified when the library is loaded
+and if it's loaded again, that state is not usable by the second loader"), though the exact trigger
+here is a single load, not a double one — a provider-level fetch-cache side effect, not a reload.
+Real hardware is apparently a necessary condition alongside the ordering; QEMU's generic CPU model
+never reproduced it despite matching every other variable. Web research (2026-10) found no existing
+report of this exact chain, but strong circumstantial support that the underlying subsystem is a
+live source of bugs: `openssl/openssl#26699` traced a near-identical symptom (a correctly-registered
+algorithm not found by the method store) into the newer lock-free provider hashtable
+(`crypto/evp/evp_fetch.c`'s `ossl_ht_get`/`lockless_reads` path); `#24272` and `#30883` are other
+recent regressions/fixes in the same area; `#29212` confirms TSAN-detectable races exist nearby. A
+lock-free hashtable race that real hardware's memory ordering exposes and QEMU's more sequential
+emulation masks fits every observation here, though this has not been confirmed against OpenSSL's
+own source.
+
+**Generalize beyond this one self-check, and beyond "calling" MD5 at all:** the trigger is not
+limited to code that explicitly calls `hashlib.md5()`/`_hashlib.new("md5", ...)`. Merely
+`import hashlib` — an extremely common, otherwise-unremarkable stdlib import that almost any
+nontrivial Python code does, with no intent to touch MD5 at all — is sufficient, because of
+`hashlib.py`'s own eager, import-time constructor-building, and the damage is not confined to MD5
+or to later, unrelated calls: other standard names processed later in that *same* import-time loop
+(confirmed here: SHA-256) can come out missing too, so `import hashlib` itself can leave the module
+silently short a FIPS-approved algorithm it should have, in the same statement that imported it. In
+a long-lived gunicorn worker, the *first* `import hashlib` anywhere in that worker's lifetime (tap's
+own code or any dependency's) could leave every *subsequent* request on that worker failing an
+unrelated DRBG-needing operation (signing, keygen, passkey verification) until the worker recycles —
+an intermittent, worker-specific failure shape with no obvious link back to its actual cause, and one
+that doesn't require anyone to have written a bug: it is dormant in the stdlib itself under this FIPS
+configuration. The fix applied here (drop `hashlib` entirely from this module in favor of `_hashlib`,
+and order every required positive operation before the one remaining negative-control probe) closes
+the one instance found in tap's own boot sequence; it does not protect against the same dormant
+trigger firing from unrelated application or dependency code later in a worker's life — those still
+import the ordinary `hashlib` wrapper, as essentially all Python code does. A more durable fix —
+running negative-control probes, wherever this pattern exists, in a dedicated throwaway `OSSL_LIB_CTX`
+rather than the default global
+one — is open, tracked as a follow-up, not yet built.
+
+**2026-10-05 follow-up (same day): the "refused fetch poisons" framing above is too narrow — three
+more spikes, each a real, build-verified negative result, converge on something broader.**
+
+1. **Not about which file delivers the config.** Rebuilt `fips`+`base` activation by editing Wolfi's
+   actual `/etc/ssl/openssl.cnf` in place (preserving its `.include ca.cnf` and `[ssl_module]`/
+   `[crypto_policy]` RFC-9325 TLS policy — a bigger, previously undiscovered loss from the
+   separate-file approach than L14 recorded on its own) instead of pointing `OPENSSL_CONF` at a
+   separate file. Identical failure, same line, same exception.
+2. **Not `cryptography`'s own legacy-provider auto-load.** Removed `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1`
+   (which normally suppresses `cryptography`'s own explicit `legacy`-provider load, D8). Identical
+   failure.
+3. **Not `cryptography`'s unconditional `default`-provider load either — read directly from
+   `cryptography`'s own Rust source** (`src/rust/src/lib.rs:107`, pinned version 50.0.0): it
+   unconditionally calls `provider::Provider::load(None, "default")` at import time, into the same
+   shared global context, with no suppression flag anywhere. History traced directly from pyca/
+   cryptography's own commits: this exact line was added 2024-02-15
+   (`pyca/cryptography#10390`, "fix provider loading take two") as a workaround for a provider-loading
+   quirk even *then* ("the machinery in providers is sufficiently complex that we are just going to
+   load the default provider explicitly"), though the underlying "load both legacy and default
+   explicitly" pattern is older still — that commit's own words, "this matches our behavior
+   pre-rust," place it at cryptography's original OpenSSL 3.0 adoption, circa 2021-2022. Patched this
+   exact line to make it skippable via a new `CRYPTOGRAPHY_OPENSSL_NO_DEFAULT` env var (mirroring the
+   existing `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` gate — the shape of fix `cryptography` would plausibly
+   accept upstream, not a destructive removal), built the patched `cryptography` from source (git tag
+   `50.0.0`, matching tap's exact pin; reused the SAME apk packages tap's own `--no-binary` build
+   already needs — `rust`, `build-base`, `openssl-4.0-dev`, `pkgconf`, `python-3.14-dev` — no new
+   system packages), and installed it over the stock PyPI build at container startup. `cryptography`'s
+   own EC keygen still succeeded cleanly with the `default` provider genuinely not loaded (confirmed:
+   boot log shows `CRYPTOGRAPHY_OPENSSL_NO_DEFAULT=1` and the patch applied) — proving `fips`+`base`
+   alone are sufficient for that operation — and the self-check still failed identically right after,
+   at `_approved_python_hash_works`'s plain `_hashlib.new("sha256", ...)`.
+
+**That third result is the important one, and it rules out "refused fetch" as the necessary condition
+at all.** By this point in the investigation, `_cryptography_positive_control` and
+`_cryptography_md5_refused` were already split into separate functions (per the fix above), so this
+specific run exercised `cryptography`'s EC keygen with **zero MD5 touches anywhere** in the process
+before the failure — no explicit probe, no `hashlib.py` import, nothing refused. A clean, successful
+`cryptography` operation, followed by a separate, plain `_hashlib` fetch for an algorithm the active
+provider genuinely supports, was sufficient on its own. (This exact zero-MD5 two-step sequence was
+only tested against the *patched* `cryptography` build; it was not independently re-verified against
+the stock build in isolation, since every earlier stock-build test paired the keygen with an MD5
+touch somewhere. Given the patch only *removes* a provider load, it would be a surprising inversion
+for that removal to be what newly exposes the failure, but this specific gap is named rather than
+quietly assumed away.)
+
+**Revised understanding:** the trigger is not "a refused fetch poisons a later one." It is closer to
+"two independent OpenSSL-touching code paths in one process — `cryptography`'s Rust/`openssl`-crate
+bindings, and CPython's own `_hashlib` C extension, a completely different binding layer into the same
+`libcrypto` — running in sequence is sufficient," independent of which providers are configured, which
+algorithm is refused, or whether anything is refused at all. This is a *stronger* fit for the OpenSSL
+provider method-store hashtable race already cited above (`openssl/openssl#26699` and related): it
+needs no unusual provider configuration or refused-fetch edge case to explain, only two separate
+consumers initializing against the same shared, still-actively-patched (confirmed 2026 bug fixes)
+hashtable. All three results above are real, build-verified negatives, not guesses — and none of them
+point to anything fixable from tap's side. The fixes already landed in this module (the ordering
+split, dropping `hashlib.py`) remain correct and worth keeping; they just are not, and were never
+going to be, a fix for the underlying OpenSSL behavior itself.
+
+**2026-10-05, later the same day: a from-scratch, Docker-free, Wolfi-free, tap-free reproduction —
+run on real GitHub Actions x86_64 hardware, bare Ubuntu, no containers at all — rules out two more
+candidate explanations, and points the remaining suspicion at Wolfi's own build rather than at
+vanilla OpenSSL 4.0 or at the version mismatch itself.**
+
+1. **Same-major-version control.** Self-built 3.0.22 FIPS provider (identical to tap's pin), activated
+   against Ubuntu's own stock system OpenSSL (3.0.13 — same major line), `cryptography==50.0.0` built
+   `--no-binary` against it, the exact `_cryptography_positive_control` + `_approved_python_hash_works`
+   sequence, 20 fresh processes. **0/20 failed.** FIPS confirmed genuinely active (`openssl list
+   -providers -verbose` showing `fips`/`base`, both `status: active`) throughout.
+2. **The version-mismatch hypothesis, tested directly.** This Dockerfile (line ~40-41) asserts "a
+   certified `fips.so` is binary-compatible with any later libcrypto" as the reason the 3.0.22 pin is
+   safe to run under Wolfi's newer system OpenSSL — and Dockerfile:438 runs `fipsinstall` with
+   whichever `openssl` CLI the `base` stage's apk packages provide, now `openssl-4.0`. Built a real,
+   vanilla-upstream OpenSSL **4.0.2** (the exact version Wolfi's `openssl-4.0` apk package ships,
+   confirmed via `apk info -a openssl-4.0` → `4.0.2-r0`) from openssl.org's own release tarball — no
+   Wolfi, no patches, nothing but the public source — as the system library. Self-built the same
+   3.0.22 FIPS provider, ran `fipsinstall` with the **4.0.2** CLI against it (reproducing Dockerfile:438
+   exactly), and built both `cryptography` and a from-source CPython 3.14.8 (so `_hashlib` itself links
+   against `libcrypto.so.4`, not Ubuntu's stock `.so.3`) against that same 4.0.2 install. Same code
+   sequence, 20 fresh processes. **0/20 failed.** `fips` (3.0.22) and `base` (4.0.2) both confirmed
+   `status: active` simultaneously.
+
+**Taken together: a generic, vanilla build of exactly this version pairing — OpenSSL 4.0.2 host
+library, self-built 3.0.22 FIPS provider, `fipsinstall`'d by the 4.0.2 CLI — does not reproduce the
+failure.** The real tap stack (Wolfi's base image, Wolfi's actual `openssl-4.0` apk package, the real
+Dockerfile) has reproduced it reliably across six separate variants in this investigation. The
+remaining candidate, by elimination rather than direct confirmation, is something specific to how
+Wolfi/Chainguard build their own `openssl-4.0` package (or possibly their own `python-3.14`/`libpq`
+builds) — not a defect in OpenSSL 4.0 as a release line, and not the major-version pairing in the
+abstract. Wolfi is already known to carry at least one downstream patch in this exact area
+(`CHAINGUARD_LEGACY_ALLOWED`, and Dimitri Ledkov's 2026-09-16 patch gating the legacy provider further)
+— this has not yet been diffed against vanilla upstream to confirm it (or something else) is the
+actual cause; that is the open next step, not yet started.
+
+**Two adjacent ideas considered and rejected the same night, both worth recording so they are not
+re-asked cold:**
+
+- **Pin tap's own system OpenSSL to Wolfi's `openssl-3.6` track instead of the floating `openssl`/
+  `openssl-dev` alias that migrated to `openssl-4.0`.** Not viable — confirmed by a real (non-simulate)
+  `apk add`, not assumed: Wolfi's current `python-3.14-base`/`libpq-18` packages transitively
+  hard-require `openssl-4.0-dev` regardless of what tap itself requests, and `openssl-3.6-dev`/
+  `openssl-4.0-dev` own the same unversioned paths (`/usr/include/openssl/*.h`, `/usr/lib/libcrypto.so`,
+  pkgconfig files) — a real file-ownership conflict (~140 files), not a soft dependency clash. This was
+  already recorded in this Dockerfile's own comment (lines ~117-125) from an earlier pass; it should
+  have been reread fully before resurfacing the idea.
+- **Hand-replace Chainguard's `openssl-4.0` binaries on the host with a vanilla-built OpenSSL 4.0.**
+  Rejected again (consistent with an earlier-session ruling). Wolfi's `python-3.14-base`/`libpq-18`/
+  `libcurl-openssl4` are compiled and tested against *Chainguard's* `openssl-4.0` build specifically;
+  swapping the shared libs underneath them recreates the tap#931 two-cores-in-one-process hazard
+  invisibly instead of avoiding it, desyncs `apk`'s own file database (next `apk upgrade` either stomps
+  the swap back or starts failing confusingly), and forks the single most compliance-significant binary
+  in the image onto an unmaintained build nothing tracks for future CVEs — all to dodge a cause that
+  is, as of this entry, still unidentified, so there is no way to confirm the swap would even avoid it.
+
+**2026-10-05, later still: resolved, by a different route than the one rejected just above.**
+The rejected idea above was pinning `openssl-3.6` ALONE, which fails because `python-3.14-base`'s
+and `postgresql-18-dev`'s then-*current* (unpinned) versions themselves hard-require
+`openssl-4.0`. Checked directly which apk revision each one actually cuts over at:
+`python-3.14-base` at `3.14.8_git20261001-r1`, `postgresql-18-dev` at `18.6-r5`. Pinning the whole
+closure — `python-3.14`/`python-3.14-base`/`python-3.14-dev`, `postgresql-18-client`/
+`postgresql-18-dev`, and `openssl-3.6`/`openssl-3.6-dev` — one revision EARLIER than each cutover
+keeps every FIPS-relevant consumer on the same OpenSSL 3.6.x line as the self-built FIPS provider.
+Confirmed on real CI hardware: the FIPS self-check passes (`declared mode 1 is consistent —
+ENFORCED`), `TAP_FIPS` is back to its default of `1`.
+
+That fix then surfaced a SECOND, separate bug: `libpq-18` is its own Wolfi package (not bundled
+with `postgresql-18-client`, which is just the CLI tools), and pinning the client/dev packages
+alone left it floating to its own `18.6-r5` cutover — `psycopg`'s SCRAM client nonce generation
+(a libpq-side RAND draw, unrelated to anything Python touches) ran through a wholly separate,
+unconfigured `libcrypto.so.4`, confirmed directly via `strings` on the installed `libpq.so.5`.
+Pinning `libpq-18` to the same revision fixed it. Confirmed end-to-end on the real `cold-boot`
+gate (full migrate → seed → collector cycle → health, GATE GREEN).
+
+The ORIGINAL bug's root cause is still not identified, only sidestepped — tracking it down was
+pursued one step further, not to conclusion. Fetched Chainguard's actual build recipe
+(`wolfi-dev/os`, `openssl-4.0.yaml`): it builds vanilla OpenSSL 4.0.3 with four patches, two
+FIPS-related (`0001-fips-block-HMAC-calculation-with-unapproved-digests.patch`, authored by
+Dimitri Ledkov, explicitly targeting "older nodejs, dotnet, and python" HMAC callers — a strong-
+looking candidate). Built vanilla OpenSSL 4.0.3 with these same four patches applied (confirmed
+applying clean against the real tag) and reran the full bare-Ubuntu repro: 0/20 failed. That rules
+these four patches out as sufficient on their own, on top of everything last night's bare-Ubuntu
+testing already ruled out (vanilla OpenSSL 4.0 as a release line, the version-mismatch itself).
+Remaining candidate, unconfirmed: something concurrency-dependent (consistent with the lock-free
+provider-hashtable race already cited above) that a sequential repro script cannot trigger
+regardless of which OpenSSL build it runs against, only tap's real multi-worker stack.
+
+**2026-10-05/06, concurrency-realistic reproduction attempted and exhausted, still clean.**
+Pursued the "only tap's real multi-worker stack can trigger it" theory directly, in increasing
+order of fidelity, each confirmed via direct log verification rather than a trusted green
+checkmark: (1) the same sequential repro, 2000 varied iterations (EC P-256/P-384, five digests,
+HMAC, periodic RSA) in one long-lived process — 0/2000 failed; (2) real thread concurrency
+sharing one `OSSL_LIB_CTX` combined with real process concurrency, 10 rounds × 8 simultaneous
+processes × 6 threads × 120 iterations — 0/80 process-launches failed; (3) the real `tap-web`
+image itself, at the exact commit that first reproduced tap#933, run through the real
+`docker/entrypoint.sh` boot sequence up to and including the FIPS self-check, 15 rounds × 16 (then
+12) simultaneous containers on native x86_64 — 0/240 then 0/180 failed. Step (3)'s artifact was
+confirmed **bit-identical** to the one the original failure used, not merely same-version: apk
+embeds the build commit and build timestamp in package metadata
+(`/lib/apk/db/installed`'s `c:`/`t:` fields), and `openssl-4.0=4.0.3-r2` on both the original
+failing run and every rebuild here carries the same commit (`e234d8396cff3e7b940dfe7b5b463f14dfa3bae7`)
+and the same build timestamp (`2026-10-02T17:32:56Z`), confirmed identically on aarch64 and
+x86_64 — ruling out "Wolfi silently rebuilt the same version string" as an explanation. The CI
+runner image was also confirmed identical (`ubuntu-24.04`, release `ubuntu24/20260927.320`,
+runner `2.337.0`) on both the original run and these reruns. Across roughly 450 attempts against
+the provably identical artifact, identical runner, and the correct architecture, the original
+self-check failure did not reproduce once — despite having failed on *every one* of three
+consecutive boot attempts in the original run. That contradiction (deterministic once, silent on
+every later attempt against identical bits) is recorded here unresolved; it was not chased further
+after the second finding below was found by the same effort.
+
+**2026-10-06: a second, independent, fully deterministic defect found while pursuing the above —
+not the same bug, and not a race at all.** Every container/concurrency test above used a
+self-check-only harness (replicating `docker/entrypoint.sh` only through the FIPS self-check, to
+avoid needing a live database) — which meant none of them ever reached `createcachetable`
+(`docker/entrypoint.sh:284`), a step that runs unconditionally on every real boot, in every
+profile, after the self-check and pre-boot stage. Running the real `docker compose` stack
+(web+db) all the way through for the first time surfaced this immediately, on the first attempt,
+with no concurrency needed:
+
+```
+web-1  | ==> Provisioning the DatabaseCache table (createcachetable)...
+web-1  |   File "/app/.venv/lib/python3.14/site-packages/django/core/cache/backends/filebased.py", line 10, in <module>
+web-1  |     from hashlib import md5
+web-1  | ImportError: cannot import name 'md5' from 'hashlib' (/usr/lib/python3.14/hashlib.py)
+web-1  | ImportError: Couldn't import Django. Are you sure it's installed and available on your PYTHONPATH environment variable?
+web-1  | TAP-ABORT: migrate: createcachetable failed
+```
+
+Mechanism: Django's file-based cache backend does `from hashlib import md5` unconditionally at
+import time, for cache-key hashing — a non-security use. Under openssl-4.0's FIPS configuration,
+`hashlib.md5` is not merely refused when *called* (the documented, intended FIPS behavior) — it is
+**absent from the module's namespace entirely**, because CPython's `hashlib.py` bootstrap loop
+even fails the `usedforsecurity=False` escape hatch
+(`_hashlib.new("md5", usedforsecurity=False)` itself raises `UnsupportedDigestmodError`), so the
+name is never bound. Any code anywhere in the dependency closure — not just Django, not just
+TAP — that imports `md5` by name unconditionally will crash identically; this is not scoped to
+one cache backend.
+
+Checked, and ruled out, two specific candidates before leaving the mechanism open: Chainguard's
+`0001-fips-block-HMAC-calculation-with-unapproved-digests.patch` only instruments
+`HMAC_Init_ex`, nothing in a bare digest-fetch path. Their
+`0001-Chainguard-Cryptographic-Hardening.patch` does touch the `default` provider's digest table,
+but only removes the combined `MD5_SHA1` entry (`PROV_NAMES_MD5_SHA1`) used by legacy TLS —
+plain `PROV_NAMES_MD5` stays registered in the diff. Neither explains why the
+`usedforsecurity=False` fetch itself fails; the actual mechanism (something in how OpenSSL 4.0's
+`default` provider or its property matching handles a non-security-flagged MD5 fetch
+differently than 3.6.x does) was not traced further.
+
+Reproduced twice, independently, confirming it is deterministic and architecture-independent:
+once via GitHub Actions on native x86_64 (the `core_ci cold-boot`-equivalent compose stack, first
+attempt), once locally on arm64 (Apple Silicon, Docker Desktop) against the same image. Confirmed
+**absent** on the shipped fix (`openssl-3.6` pinned): the identical real compose stack, same
+`TAP_BOOT_PROFILE=core_ci`, same `createcachetable` step, run against the fixed branch's image —
+`createcachetable` succeeded, migrations ran, and the full health check came back green on every
+FIPS-relevant check.
+
+Status: resolved for the web and DB images (tap#933, this entry), `TAP_FIPS=1` restored as the
+default, and confirmed clean of both known defects (the original self-check failure and this
+`createcachetable`/`hashlib.md5` failure) — because both are specific to Wolfi's `openssl-4.0`
+line and the fix stays off it entirely. Open: the original bug's actual mechanism (now backed by
+~450 failed reproduction attempts against the bit-identical artifact, including real
+container-level concurrency on native x86_64) and this second bug's actual mechanism (likely an
+OpenSSL 4.0 behavior change in `default`-provider property matching for non-security-flagged
+digest fetches, not yet traced to a specific patch or upstream change). Both are concrete enough,
+and the second is reproducible enough, to be worth raising with Wolfi/Chainguard directly rather
+than left to the next person who hits either one cold.
+
+**2026-10-06: correction to the "two cores" framing, found while chasing one more variable (closed,
+no new lead).** Tried to recover the original run's exact `uv` wheel cache to test whether a
+`cryptography` extension compiled against a *different* OpenSSL than the one it runs against could
+explain either failure — GitHub's `actions/cache` entry for the original run's exact key
+(confirmed from its own log) no longer exists (a real restore attempt returned "Cache not found"
+even on the broadest fallback prefix), so the literal bytes are gone and that specific comparison
+can't be made. Substituted the closest buildable test: extracted the `cryptography` wheel the
+shipped (`openssl-3.6`) image compiles for itself — confirmed linked against `libcrypto.so.3`/
+`libssl.so.3` — and force-installed it into the `openssl-4.0`-pinned image in place of its own
+correctly-matched build. It imported and ran a full EC keygen with no error of any kind. While
+investigating why `.so.3` was even loadable on an "`openssl-4.0`-pinned" image, found that
+`libcrypto3-3.6.4-r8`/`libssl3-3.6.4-r8` (present because `apk-tools` and `libldap` still require
+the old SONAME) is **not** a second, independent OpenSSL build — its own apk metadata declares it
+depends on `openssl-4.0-libcrypto`, i.e. it is Chainguard's own compatibility shim exposing the
+legacy `.so.3` name while forwarding to the same `openssl-4.0` engine underneath. So an
+`openssl-4.0`-pinned image is not literally running two separate cores side by side the way the
+"two cores in one process" framing above (and tap#931's own title) implies for this case — it is
+one core, exposed under two SONAMEs for backward compatibility. (The *psycopg*/`libpq-18` SCRAM
+failure earlier in this record is a different, confirmed-genuine instance of two real, independent
+cores — `libpq-18` linking the real `.so.4` while Python/`cryptography` were still on a real,
+independently-built `.so.3`; that finding stands unchanged.) This correction and the cross-built
+wheel result are both negative evidence, not positive leads — recorded so the next person does not
+re-pursue either.
+
+**2026-10-06, reopened and resolved: the mechanism above is wrong in one respect — the cache WAS
+the variable, just not recoverable the way this entry tried to recover it.** A separate session
+(bom-bom) picked the thread back up independently and found what this entry's own uv-cache spike
+missed: that spike's 30/30-clean result never actually tested a stale wheel, because its cache was
+always a genuine miss (confirmed in its own log: "Cache not found for input keys..."), which routes
+through the SAME in-image reseed path every other repro in this record used. The real variable is
+`core-ci.yml`'s `actions/cache` key itself — `hashFiles('uv.lock', 'pyproject.toml', ...)`, nothing
+about the Dockerfile or the image's system OpenSSL — combined with broad fallback `restore-keys`
+and branch-scoped storage. On the original failing run that cache had a full exact hit (confirmed
+in its own log: "Cache hit for: uv-ci-core_ci-7b57402a...", 310MB restored), so the entrypoint's
+own in-image, manifest-verified seed step never ran at all; `uv sync` installed directly from
+whatever the actions-cache already contained.
+
+Tested directly, not assumed: the apk-metadata provenance trick used earlier in this entry (build
+commit + build timestamp per package, `/lib/apk/db/installed`) was first turned on `libcrypto3`
+itself to check whether it was a real independent OpenSSL 3.6 build or (as first guessed, and
+initially reported as such — a real error, corrected below) a compatibility shim forwarding to
+`openssl-4.0-libcrypto`. Direct binary inspection (`readelf -d` NEEDED entries, file size, `strings`
+version banners, `nm -D --defined-only` symbol counts) settled it: `libcrypto.so.3` is a genuine,
+independent, full OpenSSL 3.6.4 build — 5.3MB, ~5800 real symbols, no dependency on `.so.4` at the
+binary level at all. The apk package's own `D:` dependency line naming `openssl-4.0-libcrypto` is a
+*packaging* relationship (shared config/legacy-provider wiring), not evidence of symbol forwarding
+— an assumption this record itself got wrong on the first pass and is recording the correction for.
+
+With a genuine second core confirmed reachable, the reproduction became direct: force-installed a
+`cryptography` wheel actually compiled against the real `openssl-3.6` line into the broken
+(`openssl-4.0`-pinned) image's venv, then ran the *exact* call order `tap.fips.assert_declared_mode()`
+runs for `TAP_FIPS_MODE=1` — `hashlib.sha256()` then `_hashlib.new("md5", ...)` (both via CPython's
+own `_hashlib`, linked to the system's real `.so.4`), immediately followed by `cryptography`'s EC
+P-256 keygen+sign+verify (now forced onto the real, separate `.so.3` via the stale wheel). First
+attempt, deterministic:
+
+```
+step 1 (hashlib.sha256 via _hashlib): OK
+step 2 (md5 refused): OK (UnsupportedDigestmodError)
+step 3 FAILED: InternalError: ... error:0308010C:digital envelope routines:inner_evp_generic_fetch:
+unsupported:crypto/evp/evp_fetch.c:376:Global default library context, Algorithm (CTR-DRBG : 108),
+Properties (<null>), error:12000090:random number generator:rand_new_drbg:unable to fetch drbg:
+crypto/rand/rand_lib.c:664:
+```
+
+Character-for-character the same error as the original 2026-10-03 failure, including the exact
+crash point (the first statement of the `cryptography`-based positive control, reached only after
+both `_hashlib` checks already passed — matching the original traceback precisely). **This is the
+confirmed root cause, not a candidate:** two genuinely independent OpenSSL cores (a real 3.6.4 and
+a real 4.0.2) in one process, triggered by a CI wheel cache whose key has no awareness of which
+image it is feeding. It explains everything the earlier entries above could not: why the original
+run failed on all three consecutive boot attempts (the same stale cache served every restart) and
+why roughly 450 reproduction attempts since — including against the provably bit-identical apk
+package — never reproduced it even once (every rebuild got a freshly, correctly matched wheel; none
+ever hit a non-empty, stale actions-cache restore).
+
+**This PR's own fix (`fecbbd13`) worked, but partly for the wrong reason.** Pinning the whole
+OpenSSL-touching closure back to the `openssl-3.6` line also happens to re-align the system library
+with whatever 3.6-built wheels might still be cached — a different, accidental reason the symptom
+went away, not proof the cache-key gap is closed. A future pin combination that moves the system
+OpenSSL again, without also addressing the cache key, could reopen this exact failure mode.
+
+Follow-on work (George's ruling, 2026-10-06, folded into closing tap#933 so the investigation closes
+with it, not just the symptom):
+- **Hands-on, in progress (bom-bom):** delete the CI `actions/cache` uv-cache mechanism rather than
+  re-key it; add an image-identity stamp (the seed manifest hash is the natural choice) that the
+  entrypoint checks at boot, wiping both the uv cache and `/app/.venv` on mismatch before reseeding
+  — covers CI, dev stacks, and self-hosters upgrading the image, not just this one pipeline; add a
+  boot-time guard in `tap.fips` that reads `/proc/self/maps` after the self-check's imports and
+  `TAP-ABORT`s if more than one distinct `libcrypto`/`libssl` is mapped, naming both paths — catches
+  this failure mode plus L17 (a bundled OpenSSL) and the `libpq-18` class in one place.
+- **Spec-only, no code yet (tap#975 / PR#976):** build the Python dependency closure into the image
+  at build time instead of boot time, for every artifact that is supposed to be immutable — closes
+  this class of drift at the root (what ships is what was tested, unconditionally) rather than
+  hardening the boot-time path against it. Has to explicitly address why this is not simply
+  reverting an earlier decision (`req-cicd-build-once-artifact`'s "a cp-seeded venv proved uv-hostile
+  on the CI runner", 2026-08-09) rather than repeating it.
+- **Separate, already verified end-to-end (PR#974):** activate FIPS by editing Wolfi's stock
+  `/etc/ssl/openssl.cnf` in place instead of displacing it via `OPENSSL_CONF` — restores the RFC 9325
+  TLS hardening the current override mechanism silently discards, orthogonal to the cache-key bug
+  above but found in the same investigation.
+
+**2026-10-06, a third two-cores vector found and fixed, by the new boot guard doing exactly its
+job.** bom-bom's `/proc/self/maps` guard (the Q92a item above) fired against this branch's own
+already-"fixed" image, fresh cache, no stale-wheel involvement: `/usr/lib/libcrypto.so.3` and
+`/usr/lib/libcrypto.so.4` both mapped in the same process. Bisected per-module (fresh process
+each, checking `/proc/self/maps` after one bare import): `_hashlib`, `_ssl`, and
+`cryptography.hazmat.bindings._rust` all clean, `.so.3` only. `import psycopg` alone adds
+`.so.4` — no corresponding `.so.4` libssl, a direct pull, not a natural TLS NEEDED link. Traced
+the actual chain: `libpq.so.5` links GSSAPI/Kerberos support unconditionally
+(`libgssapi_krb5.so.2` → `libkrb5.so.3` → `libk5crypto.so.3`), and `libk5crypto.so.3`'s own
+crypto backend links directly against whichever OpenSSL `krb5-libs` itself was built against —
+a wholly separate apk package from `libpq-18` (`apk info --rdepends krb5-libs` names `libpq-18`,
+`libcurl-openssl4`, and `postgresql-18-base` as its requirers), so pinning `libpq-18` alone never
+touched it. `krb5-libs-1.22.2-r5` (current, unpinned) depends on `so:libcrypto.so.4`/
+`so:libssl.so.4`; a real, non-simulated `apk add` confirms `1.22.2-r4` — one revision earlier,
+the same pattern as every other pin in this entry — depends on `so:libcrypto.so.3`/
+`so:libssl.so.3` instead. Pinned in both images; `renovate.json5` now tracks all seven names.
+Verified end-to-end: rebuilt, reran the exact bisection, `import psycopg` now shows only
+`.so.3`/`libpq.so.5.18` in `/proc/self/maps`, `.so.4` gone entirely.
+
+The pattern across all three vectors (`python-3.14-base`/`postgresql-18-dev`, `libpq-18`,
+`krb5-libs`) is the same: Wolfi migrates dependents to `openssl-4.0` piecemeal, package by
+package, with no single signal naming every affected package at once — each one was found only
+by a failure (or, this time, a proactive guard) exercising the exact code path that package's
+crypto backend sits on. There is no guarantee this is now the last one; the boot guard existing
+at all is the actual fix for the class, not any specific pin.
+
 ## 5. TAP's actual crypto surface (audit result, 2026-07-09; psycopg addendum 2026-07-21)
 
 | Surface | Finding |
