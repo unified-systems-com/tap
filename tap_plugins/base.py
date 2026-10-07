@@ -25,6 +25,7 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
     """
     from tap_grid.constraints import (
         register_edge_default_dimensions,
+        register_edge_internal_only,
         register_edge_property_schema,
         register_edge_type_constraints,
     )
@@ -43,6 +44,8 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
 
         if "default_dimensions" in et:
             register_edge_default_dimensions(slug, et["default_dimensions"])
+        if et.get("internal_only"):
+            register_edge_internal_only(slug)
 
         if "identity" in et:
             register_edge_identity(slug, et["identity"], property_schema=et.get("property_schema"))
@@ -60,7 +63,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/366c5be48f7b (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/15b7f1bc30bf (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -169,6 +172,7 @@ class TapPluginConfig(AppConfig):
 
         from tap_grid.constraints import (
             register_edge_default_dimensions,
+            register_edge_internal_only,
             register_edge_property_schema,
             register_edge_type_constraints,
         )
@@ -189,6 +193,9 @@ class TapPluginConfig(AppConfig):
 
             if edge.identity is not None:
                 register_edge_identity(edge.slug, edge.identity, property_schema=edge.property_schema)
+
+            if edge.internal_only:
+                register_edge_internal_only(edge.slug)
 
     # ---------------------------------------------------------------------------
     # Type registration

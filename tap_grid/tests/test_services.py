@@ -1,6 +1,7 @@
 """Tests for tap_grid.services — the canonical mutation API."""
 
 import uuid
+from typing import Any
 
 import pytest
 from tap_plugin.grid_fixtures.models import ConstrainedSource
@@ -11,83 +12,38 @@ from tap_grid.constraints import (
     _edge_property_schema_registry,
     register_edge_property_schema,
 )
-from tap_grid.exceptions import EdgePropertyValidationError, InvalidEdgeError
+from tap_grid.exceptions import InvalidEdgeError
 from tap_grid.models import Batch, Edge, Entity
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import (
     create_edge,
-    create_entity,
     create_node,
-    delete_edge,
-    delete_entity,
     delete_node,
     patch_edge,
     patch_node,
+    replace_edge,
     replace_node,
-    update_edge_properties,
-    update_entity,
     write_batch,
 )
+from tap_grid.tests.support import make_spine_entity
 
 
 @pytest.mark.django_db
-class TestCreateEntity:
-    def test_creates_with_type_and_name(self):
-        entity = create_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
-        assert entity.entity_type == "grid_fixtures__constrained_source"
-        assert entity.name == "Frodo Baggins"
-        assert entity.pk is not None
-
+class TestEntityIds:
     def test_auto_generates_uuid7(self):
-        e1 = create_entity("grid_fixtures__constrained_source")
-        e2 = create_entity("grid_fixtures__constrained_source")
-        assert e1.pk != e2.pk
-        # UUIDv7 is time-ordered: second should sort after first
-        assert str(e2.pk) > str(e1.pk)
-
-    def test_stamps_grid_id(self):
-        entity = create_entity("grid_fixtures__constrained_source")
-        assert entity.originating_grid_id is not None
-
-
-@pytest.mark.django_db
-class TestUpdateEntity:
-    def test_updates_fields(self):
-        entity = create_entity("grid_fixtures__constrained_source", name="Old Name")
-        updated = update_entity(entity, name="New Name")
-        assert updated.name == "New Name"
-        entity.refresh_from_db()
-        assert entity.name == "New Name"
-
-
-@pytest.mark.django_db
-class TestDeleteEntity:
-    def test_deletes_entity(self):
-        entity = create_entity("grid_fixtures__constrained_source")
-        pk = entity.pk
-        delete_entity(entity)
-        assert not Entity.objects.filter(pk=pk).exists()
-
-    def test_cascades_to_edges(self):
-        a = create_entity("grid_fixtures__constrained_source", name="Frodo")
-        b = create_entity("grid_fixtures__constrained_target", name="Mordor")
-        edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
-        delete_entity(a)
-        # Edge should be gone (from_entity cascade)
-        assert not Edge.objects.filter(pk=edge.pk).exists()
-
-    def test_cascades_to_domain_model(self):
-        entity = create_entity("grid_fixtures__constrained_source", name="Legolas")
-        ConstrainedSource.objects.create(entity=entity, description="An elf of Mirkwood.")
-        delete_entity(entity)
-        assert not ConstrainedSource.objects.filter(entity_id=entity.pk).exists()
+        """Spine ids are UUIDv7: time-ordered, so a later node sorts after an earlier one."""
+        e1 = create_node("grid_fixtures__constrained_source", {"name": "First"})
+        e2 = create_node("grid_fixtures__constrained_source", {"name": "Second"})
+        assert e1.success and e2.success
+        assert e1.entity_id != e2.entity_id
+        assert str(e2.entity_id) > str(e1.entity_id)
 
 
 @pytest.mark.django_db
 class TestCreateEdge:
     def test_creates_edge_with_backing_entity(self):
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         assert edge.from_entity == a
         assert edge.to_entity == b
@@ -97,37 +53,16 @@ class TestCreateEdge:
         assert edge.entity.entity_type == "edge"
 
     def test_edge_properties(self):
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = create_edge(a, b, "WANDERS_TOWARD", properties={"distance": "far"})
         assert edge.properties == {"distance": "far"}
 
     def test_allies_with_between_characters(self):
-        char_a = create_entity("grid_fixtures__constrained_source", name="Frodo")
-        char_b = create_entity("grid_fixtures__constrained_source", name="Gandalf")
+        char_a = make_spine_entity("grid_fixtures__constrained_source", name="Frodo")
+        char_b = make_spine_entity("grid_fixtures__constrained_source", name="Gandalf")
         edge = create_edge(char_a, char_b, "SYMMETRIC_LINK__grid_fixtures")
         assert edge.edge_type == "SYMMETRIC_LINK__grid_fixtures"
-
-
-@pytest.mark.django_db
-class TestDeleteEdge:
-    def test_deletes_edge_and_backing_entity(self):
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
-        edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
-        backing_entity_pk = edge.entity.pk
-        delete_edge(edge)
-        assert not Edge.objects.filter(pk=edge.pk).exists()
-        assert not Entity.objects.filter(pk=backing_entity_pk).exists()
-
-    def test_source_entities_survive(self):
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
-        edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
-        delete_edge(edge)
-        # The endpoints should still exist
-        assert Entity.objects.filter(pk=a.pk).exists()
-        assert Entity.objects.filter(pk=b.pk).exists()
 
 
 @pytest.mark.django_db
@@ -136,47 +71,49 @@ class TestNoEdgesBetweenEdges:
 
     def test_edge_as_from_entity_raises(self):
         """create_edge() raises InvalidEdgeError when from_entity is an edge (nono-1)."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
-        c = create_entity("grid_fixtures__constrained_source")
+        c = make_spine_entity("grid_fixtures__constrained_source")
         with pytest.raises(InvalidEdgeError, match="from_entity is an edge"):
             create_edge(edge.entity, c, "SYMMETRIC_LINK__grid_fixtures")
 
     def test_edge_as_to_entity_raises(self):
         """create_edge() raises InvalidEdgeError when to_entity is an edge (nono-2)."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
-        c = create_entity("grid_fixtures__constrained_source")
+        c = make_spine_entity("grid_fixtures__constrained_source")
         with pytest.raises(InvalidEdgeError, match="to_entity is an edge"):
             create_edge(c, edge.entity, "SYMMETRIC_LINK__grid_fixtures")
 
     def test_nono_check_precedes_constraint_validation(self):
         """The entity-type check fires before validate_edge() (nono-3)."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         # Even an edge type that would otherwise be blocked by constraint validation
         # should raise InvalidEdgeError for the nono reason, not a constraint reason.
-        c = create_entity("grid_fixtures__constrained_source")
+        c = make_spine_entity("grid_fixtures__constrained_source")
         with pytest.raises(InvalidEdgeError, match="from_entity is an edge"):
             create_edge(edge.entity, c, "TOTALLY_UNKNOWN_TYPE")
 
     def test_normal_entities_are_not_affected(self):
         """Non-edge entities can still be connected (regression guard)."""
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_source")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_source")
         edge = create_edge(a, b, "SYMMETRIC_LINK__grid_fixtures")
         assert edge.pk is not None
 
 
 @pytest.mark.django_db
 class TestUpdateEdgeProperties:
-    """req-grid-edge-properties: update_edge_properties() service function.
+    """req-grid-edge-properties-5 / -8: an edge property update goes through the write pipeline's
+    edge verbs (``patch_edge`` / ``replace_edge``), which validate the new payload against the
+    registered schema before anything persists.
 
-    Uses wanderer entities — no OUTBOUND_EDGES/INBOUND_EDGES constraints,
-    so test-only edge types are accepted without constraint errors.
+    Unconstrained endpoints — no OUTBOUND_EDGES/INBOUND_EDGES — so test-only edge types are
+    accepted without constraint errors.
     """
 
     @pytest.fixture(autouse=True)
@@ -184,48 +121,54 @@ class TestUpdateEdgeProperties:
         with isolated_registry(_edge_property_schema_registry):
             yield
 
-    def test_updates_properties_and_persists(self):
-        """update_edge_properties() saves the new payload to the database (properties-5)."""
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
-        edge = create_edge(a, b, "WANDERS_TOWARD")
-        updated = update_edge_properties(edge, {"distance": "short"})
-        updated.refresh_from_db()
-        assert updated.properties == {"distance": "short"}
+    @staticmethod
+    def _edge(edge_type: str) -> Edge:
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
+        return create_edge(a, b, edge_type)
 
-    def test_returns_updated_edge(self):
-        """update_edge_properties() returns the updated Edge instance."""
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
-        edge = create_edge(a, b, "WANDERS_TOWARD")
-        result = update_edge_properties(edge, {"note": "hi"})
-        assert result.pk == edge.pk
-        assert result.properties == {"note": "hi"}
+    @pytest.mark.parametrize("update", [patch_edge, replace_edge])
+    def test_updates_properties_and_persists(self, update):
+        """An update through either edge verb saves the new payload (properties-5)."""
+        edge = self._edge("WANDERS_TOWARD")
+        result = update(edge.entity_id, {"properties": {"distance": "short"}})
+        assert result.success, result.errors
+        assert result.entity_id == edge.entity_id
+        edge.refresh_from_db()
+        assert edge.properties == {"distance": "short"}
 
-    def test_valid_properties_pass_schema(self):
-        """update_edge_properties() succeeds when properties match the schema (properties-5)."""
+    @pytest.mark.parametrize("update", [patch_edge, replace_edge])
+    def test_valid_properties_pass_schema(self, update):
+        """An update that matches the registered schema succeeds (properties-5)."""
         register_edge_property_schema(
             "SCHEMA_EDGE",
             {"type": "object", "properties": {"score": {"type": "integer"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
-        edge = Edge.objects.create(from_entity=a, to_entity=b, edge_type="SCHEMA_EDGE", properties={})
-        update_edge_properties(edge, {"score": 10})
+        edge = self._edge("SCHEMA_EDGE")
+        result = update(edge.entity_id, {"properties": {"score": 10}})
+        assert result.success, result.errors
         edge.refresh_from_db()
         assert edge.properties == {"score": 10}
 
-    def test_invalid_properties_raise(self):
-        """update_edge_properties() raises EdgePropertyValidationError for schema violations (properties-5, properties-8)."""
+    @pytest.mark.parametrize("update", [patch_edge, replace_edge])
+    def test_invalid_properties_are_refused(self, update):
+        """An update that violates the registered schema is refused and nothing persists
+        (properties-5), as a validation error (properties-8).
+
+        ``Edge.save()`` raises ``EdgePropertyValidationError`` inside the write; the pipeline
+        reports it as ``validation_error``, the caller's input error, not as an unhandled failure.
+        """
         register_edge_property_schema(
             "SCHEMA_EDGE_FAIL",
             {"type": "object", "properties": {"score": {"type": "integer"}}},
         )
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
-        edge = Edge.objects.create(from_entity=a, to_entity=b, edge_type="SCHEMA_EDGE_FAIL", properties={})
-        with pytest.raises(EdgePropertyValidationError):
-            update_edge_properties(edge, {"score": "not-a-number"})
+        edge = self._edge("SCHEMA_EDGE_FAIL")
+        result = update(edge.entity_id, {"properties": {"score": "not-a-number"}})
+        assert not result.success
+        assert [e.code for e in result.errors] == ["validation_error"]
+        assert "failed schema validation" in result.errors[0].message
+        edge.refresh_from_db()
+        assert edge.properties == {}
 
 
 # ===========================================================================
@@ -687,8 +630,8 @@ class TestGetNode:
         from tap_grid.exceptions import ServiceConstraintError
         from tap_grid.services import get_node
 
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         with pytest.raises(ServiceConstraintError):
             get_node(edge.entity_id)
@@ -701,8 +644,8 @@ class TestGetEdge:
     def test_returns_edge(self):
         from tap_grid.services import get_edge
 
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         found = get_edge(edge.entity_id)
         assert found.pk == edge.pk
@@ -730,8 +673,8 @@ class TestGetObject:
     def test_returns_edge_for_edge_entity(self):
         from tap_grid.services import get_object
 
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         obj = get_object(edge.entity_id)
         assert isinstance(obj, Edge)
@@ -762,6 +705,75 @@ class TestResolveEntity:
 
         with pytest.raises(ServiceNotFoundError):
             resolve_entity(uuid.uuid7())
+
+
+@pytest.mark.django_db
+class TestEntityLiveness:
+    """req-grid-service-read-direct-4: one read says, for every id asked, live, tombstoned or missing.
+
+    Issue# 966 - tap: a producer checking the ids it is about to send had only
+    ``resolve_entity``, one query per id.
+    """
+
+    @staticmethod
+    def _spine_reads(captured: list[dict[str, str]]) -> list[str]:
+        table = Entity._meta.db_table
+        return [query["sql"] for query in captured if f'"{table}"' in query["sql"]]
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_every_id_is_answered_in_one_spine_read(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.services import delete_edge_by_entity, entity_liveness
+
+        live = uuid.UUID(str(create_node("grid_fixtures__constrained_source", {"name": "Live"}).entity_id))
+        retired = uuid.UUID(str(create_node("grid_fixtures__constrained_source", {"name": "Gone"}).entity_id))
+        assert delete_node(retired).success
+        sources = [make_spine_entity("grid_fixtures__constrained_source") for _ in range(2)]
+        targets = [make_spine_entity("grid_fixtures__constrained_target") for _ in range(2)]
+        live_edge = create_edge(sources[0], targets[0], "CONSTRAINED_LINK__grid_fixtures").entity_id
+        retired_edge = create_edge(sources[1], targets[1], "CONSTRAINED_LINK__grid_fixtures").entity_id
+        assert delete_edge_by_entity(retired_edge).success
+        missing = uuid.uuid7()
+
+        with CaptureQueriesContext(connection) as queries:
+            answer = entity_liveness([str(live), retired, live_edge, str(retired_edge), missing, live])
+
+        assert answer == {
+            live: "live",
+            retired: "tombstoned",
+            live_edge: "live",
+            retired_edge: "tombstoned",
+            missing: "missing",
+        }
+        assert len(self._spine_reads(queries.captured_queries)) == 1
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_an_empty_input_reads_nothing(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.services import entity_liveness
+
+        with CaptureQueriesContext(connection) as queries:
+            assert entity_liveness([]) == {}
+        assert self._spine_reads(queries.captured_queries) == []
+
+    @pytest.mark.spec("req-grid-service-read-direct-4")
+    def test_a_target_that_is_not_an_id_is_refused_before_any_read(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from tap_grid.exceptions import ServiceValidationError
+        from tap_grid.services import entity_liveness
+
+        # A single id passed bare would otherwise be read as a collection of characters.
+        refusals: tuple[Any, ...] = (["not-a-uuid"], [uuid.uuid7(), 42], str(uuid.uuid7()), uuid.uuid7())
+        for refused in refusals:
+            with CaptureQueriesContext(connection) as queries, pytest.raises(ServiceValidationError):
+                entity_liveness(refused)
+            assert self._spine_reads(queries.captured_queries) == []
 
 
 @pytest.mark.django_db
@@ -836,6 +848,7 @@ class TestDiscoveryFunctions:
         assert "grid_fixtures__constrained_source" in caps.node_types
         assert "create_node" in caps.write_verbs
         assert "get_node" in caps.read_functions
+        assert "entity_liveness" in caps.read_functions
 
 
 # ===========================================================================
@@ -891,8 +904,8 @@ class TestDeleteEdgePipeline:
         """delete_edge_by_entity tombstones the Edge and its backing Entity."""
         from tap_grid.services import delete_edge_by_entity
 
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         backing_pk = edge.entity.pk
         result = delete_edge_by_entity(edge.entity_id)
@@ -905,8 +918,8 @@ class TestDeleteEdgePipeline:
     def test_delete_edge_by_entity_endpoints_survive(self):
         from tap_grid.services import delete_edge_by_entity
 
-        a = create_entity("grid_fixtures__constrained_source")
-        b = create_entity("grid_fixtures__constrained_target")
+        a = make_spine_entity("grid_fixtures__constrained_source")
+        b = make_spine_entity("grid_fixtures__constrained_target")
         edge = create_edge(a, b, "CONSTRAINED_LINK__grid_fixtures")
         delete_edge_by_entity(edge.entity_id)
         assert Entity.objects.filter(pk=a.pk).exists()
@@ -1035,7 +1048,7 @@ class TestEntityVersion:
 class TestPublicReadGate:
     """The public entity-spine read API gates on grid.read (req-tap-auth-policy).
 
-    resolve_entity / get_node / get_edge / get_object are the spine's read
+    resolve_entity / entity_liveness / get_node / get_edge / get_object are the spine's read
     gateway — every above-service caller routes through them. Each authorizes
     grid.read in the decorator, before any DB work. This is the regression lock
     for the 2026-07-02 read-gap closure: before it these four were ungated, so a
@@ -1060,7 +1073,7 @@ class TestPublicReadGate:
         from tap_auth import policy
         from tap_auth.errors import CapabilityDenied
         from tap_grid.caller_context import set_caller_context
-        from tap_grid.services import get_edge, get_node, get_object, resolve_entity
+        from tap_grid.services import entity_liveness, get_edge, get_node, get_object, resolve_entity
 
         ctx = self._write_only_ctx()
         # Sanity: the actor holds write but NOT read — so a read denial below is
@@ -1076,3 +1089,5 @@ class TestPublicReadGate:
         for read_fn in (resolve_entity, get_node, get_edge, get_object):
             with pytest.raises(CapabilityDenied):
                 read_fn(uuid.uuid4())
+        with pytest.raises(CapabilityDenied):
+            entity_liveness([uuid.uuid4()])

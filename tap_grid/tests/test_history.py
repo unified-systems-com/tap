@@ -130,10 +130,10 @@ class TestHistoryServiceRawRecords:
 
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
         with batch_ctx(source="test:history"):
-            entity = create_entity("grid_fixtures__constrained_source", name="Test ConstrainedSource")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Test ConstrainedSource")
             character = ConstrainedSource.objects.create(entity=entity, description="Initial bio")
 
         svc = get_history_service(character)
@@ -146,9 +146,9 @@ class TestHistoryServiceRawRecords:
         """HistoryService.timeline() is backlogged — raises NotImplementedError."""
         from tap_plugin.grid_fixtures.models import ConstrainedTarget
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
-        entity = create_entity("grid_fixtures__constrained_target", name="Timeline Test")
+        entity = make_spine_entity("grid_fixtures__constrained_target", name="Timeline Test")
         location = ConstrainedTarget.objects.create(entity=entity, description="A place")
 
         svc = get_history_service(location)

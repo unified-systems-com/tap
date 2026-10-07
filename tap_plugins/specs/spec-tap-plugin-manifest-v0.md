@@ -290,6 +290,7 @@ Optional fields:
 - `targets`: array of strings
 - `property_schema`: object
 - `default_dimensions`: object
+- `internal_only`: boolean, default false; true makes the type internal-only (`req-grid-edge-internal`)
 
 Unknown keys are invalid.
 
@@ -329,6 +330,7 @@ Example:
 | req-tap-plugin-manifest-v0-edge-file-4 | Optional Property Schema | Implemented | `property_schema` may be declared as an object. | |
 | req-tap-plugin-manifest-v0-edge-file-5 | Optional Default Dimensions | Implemented | `default_dimensions` may be declared as an object. | |
 | req-tap-plugin-manifest-v0-edge-file-6 | Unknown Keys Rejected | Implemented | Unknown keys in an edge definition file are invalid. | |
+| req-tap-plugin-manifest-v0-edge-file-7 | Optional Internal-Only Flag | Implemented | `internal_only` may be declared as a boolean; `true` registers the type internal-only (`req-grid-edge-internal-1`), and a non-boolean value fails the load. | `tap_plugins/manifest.py::_load_edge_file`, `tap_plugins/base.py::_register_edges_from_manifest`. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
 
 #### Future
 If TAP later needs richer endpoint selectors, it can introduce them in a later manifest version without forcing them into v0.

@@ -4,7 +4,7 @@ import pytest
 
 from tap_grid.history import is_history_enabled
 from tap_grid.models import BaseModel, Batch, BatchEvent, BatchEventType, BatchStatus
-from tap_grid.services import create_entity
+from tap_grid.tests.support import make_spine_entity
 
 
 @pytest.mark.django_db
@@ -13,7 +13,7 @@ class TestBatchModel:
 
     def test_batch_is_entity(self):
         """Batch extends BaseModel, has an Entity."""
-        entity = create_entity("batch", name="Test Batch")
+        entity = make_spine_entity("batch", name="Test Batch")
         batch = Batch.objects.create(entity=entity)
 
         assert batch.entity == entity
@@ -22,14 +22,14 @@ class TestBatchModel:
     @pytest.mark.spec("req-grid-service-batch-model-3")
     def test_batch_default_status_is_open(self):
         """New batches start in OPEN status."""
-        entity = create_entity("batch", name="Open Test")
+        entity = make_spine_entity("batch", name="Open Test")
         batch = Batch.objects.create(entity=entity)
 
         assert batch.status == BatchStatus.OPEN
 
     def test_batch_status_transitions(self):
         """Batch status can be changed."""
-        entity = create_entity("batch", name="Status Test")
+        entity = make_spine_entity("batch", name="Status Test")
         batch = Batch.objects.create(entity=entity)
 
         batch.status = BatchStatus.CLOSED
@@ -40,21 +40,21 @@ class TestBatchModel:
 
     def test_batch_has_source_field(self):
         """Batch has source field for tracking origin."""
-        entity = create_entity("batch", name="Source Test")
+        entity = make_spine_entity("batch", name="Source Test")
         batch = Batch.objects.create(entity=entity, source="scanner:aws")
 
         assert batch.source == "scanner:aws"
 
     def test_batch_has_metadata_field(self):
         """Batch has metadata JSONField."""
-        entity = create_entity("batch", name="Metadata Test")
+        entity = make_spine_entity("batch", name="Metadata Test")
         batch = Batch.objects.create(entity=entity, metadata={"param1": "value1", "count": 42})
 
         assert batch.metadata == {"param1": "value1", "count": 42}
 
     def test_batch_has_timestamps(self):
         """Batch has started_at and closed_at fields."""
-        entity = create_entity("batch", name="Timestamp Test")
+        entity = make_spine_entity("batch", name="Timestamp Test")
         batch = Batch.objects.create(entity=entity)
 
         assert batch.started_at is not None
@@ -62,7 +62,7 @@ class TestBatchModel:
 
     def test_batch_str_representation(self):
         """Batch __str__ includes name and status."""
-        entity = create_entity("batch", name="My Batch")
+        entity = make_spine_entity("batch", name="My Batch")
         # Pass name to Batch as well — per req-grid-node-display, BaseModel.get_name()
         # is the source of truth for the spine's Entity.name projection. Leaving
         # Batch.name empty would cause save() to overwrite entity.name with "".
@@ -78,7 +78,7 @@ class TestBatchMetadataFields:
 
     def test_name_stored_and_retrieved(self):
         """name is stored and retrieved correctly."""
-        entity = create_entity("batch", name="Name Test")
+        entity = make_spine_entity("batch", name="Name Test")
         batch = Batch.objects.create(entity=entity, name="My Ingestion Run")
 
         batch.refresh_from_db()
@@ -86,14 +86,14 @@ class TestBatchMetadataFields:
 
     def test_name_defaults_to_empty_string(self):
         """name defaults to empty string when not provided."""
-        entity = create_entity("batch", name="No Name")
+        entity = make_spine_entity("batch", name="No Name")
         batch = Batch.objects.create(entity=entity)
 
         assert batch.name == ""
 
     def test_description_stored_and_retrieved(self):
         """description is stored and retrieved correctly."""
-        entity = create_entity("batch", name="Desc Test")
+        entity = make_spine_entity("batch", name="Desc Test")
         batch = Batch.objects.create(entity=entity, description="Imports all AWS resources.")
 
         batch.refresh_from_db()
@@ -113,7 +113,7 @@ class TestBatchMetadataFields:
 
     def test_description_json_none_allowed(self):
         """description_json=None is valid (field is nullable)."""
-        entity = create_entity("batch", name="Null JSON")
+        entity = make_spine_entity("batch", name="Null JSON")
         batch = Batch.objects.create(entity=entity, description_json=None)
 
         batch.refresh_from_db()
@@ -163,10 +163,10 @@ class TestBatchEventModel:
     @pytest.mark.spec("req-grid-service-batch-event-2")
     def test_batch_event_links_to_batch(self):
         """BatchEvent belongs to a Batch."""
-        batch_entity = create_entity("batch", name="Parent Batch")
+        batch_entity = make_spine_entity("batch", name="Parent Batch")
         batch = Batch.objects.create(entity=batch_entity)
 
-        target_entity = create_entity("concept", name="Target")
+        target_entity = make_spine_entity("concept", name="Target")
         event = BatchEvent.objects.create(
             batch=batch,
             event_type=BatchEventType.CREATE,
@@ -184,10 +184,10 @@ class TestBatchEventModel:
 
     def test_batch_event_has_uuid_primary_key(self):
         """BatchEvent uses UUIDField as primary key."""
-        batch_entity = create_entity("batch", name="UUID Test Batch")
+        batch_entity = make_spine_entity("batch", name="UUID Test Batch")
         batch = Batch.objects.create(entity=batch_entity)
 
-        target_entity = create_entity("concept", name="Target")
+        target_entity = make_spine_entity("concept", name="Target")
         event = BatchEvent.objects.create(
             batch=batch,
             event_type=BatchEventType.CREATE,
@@ -208,10 +208,10 @@ class TestBatchEventModel:
 
     def test_batch_event_has_metadata(self):
         """BatchEvent has metadata JSONField."""
-        batch_entity = create_entity("batch", name="Metadata Batch")
+        batch_entity = make_spine_entity("batch", name="Metadata Batch")
         batch = Batch.objects.create(entity=batch_entity)
 
-        target_entity = create_entity("concept", name="Target")
+        target_entity = make_spine_entity("concept", name="Target")
         event = BatchEvent.objects.create(
             batch=batch,
             event_type=BatchEventType.CREATE,
@@ -224,10 +224,10 @@ class TestBatchEventModel:
 
     def test_batch_event_str_representation(self):
         """BatchEvent __str__ shows event type and entity info."""
-        batch_entity = create_entity("batch", name="Str Batch")
+        batch_entity = make_spine_entity("batch", name="Str Batch")
         batch = Batch.objects.create(entity=batch_entity)
 
-        target_entity = create_entity("concept", name="Target")
+        target_entity = make_spine_entity("concept", name="Target")
         event = BatchEvent.objects.create(
             batch=batch,
             event_type=BatchEventType.CREATE,
@@ -241,10 +241,10 @@ class TestBatchEventModel:
     @pytest.mark.spec("req-grid-service-batch-event-6")
     def test_batch_events_cascade_on_batch_delete(self):
         """BatchEvents are deleted when their Batch is deleted."""
-        batch_entity = create_entity("batch", name="Cascade Test Batch")
+        batch_entity = make_spine_entity("batch", name="Cascade Test Batch")
         batch = Batch.objects.create(entity=batch_entity)
 
-        target_entity = create_entity("concept", name="Target")
+        target_entity = make_spine_entity("concept", name="Target")
         event = BatchEvent.objects.create(
             batch=batch,
             event_type=BatchEventType.CREATE,

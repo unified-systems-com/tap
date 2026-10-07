@@ -9,17 +9,68 @@ from typing import Any
 
 from django.contrib import admin
 from django.db import models
+from django.db.models import QuerySet
 from django.http import Http404, HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from simple_history.admin import SimpleHistoryAdmin
 
+from tap_auth import policy
+from tap_auth.capabilities import READ_CAPABILITY
+from tap_grid.caller_context import get_caller_context
 from tap_grid.models import Batch, BatchEvent, Edge, Entity, EntityType
 from tap_grid.registry import Registry, ScopedRegistry, meta_registry
 
 
+class GridReadAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Admin reads graph rows only for an actor holding `grid.read` (req-tap-auth-policy-6, Issue# 961 - tap).
+
+    `is_superuser` grants no TAP capability (req-tap-auth-policy-5), so without this a superuser
+    outside tap_admin passed admin's own checks and read the rows: the ORM read backstop failed
+    the page with a 500, or, for the Entity spine it does not guard, the rows were shown. Admin
+    now asks TAP's policy first, and refuses with a 403.
+
+    Two hooks, because Django asks in two places. `has_view_permission` hides the model from the
+    admin index and refuses the pages that check permission before reading. `get_queryset`
+    authorizes every read the admin makes, which covers the change, delete and history views:
+    Django fetches their object before it checks permission. A denial there is a
+    `CapabilityDenied`, which `CallerContextMiddleware` answers with a 403.
+    """
+
+    def has_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return policy.can(get_caller_context(), READ_CAPABILITY) and super().has_view_permission(request, obj)
+
+    def get_queryset(self, request: HttpRequest) -> QuerySet[Any]:
+        policy.authorize(get_caller_context(), READ_CAPABILITY, operation=f"admin {self.opts.label}")
+        return super().get_queryset(request)
+
+
+class ReadOnlyGraphAdmin(GridReadAdmin):
+    """Admin shows graph rows and never writes them (req-tap-auth-policy-6, Issue# 957 - tap).
+
+    A graph row changes only through the service layer's write pipeline, which records its batch,
+    provenance and history. The write guard already refuses admin's single-object saves and deletes.
+    Its "delete selected" action deleted a queryset below the guard and left no record. So no add,
+    no change, no delete and no bulk actions: superuser break-glass covers accounts and auth
+    objects, not the grid. The EntityType catalog is declared by plugins at boot, so nothing
+    legitimate edits it here either (Issue# 961 - tap).
+    """
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def get_actions(self, request: HttpRequest) -> dict[str, Any]:
+        return {}
+
+
 @admin.register(Batch)
-class BatchAdmin(SimpleHistoryAdmin):
+class BatchAdmin(ReadOnlyGraphAdmin, SimpleHistoryAdmin):
     """Admin for Batch model with history support."""
 
     list_display = ["entity", "status", "source", "actor", "started_at", "closed_at"]
@@ -31,7 +82,7 @@ class BatchAdmin(SimpleHistoryAdmin):
 
 
 @admin.register(BatchEvent)
-class BatchEventAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class BatchEventAdmin(GridReadAdmin):
     """Admin for BatchEvent model (read-only audit log)."""
 
     list_display = ["id", "batch", "event_type", "entity_type", "model_name", "timestamp", "actor"]
@@ -62,7 +113,7 @@ class BatchEventAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 
 @admin.register(Entity)
-class EntityAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class EntityAdmin(ReadOnlyGraphAdmin):
     list_display = ["id", "entity_type", "name", "created_at"]
     list_filter = ["entity_type", "created_at"]
     search_fields = ["name", "entity_type"]
@@ -71,14 +122,14 @@ class EntityAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 
 @admin.register(EntityType)
-class EntityTypeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class EntityTypeAdmin(ReadOnlyGraphAdmin):
     list_display = ["slug", "name", "icon", "plugin_name"]
     list_filter = ["plugin_name"]
     search_fields = ["slug", "name"]
 
 
 @admin.register(Edge)
-class EdgeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class EdgeAdmin(ReadOnlyGraphAdmin):
     list_display = ["id", "from_entity", "edge_type", "to_entity"]
     list_filter = ["edge_type"]
     search_fields = ["edge_type"]

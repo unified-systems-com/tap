@@ -576,7 +576,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-batch | [Batch Container](#batch-container) | Implemented | Serialized TAP batches wrap nodes and edges |
 | req-grift-node | [Node Object](#node-object) | Implemented | Full-object node interchange contract |
 | req-grift-edge | [Edge Object](#edge-object) | Implemented | Full-object edge interchange contract |
-| req-grift-edge-identity-surface | [Edge Identity Document Surface](#edge-identity-document-surface) | Proposed | The three document shapes edge identity adds: an endpoint named by type and natural key, a removal target named by edge identity, and the batch `edge_cases` section carrying authority claims |
+| req-grift-edge-identity-surface | [Edge Identity Document Surface](#edge-identity-document-surface) | Implemented | The three document shapes edge identity adds: an endpoint named by type and natural key, a removal target named by edge identity, and the batch `edge_cases` section carrying authority claims |
 | req-grift-validation | [Validation Rules](#validation-rules) | Implemented | Strict schema and sanity rules |
 | req-grift-seed-ids | [Seed Data ID Convention](#seed-data-id-convention) | Deprecated | Superseded by [spec-grid-uuid-selection.md](spec-grid-uuid-selection.md) and [spec-grift-seed-ids-real-uuid7.md](spec-grift-seed-ids-real-uuid7.md) |
 | req-grift-order | [Canonical Export Ordering](#canonical-export-ordering) | Backlog | Export ordering (no exporter yet) |
@@ -970,10 +970,10 @@ RID: `req-grift-edge-identity-surface`
 
 Status: `Proposed`
 
-Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Each shape is added to `grift-document.schema.json` in the same change as the importer code that honours it, so no field is ever accepted and then dropped. The endpoint by natural key (Issue# 914 - tap) and removal by identity (Issue# 915 - tap) have landed; the `edge_cases` section is still a proposal the schema rejects.
+Edge identity (`req-grid-edge-identity`) adds three shapes to the GRIFT document. This requirement lists them in one place so the format stays one contract; the behaviour of each is the importer's and is specified there. Each shape is added to `grift-document.schema.json` in the same change as the importer code that honours it, so no field is ever accepted and then dropped. All three have landed: the endpoint by natural key (Issue# 914 - tap), removal by identity (Issue# 915 - tap) and the `edge_cases` section (Issue# 919 - tap).
 
 #### Status Details
-Proposed (Issue# 912 - tap; epic Issue# 911 - tap).
+Implemented (Issue# 912 - tap; epic Issue# 911 - tap). The `edge_cases` section's schema is `GriftEdgeCases` / `GriftAuthorityClaim`, closed; its behaviour is `req-grid-reconcile-edge-authority`, a dry-run until Issue# 920 - tap.
 
 #### Implementation
 | Shape | Where | Behaviour |
@@ -988,9 +988,9 @@ An importer that does not implement a shape fails preflight on a document carryi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grift-edge-identity-surface-1 | Shapes Land With Their Code | Proposed | The schema accepts each of the three shapes only in the change that adds the importer behaviour for it; until then a document carrying one fails preflight. | No accept-and-drop. |
-| req-grift-edge-identity-surface-2 | A Key Names, The Grid Decides | Proposed | An endpoint or removal key is read against the receiving grid's own natural-key declaration; the document supplies values for declared properties and nothing else. | `req-grid-entity-natural-key-2`. |
-| req-grift-edge-identity-surface-3 | `edge_cases` Is Closed | Proposed | The `edge_cases` section accepts only its defined members; an unknown member fails the document. | Room for the edge overwrite policy without an open-ended bag. |
+| req-grift-edge-identity-surface-1 | Shapes Land With Their Code | Implemented | The schema accepts each of the three shapes only in the change that adds the importer behaviour for it; until then a document carrying one fails preflight. | No accept-and-drop. `edge_cases` landed with its importer step (Issue# 919 - tap). `tap_grid/tests/test_grift_edge_authority.py::TestTheStatementShape::test_the_schema_accepts_a_claim_now_that_the_importer_honours_it`. |
+| req-grift-edge-identity-surface-2 | A Key Names, The Grid Decides | Implemented | An endpoint or removal key is read against the receiving grid's own natural-key declaration; the document supplies values for declared properties and nothing else. | `req-grid-entity-natural-key-2`. `tap_grid/tests/test_grift_edge_endpoints.py::TestCompleteKeysOnly::test_an_unsound_key_is_refused_before_anything_is_written`. |
+| req-grift-edge-identity-surface-3 | `edge_cases` Is Closed | Implemented | The `edge_cases` section accepts only its defined members; an unknown member fails the document. | Room for the edge overwrite policy without an open-ended bag. `tap_grid/tests/test_grift_edge_authority.py::TestTheStatementShape::test_edge_cases_is_closed`. |
 
 
 ## Validation Rules

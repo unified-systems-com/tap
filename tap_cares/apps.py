@@ -15,10 +15,14 @@ class TapCaresConfig(AppConfig):
     # (req-grid-edge-identity-declaration). The three lifecycle edges are keyless: each records
     # something this grid did once, its target minted in the same code path as the edge, so
     # there is no source relationship to find again. SCHEDULED_TARGET is a standing,
-    # operator-declared relationship and a plain key.
+    # operator-declared relationship and a plain key. The three lifecycle edges are also
+    # internal-only (req-grid-edge-internal): bookkeeping this subsystem writes about itself, which
+    # the generic edge verbs and GRIFT refuse; SCHEDULED_TARGET stays public because schedules are
+    # authored in GRIFT.
     edge_types: list[dict[str, Any]] = [
         {
             "slug": "HAS_COLLECTION_JOB",
+            "internal_only": True,
             "sources": [{"type": "collector"}],
             "targets": [{"type": "collection_job"}],
             "identity": {
@@ -39,6 +43,7 @@ class TapCaresConfig(AppConfig):
         },
         {
             "slug": "HAS_FIRED",
+            "internal_only": True,
             "sources": [{"type": "schedule"}],
             "targets": [{"type": "schedule_fire"}],
             "identity": {
@@ -52,6 +57,7 @@ class TapCaresConfig(AppConfig):
         },
         {
             "slug": "TRIGGERED_JOB",
+            "internal_only": True,
             "sources": [{"type": "schedule_fire"}],
             "targets": [{"type": "collection_job"}],
             "identity": {

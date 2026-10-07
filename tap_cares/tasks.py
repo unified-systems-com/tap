@@ -117,7 +117,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     Every claim that did not become an edge, refused or failed, is returned for the task body to
     record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@3878f7cd507f/a6a4a7cd2df2 (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@573c12406621/164e83c07726 (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
@@ -127,7 +127,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
 
     from tap_grid.batch import imported_by
     from tap_grid.models import Entity
-    from tap_grid.services import create_edge, replace_edge, resolve_edge_identity
+    from tap_grid.services import _create_edge_internal, _replace_edge_internal, resolve_edge_identity
 
     job_id = str(job.entity_id)
     unlinked: list[dict[str, Any]] = []
@@ -154,9 +154,11 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                 found = resolve_edge_identity("PRODUCED_BATCH", job_id, batch_id, {})
                 if found.found:
                     if disposition == "imported":
-                        replace_edge(found.entity_id, {"properties": {"disposition": "imported"}})
+                        _replace_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.collector via acting_as; grid.write re-checked at the write backstop
+                            found.entity_id, {"properties": {"disposition": "imported"}}
+                        )
                     continue
-                create_edge(
+                _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.collector via acting_as; grid.write re-checked at the write backstop
                     from_entity=job.entity,
                     to_entity=batch_entity,
                     edge_type="PRODUCED_BATCH",
@@ -331,6 +333,36 @@ def run_collector(
             _seal_lifecycle_batch(scoped_batch_id or "", collection_job_entity_id)
 
 
+def _bookkeeping_scope(operation: str) -> Any:
+    """The service write scope for the task body's own records on its lifecycle batch.
+
+    The completeness statement and the candidate record are metadata the run writes on its
+    own lifecycle batch, as `_seal_lifecycle_batch` writes its status, and like the seal
+    they go through the service boundary: `authorized` opens the write scope for a
+    write-class capability, so the batch write passes the write guard instead of tripping
+    it (unified-systems-com/tap#906). The task body already acts as the collector.
+    """
+    from tap_auth.capabilities import WRITE_CAPABILITY
+    from tap_auth.enforcement import authorized
+    from tap_grid.caller_context import CallerContext
+
+    return authorized(CallerContext(user=get_builtin_actor(COLLECTOR)), WRITE_CAPABILITY, operation=operation)
+
+
+def _record_on_job(instance: Any, site: str, message_code: str, message: str, exc: Exception, batch_id: str) -> None:
+    """Put a refused record on the job's results, so a recurring refusal is never only a log line.
+
+    The entry rides the terminal patch; the job's status is unchanged. It carries the error's
+    code (or class), never its text, which can carry statement values (tap#906, direction 3).
+    """
+    instance.record_error(
+        site,
+        message_code,
+        message,
+        message_data={"lifecycle_batch_entity_id": batch_id, "error": getattr(exc, "code", type(exc).__name__)},
+    )
+
+
 def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
     """Record the collector's surface statements on the run's lifecycle batch.
 
@@ -357,16 +389,25 @@ def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
     from tap_grid.models import Batch
 
     try:
-        record_completeness(
-            Batch.objects.get(entity_id=scoped_batch_id),
-            surfaces,
-            produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
-        )
+        with _bookkeeping_scope("tap_cares.collector.record_completeness"):
+            record_completeness(
+                Batch.objects.get(entity_id=scoped_batch_id),
+                surfaces,
+                produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
+            )
     except Exception as exc:
         logger.exception(
             "[23f6] collector: completeness statement refused for lifecycle batch %s; not recorded: %s",
             scoped_batch_id,
             exc,
+        )
+        _record_on_job(
+            instance,
+            "c789",
+            "COMPLETENESS_NOT_RECORDED",
+            "The run's completeness statement was refused and not recorded; the server log has the detail.",
+            exc,
+            scoped_batch_id,
         )
 
 
@@ -432,17 +473,26 @@ def _record_candidates(
         if completeness_of(batch) is None:
             return
         previous_batch, previous_produced = _previous_run(collector_entity_id, job_entity_id)
-        record_candidates(
-            batch,
-            produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
-            previous_batch=previous_batch,
-            previous_produced_batches=previous_produced,
-        )
+        with _bookkeeping_scope("tap_cares.collector.record_candidates"):
+            record_candidates(
+                batch,
+                produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
+                previous_batch=previous_batch,
+                previous_produced_batches=previous_produced,
+            )
     except Exception as exc:
         logger.exception(
             "[be00] collector: candidate derivation refused for lifecycle batch %s; not recorded: %s",
             scoped_batch_id,
             exc,
+        )
+        _record_on_job(
+            instance,
+            "e13a",
+            "CANDIDATES_NOT_RECORDED",
+            "The run's retirement-candidate record was refused and not recorded; the server log has the detail.",
+            exc,
+            scoped_batch_id,
         )
 
 

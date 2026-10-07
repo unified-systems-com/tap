@@ -7,19 +7,19 @@ Public write API:
   patch_node()         — partial update (PATCH semantics)
   replace_node()       — full replacement (PUT semantics)
   delete_node()        — delete a node and its Entity spine
-  create_edge()        — create an Edge between two entities (also the compat wrapper)
+  create_edge()        — create an Edge between two entities, returning the Edge
   patch_edge()         — partial update of edge properties
   replace_edge()       — full replacement of edge properties
-  delete_edge()        — delete an edge (also the compat wrapper)
+  delete_edge_by_entity() — tombstone an edge
 
-Backward-compatible low-level helpers (kept for existing callers):
-  create_entity(), update_entity(), delete_entity(),
-  update_edge_properties()
+Every write goes through write_batch. The Entity-level helpers that wrote the spine directly
+(create_entity, update_entity, delete_entity, update_edge_properties, delete_edge) were removed
+(Issue# 957 - tap): they skipped the batch, provenance, history and the per-type gates.
 """
 
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
@@ -53,6 +53,7 @@ from tap_grid.exceptions import (
     ServiceConflictError,
     ServiceConstraintError,
     ServiceNotFoundError,
+    ServiceUnsupportedOperationError,
     ServiceValidationError,
     ServiceVersionConflictError,
     is_deadlock,
@@ -62,6 +63,7 @@ from tap_grid.service_types import (
     BatchWriteResult,
     EdgeIdentityResolution,
     EdgeTypeDescription,
+    EntityLiveness,
     IdentityResolution,
     NodeTypeDescription,
     ServiceCapabilities,
@@ -81,6 +83,7 @@ from tap_grid.services._impl import (
     _ensure_batch,
     _execute_write_pipeline,
     _load_entity_or_raise,
+    _refuse_internal_edge_type,
 )
 from tap_grid.write_guard import service_write_scope
 
@@ -113,6 +116,7 @@ __all__ = [
     "find_edge_by_identity",
     # Read API (grid.read)
     "resolve_entity",
+    "entity_liveness",
     "get_node",
     "get_edge",
     "get_object",
@@ -124,13 +128,8 @@ __all__ = [
     "list_edge_types",
     "describe_edge_type",
     "describe_service_capabilities",
-    # Backward-compatible low-level helpers (grid.write / grid.delete)
-    "create_entity",
-    "update_entity",
-    "delete_entity",
+    # The edge create that returns the Edge (grid.write)
     "create_edge",
-    "update_edge_properties",
-    "delete_edge",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1231,51 @@ def _create_node_internal(
     )
 
 
+@requires_capability(WRITE_CAPABILITY, operation="_create_edge_internal")
+def _create_edge_internal(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    caller_context: CallerContext | None = None,
+) -> Edge:
+    """Trusted-internal create for an internal-only (or any) edge type (req-grid-edge-internal).
+
+    ``create_edge`` minus the internal-only gate: the same pre-checks and the same pipeline, with
+    the bypass ``write_batch`` grants only a program actor. For subsystem code that writes its own
+    bookkeeping edges (``PRODUCED_BATCH``, ``HAS_COLLECTION_JOB``, ``HAS_FIRED``, ``TRIGGERED_JOB``).
+
+    Raises:
+        InvalidEdgeError: An endpoint is an edge, or the edge violates topology constraints.
+        EdgePropertyValidationError: The pipeline refused the write.
+    """
+    return _create_edge(
+        from_entity, to_entity, edge_type, properties, caller_context=caller_context, internal_only_bypass=True
+    )
+
+
+@requires_capability(WRITE_CAPABILITY, operation="_replace_edge_internal")
+def _replace_edge_internal(
+    target: str | uuid.UUID,
+    payload: dict[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+) -> WriteResult:
+    """Trusted-internal replace for an internal-only (or any) edge type (req-grid-edge-internal).
+
+    ``replace_edge`` minus the internal-only gate, for subsystem code (the ``PRODUCED_BATCH`` claims
+    path upgrades its own ``skipped`` edge to ``imported`` with it).
+    """
+    op = WriteOperation(verb="replace_edge", target=target, payload=payload)
+    batch_result = write_batch([op], caller_context=caller_context, _internal_only_bypass=True)
+    return (
+        batch_result.results[0]
+        if batch_result.results
+        else WriteResult(success=False, batch_id=batch_result.batch_id, errors=batch_result.errors)
+    )
+
+
 @requires_capability(WRITE_CAPABILITY, operation="_patch_node_internal")
 def _patch_node_internal(
     target: str | uuid.UUID,
@@ -1265,6 +1309,28 @@ def _patch_node_internal(
         batch_result.results[0]
         if batch_result.results
         else WriteResult(success=False, batch_id=batch_result.batch_id, errors=batch_result.errors)
+    )
+
+
+def _create_edge_internal_for_test(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    caller_context: CallerContext | None = None,
+) -> Edge:
+    """Test-only trusted-internal edge create (req-grid-edge-internal).
+
+    Same semantics as `_create_edge_internal`, but raises `RuntimeError` unless running under
+    Django test/DEBUG settings, so tests can build internal-only edges (PRODUCED_BATCH fixtures,
+    for example) without going through the subsystem that owns them.
+    """
+    _assert_test_or_debug("_create_edge_internal_for_test")
+    return (
+        _create_edge_internal(  # TAP-AUTHZ-COV: test-only helper; _assert_test_or_debug makes it production-unreachable
+            from_entity, to_entity, edge_type, properties, caller_context=caller_context
+        )
     )
 
 
@@ -1403,6 +1469,54 @@ def resolve_entity(target: str | uuid.UUID, *, caller_context: CallerContext | N
     return _load_entity_or_raise(entity_id)
 
 
+@requires_capability(READ_CAPABILITY, operation="entity_liveness")
+def entity_liveness(
+    targets: Iterable[str | uuid.UUID], *, caller_context: CallerContext | None = None
+) -> dict[uuid.UUID, EntityLiveness]:
+    """Say, for each entity id, whether it is live, tombstoned or missing, in one query.
+
+    The bulk form of asking ``resolve_entity`` about each id: a producer checking the ids it is
+    about to send makes one database round trip, not one per id (Issue# 966 - tap). Every
+    requested id is in the answer, so an id that never existed reads ``"missing"``: never as
+    retired, and never as left out. Liveness lives on the Entity spine, so nodes and edges are
+    answered alike.
+
+    Args:
+        targets: Entity UUIDs (str or uuid.UUID). Duplicates collapse.
+
+    Returns:
+        Each requested id, as a ``uuid.UUID``, mapped to ``"live"``, ``"tombstoned"`` or
+        ``"missing"``. An empty input reads nothing and returns ``{}``.
+
+    Raises:
+        ServiceValidationError: If ``targets`` is a single id rather than a collection, or any
+            target is not a UUID. Nothing is read.
+    """
+    if isinstance(targets, str | uuid.UUID):
+        raise ServiceValidationError("targets must be a collection of ids, not a single id.")
+    ids: set[uuid.UUID] = set()
+    for position, target in enumerate(targets):
+        try:
+            entity_id = _coerce_uuid(target)
+        except ValueError:
+            entity_id = None
+        if entity_id is None:
+            raise ServiceValidationError(f"targets[{position}] is not a valid UUID.")
+        ids.add(entity_id)
+    if not ids:
+        return {}
+    retired_at = dict(Entity.objects.filter(pk__in=ids).values_list("pk", "deleted_at"))
+    answer: dict[uuid.UUID, EntityLiveness] = {}
+    for entity_id in ids:
+        if entity_id not in retired_at:
+            answer[entity_id] = "missing"
+        elif retired_at[entity_id] is None:
+            answer[entity_id] = "live"
+        else:
+            answer[entity_id] = "tombstoned"
+    return answer
+
+
 @requires_capability(WRITE_CAPABILITY, operation="resolve_identity")
 def resolve_identity(
     type_slug: str,
@@ -1441,7 +1555,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@6f5a16b5dd9d/38bc29892d93 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@91817a01cb5a/38bc29892d93 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
@@ -1555,7 +1669,7 @@ def resolve_edge_identity(
     it found (an id, or every candidate), so a caller that may write but not read is refused here
     whoever calls it, not only when the importer remembers to ask (``req-grid-edge-identity-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@b9c04d9c5b2e/60d4179c54e3 (derivation) — the one place
+    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/60d4179c54e3 (derivation) — the one place
         a relationship's declared identity becomes the id written under: incomplete-key refusal,
         the lock before any read, the bound search among live edges and the assignment on a
         miss all happen here, inside the caller's transaction.
@@ -1907,6 +2021,7 @@ def describe_service_capabilities(*, caller_context: CallerContext | None = None
             "get_node",
             "get_edge",
             "resolve_entity",
+            "entity_liveness",
             "list_node_types",
             "describe_node_type",
             "list_edge_types",
@@ -1915,60 +2030,12 @@ def describe_service_capabilities(*, caller_context: CallerContext | None = None
     )
 
 
-# ---------------------------------------------------------------------------
-# Legacy backward-compatible helpers (kept for existing callers)
-# ---------------------------------------------------------------------------
-
-
-@requires_capability(WRITE_CAPABILITY, operation="create_entity")
-def create_entity(
-    entity_type: str,
-    name: str = "",
-    *,
-    caller_context: CallerContext | None = None,
-    **kwargs: Any,
-) -> Entity:
-    """Create a new Entity.
-
-    .. deprecated::
-        Bare Entity creation bypasses the typed write pipeline. Prefer
-        ``create_node(type_slug, payload)`` for all typed domain objects.
-        This function is kept for backward compatibility and will be removed
-        once all callers are migrated.
-    """
-    return Entity.objects.create(
-        entity_type=entity_type,
-        name=name,
-        **kwargs,
-    )
-
-
-@requires_capability(WRITE_CAPABILITY, operation="update_entity")
-def update_entity(entity: Entity, *, caller_context: CallerContext | None = None, **kwargs: Any) -> Entity:
-    """Update an existing Entity's fields.
-
-    .. deprecated::
-        Prefer the typed write pipeline (``patch_node``) for domain objects.
-    """
-    for field_name, value in kwargs.items():
-        setattr(entity, field_name, value)
-    entity.save(update_fields=list(kwargs.keys()) + ["updated_at"])
-    return entity
-
-
-@requires_capability(DELETE_CAPABILITY, operation="delete_entity")
-def delete_entity(entity: Entity, *, caller_context: CallerContext | None = None) -> None:
-    """Delete an Entity. Cascades to edges and domain objects."""
-    entity.delete()
-
-
 @requires_capability(WRITE_CAPABILITY, operation="create_edge")
 def create_edge(
     from_entity: Entity,
     to_entity: Entity,
     edge_type: str,
     properties: dict[str, Any] | None = None,
-    name: str = "",
     *,
     caller_context: CallerContext | None = None,
     batch_name: str | None = None,
@@ -1976,10 +2043,12 @@ def create_edge(
 ) -> Edge:
     """Create an Edge between two entities.
 
-    The backing Entity for the Edge is auto-created by Edge.save().
-    An optional name overrides the auto-generated label on that Entity; it names
-    the edge, not the batch — ``batch_name`` / ``batch_description`` name the batch
-    this call mints (req-grid-service-batch-caller-name).
+    The backing Entity for the Edge is auto-created by Edge.save(), named from the endpoints and
+    the type (``Edge.get_name``). ``batch_name`` / ``batch_description`` name the batch this call
+    mints (req-grid-service-batch-caller-name). An edge's name is derived today, and the spine
+    re-syncs it on every save, so the old ``name`` parameter never survived the next save and was a
+    second write outside the batch; it was removed (Issue# 957 - tap). Carrying a declared edge name
+    is Issue# 743 - tap, and would ride the pipeline's own write.
 
     Raises InvalidEdgeError if either endpoint is itself an edge, or if the
     edge violates topology constraints.
@@ -1992,15 +2061,42 @@ def create_edge(
     propagation, and the ``link`` provenance recorded by the pipeline's
     ``_record_provenance`` (no separate best-effort BatchEvent). The topology and
     edge-constraint pre-checks below run first so the legacy ``InvalidEdgeError``
-    contract is preserved for callers (e.g. the edges API) that catch it; the
-    nono (edge-as-endpoint) check precedes constraint validation.
+    contract is preserved for callers that catch it; the
+    nono (edge-as-endpoint) check precedes constraint validation. An internal-only
+    edge type is refused here (req-grid-edge-internal); subsystem code uses
+    ``_create_edge_internal``.
     """
+    return _create_edge(
+        from_entity,
+        to_entity,
+        edge_type,
+        properties,
+        caller_context=caller_context,
+        batch_name=batch_name,
+        batch_description=batch_description,
+    )
+
+
+def _create_edge(
+    from_entity: Entity,
+    to_entity: Entity,
+    edge_type: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    caller_context: CallerContext | None = None,
+    batch_name: str | None = None,
+    batch_description: str | None = None,
+    internal_only_bypass: bool = False,
+) -> Edge:
+    """The body ``create_edge`` and ``_create_edge_internal`` share; gated by its callers."""
     # Edges cannot connect to other edges (req-grid-edge-nono) — pre-checked here
     # to raise InvalidEdgeError (the pipeline would raise ServiceConstraintError).
     if from_entity.entity_type == "edge":
         raise InvalidEdgeError("Edges cannot have other edges as endpoints (from_entity is an edge).")
     if to_entity.entity_type == "edge":
         raise InvalidEdgeError("Edges cannot have other edges as endpoints (to_entity is an edge).")
+    if not internal_only_bypass:
+        _refuse_internal_edge_object(edge_type, "create_edge")
 
     _validate_edge_constraint(from_entity.entity_type, to_entity.entity_type, edge_type)
 
@@ -2015,8 +2111,12 @@ def create_edge(
         edge_type=edge_type,
         payload=payload,
     )
-    batch_result = write_batch(
-        [op], caller_context=caller_context, batch_name=batch_name, batch_description=batch_description
+    batch_result = write_batch(  # TAP-AUTHZ-COV: gated by create_edge / _create_edge_internal
+        [op],
+        caller_context=caller_context,
+        batch_name=batch_name,
+        batch_description=batch_description,
+        _internal_only_bypass=internal_only_bypass,
     )
     result = batch_result.results[0] if batch_result.results else None
     if result is None or not result.success or result.entity_id is None:
@@ -2024,38 +2124,18 @@ def create_edge(
         detail = "; ".join(e.message for e in errors) or "edge creation failed"
         raise EdgePropertyValidationError(detail)
 
-    edge = cast(Edge, Edge.objects.select_related("entity").get(entity_id=result.entity_id))
-
-    if name:
-        edge.entity.name = name
-        edge.entity.save(update_fields=["name", "updated_at"])
-
-    return edge
+    return cast(Edge, Edge.objects.select_related("entity").get(entity_id=result.entity_id))
 
 
-@requires_capability(WRITE_CAPABILITY, operation="update_edge_properties")
-def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
-    """Update an Edge's properties payload.
+def _refuse_internal_edge_object(edge_type: str, verb: str) -> None:
+    """The internal-only edge gate for ``create_edge``, which takes and returns Edge objects
+    (req-grid-edge-internal-3).
 
-    Validates the new properties against the registered schema for the edge
-    type (via Edge.save()) before persisting. Raises EdgePropertyValidationError
-    if the payload is invalid.
-
-    Args:
-        edge: The Edge instance to update.
-        properties: The new properties dict to assign.
-
-    Returns:
-        The updated Edge instance.
+    The pipeline's refusal, raised as ``InvalidEdgeError``: the refusal ``create_edge``'s callers
+    already handle, where the pipeline verbs return ``unsupported_operation``. The pipeline refuses
+    the write too; raising first keeps ``create_edge``'s one error contract.
     """
-    edge.properties = properties
-    edge.save(update_fields=["properties"])
-    return edge
-
-
-@requires_capability(DELETE_CAPABILITY, operation="delete_edge")
-def delete_edge(edge: Edge, *, caller_context: CallerContext | None = None) -> None:
-    """Delete an Edge and its backing Entity."""
-    # Deleting the backing Entity cascades to the Edge via OneToOne,
-    # but we go through the Entity to keep the pattern consistent.
-    edge.entity.delete()
+    try:
+        _refuse_internal_edge_type(edge_type, verb, internal_only_bypass=False)
+    except ServiceUnsupportedOperationError as exc:
+        raise InvalidEdgeError(str(exc)) from exc

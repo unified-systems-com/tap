@@ -10,8 +10,6 @@ from ninja import NinjaAPI
 from tap.flaws import HANDLING_REFUSE_BOOT, AppFlaw
 from tap_api.auth import session_auth
 from tap_api.parsing import NulForbiddingParser
-from tap_api.routers.edges import router as edges_router
-from tap_api.routers.entities import router as entities_router
 from tap_api.routers.entity_types import router as entity_types_router
 from tap_api.routers.gryphon import router as gryphon_router
 from tap_api.routers.searches import router as searches_router
@@ -30,8 +28,6 @@ api = NinjaAPI(
 )
 
 # Core routers — auth applied at mount time so TestClient(router) bypasses auth
-api.add_router("/entities/", entities_router, tags=["Entities"], auth=session_auth)
-api.add_router("/edges/", edges_router, tags=["Edges"], auth=session_auth)
 api.add_router("/entity-types/", entity_types_router, tags=["Entity Types"], auth=session_auth)
 api.add_router("/searches/", searches_router, tags=["Searches"], auth=session_auth)
 api.add_router("/gryphon/", gryphon_router, tags=["Gryphon"], auth=session_auth)

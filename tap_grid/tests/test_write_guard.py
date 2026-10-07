@@ -19,10 +19,18 @@ from django.test import override_settings
 
 from tap_auth.errors import UnguardedOperation
 from tap_grid.models import Entity, Search
-from tap_grid.services import create_entity, delete_entity
+from tap_grid.services import create_node, delete_node
 from tap_grid.write_guard import service_write_scope, unguarded_write
 
 pytestmark = [pytest.mark.django_db, pytest.mark.enforce_write_guard]
+
+
+def _node(name: str) -> Entity:
+    """A node written through the write pipeline: with the guard live, the only way in."""
+    made = create_node("grid_fixtures__node", {"name": name})
+    assert made.success, made.errors
+    assert made.entity_id is not None
+    return Entity.objects.get(pk=made.entity_id)
 
 
 # --- direct ORM writes outside the service layer fail closed ---------------
@@ -57,7 +65,7 @@ def test_direct_entity_create_fails_closed():
 
 
 def test_direct_entity_delete_fails_closed():
-    entity = create_entity(entity_type="test", name="x")  # via service (scoped)
+    entity = _node("x")  # via the pipeline (scoped)
     with pytest.raises(UnguardedOperation, match="unguarded write"):
         entity.delete()  # direct, outside a scope
 
@@ -66,15 +74,19 @@ def test_direct_entity_delete_fails_closed():
 
 
 def test_service_layer_create_and_delete_pass():
-    entity = create_entity(entity_type="test", name="x")  # grid.write scope
+    entity = _node("x")  # create_node: grid.write scope
     assert entity.pk is not None
-    delete_entity(entity)  # grid.delete scope — no raise
+    result = delete_node(entity.pk, reason="operator")  # grid.delete scope — no raise
+    assert result.success, result.errors
+    # The delete verb tombstones: the row stays, marked deleted.
+    entity.refresh_from_db()
+    assert entity.deleted_at is not None
 
 
 def test_delete_and_purge_capabilities_are_write_class():
     """delete + purge (+ import) are write-class, so their @requires_capability
-    decorator opens the service-write scope — an instance delete inside them (e.g.
-    delete_edge/delete_entity's entity.delete()) passes the guard rather than
+    decorator opens the service-write scope — an instance write inside them (the
+    delete verbs' tombstone, purge's hard delete) passes the guard rather than
     tripping it."""
     from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES
 
@@ -88,7 +100,7 @@ def test_service_layer_purge_passes():
     production gate."""
     from tap_grid.services import purge_node
 
-    entity = create_entity(entity_type="test", name="to-purge")  # grid.write scope
+    entity = _node("to-purge")  # create_node: grid.write scope
     result = purge_node(entity.pk, reason="write-guard proof")  # grid.purge scope
     assert result is not None
     assert not Entity.objects.filter(pk=entity.pk).exists()

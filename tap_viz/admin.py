@@ -2,11 +2,12 @@
 
 from django.contrib import admin
 
+from tap_grid.admin import ReadOnlyGraphAdmin
 from tap_viz.models import Layout
 
 
 @admin.register(Layout)
-class LayoutAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class LayoutAdmin(ReadOnlyGraphAdmin):
     """Admin interface for Layout model."""
 
     list_display = ["name", "entity_id"]

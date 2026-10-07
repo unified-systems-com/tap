@@ -591,7 +591,7 @@ drive-browser `mint_session.py`, pairs it with the `csrftoken` cookie + `X-CSRFT
 header (ninja's `django_auth` is `APIKeyCookie(csrf=True)` — without the CSRF pair every
 write op collapses to 403), and fuzzes the surface BEHIND the wall as `tap_admin`
 (highest-capability actor = maximal reachable surface; the service layer stays fully
-engaged). A **200-canary** on `GET /api/v1/entities/` fails the step loudly if the
+engaged). A **200-canary** on `GET /api/v1/entity-types/` fails the step loudly if the
 minted session doesn't actually authenticate — an "authenticated" pass that silently
 fuzzes 401s is the failure mode this requirement exists to forbid. **Enforcement:** the
 job is in the `gate` aggregator's `needs` (tier-gated like the boot gates — runs only on

@@ -60,6 +60,8 @@ SINK_CALLS: frozenset[str] = frozenset(
         "grift_import",
         "_create_node_internal",
         "_patch_node_internal",
+        "_create_edge_internal",
+        "_replace_edge_internal",
     }
 )
 

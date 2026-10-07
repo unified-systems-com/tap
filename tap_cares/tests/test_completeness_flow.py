@@ -207,3 +207,42 @@ class TestSurfaceStatementsReachTheRun:
         assert job.status == CollectionJobStatus.SUCCESSFUL.value
         assert completeness_of(_lifecycle_batch(job)) is None
         assert any("[23f6]" in rec.message for rec in caplog.records), "the refusal is logged against the run"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.enforce_write_guard
+class TestWithTheWriteGuardOn:
+    """The suite normally suspends the write guard, which hid that no real run ever recorded its
+    statement: the recorder wrote the lifecycle batch outside the service layer, the guard refused
+    it, and the task body swallowed the refusal (unified-systems-com/tap#906). Here the guard is
+    live for the run itself; only the fixture collector's registration runs with it suspended.
+    """
+
+    @staticmethod
+    def _register(key: str, cls: type[CollectorBase]) -> Collector:
+        from tap_grid.write_guard import unguarded_write
+
+        with unguarded_write():  # test setup, the sanctioned below-service zone
+            return _register(key, cls)
+
+    @pytest.mark.spec("req-grid-reconcile-evidence-1")
+    @pytest.mark.spec("req-grid-reconcile-candidates-1")
+    def test_a_real_run_records_its_statement_and_its_candidates(self, isolate_collector_registry: Any) -> None:
+        from tap_grid.candidates import candidates_of
+
+        job = run_collection(self._register("guarded", SurfaceCollector))
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL.value
+        lifecycle = _lifecycle_batch(job)
+        assert completeness_of(lifecycle) is not None
+        assert candidates_of(lifecycle) is not None
+        codes = {entry["message_code"] for entry in job.results["error"]}
+        assert not codes & {"COMPLETENESS_NOT_RECORDED", "CANDIDATES_NOT_RECORDED"}, job.results["error"]
+
+    def test_a_refused_statement_is_recorded_on_the_job(self, isolate_collector_registry: Any) -> None:
+        job = run_collection(self._register("guarded-bad", BadSurfaceCollector))
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL.value, "a refused statement never fails the run"
+        assert completeness_of(_lifecycle_batch(job)) is None
+        (entry,) = [e for e in job.results["error"] if e["message_code"] == "COMPLETENESS_NOT_RECORDED"]
+        assert entry["message_data"]["error"] == "derived_not_authored"

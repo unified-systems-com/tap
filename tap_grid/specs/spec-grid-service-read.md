@@ -17,7 +17,7 @@ The TAP service layer should expose a small, explicit read surface for direct ob
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-grid-service-read-direct | [Direct Object Reads](#direct-object-reads) | Implemented | get_object, get_node, get_edge, resolve_entity |
+| req-grid-service-read-direct | [Direct Object Reads](#direct-object-reads) | Implemented | get_object, get_node, get_edge, resolve_entity, entity_liveness |
 | req-grid-service-read-discovery | [Discovery Reads](#discovery-reads) | Implemented | list_node_types, describe_node_type, list_edge_types, describe_edge_type, describe_service_capabilities |
 | req-grid-service-read-search | [Search Boundary](#search-boundary) | Implemented | Rich reads go through search; no neighborhood helpers on service layer |
 | req-grid-service-read-schemas | [Schema Delivery For Reads](#schema-delivery-for-reads) | In Development | Schema refs defined in NodeTypeDescription; inline schema delivery not yet built |
@@ -29,10 +29,10 @@ RID: `req-grid-service-read-direct`
 
 Status: `Implemented`
 
-The direct read surface provides a small set of single-object lookups plus a generic wrapper for callers that have an object reference but do not want to branch on node versus edge handling themselves.
+The direct read surface provides a small set of single-object lookups, a generic wrapper for callers that have an object reference but do not want to branch on node versus edge handling themselves, and one bulk lookup by id that says whether each id is live, tombstoned or missing.
 
 #### Status Details
-Implemented in `tap_grid/services.py`. All four functions exist and are tested.
+Implemented in the `tap_grid/services/` gateway package. All five functions exist and are tested.
 
 #### Implementation
 Direct read API:
@@ -41,8 +41,9 @@ Direct read API:
 - `get_node(target)` — return the typed domain node instance; raises `ServiceConstraintError` if entity is an edge
 - `get_edge(target)` — return the Edge instance
 - `get_object(target)` — detect entity type and dispatch to `get_node` or `get_edge`
+- `entity_liveness(targets)` — for a collection of entity UUIDs, return each one mapped to `"live"`, `"tombstoned"` or `"missing"`, in one query
 
-All functions accept `str | uuid.UUID` and raise `ServiceNotFoundError` on miss.
+The single-object functions accept `str | uuid.UUID` and raise `ServiceNotFoundError` on miss. `entity_liveness` answers every id it is given, so a miss is the value `"missing"`, never an exception and never an omission. It exists for producers that check the ids they are about to send. aws_core leaves out a fixed-id edge whose id is already tombstoned, because re-sending it fails the batch, and asking `resolve_entity` cost one query per id (Issue# 966 - tap). It is a lookup by id, so it is a direct read however many ids it names. Search could not answer it: every Gryphon read runs under `LiveNow`, which excludes tombstoned rows, so a retired id and one that never existed look the same there.
 
 #### Acceptance Criteria
 
@@ -51,6 +52,7 @@ All functions accept `str | uuid.UUID` and raise `ServiceNotFoundError` on miss.
 | req-grid-service-read-direct-1 | Generic Object Wrapper | Implemented | Direct reads include a generic wrapper for node/edge dispatch. | `get_object()` |
 | req-grid-service-read-direct-2 | IDs And Instances Accepted | Implemented | Single-object read APIs accept object IDs and model instances. | str or uuid.UUID |
 | req-grid-service-read-direct-3 | JSON Or Model Return | Proposed | Direct reads support JSON-safe and native model return modes. | Native model return implemented; JSON-safe envelope mode deferred |
+| req-grid-service-read-direct-4 | Bulk Liveness By Id | Implemented | `entity_liveness(targets)` returns every requested id mapped to `live`, `tombstoned` or `missing`, nodes and edges alike, in one spine query; gated on `grid.read`; an empty input reads nothing; a bare single id or a non-UUID is refused before any read. | `tap_grid/tests/test_services.py::TestEntityLiveness`; the gate in `TestPublicReadGate`; listed in `describe_service_capabilities().read_functions`. Issue# 966 - tap. |
 
 #### Future
 Decide whether a direct `get_entity()` helper is needed for internal plumbing only. Add JSON-safe envelope return mode when clients need it.
@@ -98,7 +100,7 @@ Status: `Implemented`
 Direct read APIs are intentionally narrow. Graph neighborhoods, complex filtering, traversal, pagination-heavy retrieval, and other richer read behavior should go through the shared search service rather than growing the direct read surface.
 
 #### Status Details
-The direct read surface is intentionally limited to four single-object lookups and five discovery functions. No neighborhood or traversal helpers exist on the service layer.
+The direct read surface is intentionally limited to four single-object lookups, one bulk liveness lookup by id (`entity_liveness`, req-grid-service-read-direct-4), and five discovery functions. No neighborhood or traversal helpers exist on the service layer. A lookup by id stays a direct read however many ids it names; it reads no relation and follows no edge.
 
 #### Implementation
 Direct reads do not grow convenience helpers for graph traversal or complex retrieval. Complex retrieval is expressed as a Search and executed through `spec-grid-search.md`.

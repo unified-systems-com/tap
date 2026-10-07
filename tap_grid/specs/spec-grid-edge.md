@@ -29,7 +29,8 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-produced-batch | [PRODUCED_BATCH Standard Edge](#produced_batch-standard-edge) | Implemented | Canonical edge from any batch producer to a `Batch` entity; replaces embedded batch-ID lists |
 | req-grid-edge-identity-declaration | [Edge Identity Declaration](#edge-identity-declaration) | Proposed | Every edge type declares, on its edge definition, how a relationship of that type is found again: declared discriminators (objects with a path and a description) or keyless with a reason |
 | req-grid-edge-identity | [Edge Identity](#edge-identity) | Implemented | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
-| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | In Development | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
+| req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Implemented | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
+| req-grid-edge-internal | [Internal-Only Edge Types](#internal-only-edge-types) | Implemented | An edge type may be declared internal-only: the generic edge verbs and GRIFT import refuse it, subsystem code writes it through a trusted-internal path, and GRIFT export leaves it out. The node rule (`req-grid-entity-internal`) applied to edges |
 
 
 ## Explanation
@@ -201,18 +202,16 @@ Status: `Implemented`
 Implemented in `tap_grid/services.py`. The `create_edge()` function was updated to remove manual Entity pre-creation in favor of `Edge.save()` auto-creation per `req-grid-entity-base-5`. Retroactively specified here.
 
 #### Implementation
-`tap_grid/services.py` is the canonical mutation API for edges. All application code that creates or deletes edges should go through these functions rather than direct ORM calls, so that constraint validation is guaranteed and FLIP can be wired in at these call sites without changing callers.
+`tap_grid/services` is the canonical mutation API for edges. Every edge write goes through the write pipeline (`write_batch` and the verbs built on it), never a direct ORM call, so constraint validation, the batch, provenance and history are guaranteed.
 
-**`create_edge(from_entity, to_entity, edge_type, properties=None, display_name="")`**:
+**`create_edge(from_entity, to_entity, edge_type, properties=None, *, caller_context=None, batch_name=None, batch_description=None)`**:
 1. Calls `validate_edge(from_entity.entity_type, to_entity.entity_type, edge_type)` — raises `InvalidEdgeError` on violation.
-2. Creates the edge via `Edge.objects.create(...)` — `Edge.save()` auto-creates the backing Entity.
-3. If `display_name` is provided, updates `edge.entity.display_name` on the backing Entity.
-4. Returns the created `Edge` instance.
+2. Writes the edge through `write_batch` (the `create_edge` verb); `Edge.save()` auto-creates the backing Entity, named from the endpoints and the type.
+3. Returns the created `Edge` instance.
 
-`create_edge()` takes full `Entity` instances (not IDs) so that `entity_type` is available for constraint validation without an extra DB query.
+`create_edge()` takes full `Entity` instances (not IDs) so that `entity_type` is available for constraint validation without an extra DB query. Edge updates and deletes are the pipeline verbs `patch_edge`, `replace_edge` and `delete_edge_by_entity` (a tombstone with a reason, `spec-grid-service-delete`).
 
-**`delete_edge(edge)`**:
-- Deletes via `edge.entity.delete()`. Cascades to the `Edge` row through the `OneToOneField`. Going through the Entity rather than the Edge directly keeps the deletion pattern consistent with `delete_entity()`.
+The `display_name` override and the object-taking `delete_edge(edge)` were removed (Issue# 957 - tap). An edge's name is derived today and re-synced on every save, so the override never survived the next save, and setting it meant a second write outside the batch. A declared edge name that survives is Issue# 743 - tap, and would ride the pipeline's own write. `delete_edge(edge)` hard-deleted the row outside the pipeline.
 
 #### Development
 
@@ -222,12 +221,11 @@ Implemented in `tap_grid/services.py`. The `create_edge()` function was updated 
 | --- | --- | :---: | --- | --- |
 | req-grid-edge-service-1 | Validates Before Write | Implemented | `create_edge()` calls `validate_edge()` before any DB write; `InvalidEdgeError` propagates to the caller with no DB side effects. | |
 | req-grid-edge-service-2 | Returns Created Edge | Implemented | `create_edge()` returns the `Edge` instance with its backing Entity populated. | |
-| req-grid-edge-service-3 | Display Name Override | Implemented | If `display_name` is provided to `create_edge()`, the backing Entity's `display_name` is updated after creation. | |
-| req-grid-edge-service-4 | delete_edge Cascades via Entity | Implemented | `delete_edge()` deletes through `edge.entity.delete()`, which cascades to the Edge row. | |
+| req-grid-edge-service-3 | Display Name Override | Deprecated | If `display_name` is provided to `create_edge()`, the backing Entity's `display_name` is updated after creation. | Removed, Issue# 957 - tap: an edge's name is derived (`Edge.get_name`) and re-synced on every save, so the override did not survive, and it was a second write outside the batch. A declared edge name is Issue# 743 - tap. |
+| req-grid-edge-service-4 | delete_edge Cascades via Entity | Deprecated | `delete_edge()` deletes through `edge.entity.delete()`, which cascades to the Edge row. | Removed, Issue# 957 - tap: a hard delete outside the pipeline. Edges are tombstoned by `delete_edge_by_entity`. |
 
 #### Future
-Once FLIP is active, `create_edge()` and `delete_edge()` should record provenance events. The integration point is already identified; no call-site changes will be needed.
-Consider an `update_edge_properties()` service function for mutating edge properties without recreating the edge.
+Edge writes record provenance through the pipeline. Property updates are `patch_edge` / `replace_edge`.
 
 
 ### No Edges Between Edges
@@ -280,7 +278,7 @@ Edge types may define a `property_schema` JSON Schema in registered app `edge_ty
 This schema lives in registered `edge_types` declarations and is not sourced from `EntityType` storage.
 
 #### Status Details
-Implemented in `tap_grid/constraints.py` (`_EDGE_PROPERTY_SCHEMA_REGISTRY`, `register_edge_property_schema`, `get_edge_property_schema`, `validate_edge_properties`), `tap_grid/models.py` (`Edge.save()`), `tap_grid/services.py` (`update_edge_properties()`), and `tap_plugins/base.py` (`_register_edge_constraints()`). Tests in `tap_grid/tests/test_constraints.py` under `TestEdgePropertySchemaRegistry` and `TestValidateEdgeProperties`, `tap_grid/tests/test_models.py` under `TestEdgePropertyValidation`, and `tap_grid/tests/test_services.py` under `TestUpdateEdgeProperties`.
+Implemented in `tap_grid/constraints.py` (`_EDGE_PROPERTY_SCHEMA_REGISTRY`, `register_edge_property_schema`, `get_edge_property_schema`, `validate_edge_properties`), `tap_grid/models.py` (`Edge.save()`), the write pipeline's edge update path (`patch_edge` / `replace_edge`; `update_edge_properties()` was removed, Issue# 957 - tap), and `tap_plugins/base.py` (`_register_edge_constraints()`). Tests in `tap_grid/tests/test_constraints.py` under `TestEdgePropertySchemaRegistry` and `TestValidateEdgeProperties`, `tap_grid/tests/test_models.py` under `TestEdgePropertyValidation`, and `tap_grid/tests/test_services.py` under `TestUpdateEdgeProperties` (now through `patch_edge` / `replace_edge`).
 
 #### Implementation
 **Schema declaration source**
@@ -350,7 +348,7 @@ Property validation should be implemented as a standalone validation step that c
 | req-grid-edge-properties-5 | Validate on Update | Implemented | Edge property payloads are validated against registry-provided schema on every edge property update when a schema is defined for the edge type. | |
 | req-grid-edge-properties-6 | Missing Schema Skips Validation | Implemented | If an edge type has no registered schema, property validation is not executed. | To be narrowed by `req-grid-edge-schema-required`: skip-validation will apply only to edges carrying no properties. |
 | req-grid-edge-properties-7 | Any JSON Allowed Without Schema | Implemented | When no schema is registered for an edge type, `properties` may be any valid JSON value. | To be superseded by `req-grid-edge-schema-required`: non-empty `properties` without a schema becomes an error. |
-| req-grid-edge-properties-8 | Dedicated Validation Error | Implemented | Schema validation failures raise `EdgePropertyValidationError` rather than `InvalidEdgeError`. | |
+| req-grid-edge-properties-8 | Dedicated Validation Error | Implemented | Schema validation failures raise `EdgePropertyValidationError` rather than `InvalidEdgeError`. | `create_edge` raises it; through the pipeline verbs (`patch_edge`, `replace_edge`, `write_batch`) the failure is reported as `validation_error`, not as an unhandled `internal_error` (Issue# 957 - tap). `tap_grid/tests/test_services.py::TestUpdateEdgeProperties::test_invalid_properties_are_refused`. |
 | req-grid-edge-properties-9 | Schema Author Controls Strictness | Implemented | The system does not impose default `additionalProperties`; strictness is determined by each schema definition. | |
 
 #### Future
@@ -593,7 +591,7 @@ Implemented (Issue# 913 - tap): `resolve_edge_identity` in `tap_grid/services/__
 
 **Lookup.** Among live edges of the type between the resolved endpoints, filtered by the declared discriminator values. Zero matches: the edge is new and takes its provisional id (an assigned UUIDv7). One: that row is found and the batch's edge replaces it. More than one: the whole batch fails with nothing written, and the error names every candidate id. A tombstoned edge is never found. A relationship that returns after its edge was retired is a **new edge with a new id**; no verb restores an id (`req-grid-reconcile-terminology-2`), and the lookup being limited to live rows is what makes that safe. The existing compound indexes on `(from_entity, edge_type)` and `(to_entity, edge_type)` (`req-grid-edge-model-5`) serve the search.
 
-**Lock.** Before it reads the grid for an edge, the importer takes `pg_advisory_xact_lock` keyed by the identity (type, endpoint ids, discriminator values), through the same helper that keys the node lock, so two writers resolving one relationship serialise and the second finds the first's row. A keyless type is locked too, on (type, source, target): it has no search, but its duplicate check reads the grid all the same, and without the lock two writers would each see no duplicate and both insert.
+**Lock.** Before it reads the grid for an edge, the importer takes `pg_advisory_xact_lock` keyed by the identity (type, endpoint ids, discriminator values), through the same helper that keys the node lock, so two writers resolving one relationship serialise and the second finds the first's row. A keyless type is locked too, on (type, source, target): it has no search, but its duplicate check reads the grid all the same, and without the lock two writers would each see no duplicate and both insert. **One order per batch** (Issue# 943 - tap): the verbs lock as they look up, in the order they meet the batch's objects, so the importer first takes every lock the batch will need, sorted by key. Node keys come first, since an edge's key needs its endpoints' final ids. Edge keys follow, with ref edges, keyless duplicate checks and deletes by identity together. Two batches naming the same relationships in opposite orders then take the shared locks in one order, and neither holds one while waiting for the other's. Advisory transaction locks are re-entrant, so each verb's own lock call returns at once.
 
 **An incomplete key is rejected.** A declared discriminator that is absent, `null` or empty (an empty string, object or array) makes the edge's key incomplete. The edge is **rejected**, never matched as "not found", so a thin edge cannot mint a duplicate on every run. This is deliberately **not** the node convention, where an empty string is observed-empty and is searched (`req-grid-entity-natural-key-16`): for a node the empty value is a fact about the source object; for an edge discriminator it distinguishes nothing, and the 2026-10-02 ruling is to reject it.
 
@@ -619,7 +617,7 @@ Cut-over: edges collectors wrote under derived ids are live today. Identity look
 | req-grid-edge-identity-1 | Bound To Endpoint Entity Ids | Implemented | Lookup resolves both endpoints to live entities first and searches live edges attached to those ids; an edge attached to a different live row sharing an endpoint's natural key is not returned. | The binding invariant of the 2026-09-15 ruling. `tap_grid/edge_identity.py::find_live_edges`; `tap_grid/tests/test_grift_edge_identity.py::TestAPlainKey::test_the_same_type_between_other_endpoints_is_another_edge`. |
 | req-grid-edge-identity-2 | Zero, One, Many | Implemented | No live match creates a new edge with its provisional id; one match is found and replaced; more than one fails the whole batch with nothing written and every candidate id named. | As `req-grid-entity-natural-key-9` and `-13`. `tap_grid/tests/test_grift_edge_identity.py::TestAPlainKey`, `::TestADiscriminatedKey`. |
 | req-grid-edge-identity-3 | Live Rows Only | Implemented | A tombstoned edge is never found; a returning relationship is a new edge with a new id; no verb restores a tombstoned id. | `req-grid-reconcile-terminology-2`. `tap_grid/tests/test_grift_edge_identity.py::TestAPlainKey::test_a_tombstoned_edge_is_not_found_and_a_return_gets_a_new_id`. |
-| req-grid-edge-identity-4 | Lock Before Reading The Grid | Implemented | Before any read of the grid for an edge (the identity search, or a keyless type's duplicate check), the importer takes an advisory transaction lock keyed by the identity, or by (type, source, target) for a keyless type; it refuses to run outside a transaction. Two concurrent writers of one edge key produce one edge, and two concurrent writers of one keyless relationship produce one edge and one failed batch. | Two-connection tests: `tap_grid/tests/test_grift_edge_identity.py::TestTwoWriters` (a plain key and a keyless type); `::TestOutsideATransaction`. |
+| req-grid-edge-identity-4 | Lock Before Reading The Grid | Implemented | Before any read of the grid for an edge (the identity search, or a keyless type's duplicate check), the importer takes an advisory transaction lock keyed by the identity, or by (type, source, target) for a keyless type; it refuses to run outside a transaction. Two concurrent writers of one edge key produce one edge, and two concurrent writers of one keyless relationship produce one edge and one failed batch. | Two-connection tests: `tap_grid/tests/test_grift_edge_identity.py::TestTwoWriters` (a plain key and a keyless type); `::TestOutsideATransaction`. All of a batch's locks are taken up front in sorted key order, nodes then edges (Issue# 943 - tap); `tap_grid/tests/test_grift_lock_order.py::TestOppositeOrders`. |
 | req-grid-edge-identity-5 | Keyless Duplicates Fail The Batch | Implemented | An edge of a keyless type whose (type, source, target) equals another in the same batch, or a live edge on the grid, fails the whole batch; the in-batch check runs first, and the grid check runs under the lock of `-4`. An edge addressed by its own existing id is not a duplicate of itself. | Batch first, then grid. `tap_grid/tests/test_grift_edge_identity.py::TestAKeylessType`. |
 | req-grid-edge-identity-6 | Ref-Addressed Edges Need A Declaration | Implemented | A ref-addressed edge of a type with no identity declaration fails the batch as `identity_undeclared`; an id-addressed edge is unaffected by the declaration. Until the flip (Issue# 928 - tap) the importer runs in warn mode: such an edge is created as before, with no lookup, the import result is unchanged, and a warning naming the type is logged, so producers can declare their types before anything refuses them. | Warn mode until Issue# 928 - tap (ruled 2026-10-02): `tap_grid/edge_identity.py::ENFORCE_EDGE_IDENTITY_DECLARED`, log site `[9acf]`. `tap_grid/tests/test_grift_edge_identity.py::TestAnUndeclaredType`. |
 | req-grid-edge-identity-7 | Core Types Declare | Implemented | Every edge type registered by tap core carries an identity declaration, and a guard fails an undeclared one. | The guard derives the core set from `CORE_EDGE_TYPES` and every first-party app's `edge_types`. `tap_grid/tests/test_edge_identity_declaration.py::TestCoreTypesDeclare`. |
@@ -635,12 +633,12 @@ Cut-over: edges collectors wrote under derived ids are live today. Identity look
 ----
 RID: `req-grid-edge-produced-batch-claims`
 
-Status: `In Development`
+Status: `Implemented`
 
 Refines `req-grid-edge-produced-batch` (ruled 2026-10-02) and leaves its text as it stands. A batch is produced by one job, so the job-to-batch relationship is singular, but a *job* may mention a batch it did not produce.
 
 #### Status Details
-In Development. The claims path is built (Issue# 918 - tap): criteria 1 to 4. Holding the rule against every other writer is criterion 5, Issue# 948 - tap. The claims path is `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
+Implemented. The claims path is built (Issue# 918 - tap): criteria 1 to 4. Criterion 5 holds the rule against every other writer by making `PRODUCED_BATCH` internal-only (Issue# 948 - tap, `req-grid-edge-internal`), so the claims path is its only writer. The claims path is `tap_cares/tasks.py::_link_produced_batches`, which the task body now calls just before its terminal write, on both terminal paths, so a refused claim is recorded by that write. Before this, the edges were created after the job's results were persisted, by a step that only logged, and a document submitted twice within one run could yield two edges for one (job, batch) pair. Tests: `tap_cares/tests/test_produced_batch_claims.py`.
 
 #### Implementation
 `PRODUCED_BATCH` is a **plain key** (`discriminators: []`): its identity is (job, batch). It is not keyless. `disposition` is a defined and consumed property (`req-grid-edge-produced-batch-3`; the batch read helpers and the cold-boot gate read it), so a later job holding a `skipped` edge to a batch it did not produce is designed behaviour and not an error: `skipped` means "submitted, and the importer found it already present", so it claims no creation.
@@ -655,7 +653,40 @@ A repeat submission of one batch within one job collapses to one edge, and `impo
 | req-grid-edge-produced-batch-claims-2 | A Repeat Collapses | Implemented | A batch submitted more than once within one job yields one edge, and `imported` wins over `skipped`. | Claims collapse per batch (`_collapse_claims`), and the edge is found by identity before one is created, so linking again adds none and an `imported` claim upgrades this job's `skipped` edge. `::test_a_batch_submitted_twice_in_one_run_is_one_imported_edge`, `::test_linking_again_makes_no_second_edge_and_imported_upgrades_skipped`. |
 | req-grid-edge-produced-batch-claims-3 | A Later Job May Skip | Implemented | A job may hold a `skipped` edge to a batch it did not produce without error. | The disposition semantics already in force. `::test_a_later_job_skipping_a_batch_it_did_not_produce_is_fine`. |
 | req-grid-edge-produced-batch-claims-4 | A Conflicting Claim Is Refused | Implemented | A job's `imported` claim on a batch another job already holds as `imported` is checked and written atomically, with the batch row locked: it writes no edge, and it is a loud error recorded on the job; the job's status is unchanged. | The batch row is locked and `imported_by` read in one savepoint per `imported` claim, in batch-id order so two jobs never wait on each other; a refused claim logs `[d812]` and is recorded in the job's `results.error` as `PRODUCED_BATCH_CONFLICT` by the terminal write (a claim that fails otherwise is `PRODUCED_BATCH_LINK_FAILED`). `::test_a_second_imported_claim_is_refused_and_recorded_on_the_job`, `::test_a_failed_run_records_a_refused_claim_too`, `::test_two_jobs_claiming_the_same_batches_in_opposite_orders_do_not_deadlock`. |
-| req-grid-edge-produced-batch-claims-5 | No Writer Adds A Second Imported Holder | Proposed | At most one job holds an `imported` edge to one batch, whatever writes it: a generic edge write or a GRIFT import that would add a second `imported` holder is refused. | Issue# 948 - tap. Today only the claims path (criterion 4) holds it. |
+| req-grid-edge-produced-batch-claims-5 | No Writer Adds A Second Imported Holder | Implemented | At most one job holds an `imported` edge to one batch, whatever writes it: a generic edge write or a GRIFT import that would add a second `imported` holder is refused. | Issue# 948 - tap: `PRODUCED_BATCH` is internal-only (`req-grid-edge-internal`), so the generic verbs and GRIFT refuse every write of it, and the claims path (criterion 4) is the one writer. `tap_grid/tests/test_edge_internal.py::TestTheGenericVerbsRefuse`, `::TestGriftRefuses`. |
+
+
+### Internal-Only Edge Types
+----
+RID: `req-grid-edge-internal`
+
+Status: `Implemented`
+
+Some edge types are bookkeeping that one subsystem writes about its own work: which job produced a batch, which collector a job ran for, which schedule fired and what the fire started. Nobody else has a reason to write them, and a generic write of one could break a rule the owning subsystem holds (at most one job holds an `imported` claim to a batch, `req-grid-edge-produced-batch-claims`). Such a type is declared **internal-only**, the edge counterpart of an `INTERNAL_ONLY` node type (`req-grid-entity-internal`).
+
+#### Status Details
+Implemented (Issue# 948 - tap, ruled 2026-10-04). The declaration is `internal_only` on the edge definition (`edge-definition.schema.json`), registered in `tap_grid/constraints.py` (`register_edge_internal_only`, read by `is_internal_edge_type`) from a plugin's `edge_types` list or manifest entry, and by `tap_grid/core_edges.py` for core types. The gate is `tap_grid/services/_impl.py::_refuse_internal_edge_type`, called on `create_edge` and on `patch_edge` / `replace_edge` / `delete_edge` after the edge is loaded. The trusted-internal path is `_create_edge_internal` and `_replace_edge_internal` in `tap_grid/services/__init__.py`. Tests: `tap_grid/tests/test_edge_internal.py`.
+
+#### Implementation
+Four types are internal-only: `PRODUCED_BATCH` (core, written by the claims path in `tap_cares/tasks.py`), and tap_cares' `HAS_COLLECTION_JOB` (`run_collection`), `HAS_FIRED` and `TRIGGERED_JOB` (the scheduler). `SCHEDULED_TARGET` is not: a schedule and its target are authored in GRIFT.
+
+The generic edge verbs refuse an internal-only type with `ServiceUnsupportedOperationError`, the error the node gate raises. GRIFT import writes through those verbs, so an import carrying one fails its batch. The trusted-internal path is the same pipeline with the gate lifted: the same validation, provenance and batch, behind the same bypass the node path uses, which `write_batch` grants a program actor only. GRIFT export leaves internal-only edges out and records each in its skip ledger, as it does internal-only nodes.
+
+Deleting a node ends every edge attached to it by one bulk update, not through the edge verbs, so an internal-only edge still ends with its endpoint: deleting a `Schedule` ends its `HAS_FIRED` edges. Purge is not refused either, as for nodes (`req-grid-service-purge-5`): it is a deliberate, DEBUG-only hard delete, not a generic write.
+
+As for nodes, this is a tripwire against accidental writes, not a wall against in-process code, which can call the `_`-prefixed path. The boundary that matters is the network one, where neither the generic verbs nor GRIFT reach these types.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-internal-1 | Declared On The Edge Definition | Implemented | An edge definition may carry `internal_only: true`; the default is false. The flag is read from a plugin's `edge_types` list and from its manifest, and a core type registers it in code. | `tap_grid/constraints.py::register_edge_internal_only`, `::is_internal_edge_type`. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
+| req-grid-edge-internal-2 | The Four Bookkeeping Types | Implemented | `PRODUCED_BATCH`, `HAS_COLLECTION_JOB`, `HAS_FIRED` and `TRIGGERED_JOB` are internal-only; `SCHEDULED_TARGET` is not. | Ruled 2026-10-04. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
+| req-grid-edge-internal-3 | Generic Verbs Refuse | Implemented | `create_edge`, `patch_edge`, `replace_edge` and `delete_edge` refuse an internal-only type with `ServiceUnsupportedOperationError` and write nothing. | `tap_grid/tests/test_edge_internal.py::TestTheGenericVerbsRefuse`. |
+| req-grid-edge-internal-4 | GRIFT Import Refuses | Implemented | A GRIFT import carrying an edge of an internal-only type fails its batch with nothing written. | It writes through the generic verbs. `tap_grid/tests/test_edge_internal.py::TestGriftRefuses`. |
+| req-grid-edge-internal-5 | A Trusted-Internal Path | Implemented | `_create_edge_internal` and `_replace_edge_internal` write an internal-only type through the full pipeline minus the gate, for a program actor only. | The node bypass, reused. `tap_grid/tests/test_edge_internal.py::TestTheTrustedInternalPath`. |
+| req-grid-edge-internal-6 | Export Leaves Them Out | Implemented | GRIFT export does not emit an internal-only edge and records it in the skip ledger as `internal_only_entity_type`. | `tap_grid/grift/exporter.py`. `tap_grid/tests/test_edge_internal.py::TestExportLeavesThemOut`. |
+| req-grid-edge-internal-7 | They End With Their Endpoint | Implemented | Deleting an endpoint node ends its internal-only edges as it ends any other edge. | `tap_grid/tests/test_edge_internal.py::TestTheyEndWithTheirEndpoint`. |
 
 
 ## Status Vocabulary

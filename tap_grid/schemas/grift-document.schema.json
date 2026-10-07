@@ -240,6 +240,53 @@
         },
         "contents": {
           "$ref": "#/$defs/GriftContents"
+        },
+        "edge_cases": {
+          "$ref": "#/$defs/GriftEdgeCases"
+        }
+      }
+    },
+    "GriftEdgeCases": {
+      "description": "Statements about edges that the nodes and edges lists cannot make. Closed: only its defined members are accepted. See req-grift-edge-identity-surface.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "type": "array",
+          "description": "Authority claims: for each scope, the batch states its edges are the total allowed set. Dry-run: the importer records what each claim would remove and removes nothing. See req-grid-reconcile-edge-authority.",
+          "items": {
+            "$ref": "#/$defs/GriftAuthorityClaim"
+          }
+        }
+      }
+    },
+    "GriftAuthorityClaim": {
+      "description": "One authority claim: for this edge type, at this anchor, in this direction, the batch's edges are the total allowed set. Every live edge in that scope the batch does not assert, whoever wrote it, is proposed for removal.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_type", "anchor", "direction", "read"],
+      "properties": {
+        "edge_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The registered edge type the claim covers. An internal-only type is refused."
+        },
+        "anchor": {
+          "$ref": "#/$defs/GriftRemovalEndpoint",
+          "description": "The node the scope is centred on: an entity id, or a node type and its natural key, resolved against this batch's nodes, then the live grid."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["outbound", "inbound"],
+          "description": "outbound: the edges leaving the anchor; inbound: the edges arriving at it."
+        },
+        "read": {
+          "type": "string",
+          "enum": ["complete", "partial", "failed"],
+          "description": "How the producer read the scope. Only complete licenses a proposal; partial and failed are recorded and propose nothing. Required: never defaulted to complete."
+        },
+        "dimensions": {
+          "description": "Reserved for dimension-scoped claims (Issue# 907 - tap). Refused while present."
         }
       }
     },

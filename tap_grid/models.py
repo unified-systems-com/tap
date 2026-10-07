@@ -395,8 +395,8 @@ class Entity(models.Model):
         """Save the spine Entity — must route through the service layer.
 
         Write backstop (req-tap-auth-write-batch-routing): the Entity spine is
-        written only via the service layer (create_entity / update_entity, or the
-        node write pipeline, all of which open the write scope). A direct
+        written only via the service layer (the write pipeline, or the batch
+        subsystem's own spine row, both of which open the write scope). A direct
         Entity.save() outside a scope fails closed.
         """
         from tap_grid.write_guard import enforce_service_write
@@ -1064,8 +1064,8 @@ class BaseModel(models.Model):
         """Delete the node/edge — must route through the service layer.
 
         Write backstop (req-tap-auth-write-batch-routing): a direct instance delete
-        outside a service-layer write scope fails closed. The service delete path
-        (delete_node / delete_edge → entity.delete()) opens the scope.
+        outside a service-layer write scope fails closed. A service-layer delete
+        tombstones through the write pipeline; a hard delete is purge's alone.
         """
         from tap_grid.write_guard import enforce_service_write
 
@@ -1494,6 +1494,10 @@ class BatchEventType(models.TextChoices):
     # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own
     # transaction; entity_id is the edge's provisional id, which no entity has.
     SKIP = "skip", "Skip (edge not written)"
+    # An edge an authority claim would remove (req-grid-reconcile-edge-authority-6). A dry-run
+    # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
+    # each proposal, and on the batch for each claim's outcome.
+    AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
 
 
 class BatchEvent(models.Model):

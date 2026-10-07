@@ -758,3 +758,59 @@ class TestFireStrandedPending:
 
         assert batch.status == BatchStatus.FAILED, "an unverifiable fire must not seal as a clean close"
         assert "could not be verified" in batch.error_message
+
+
+@pytest.mark.django_db(transaction=True)
+class TestTheLifecycleEdgesAreInternalOnly:
+    """req-grid-edge-internal (Issue# 948 - tap): HAS_COLLECTION_JOB, HAS_FIRED and TRIGGERED_JOB
+    are written by run_collection and the scheduler through the trusted-internal path, and the
+    generic edge verbs refuse them."""
+
+    def _fired(self, collector: Collector) -> tuple[Schedule, ScheduleFire, CollectionJob]:
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+        (fire,) = evaluate_tick(now=slot)
+        job_id = Edge.objects.get(from_entity_id=fire.entity_id, edge_type="TRIGGERED_JOB").to_entity_id
+        return schedule, fire, CollectionJob.objects.get(entity_id=job_id)
+
+    def _lifecycle_edges(self, collector, schedule, fire, job) -> list[Edge]:
+        return [
+            Edge.objects.get(
+                from_entity_id=collector.entity_id, to_entity_id=job.entity_id, edge_type="HAS_COLLECTION_JOB"
+            ),
+            Edge.objects.get(from_entity_id=schedule.entity_id, to_entity_id=fire.entity_id, edge_type="HAS_FIRED"),
+            Edge.objects.get(from_entity_id=fire.entity_id, to_entity_id=job.entity_id, edge_type="TRIGGERED_JOB"),
+        ]
+
+    @pytest.mark.spec("req-grid-edge-internal-5")
+    def test_a_fire_still_writes_all_three(self, collector):
+        schedule, fire, job = self._fired(collector)
+        assert len(self._lifecycle_edges(collector, schedule, fire, job)) == 3
+
+    @pytest.mark.spec("req-grid-edge-internal-3")
+    def test_the_generic_verbs_refuse_them(self, collector):
+        from tap_grid.exceptions import InvalidEdgeError
+        from tap_grid.services import create_edge, delete_edge_by_entity
+
+        schedule, fire, job = self._fired(collector)
+        for edge in self._lifecycle_edges(collector, schedule, fire, job):
+            with pytest.raises(InvalidEdgeError, match="internal-only"):
+                create_edge(edge.from_entity, edge.to_entity, edge.edge_type)
+            result = delete_edge_by_entity(edge.entity_id, reason="operator")
+            assert [e.code for e in result.errors] == ["unsupported_operation"], edge.edge_type
+            edge.entity.refresh_from_db()
+            assert edge.entity.deleted_at is None
+
+    @pytest.mark.spec("req-grid-edge-internal-7")
+    def test_deleting_the_schedule_ends_its_fire_edge(self, collector):
+        from tap_grid.services import delete_node
+
+        schedule, fire, job = self._fired(collector)
+        has_fired = self._lifecycle_edges(collector, schedule, fire, job)[1]
+
+        result = delete_node(schedule.entity_id, reason="operator")
+
+        assert result.success, result.errors
+        has_fired.entity.refresh_from_db()
+        assert has_fired.entity.deleted_at is not None

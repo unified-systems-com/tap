@@ -170,9 +170,9 @@ jobs:
           echo "::add-mask::$key"
           tok="$(curl -fsS -c - -o /dev/null "$base/auth/passkey/login/" | awk '$6 == "csrftoken" { print $7 }')"
           [ -n "$tok" ] || { echo "::error::no csrftoken cookie from $base/auth/passkey/login/"; exit 1; }
-          code="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: sessionid=$key" "$base/api/v1/entities/")"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: sessionid=$key" "$base/api/v1/entity-types/")"
           if [ "$code" != "200" ]; then
-            echo "::error::authenticated canary GET /api/v1/entities/ returned $code, not 200 — refusing to fuzz what would silently be the 401 surface"
+            echo "::error::authenticated canary GET /api/v1/entity-types/ returned $code, not 200 — refusing to fuzz what would silently be the 401 surface"
             exit 1
           fi
           seed_args=(); [ -n "$FUZZ_SEED" ] && seed_args=(--seed "$FUZZ_SEED")

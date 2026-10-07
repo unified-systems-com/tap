@@ -17,7 +17,8 @@ from tap_grid.constraints import (
 )
 from tap_grid.models import Dimension, Edge, Entity
 from tap_grid.service_types import WriteOperation
-from tap_grid.services import create_entity, write_batch
+from tap_grid.services import write_batch
+from tap_grid.tests.support import make_spine_entity
 
 # ---------------------------------------------------------------------------
 # req-grid-dimension-em: Dimensions on Entity Model
@@ -30,23 +31,23 @@ class TestEntityDimensionsField:
 
     def test_dimensions_defaults_to_empty_dict(self):
         """New Entity gets dimensions={} by default (em-1, em-2)."""
-        entity = create_entity("grid_fixtures__constrained_source")
+        entity = make_spine_entity("grid_fixtures__constrained_source")
         assert entity.dimensions == {}
 
     def test_dimensions_can_be_set_on_create(self):
         """Entity.objects.create() accepts explicit dimensions (em-1)."""
-        entity = create_entity("grid_fixtures__constrained_source", dimensions={"env": "staging"})
+        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"env": "staging"})
         assert entity.dimensions == {"env": "staging"}
 
     def test_dimensions_persists_after_save(self):
         """Dimensions round-trip correctly through the DB (em-1)."""
-        entity = create_entity("grid_fixtures__constrained_source", dimensions={"tap.graph": "web", "env": "prod"})
+        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"tap.graph": "web", "env": "prod"})
         entity.refresh_from_db()
         assert entity.dimensions == {"tap.graph": "web", "env": "prod"}
 
     def test_dimensions_field_is_non_nullable(self):
         """The dimensions field is non-nullable; the DB stores a dict (em-2)."""
-        entity = create_entity("grid_fixtures__constrained_source")
+        entity = make_spine_entity("grid_fixtures__constrained_source")
         entity.refresh_from_db()
         assert entity.dimensions is not None
         assert isinstance(entity.dimensions, dict)
