@@ -1073,6 +1073,63 @@ class TestReleaseLane:
         assert "NARROW it to" in _messages(check)
         assert "`attestations: write`" in _messages(check)
 
+    def test_a_tag_filter_that_cannot_match_a_release_fails(self, tmp_path: Path) -> None:
+        """A non-empty tag filter is not the property. `tags: ["never-release-*"]` catches nothing
+        release-please cuts, so the lane never fires, the wheel publishes unattested, and a presence
+        test calls the repository conformant — the silent failure this check exists to catch, one
+        level further in (`tap#982`)."""
+        lane = self._release_lane().replace('tags: ["v*"]', 'tags: ["never-release-*"]')
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "none of which can match a release tag" in _messages(check)
+        assert "tag-protection" in _messages(check)
+
+    def test_a_different_but_working_spelling_passes(self, tmp_path: Path) -> None:
+        """CAPABILITY, not equality. Asserting the literal string `v*` would red a repository whose
+        filter is spelled differently and works — the question is whether a real release reaches the
+        lane, so any filter that matches the protected shape is conformant."""
+        for spelling in ('tags: ["v*.*.*"]', 'tags: ["v[0-9]*.[0-9]*.[0-9]*"]'):
+            lane = self._release_lane().replace('tags: ["v*"]', spelling)
+            repo = _make_repo(tmp_path / spelling[:12].replace("[", "_"), workflows={"release-sbom.yml": lane})
+            (repo / "release-please-config.json").write_text("{}\n")
+            check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+            assert check.status == "pass", f"{spelling}: {_messages(check)}"
+
+    def test_a_single_digit_only_filter_fails(self, tmp_path: Path) -> None:
+        """`v?.?.?` matches `v1.2.3` and MISSES `v0.12.2` — github-core-tap's actual release. So
+        every representative tag must be covered, not merely one: a rule satisfied by a single match
+        would bless a filter that silently skips every two-digit version. This test is why the
+        implementation requires full coverage."""
+        lane = self._release_lane().replace('tags: ["v*"]', 'tags: ["v?.?.?"]')
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "none of which can match a release tag" in _messages(check)
+
+    def test_two_filters_together_can_cover_the_shape(self, tmp_path: Path) -> None:
+        """Coverage is across the whole filter LIST, not per filter — a repository may split the
+        single-digit and multi-digit cases and still catch every release."""
+        lane = self._release_lane().replace('tags: ["v*"]', 'tags: ["v?.?.?", "v*.*.*"]')
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
+    def test_unmodellable_filter_syntax_warns_rather_than_failing(self, tmp_path: Path) -> None:
+        """Actions filters also have `!`, `**` and `+`, which `fnmatch` cannot model faithfully.
+        Reporting those as unmatched would teach authors to delete a filter to quiet the checker —
+        the over-reporting mirror of the fail-open direction, and how the 2026-09-29 outage was
+        instructed. So it warns and asks for a human confirmation."""
+        lane = self._release_lane().replace('tags: ["v*"]', 'tags: ["v*", "!v*-rc*"]')
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "warn", _messages(check)
+        assert "cannot evaluate" in _messages(check)
+
     def test_a_disabled_calling_job_fails(self, tmp_path: Path) -> None:
         """`if: ${{ false }}` is accepted by GitHub and simply never runs the job. Target, trigger
         and grant can all be correct while the repository publishes an unattested wheel on every
