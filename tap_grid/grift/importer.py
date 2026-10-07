@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2973f9ad9a90 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5785c4b9ecb7 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -40,6 +40,7 @@ from tap_grid.services import (
     resolve_identity,
     write_batch,
 )
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
@@ -2887,7 +2888,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/42d34ce86462 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/ad93e08e70c9 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2988,7 +2989,8 @@ def _execute_grift_batch(
                     if new_name != batch.name or new_description != batch.description:
                         batch.name = new_name
                         batch.description = new_description
-                        batch.save(update_fields=["name", "description"])
+                        with below_pipeline_write("batch"):
+                            batch.save(update_fields=["name", "description"])
                     # If the batch was previously closed, reopen-then-reclose on
                     # success. Status is managed by close_batch at the bottom.
                     from tap_grid.models import BatchStatus
@@ -2996,7 +2998,8 @@ def _execute_grift_batch(
                     if batch.status != BatchStatus.OPEN:
                         batch.status = BatchStatus.OPEN
                         batch.closed_at = None
-                        batch.save(update_fields=["status", "closed_at"])
+                        with below_pipeline_write("batch"):
+                            batch.save(update_fields=["status", "closed_at"])
                 else:
                     # Normal path: create the batch with the preserved entity_id.
                     batch = create_batch(
@@ -4845,7 +4848,10 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
 
         if update_fields:
             update_fields["updated_at"] = now
-            Entity.objects.filter(pk=entity_uuid).update(**update_fields)
+            # A named below-pipeline writer, open only under grift_import's gate: the replace
+            # of this node in the same batch carries the version bump and the update event.
+            with below_pipeline_write("spine_sync"):
+                Entity.objects.filter(pk=entity_uuid).update(**update_fields)
 
 
 # ---------------------------------------------------------------------------
@@ -5040,7 +5046,7 @@ def _apply_sweep_purge(
 ) -> list[GriftSweptEntity]:
     """Hard-delete each cleared candidate along with this batch's BatchEvent
 
-    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/ce9bc321fb52 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/b4224857f9f1 (derivation) — the
         opt-in hard-delete escalation of the sweep.
     rows and any domain-model history tied to the candidate.
 
@@ -5102,8 +5108,10 @@ def _apply_sweep_purge(
                     batch__entity_id=batch_entity_id,
                 ).delete()
                 # Deleting the edge's Entity spine cascades the Edge row via
-                # the OneToOneField(on_delete=CASCADE) on BaseModel.
-                Entity.objects.filter(pk__in=attached_edges).delete()
+                # the OneToOneField(on_delete=CASCADE) on BaseModel. A named
+                # below-pipeline writer, open only under grift_import's gate.
+                with below_pipeline_write("sweep_purge"):
+                    Entity.objects.filter(pk__in=attached_edges).delete()
 
         # Finally, hard-delete the candidate Entity itself. For edge candidates,
         # this removes the Edge row and its history via cascade; for node
@@ -5111,7 +5119,8 @@ def _apply_sweep_purge(
         # the Entity.
         if entity_type == "edge":
             Edge.history.filter(entity_id=candidate_uuid).delete()
-        Entity.objects.filter(pk=candidate_uuid).delete()
+        with below_pipeline_write("sweep_purge"):
+            Entity.objects.filter(pk=candidate_uuid).delete()
 
         swept.append(
             GriftSweptEntity(

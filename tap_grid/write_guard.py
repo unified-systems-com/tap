@@ -1,38 +1,39 @@
-"""Structural write backstop: node/edge writes must route through the service layer.
+"""Structural write backstop: a graph-row write must go through the write pipeline.
 
 The architectural rule (CLAUDE.md, spec-grid-service): every mutation of a
-TAP-managed node or edge goes through the service layer (`write_batch` and the
-`@requires_capability`-gated `create_node`/`patch_node`/`create_edge`/`delete_*`/
-`purge_*` functions), so it carries batch scope, FLIP, provenance, and the
-`grid.write`/`grid.delete`/`grid.purge` authorization backstop. A direct
-`instance.save()` / `Model.objects.create()` / `entity.delete()` from a view,
-panel, collector, or command bypasses all of that.
+TAP-managed node or edge goes through the write pipeline, `write_batch`, so it
+carries batch scope, FLIP, provenance and the per-operation capability backstop.
+A direct `instance.save()` / `Model.objects.create()` / `entity.delete()` /
+`queryset.delete()` from a view, panel, collector, command, or a gated helper
+bypasses all of that.
 
-This is the write analog of the read backstop (`tap_grid/read_guard.py`), and it
-converts that rule from convention into a runtime invariant. Unlike the read
-guard (capability-based: "does the actor hold grid.read"), the write guard is
-*scope-based*: a node/edge write is permitted only when it happens **inside a
-service-layer write scope** — a contextvar opened by the sanctioned write API:
+This is the write analog of the read backstop (`tap_grid/read_guard.py`). The read
+guard asks "does the actor hold grid.read"; this one asks **"is this write the
+pipeline's, or one of the named writers that sit below it"**. It passes a graph-row
+write only inside one of:
 
-- `requires_capability` / `authorized` (tap_auth) open the scope for their body
-  when the authorized capability is write-class (grid.write / grid.delete /
-  grid.purge / grid.import_grift) — so every gated service write function opens it
-  by construction, current and future.
-- `write_batch` opens it directly (it is the commit chokepoint and is not itself
-  decorated).
+- **the pipeline's scope** (`service_write_scope`), opened by `write_batch` and by
+  nothing else;
+- **a named below-pipeline writer** (`below_pipeline_write(name)`), one of the
+  closed set in `BELOW_PIPELINE_WRITERS`, each a bookkeeping or removal path the
+  pipeline itself cannot carry. The name is recorded so a failure says which writer
+  was, or was not, open.
 
-`BaseModel.save`/`delete` and `Entity.save`/`delete` call `enforce_service_write`,
-which fails closed (`UnguardedOperation`, a defect-class error → 500, not a user
-denial) when a write reaches the ORM outside any such scope. Capability
-enforcement still happens at the gate (`@requires_capability`) and the write
-backstop (`assert_write_authorized`); this guard adds the "and it went through the
-batch pipeline at all" half.
+A permission gate is not a scope. Until Issue# 959 - tap, `requires_capability` and
+`authorized` opened the scope for any write-class capability, so a gated helper could
+write the ORM directly and pass: that is how the compatibility helpers removed in
+Issue# 957 - tap got through. A gate now opens nothing, and its body runs under the
+real rule even inside a test (`gated_body`).
+
+`BaseModel.save`/`delete`, `Entity.save`/`delete` and the graph querysets'
+`update`/`delete`/`bulk_create`/`bulk_update` call `enforce_service_write`, which
+fails closed (`UnguardedOperation`, a defect-class error → 500, not a user denial)
+outside those scopes.
 
 Exemptions:
-- `unguarded_write()` — explicit escape hatch for sanctioned direct-ORM writers
-  below/around the service boundary (low-level model tests, admin/infra, one-off
-  maintenance). The test suite wraps itself in this (tests are the sanctioned
-  below-service zone, like migrations).
+- `unguarded_write()` — the test harness's hatch. Every test runs inside it, so
+  fixtures can set up rows directly, but it stops at a gated service function's
+  body: production code reached from a test is held to the real rule.
 - Migrations are exempt automatically: migration-state/historical models are
   reconstructed without the `BaseModel`/`Entity` method overrides, so they never
   reach this guard.
@@ -46,29 +47,101 @@ import contextlib
 import contextvars
 import logging
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
-# Capabilities whose authorization means "we are entering a sanctioned service
-# write" — authorizing any of these opens the write scope for the gated body.
-# TAP-KNOWN-DUPE(write-scope-caps): the canonical spellings are the *_CAPABILITY
-# constants in tap_auth/capabilities.py — this module cannot import them at module
-# scope because tap_auth.enforcement imports THIS module at module scope (the
-# deferred tap_auth import at the bottom of this file exists for the same reason).
-# Editing this set means putting eyes on the partner constants.
-WRITE_SCOPE_CAPABILITIES: frozenset[str] = frozenset(
-    {"grid.write", "grid.delete", "grid.reconcile", "grid.purge", "grid.import_grift"}
-)
+# The writers that write graph rows below the pipeline, each for a reason the pipeline
+# cannot carry. Closed: `below_pipeline_write` refuses any other name, so a new one is a
+# reviewed edit here and in req-tap-auth-write-batch-routing, never a call-site invention.
+# A named writer passes the guard only for the writes it exists for (`BELOW_PIPELINE_WRITES`,
+# and `BELOW_PIPELINE_ENTITY_TYPES` for the spine rows it may touch), and only while a gate it
+# accepts is open (`_writer_gates`): the name says why the write skips the pipeline and what it
+# may write, the gate says who may make it.
+BELOW_PIPELINE_WRITERS: dict[str, str] = {
+    "batch": "a batch's own spine row and its open/close bookkeeping: a batch cannot be written in a batch",
+    "purge": "the DEBUG-only hard purge, which removes rows the pipeline only tombstones",
+    "sweep_purge": "the GRIFT importer's force-reimport sweep in purge mode",
+    "bookkeeping": "the run records on a lifecycle batch: completeness, candidates, verdicts and links",
+    "spine_sync": (
+        "the GRIFT importer's copy of a replaced node's envelope name and dimensions onto its spine row; "
+        "the replace in the same batch carries the version bump and the update event"
+    ),
+    "scheduler_cursor": "the scheduler's own cursors on a Schedule: the claim of a due slot and the enable stamp",
+}
 
-# True while control is inside a service-layer write scope (nestable — token-based
-# set/reset, so an inner scope restores the outer's value on exit).
+# The writes each named writer may make, as (operation, model label). A Batch save also updates
+# the batch's own spine row through a queryset, so the batch and bookkeeping writers carry it.
+BELOW_PIPELINE_WRITES: dict[str, frozenset[tuple[str, str]]] = {
+    "batch": frozenset(
+        {("save", "tap_grid.Entity"), ("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}
+    ),
+    "purge": frozenset({("queryset delete", "tap_grid.Entity")}),
+    "sweep_purge": frozenset({("queryset delete", "tap_grid.Entity")}),
+    "bookkeeping": frozenset({("save", "tap_grid.Batch"), ("queryset update", "tap_grid.Entity")}),
+    "spine_sync": frozenset({("queryset update", "tap_grid.Entity")}),
+    "scheduler_cursor": frozenset({("queryset update", "tap_cares.Schedule")}),
+}
+
+# Writers that may touch spine (`tap_grid.Entity`) rows of these entity types only. A writer
+# not listed here may touch any type its writes allow (purge, sweep_purge and spine_sync act on
+# whatever node or edge they were asked about).
+BELOW_PIPELINE_ENTITY_TYPES: dict[str, frozenset[str]] = {
+    "batch": frozenset({"batch"}),
+    "bookkeeping": frozenset({"batch"}),
+}
+
+
+def _writer_gates() -> dict[str, frozenset[str]]:
+    """The gates (capabilities) under which each named writer may write.
+
+    Built on call, not at import: tap_auth.enforcement imports this module at module scope,
+    so importing tap_auth.capabilities here at module scope would close the cycle.
+    """
+    from tap_auth import capabilities as caps
+
+    grid_writes = frozenset(
+        {
+            caps.WRITE_CAPABILITY,
+            caps.DELETE_CAPABILITY,
+            caps.RECONCILE_CAPABILITY,
+            caps.PURGE_CAPABILITY,
+            caps.IMPORT_GRIFT_CAPABILITY,
+        }
+    )
+    return {
+        "batch": grid_writes,
+        "purge": frozenset({caps.PURGE_CAPABILITY}),
+        "sweep_purge": frozenset({caps.IMPORT_GRIFT_CAPABILITY}),
+        "bookkeeping": frozenset({caps.WRITE_CAPABILITY, caps.RECONCILE_CAPABILITY}),
+        "spine_sync": frozenset({caps.IMPORT_GRIFT_CAPABILITY}),
+        # The scheduler's capabilities are spelled where its gates are (tap_cares.services.
+        # scheduler); test_write_guard checks each name here is a registered capability.
+        "scheduler_cursor": frozenset({"cares.run_scheduler", "cares.toggle_schedules"}),
+    }
+
+
+# True while control is inside the pipeline's scope (nestable — token-based set/reset, so
+# an inner scope restores the outer's value on exit). Opened by `write_batch` alone.
 _service_write_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "service_write_active",
     default=False,
 )
 
-# True while the write guard is explicitly suspended (the escape hatch).
+# The named below-pipeline writer open around the current code, if any.
+_below_pipeline_writer: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "below_pipeline_writer",
+    default=None,
+)
+
+# The capabilities of the gates open around the current code, outermost first. A gate is
+# pushed by `gated_body` after the gate has authorized its capability.
+_open_gates: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "open_gates",
+    default=(),
+)
+
+# True while the test harness's hatch is open (and not suspended by a gated body).
 _write_guard_bypass: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "write_guard_bypass",
     default=False,
@@ -119,11 +192,11 @@ def reconcile_licenses(targets: Iterable[str | uuid.UUID]) -> bool:
 
 @contextlib.contextmanager
 def service_write_scope() -> Iterator[None]:
-    """Mark the wrapped block as a sanctioned service-layer write.
+    """Mark the wrapped block as the write pipeline.
 
-    Node/edge writes (`BaseModel`/`Entity` `save`/`delete`) inside this scope pass
-    the write guard. Opened by the service write API — application code should not
-    call this directly; it should call the service layer, which opens it.
+    Graph-row writes inside it pass the write guard. `write_batch` opens it, and nothing
+    else should: code that needs to write calls `write_batch`, or is one of the named
+    writers in `BELOW_PIPELINE_WRITERS`.
     """
     token = _service_write_active.set(True)
     try:
@@ -133,13 +206,48 @@ def service_write_scope() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def unguarded_write() -> Iterator[None]:
-    """Suspend the write guard for the wrapped block (escape hatch).
+def below_pipeline_write(writer: str) -> Iterator[None]:
+    """Mark the wrapped block as the named below-pipeline writer ``writer``.
 
-    For sanctioned direct-ORM writers below/around the service boundary only —
-    low-level model tests, admin/infra, one-off maintenance. NOT for
-    above-service-layer application code: views, panels, collectors, and commands
-    must route writes through the service layer (which opens the scope for them).
+    Graph-row writes inside it pass the write guard. ``writer`` must be a key of
+    `BELOW_PIPELINE_WRITERS`; any other name raises ValueError before the block runs,
+    so the set of writers that skip the pipeline stays the reviewed one.
+    """
+    if writer not in BELOW_PIPELINE_WRITERS:
+        raise ValueError(f"{writer!r} is not a named below-pipeline writer; see BELOW_PIPELINE_WRITERS")
+    token = _below_pipeline_writer.set(writer)
+    try:
+        yield
+    finally:
+        _below_pipeline_writer.reset(token)
+
+
+@contextlib.contextmanager
+def gated_body(capability: str) -> Iterator[None]:
+    """Hold a gated service function's body to the real write rule, inside a test too.
+
+    Opened by `requires_capability` and `authorized` around the body they guard, after the
+    gate has authorized ``capability``. It records the gate, so a named below-pipeline
+    writer inside the body can pass, and it closes the test harness's hatch for the body,
+    so a gated helper that writes the ORM directly fails in the test suite as it would in
+    production. It opens no write scope: a gate is a permission check, not the pipeline.
+    """
+    bypass = _write_guard_bypass.set(False)
+    gates = _open_gates.set((*_open_gates.get(), capability))
+    try:
+        yield
+    finally:
+        _open_gates.reset(gates)
+        _write_guard_bypass.reset(bypass)
+
+
+@contextlib.contextmanager
+def unguarded_write() -> Iterator[None]:
+    """Suspend the write guard for the wrapped block: the test harness's hatch.
+
+    For test fixtures that set up rows directly. It does not reach into a gated service
+    function's body (`gated_body` closes it there). NOT for application code: views,
+    panels, collectors and commands write through `write_batch`.
     """
     token = _write_guard_bypass.set(True)
     try:
@@ -148,19 +256,44 @@ def unguarded_write() -> Iterator[None]:
         _write_guard_bypass.reset(token)
 
 
-def enforce_service_write(detail: str) -> None:
-    """Fail closed if a node/edge write is happening outside a service write scope.
+def _writer_permits(
+    writer: str, operation: str, model_label: str, row_types: Callable[[], Iterable[str]] | None
+) -> bool:
+    """True iff the named ``writer`` may make this write under the gates open now."""
+    if not _writer_gates()[writer].intersection(_open_gates.get()):
+        return False
+    if (operation, model_label) not in BELOW_PIPELINE_WRITES[writer]:
+        return False
+    allowed_types = BELOW_PIPELINE_ENTITY_TYPES.get(writer)
+    if allowed_types is None or model_label != "tap_grid.Entity":
+        return True
+    # A writer held to some entity types must be able to show the rows are of those types.
+    return row_types is not None and set(row_types()) <= allowed_types
 
-    Passes iff the bypass hatch is active or we are inside a `service_write_scope`
-    (i.e. the write is going through the sanctioned service-layer pipeline).
-    Otherwise raises `UnguardedOperation` — a defect (some code mutated the grid by
-    direct ORM instead of the service layer), not a user-facing denial.
+
+def enforce_service_write(
+    operation: str, model_label: str, *, row_types: Callable[[], Iterable[str]] | None = None
+) -> None:
+    """Fail closed if a graph-row write is happening outside the pipeline.
+
+    Passes iff the pipeline's scope is open; or a named below-pipeline writer is open that
+    permits this write (its operation and model, and for a type-held writer the rows' entity
+    types) under a gate it accepts; or the test hatch is open (and not closed by a gated body).
+    Otherwise raises `UnguardedOperation` — a defect (some code mutated the grid by direct ORM
+    instead of the pipeline), not a user-facing denial.
 
     Args:
-        detail: The write site (e.g. ``save tap_web.Panel``), woven into the
-            failure message so the offending direct write is locatable.
+        operation: The write: ``save``, ``delete``, or ``queryset update`` / ``queryset delete``
+            / ``queryset bulk_create`` / ``queryset bulk_update``.
+        model_label: The model written, e.g. ``tap_grid.Entity``.
+        row_types: For spine rows, a callable returning the entity types written. Called only
+            when a type-held named writer is open.
     """
+    detail = f"{operation} {model_label}"
     if _write_guard_bypass.get() or _service_write_active.get():
+        return
+    writer = _below_pipeline_writer.get()
+    if writer is not None and _writer_permits(writer, operation, model_label, row_types):
         return
 
     from tap.flaws import report_service_layer_bypass
@@ -176,10 +309,12 @@ def enforce_service_write(detail: str) -> None:
         detail=detail,
     )
     raise UnguardedOperation(
-        f"unguarded write: {detail} bypassed the service layer — node/edge mutations must go "
-        f"through the service layer (write_batch / create_node / create_edge / delete_* / patch_node), "
-        f"which carries batch scope, FLIP, provenance, and the grid.write/grid.delete backstop. "
-        f"For sanctioned below-service writes (tests, admin, migrations) wrap in "
-        f"tap_grid.write_guard.unguarded_write().",
+        f"unguarded write: {detail} bypassed the write pipeline — graph-row mutations go "
+        f"through write_batch (or a service verb that calls it), which carries batch scope, "
+        f"FLIP, provenance and the per-operation capability backstop. A permission gate is "
+        f"not a write scope. A writer that must sit below the pipeline is one of the named "
+        f"BELOW_PIPELINE_WRITERS in tap_grid.write_guard, writing only what it is named for, "
+        f"under a gate it accepts (writer: {_below_pipeline_writer.get()!r}; "
+        f"open gates: {list(_open_gates.get())!r}).",
         callsite=detail,
     )

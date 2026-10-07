@@ -74,8 +74,13 @@ class ForeignBatchCollector(CollectorBase):
 
     def run(self) -> None:
         from tap_grid.batch import close_batch, create_batch
+        from tap_grid.write_guard import unguarded_write
 
-        foreign = close_batch(create_batch(source="somebody.else"))
+        # Fixture setup: another producer's committed batch, made directly. A real collector
+        # never writes a batch; this one runs inside the run task's gate, so the harness's
+        # write hatch is reopened for this line only.
+        with unguarded_write():
+            foreign = close_batch(create_batch(source="somebody.else"))
         self.record_surface(
             relation="repository.workflows",
             subject="repo:fixture",

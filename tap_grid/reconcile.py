@@ -59,7 +59,7 @@ from tap_grid.falsifiers import (
     verdicts_of,
 )
 from tap_grid.service_types import WriteOperation
-from tap_grid.write_guard import reconcile_write_scope
+from tap_grid.write_guard import below_pipeline_write, reconcile_write_scope
 
 logger = logging.getLogger(__name__)
 
@@ -451,7 +451,9 @@ def _store(batch: Any, record: dict[str, Any]) -> None:
         metadata = dict(locked.metadata or {})
         metadata[METADATA_KEY] = record
         locked.metadata = metadata
-        locked.save(update_fields=["metadata"])
+        # Run bookkeeping on the lifecycle batch: a named below-pipeline writer.
+        with below_pipeline_write("bookkeeping"):
+            locked.save(update_fields=["metadata"])
     batch.metadata = metadata
 
 

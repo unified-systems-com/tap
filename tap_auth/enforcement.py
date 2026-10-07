@@ -39,7 +39,7 @@ from tap_auth import capabilities as caps
 from tap_auth import policy
 from tap_auth.errors import UnguardedOperation
 from tap_auth.models import UserKind
-from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES, reconcile_licenses, service_write_scope
+from tap_grid.write_guard import gated_body, reconcile_licenses
 
 if TYPE_CHECKING:
     from tap_grid.caller_context import CallerContext
@@ -87,13 +87,12 @@ def requires_capability(capability: str, *, operation: str = "") -> Callable[[F]
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             ctx = _resolve_caller_context(kwargs)
             policy.authorize(ctx, capability, operation=operation or fn.__name__)
-            # A gated write function opens the service-write scope for its body, so
-            # its node/edge writes pass the write backstop (req-tap-auth-write-batch-
-            # routing). Reads (grid.read) do not open it.
-            if capability in WRITE_SCOPE_CAPABILITIES:
-                with service_write_scope():
-                    return fn(*args, **kwargs)
-            return fn(*args, **kwargs)
+            # A gate is a permission check, not a write scope: the body's graph-row writes
+            # pass the write backstop only through write_batch or a named below-pipeline
+            # writer, and gated_body holds the body to that inside a test too
+            # (req-tap-auth-write-batch-routing, Issue# 959 - tap).
+            with gated_body(capability):
+                return fn(*args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
 
@@ -142,12 +141,10 @@ def authorized(
         resource_type=resource_type,
         resource=resource,
     )
-    # Same as the decorator: a write-class authorization opens the service-write
-    # scope for the body (e.g. grift_import runs under `authorized(grid.import_grift)`).
-    if capability in WRITE_SCOPE_CAPABILITIES:
-        with service_write_scope():
-            yield
-    else:
+    # Same as the decorator: authorizing opens no write scope, and the body is held to the
+    # real write rule (e.g. grift_import, under `authorized(grid.import_grift)`, writes
+    # through write_batch and its named below-pipeline writers).
+    with gated_body(capability):
         yield
 
 
