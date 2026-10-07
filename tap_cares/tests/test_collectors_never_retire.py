@@ -30,6 +30,7 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
         "_patch_node_internal",
         "unguarded_write",
         "service_write_scope",
+        "below_pipeline_write",
         "reconcile_write_scope",
         "contained_closure_locked",
         "write_guard",

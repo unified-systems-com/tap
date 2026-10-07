@@ -85,7 +85,7 @@ from tap_grid.services._impl import (
     _load_entity_or_raise,
     _refuse_internal_edge_type,
 )
-from tap_grid.write_guard import service_write_scope
+from tap_grid.write_guard import below_pipeline_write, service_write_scope
 
 logger = logging.getLogger(__name__)
 
@@ -1006,12 +1006,15 @@ def purge_node(
         # then survive a pre-cascade history sweep. Deleting history after the
         # cascade catches every row, including the signal-generated ones.
 
-        # 1) Touching edges: delete Entity rows first (cascades the typed Edge).
-        if touching_edge_ids:
-            Entity.objects.filter(pk__in=touching_edge_ids).delete()
+        # A purge removes rows the pipeline only tombstones, so it is a named below-pipeline
+        # writer, open only under this function's grid.purge gate (req-tap-auth-write-batch-routing).
+        with below_pipeline_write("purge"):
+            # 1) Touching edges: delete Entity rows first (cascades the typed Edge).
+            if touching_edge_ids:
+                Entity.objects.filter(pk__in=touching_edge_ids).delete()
 
-        # 2) The target Entity itself. Cascades the typed BaseModel row.
-        Entity.objects.filter(pk=target_uuid).delete()
+            # 2) The target Entity itself. Cascades the typed BaseModel row.
+            Entity.objects.filter(pk=target_uuid).delete()
 
         # 3) Now sweep history rows for the typed model and the touching edges.
         #    django-simple-history doesn't cascade-delete history with the live
@@ -1145,7 +1148,8 @@ def purge_edge(
         #   2) Edge history rows (django-simple-history does not cascade
         #      history with the live row)
         #   3) BatchEvent rows referencing the purged edge
-        Entity.objects.filter(pk=target_uuid).delete()
+        with below_pipeline_write("purge"):
+            Entity.objects.filter(pk=target_uuid).delete()
         Edge.history.filter(entity_id=target_uuid).delete()
         BatchEvent.objects.filter(entity_id=target_uuid).delete()
 

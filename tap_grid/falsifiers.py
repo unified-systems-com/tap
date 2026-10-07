@@ -56,6 +56,7 @@ from tap.credential_patterns import CREDENTIAL_PATTERNS
 from tap.jsonfiles import JsonFileError, load_schema, validate_json
 from tap_grid.candidates import candidates_of
 from tap_grid.completeness import completeness_of
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
@@ -486,7 +487,7 @@ def falsify_candidates(
     handed to falsifiers, in surface order; the remainder are recorded ``UNDETERMINED(budget)``
     without a probe, with one warning naming how many were left. None means unbounded.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@10b39b38eae5/e19fe345808e (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@10b39b38eae5/2362a958f9de (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 
@@ -529,7 +530,9 @@ def falsify_candidates(
         metadata = dict(locked.metadata or {})
         metadata[METADATA_KEY] = record
         locked.metadata = metadata
-        locked.save(update_fields=["metadata"])
+        # Run bookkeeping on the lifecycle batch: a named below-pipeline writer.
+        with below_pipeline_write("bookkeeping"):
+            locked.save(update_fields=["metadata"])
     batch.metadata = metadata
     logger.info(
         "[2eb2] verdicts recorded on batch %s: %d candidate(s), %d judged, %d not reconcilable, authority off",
@@ -683,7 +686,9 @@ def record_not_judged(batch: Any, *, reason: str) -> dict[str, Any]:
         metadata = dict(locked.metadata or {})
         metadata[METADATA_KEY] = record
         locked.metadata = metadata
-        locked.save(update_fields=["metadata"])
+        # Run bookkeeping on the lifecycle batch: a named below-pipeline writer.
+        with below_pipeline_write("bookkeeping"):
+            locked.save(update_fields=["metadata"])
     batch.metadata = metadata
     return record
 

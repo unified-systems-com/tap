@@ -23,6 +23,7 @@ from tap_auth.capabilities import WRITE_CAPABILITY
 from tap_auth.enforcement import requires_capability
 from tap_grid.context import get_batch_id
 from tap_grid.history import get_history_user
+from tap_grid.write_guard import below_pipeline_write
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -112,26 +113,30 @@ def create_batch(
 
     resolved_name = _clamp_batch_name(name or f"Batch {datetime.now().isoformat()}")
 
-    # Create backing Entity for the Batch, optionally with a pre-specified ID.
-    if entity_id is not None:
-        resolved_id = uuid.UUID(str(entity_id)) if not isinstance(entity_id, uuid.UUID) else entity_id
-        entity = Entity.objects.create(
-            id=resolved_id,
-            entity_type="batch",
-            name=resolved_name,
-        )
-    else:
-        entity = _create_batch_spine(resolved_name)
+    # A batch is the pipeline's own bookkeeping and cannot be written in a batch, so its rows
+    # are a named below-pipeline writer: they pass the write guard only under a grid write
+    # gate the caller already holds (req-tap-auth-write-batch-routing).
+    with below_pipeline_write("batch"):
+        # Create backing Entity for the Batch, optionally with a pre-specified ID.
+        if entity_id is not None:
+            resolved_id = uuid.UUID(str(entity_id)) if not isinstance(entity_id, uuid.UUID) else entity_id
+            entity = Entity.objects.create(
+                id=resolved_id,
+                entity_type="batch",
+                name=resolved_name,
+            )
+        else:
+            entity = _create_batch_spine(resolved_name)
 
-    return Batch.objects.create(
-        entity=entity,
-        source=source,
-        actor=actor,
-        name=resolved_name,
-        description=description,
-        description_json=description_json,
-        metadata=metadata or {},
-    )
+        return Batch.objects.create(
+            entity=entity,
+            source=source,
+            actor=actor,
+            name=resolved_name,
+            description=description,
+            description_json=description_json,
+            metadata=metadata or {},
+        )
 
 
 @requires_capability(WRITE_CAPABILITY, operation="create_batch")
@@ -145,7 +150,8 @@ def _create_batch_spine(name: str) -> Entity:
     """
     from tap_grid.models import Entity
 
-    return Entity.objects.create(entity_type="batch", name=name)
+    with below_pipeline_write("batch"):
+        return Entity.objects.create(entity_type="batch", name=name)
 
 
 def close_batch(batch: Batch) -> Batch:
@@ -167,7 +173,8 @@ def close_batch(batch: Batch) -> Batch:
 
     batch.status = BatchStatus.CLOSED
     batch.closed_at = timezone.now()
-    batch.save(update_fields=["status", "closed_at"])
+    with below_pipeline_write("batch"):
+        batch.save(update_fields=["status", "closed_at"])
     return batch
 
 
@@ -192,7 +199,8 @@ def fail_batch(batch: Batch, error_message: str = "") -> Batch:
     batch.status = BatchStatus.FAILED
     batch.closed_at = timezone.now()
     batch.error_message = error_message
-    batch.save(update_fields=["status", "closed_at", "error_message"])
+    with below_pipeline_write("batch"):
+        batch.save(update_fields=["status", "closed_at", "error_message"])
     return batch
 
 
