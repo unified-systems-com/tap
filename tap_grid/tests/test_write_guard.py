@@ -373,9 +373,33 @@ def test_a_writer_named_for_inserts_cannot_overwrite_a_batch_by_reusing_its_id()
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
-def test_an_upsert_is_checked_as_the_update_it_can_be(monkeypatch: pytest.MonkeyPatch):
-    """bulk_create(update_conflicts=True) updates existing rows, so it needs the fields, not just
-    the right to insert. No shipped writer may bulk-create; this one is granted inserts only."""
+def test_a_save_naming_fields_on_a_new_instance_is_checked_as_the_insert_it_can_be(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Django inserts a new instance whose key has a default even when ``update_fields`` names
+    fields (``Model._save_table``), so a writer named only for updates cannot create a row that
+    way. No shipped writer may update an Entity by save; this one is granted ``name`` only."""
+    import tap_grid.write_guard as write_guard
+
+    grants = {**write_guard.BELOW_PIPELINE_WRITES["bookkeeping"], ("save", "tap_grid.Entity"): frozenset({"name"})}
+    monkeypatch.setitem(write_guard.BELOW_PIPELINE_WRITES, "bookkeeping", grants)
+    name = f"inserted-{uuid.uuid4()}"
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Entity"):
+        _under_grid_write("bookkeeping", lambda: Entity(entity_type="batch", name=name).save(update_fields=["name"]))
+    assert not Entity.objects.filter(name=name).exists()
+    # A loaded row saved with the fields it is granted is an update, and still allowed.
+    spine = _batch_spine(f"renamed-{uuid.uuid4()}")
+    spine.name = name
+    _under_grid_write("bookkeeping", lambda: spine.save(update_fields=["name"]))
+    spine.refresh_from_db()
+    assert spine.name == name
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_an_upsert_is_checked_as_the_insert_and_the_update_it_can_be(monkeypatch: pytest.MonkeyPatch):
+    """bulk_create(update_conflicts=True) inserts the rows that do not conflict and updates those
+    that do, so it needs both the right to insert and the fields. No shipped writer may
+    bulk-create; this one is granted inserts only, then fields only."""
     import tap_grid.write_guard as write_guard
 
     grants = {
@@ -416,3 +440,21 @@ def test_an_upsert_is_checked_as_the_update_it_can_be(monkeypatch: pytest.Monkey
         "batch", lambda: Entity.objects.bulk_create([Entity(entity_type="batch", name=f"bulk-{uuid.uuid4()}")])
     )
     assert made
+    # It may insert too: a writer granted the fields but not inserts is refused one.
+    monkeypatch.setitem(
+        write_guard.BELOW_PIPELINE_WRITES,
+        "batch",
+        {**grants, ("queryset bulk_create", "tap_grid.Entity"): frozenset({"name"})},
+    )
+    name = f"upsert-insert-{uuid.uuid4()}"
+    with pytest.raises(UnguardedOperation, match="queryset bulk_create tap_grid.Entity"):
+        _under_grid_write(
+            "batch",
+            lambda: Entity.objects.bulk_create(
+                [Entity(entity_type="batch", name=name)],
+                update_conflicts=True,
+                update_fields=["name"],
+                unique_fields=["id"],
+            ),
+        )
+    assert not Entity.objects.filter(name=name).exists()

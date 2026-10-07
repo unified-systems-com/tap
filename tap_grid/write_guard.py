@@ -71,9 +71,9 @@ BELOW_PIPELINE_WRITERS: dict[str, str] = {
 }
 
 # The writes each named writer may make: (operation, model label) mapped to the fields it may
-# write there (Issue# 980 - tap). A save is checked against its ``update_fields``, and creating a
-# row is allowed only where ``ROW_INSERT`` is listed; a queryset update is checked against its
-# keyword arguments; a delete writes no fields. No writer may change ``entity_type``.
+# write there (Issue# 980 - tap). A save is checked against its ``update_fields``, and a write that
+# can create a row is allowed only where ``ROW_INSERT`` is listed; a queryset update is checked
+# against its keyword arguments; a delete writes no fields. No writer may change ``entity_type``.
 ROW_INSERT = "<insert>"
 # The spine fields a BaseModel save keeps in step on its own Entity row (`BaseModel.save`).
 _SPINE_SYNC_FIELDS = frozenset({"updated_at", "version", "name"})
@@ -274,7 +274,8 @@ def _writer_permits(
     model_label: str,
     row_types: Callable[[], Iterable[str]] | None,
     fields: Iterable[str] | None,
-    inserting: bool,
+    may_insert: bool,
+    may_update: bool,
 ) -> bool:
     """True iff the named ``writer`` may make this write under the gates open now."""
     if not _writer_gates()[writer].intersection(_open_gates.get()):
@@ -282,7 +283,7 @@ def _writer_permits(
     allowed_fields = BELOW_PIPELINE_WRITES[writer].get((operation, model_label))
     if allowed_fields is None:
         return False
-    if not _fields_permitted(operation, allowed_fields, fields, inserting):
+    if not _fields_permitted(operation, allowed_fields, fields, may_insert, may_update):
         return False
     allowed_types = BELOW_PIPELINE_ENTITY_TYPES.get(writer)
     if allowed_types is None or model_label != "tap_grid.Entity":
@@ -292,13 +293,23 @@ def _writer_permits(
 
 
 def _fields_permitted(
-    operation: str, allowed_fields: frozenset[str], fields: Iterable[str] | None, inserting: bool
+    operation: str,
+    allowed_fields: frozenset[str],
+    fields: Iterable[str] | None,
+    may_insert: bool,
+    may_update: bool,
 ) -> bool:
-    """True iff the write touches only fields its writer may write (Issue# 980 - tap)."""
+    """True iff the write touches only fields its writer may write (Issue# 980 - tap).
+
+    A write that may create a row needs ``ROW_INSERT``; one that may update an existing row
+    needs every field it writes allowed. A save or an upsert can be both, and needs both.
+    """
     if operation in {"delete", "queryset delete"}:
         return True
-    if inserting:
-        return ROW_INSERT in allowed_fields
+    if may_insert and ROW_INSERT not in allowed_fields:
+        return False
+    if not may_update:
+        return True
     if fields is None:
         # A save with no update_fields writes every column: no named writer may do that.
         return False
@@ -312,7 +323,8 @@ def enforce_service_write(
     *,
     row_types: Callable[[], Iterable[str]] | None = None,
     fields: Iterable[str] | None = None,
-    inserting: bool = False,
+    may_insert: bool = False,
+    may_update: bool = True,
 ) -> None:
     """Fail closed if a graph-row write is happening outside the pipeline.
 
@@ -330,13 +342,16 @@ def enforce_service_write(
             when a type-held named writer is open.
         fields: The fields written: a save's ``update_fields``, a queryset update's keyword
             arguments. None for a save that writes every column.
-        inserting: True when the write creates the row.
+        may_insert: True when the write can create a row.
+        may_update: True when the write can change an existing row.
     """
     detail = f"{operation} {model_label}"
     if _write_guard_bypass.get() or _service_write_active.get():
         return
     writer = _below_pipeline_writer.get()
-    if writer is not None and _writer_permits(writer, operation, model_label, row_types, fields, inserting):
+    if writer is not None and _writer_permits(
+        writer, operation, model_label, row_types, fields, may_insert, may_update
+    ):
         return
 
     from tap.flaws import report_service_layer_bypass
