@@ -25,6 +25,7 @@ repaired. Measure first (req-tap-plugin-validate-repo-5).
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -1476,7 +1477,21 @@ def _release_job_condition(text: str, lineno: int) -> str:
 #: and a capability test is answered by matching concrete tags. Drawn from real releases in the
 #: fleet (every tag in the org is `v<major>.<minor>.<patch>`), with a multi-digit case so a filter
 #: that only handles single digits cannot pass by luck.
-PROTECTED_RELEASE_TAGS: tuple[str, ...] = ("v0.1.0", "v1.2.3", "v10.20.30")
+PROTECTED_RELEASE_TAGS: tuple[str, ...] = (
+    "v0.1.0",
+    "v1.2.3",
+    "v2.3.4",
+    "v0.12.2",
+    "v10.20.30",
+    "v1.2.3-rc1",
+)
+
+#: A glob metacharacter. **A filter carrying none of these matches exactly ONE literal tag**, so no
+#: finite set of literal filters can cover an unbounded release series — `["v0.1.0", "v1.2.3",
+#: "v10.20.30"]` would match every sample above and still miss `v2.3.4`. Requiring a wildcard is
+#: what makes the sample sweep evidence rather than a loophole; it is cheap and it is provable,
+#: which the sweep alone is not.
+_FILTER_WILDCARDS = ("*", "?", "[")
 
 #: Actions filter syntax this cannot model faithfully with `fnmatch`: `!` negates, `**` crosses
 #: separators, `+` repeats. A filter using any of them is NOT reported as unmatched — refusing what
@@ -1520,22 +1535,38 @@ def _release_tag_filters(text: str) -> list[str] | None:
 
 
 def _tag_filter_reaches_a_release(filters: list[str]) -> str:
-    """Whether any *filter* could match a protected release tag: ``yes``/``no``/``unknown``.
+    """How well *filters* cover the protected release-tag series.
+
+    ``yes`` every representative tag is covered · ``partial`` some are, so part of the series is
+    missed · ``literal`` no filter carries a metacharacter, which cannot cover an unbounded series
+    at all · ``no`` nothing matches · ``unknown`` the syntax cannot be modelled.
+
+    **This does not decide glob language containment**, and the verdicts are worded so as not to
+    claim it: it refuses the shapes that provably cannot cover the series, then checks a sweep.
 
     A non-empty tag filter is NOT the property worth asserting. `tags: ["never-release-*"]` is
     non-empty and catches nothing release-please cuts, so the lane never fires, the wheel publishes
     unattested, and a presence test calls the repository conformant — the same silent failure this
     check exists to catch, one level further in.
     """
-    from fnmatch import fnmatch
-
     if any(tok in f for f in filters for tok in _UNMODELLABLE_FILTER_SYNTAX):
         return "unknown"
+    # A LITERAL SET CANNOT COVER AN UNBOUNDED SERIES. Checked first and separately from the sweep,
+    # because it is the part that is provable: without a metacharacter a filter matches one tag, so
+    # listing the samples themselves would otherwise satisfy a sample-based test while missing the
+    # next release. This is the honest limit of the method — it does not decide glob language
+    # containment, it refuses the shapes that provably cannot contain the series and then checks a
+    # sweep of representative tags.
+    if not any(c in f for f in filters for c in _FILTER_WILDCARDS):
+        return "literal"
     # EVERY representative tag must be covered by SOME filter, not merely one of them. `v?.?.?`
     # matches `v1.2.3` and misses `v0.12.2` — which is a real current release in the fleet — so a
     # rule satisfied by one match would bless a filter that silently skips every two-digit version.
     # Found by writing the multi-digit test, not by reading the code.
-    return "yes" if all(any(fnmatch(tag, f) for f in filters) for tag in PROTECTED_RELEASE_TAGS) else "no"
+    covered = [tag for tag in PROTECTED_RELEASE_TAGS if any(fnmatch(tag, f) for f in filters)]
+    if len(covered) == len(PROTECTED_RELEASE_TAGS):
+        return "yes"
+    return "partial" if covered else "no"
 
 
 def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
@@ -1670,14 +1701,32 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
     # (`23794714`), not here — this asks only whether a tag of that protected shape would reach
     # the lane, so a repository using a different-but-working spelling still passes.
     reaches = _tag_filter_reaches_a_release(filters)
-    if reaches == "no":
+    if reaches in {"no", "partial", "literal"}:
+        # Each verdict gets its OWN sentence, because they are different defects and a message that
+        # says "none of which can match" about a filter that matches some of the series is simply
+        # false — an author with a too-narrow-but-partly-correct glob would be told the checker
+        # found zero coverage and would look in the wrong place.
+        if reaches == "literal":
+            why = (
+                "none of which contains a glob metacharacter. A filter without one matches exactly "
+                "one literal tag, so this set can never cover an unbounded release series: the "
+                "next version after the ones listed will not fire the lane"
+            )
+        elif reaches == "partial":
+            missed = [x for x in PROTECTED_RELEASE_TAGS if not any(fnmatch(x, f) for f in filters)]
+            why = (
+                "which cover only part of the release series — they do not match "
+                f"{', '.join(missed)}. A filter that catches some releases and silently skips "
+                "others is the harder version of this defect to notice"
+            )
+        else:
+            why = "none of which can match a release tag at all"
         check.fail(
-            f"{RELEASE_WORKFLOW} triggers on tag pushes matching {filters}, none of which can match "
-            "a release tag. The org `tag-protection` ruleset protects "
-            f"`refs/tags/v[0-9]*.[0-9]*.[0-9]*`, and every release in the fleet is of that shape "
-            f"(e.g. {', '.join(PROTECTED_RELEASE_TAGS)}) — so this lane never fires on a release "
-            "and the wheel publishes unattested while the file looks conformant. Widen the filter "
-            "to one that matches the release tag, `v*` being what the fleet uses",
+            f"{RELEASE_WORKFLOW} triggers on tag pushes matching {filters}, {why}. The org "
+            "`tag-protection` ruleset protects `refs/tags/v[0-9]*.[0-9]*.[0-9]*` and every release "
+            f"in the fleet is of that shape (e.g. {', '.join(PROTECTED_RELEASE_TAGS[:3])}) — so a "
+            "release this filter misses publishes an unattested wheel while the file looks "
+            "conformant. Widen the filter, `v*` being what the fleet uses",
             path=RELEASE_WORKFLOW,
         )
         result.checks.append(check)
