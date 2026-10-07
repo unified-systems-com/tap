@@ -25,6 +25,7 @@ repaired. Measure first (req-tap-plugin-validate-repo-5).
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -105,7 +106,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@d8e29c3a5b47/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@b6cfd92404c7/6391d18c654a (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -1468,8 +1469,41 @@ def _release_job_condition(text: str, lineno: int) -> str:
     return "absent"
 
 
-def _fires_on_a_release_tag(text: str) -> bool | None:
-    """Whether the workflow triggers on a tag push. ``None`` when it cannot be determined.
+#: The org `tag-protection` ruleset (id `23794714`, source `unified-systems-com`, enforcement
+#: `active`) protects `refs/tags/v[0-9]*.[0-9]*.[0-9]*` against deletion, update and
+#: non-fast-forward. **That ruleset is where the release-tag convention LIVES; this constant only
+#: cites it.** Representative tags rather than the pattern itself, because the question asked here
+#: is not "does the workflow spell it the same way" but "would a real release reach this lane" —
+#: and a capability test is answered by matching concrete tags. Drawn from real releases in the
+#: fleet (every tag in the org is `v<major>.<minor>.<patch>`), with a multi-digit case so a filter
+#: that only handles single digits cannot pass by luck.
+PROTECTED_RELEASE_TAGS: tuple[str, ...] = (
+    "v0.1.0",
+    "v1.2.3",
+    "v2.3.4",
+    "v0.12.2",
+    "v10.20.30",
+    "v1.2.3-rc1",
+)
+
+#: A glob metacharacter. **A filter carrying none of these matches exactly ONE literal tag**, so no
+#: finite set of literal filters can cover an unbounded release series — `["v0.1.0", "v1.2.3",
+#: "v10.20.30"]` would match every sample above and still miss `v2.3.4`. Requiring a wildcard is
+#: what makes the sample sweep evidence rather than a loophole; it is cheap and it is provable,
+#: which the sweep alone is not.
+_FILTER_WILDCARDS = ("*", "?", "[")
+
+#: Actions filter syntax this cannot model faithfully with `fnmatch`: `!` negates, `**` crosses
+#: separators, `+` repeats. A filter using any of them is NOT reported as unmatched — refusing what
+#: cannot be decided teaches authors to delete a filter to quiet the checker, which is how the
+#: 2026-09-29 outage was instructed.
+_UNMODELLABLE_FILTER_SYNTAX = ("!", "**", "+")
+
+
+def _release_tag_filters(text: str) -> list[str] | None:
+    """The `on.push.tags` filters, or ``None`` when they cannot be determined.
+
+    An empty list means the workflow has triggers but no tag-push filter among them.
 
     **`on:` is the YAML 1.1 boolean `true`.** `yaml.safe_load` returns the key as ``True``, not as
     the string ``"on"``, so both spellings are looked up — a reader who checks only ``"on"`` finds
@@ -1488,9 +1522,51 @@ def _fires_on_a_release_tag(text: str) -> bool | None:
         return None
     triggers = doc.get("on", doc.get(True))
     if not isinstance(triggers, dict):
-        return False
+        return []
     push = triggers.get("push")
-    return isinstance(push, dict) and bool(push.get("tags"))
+    if not isinstance(push, dict):
+        return []
+    tags = push.get("tags")
+    if isinstance(tags, str):
+        return [tags]
+    if isinstance(tags, list):
+        return [str(x) for x in tags]
+    return []
+
+
+def _tag_filter_reaches_a_release(filters: list[str]) -> str:
+    """How well *filters* cover the protected release-tag series.
+
+    ``yes`` every representative tag is covered · ``partial`` some are, so part of the series is
+    missed · ``literal`` no filter carries a metacharacter, which cannot cover an unbounded series
+    at all · ``no`` nothing matches · ``unknown`` the syntax cannot be modelled.
+
+    **This does not decide glob language containment**, and the verdicts are worded so as not to
+    claim it: it refuses the shapes that provably cannot cover the series, then checks a sweep.
+
+    A non-empty tag filter is NOT the property worth asserting. `tags: ["never-release-*"]` is
+    non-empty and catches nothing release-please cuts, so the lane never fires, the wheel publishes
+    unattested, and a presence test calls the repository conformant — the same silent failure this
+    check exists to catch, one level further in.
+    """
+    if any(tok in f for f in filters for tok in _UNMODELLABLE_FILTER_SYNTAX):
+        return "unknown"
+    # A LITERAL SET CANNOT COVER AN UNBOUNDED SERIES. Checked first and separately from the sweep,
+    # because it is the part that is provable: without a metacharacter a filter matches one tag, so
+    # listing the samples themselves would otherwise satisfy a sample-based test while missing the
+    # next release. This is the honest limit of the method — it does not decide glob language
+    # containment, it refuses the shapes that provably cannot contain the series and then checks a
+    # sweep of representative tags.
+    if not any(c in f for f in filters for c in _FILTER_WILDCARDS):
+        return "literal"
+    # EVERY representative tag must be covered by SOME filter, not merely one of them. `v?.?.?`
+    # matches `v1.2.3` and misses `v0.12.2` — which is a real current release in the fleet — so a
+    # rule satisfied by one match would bless a filter that silently skips every two-digit version.
+    # Found by writing the multi-digit test, not by reading the code.
+    covered = [tag for tag in PROTECTED_RELEASE_TAGS if any(fnmatch(tag, f) for f in filters)]
+    if len(covered) == len(PROTECTED_RELEASE_TAGS):
+        return "yes"
+    return "partial" if covered else "no"
 
 
 def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
@@ -1593,8 +1669,8 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    fires = _fires_on_a_release_tag(text)
-    if fires is None:
+    filters = _release_tag_filters(text)
+    if filters is None:
         # UNKNOWN IS NOT CONFORMANT — the same verdict the caller-presence half above reaches on an
         # incomplete parse. Treating an unverifiable trigger as a pass is this very check's own
         # defect one level up: a `uses:` line the line-scan fallback can still see, paired with an
@@ -1608,7 +1684,7 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
-    if fires is False:
+    if not filters:
         check.fail(
             f"{RELEASE_WORKFLOW} calls `{REUSABLE_RELEASE}` but does not trigger on a tag push, so "
             "no release reaches it. A caller that cannot fire attests nothing, and the repository "
@@ -1619,6 +1695,51 @@ def _check_release_lane(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
+
+    # A NON-EMPTY FILTER IS NOT THE PROPERTY. `tags: ["never-release-*"]` is non-empty and catches
+    # nothing release-please cuts. The convention lives in the org `tag-protection` ruleset
+    # (`23794714`), not here — this asks only whether a tag of that protected shape would reach
+    # the lane, so a repository using a different-but-working spelling still passes.
+    reaches = _tag_filter_reaches_a_release(filters)
+    if reaches in {"no", "partial", "literal"}:
+        # Each verdict gets its OWN sentence, because they are different defects and a message that
+        # says "none of which can match" about a filter that matches some of the series is simply
+        # false — an author with a too-narrow-but-partly-correct glob would be told the checker
+        # found zero coverage and would look in the wrong place.
+        if reaches == "literal":
+            why = (
+                "none of which contains a glob metacharacter. A filter without one matches exactly "
+                "one literal tag, so this set can never cover an unbounded release series: the "
+                "next version after the ones listed will not fire the lane"
+            )
+        elif reaches == "partial":
+            missed = [x for x in PROTECTED_RELEASE_TAGS if not any(fnmatch(x, f) for f in filters)]
+            why = (
+                "which cover only part of the release series — they do not match "
+                f"{', '.join(missed)}. A filter that catches some releases and silently skips "
+                "others is the harder version of this defect to notice"
+            )
+        else:
+            why = "none of which can match a release tag at all"
+        check.fail(
+            f"{RELEASE_WORKFLOW} triggers on tag pushes matching {filters}, {why}. The org "
+            "`tag-protection` ruleset protects `refs/tags/v[0-9]*.[0-9]*.[0-9]*` and every release "
+            f"in the fleet is of that shape (e.g. {', '.join(PROTECTED_RELEASE_TAGS[:3])}) — so a "
+            "release this filter misses publishes an unattested wheel while the file looks "
+            "conformant. Widen the filter, `v*` being what the fleet uses",
+            path=RELEASE_WORKFLOW,
+        )
+        result.checks.append(check)
+        return
+    if reaches == "unknown":
+        check.warn(
+            f"{RELEASE_WORKFLOW} triggers on tag pushes matching {filters}, which uses Actions "
+            "filter syntax this check cannot evaluate (`!`, `**` or `+`), so whether a release tag "
+            "reaches the lane is not established by reading the file. The filter may well be "
+            "correct; confirm by hand that a tag of the protected shape "
+            f"(`refs/tags/v[0-9]*.[0-9]*.[0-9]*`, e.g. {PROTECTED_RELEASE_TAGS[1]}) matches it",
+            path=RELEASE_WORKFLOW,
+        )
 
     # PRESENCE IS NOT CAPABILITY. A correctly named caller firing on the right tag still attests
     # nothing if it cannot grant the lane what the lane declares: GitHub refuses the run at
