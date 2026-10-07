@@ -353,6 +353,26 @@ def test_a_writer_named_for_inserts_cannot_overwrite_a_row_by_reusing_its_id():
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_a_writer_named_for_inserts_cannot_overwrite_a_batch_by_reusing_its_id():
+    """The same rule on ``BaseModel.save``, which Batch inherits: the batch writer may create a
+    Batch, not overwrite one."""
+    existing = _make_batch(f"existing-{uuid.uuid4()}")
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write(
+            "batch",
+            lambda: Batch(pk=existing.pk, entity=existing.entity, name="overwritten", source="test").save(
+                force_update=True
+            ),
+        )
+    with pytest.raises(UnguardedOperation, match="save tap_grid.Batch"):
+        _under_grid_write(
+            "batch", lambda: Batch(pk=existing.pk, entity=existing.entity, name="overwritten", source="test").save()
+        )
+    existing.refresh_from_db()
+    assert existing.name != "overwritten"
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
 def test_an_upsert_is_checked_as_the_update_it_can_be(monkeypatch: pytest.MonkeyPatch):
     """bulk_create(update_conflicts=True) updates existing rows, so it needs the fields, not just
     the right to insert. No shipped writer may bulk-create; this one is granted inserts only."""
