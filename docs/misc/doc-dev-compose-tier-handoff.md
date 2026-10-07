@@ -69,12 +69,12 @@ Verified against `Dockerfile`, `docker/entrypoint.sh`, `docker-compose.yml`, and
    spawn time, not in the entrypoint (deliberate; see the entrypoint comment). A
    self-contained container needs it in the startup path (idempotence guard required) or as
    a documented one-time `exec` step.
-4. **Cache-seed refresh is first-boot-only.** The wheel seed copies into the `uv_cache`
-   volume only when that volume is **empty**. After an image update the old cache persists,
-   so wheels new to the updated lock download from the network instead of the fresh seed.
-   Cosmetic (slower first cycle after an update, needs network) — but don't promise
-   "instant" cycles until the seed-refresh logic compares versions instead of testing
-   emptiness.
+4. **Cache-seed refresh was first-boot-only, and that was not cosmetic.** The wheel seed
+   copied into the `uv_cache` volume only when the volume was **empty**, so after an image
+   update the old cache and the old `/app/.venv` persisted. That once served a `cryptography`
+   compiled against OpenSSL 3.6 into an image whose Python uses 4.0, and broke FIPS at boot
+   (tap#933). The entrypoint now stamps the cache with the image that seeded it and clears
+   both volumes on a mismatch (`req-cicd-supply-chain-provenance-4`).
 
 What does NOT carry over from spawn: worktrees, port bands, session registry, branch
 hygiene, host-readiness battery — all dev-multisession machinery that has no meaning in this

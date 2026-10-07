@@ -22,6 +22,11 @@
 
 ARG TAP_FIPS=1
 
+# How FIPS is activated, independent of whether it is on at all (TAP_FIPS above). See the
+# web Dockerfile's matching ARG and docker/activate-fips-system-wide.sh for the full
+# rationale; both images share the same script and the same decision record (§5.4).
+ARG TAP_FIPS_ACTIVATION=system
+
 # ============================================================================
 # ossl-builder — compile the pinned OpenSSL FIPS provider (fips.so)
 # ============================================================================
@@ -53,15 +58,39 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af
 
 # postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
-# image), openssl (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
+# image), openssl-3.6 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
+#
+# `openssl-3.6`, not `openssl-4.0` or the bare `openssl` alias — tap#932/#933, L18.
+#
+# `libpq-18` is EXPLICITLY PINNED here too, corrected from an earlier, wrong claim in this
+# comment that it "had not cut over" — checked directly, right now, it has: `postgresql-16-client`
+# pulls `libpq-18` transitively, unpinned, which currently resolves to `18.6-r5` and links
+# `libcrypto.so.4`/`libssl.so.4` (confirmed via `strings` on the installed `libpq.so.5`). This
+# image is runtime-only (no `-dev` packages, no `cryptography`/psycopg build here), so this
+# wouldn't poison a Python process the way it did on the web image — but `psql`/`pg_isready`
+# (used by the healthcheck) are real libpq consumers in this same image, so pinning for
+# consistency and to not leave a second, unpinned copy of the same hazard sitting here.
+# A real, non-simulated `apk add` with this exact package set, `libpq-18=18.6-r4` and
+# `openssl-3.6` resolves clean, no conflicts. See Dockerfile (web image) for the full writeup,
+# including the from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
+# the cause of the original FIPS self-check failure. The lingering `libssl3`/`libcrypto3` (.so.3)
+# belong to `apk-tools` itself regardless of any of this, and never share a process with postgres.
+#
+# `krb5-libs` pinned for the same reason as the web image (see Dockerfile there for the full
+# writeup): `libpq.so.5` links GSSAPI/Kerberos support unconditionally, and `krb5-libs`'s own
+# crypto backend (`libk5crypto.so.3`) floats to `openssl-4.0` independently of `libpq-18`'s own
+# pin. Pinning for the same consistency reason as `libpq-18` above, not a confirmed live hazard
+# in this specific image (no Python process here to poison), one revision before its own cutover.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     postgresql-16 \
     postgresql-16-client \
     postgresql-16-oci-entrypoint \
+    libpq-18=18.6-r4 \
+    krb5-libs=1.22.2-r4 \
     gosu \
-    openssl \
+    openssl-3.6=3.6.5-r1 \
     bash \
     tzdata \
       ; then break; fi; \
@@ -110,16 +139,29 @@ FROM base AS fips-0
 ENV TAP_FIPS_MODE=0
 LABEL org.tap.fips="false"
 
+# TAP_FIPS_ACTIVATION is meaningless when FIPS is off; see the web Dockerfile's matching
+# aliases for why these exist (keeps the final stage's selection a single-level ARG
+# template, which is what test_container_healthcheck.py's ancestry walker resolves).
+FROM fips-0 AS fips-0-legacy
+FROM fips-0 AS fips-0-system
+
 # ============================================================================
-# fips-1 — FIPS variant (default, TAP_FIPS=1)
+# fips-1-base — shared prerequisite for both activation mechanisms below
 # ============================================================================
-FROM base AS fips-1
+FROM base AS fips-1-base
 
 # Drop our pinned provider into the base's ossl-modules dir, then fipsinstall it
 # in-image (self-tests + integrity MAC). Postgres links the SYSTEM libcrypto for TLS +
 # cryptohash, so it inherits the activated provider with no rebuild (§5.4).
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+
+# ============================================================================
+# fips-1-legacy — the ORIGINAL activation mechanism (separate generated file +
+# OPENSSL_CONF). Kept as TAP_FIPS_ACTIVATION=legacy; see the web Dockerfile's matching
+# stage and docs/misc/doc-fips-assessment-record.md for why "system" is now the default.
+# ============================================================================
+FROM fips-1-base AS fips-1-legacy
 
 # Strict fips + base provider set, fips=yes globally. Order is load-bearing (openssl_conf
 # before the .include, else it is swallowed into [fips_sect] and nothing activates — L1);
@@ -150,6 +192,19 @@ ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
 # ============================================================================
-# final — select the variant by the build flag (default fips-1)
+# fips-1-system — the DEFAULT activation mechanism: edits Wolfi's own stock
+# /etc/ssl/openssl.cnf in place. See docker/activate-fips-system-wide.sh.
 # ============================================================================
-FROM fips-${TAP_FIPS} AS final
+FROM fips-1-base AS fips-1-system
+
+COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+RUN sh /opt/ossl/activate-fips-system-wide.sh
+
+ENV TAP_FIPS_MODE=1
+LABEL org.tap.fips="true"
+
+# ============================================================================
+# final — select the variant by TAP_FIPS and (when FIPS is on) TAP_FIPS_ACTIVATION, in
+# ONE templated FROM (see the fips-0-legacy/fips-0-system aliases above for why).
+# ============================================================================
+FROM fips-${TAP_FIPS}-${TAP_FIPS_ACTIVATION} AS final
