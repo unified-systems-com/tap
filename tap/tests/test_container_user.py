@@ -100,7 +100,15 @@ def test_the_root_only_image_setup_happens_before_the_drop_not_after() -> None:
     failure one stage away from the edit that caused it.
     """
     stages = _stages()
-    for name in ("app", "fips-0", "fips-1"):
+    for name in (
+        "app",
+        "fips-0",
+        "fips-0-legacy",
+        "fips-0-system",
+        "fips-1-base",
+        "fips-1-legacy",
+        "fips-1-system",
+    ):
         assert not [line for line in stages[name] if line.upper().startswith("USER ")], name
 
 

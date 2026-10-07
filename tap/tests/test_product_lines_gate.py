@@ -109,8 +109,8 @@ def test_cold_boot_boots_core_ci_on_the_full_and_boot_tiers(workflow: dict[str, 
     assert caller["with"]["lane"] == "cold-boot"
     job = _load("core-ci.yml")["jobs"]["cold-boot"]
     assert job["env"]["TAP_BOOT_PROFILE"] == "core_ci"
-    cache = next(s for s in job["steps"] if "actions/cache" in str(s.get("uses", "")))
-    assert cache["with"]["key"].startswith("uv-ci-core_ci-")
+    # No cross-run uv cache (tap#933): the lane boots on a volume seeded from its own image.
+    assert not [s for s in job["steps"] if "actions/cache" in str(s.get("uses", ""))]
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
