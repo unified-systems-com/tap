@@ -11,7 +11,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from tap_plugins.validate.repo import REUSABLE_CALLER, REUSABLE_PREFIX
+from tap_plugins.validate.repo import REUSABLE_CALLER, REUSABLE_PREFIX, REUSABLE_RELEASE
 from tap_plugins.validate.service import CheckResult, ValidationResult, validate_plugin
 
 _SHA = "f64030e0ba5376ff6e2121bc7dd1ceddbbda1b96"
@@ -159,6 +159,7 @@ class TestOptIn:
             "repo-ci-caller-pin",
             "repo-caller-permissions",
             "repo-nightly-shape",
+            "repo-release-lane",
             "repo-waiver-ledger",
         }
 
@@ -594,20 +595,56 @@ def _caller_with_grant(ref: str, grant: str | None) -> str:
     )
 
 
+def _caller_with_workflow_grant(ref: str, workflow_grant: str) -> str:
+    """A caller whose job declares NO block, so the WORKFLOW grant is the effective one.
+
+    The inheriting shape. `_caller_with_grant` fixes the workflow level at `contents: read`, which
+    cannot express an inherited `contents: write` or GitHub's `read-all`/`write-all` shorthand —
+    the two runnable shapes that an equality test silently failed.
+    """
+    return (
+        f"name: ci\non: [pull_request]\npermissions:\n  {workflow_grant}\n\njobs:\n  tap:\n"
+        f"    uses: {REUSABLE_CALLER}@{ref}\n    with:\n      plugin_slug: shell_sample\n"
+    )
+
+
 class TestCallerPermissions:
-    def test_the_narrow_grant_passes(self, tmp_path: Path) -> None:
+    def test_the_full_grant_passes(self, tmp_path: Path) -> None:
+        """Both scopes on the calling job. `contents: read` is not optional: the lane's own jobs
+        declare it, and a job-level block replaces the workflow grant rather than merging."""
+        grant = "contents: read\n      security-events: write"
         repo = _make_repo(
             tmp_path,
-            workflows={
-                "ci.yml": _caller_with_grant(_SHA, "security-events: write"),
-                "nightly.yml": _caller_with_grant(_SHA, "security-events: write"),
-            },
+            workflows={"ci.yml": _caller_with_grant(_SHA, grant), "nightly.yml": _caller_with_grant(_SHA, grant)},
         )
         check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
         assert check.status == "pass", _messages(check)
         assert check.details is not None
         assert [c["granted"] for c in check.details["callers"]] == [True, True]
         assert [c["contents_write"] for c in check.details["callers"]] == [False, False]
+
+    def test_security_events_alone_fails(self, tmp_path: Path) -> None:
+        """THE REGRESSION. This exact shape was asserted to PASS by a test called
+        `test_the_narrow_grant_passes`, and on 2026-09-29 eight repositories adopted it — following
+        this check's own over-grant warning — and every CI run in all eight died at startup with
+        zero jobs and no log. A job-level block replaces the workflow grant, so naming only
+        `security-events` grants no `contents`, and the lane declares `contents: read`."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller_with_grant(_SHA, "security-events: write")})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "fail", _messages(check)
+        text = _messages(check)
+        assert "contents: read" in text
+        assert "startup_failure" in text
+
+    def test_the_over_grant_message_says_narrow_not_remove(self, tmp_path: Path) -> None:
+        """The wording is the defect that caused the outage: a reader told to REMOVE `contents:
+        write` produces a block with no `contents` at all."""
+        grant = "contents: write\n      security-events: write"
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller_with_grant(_SHA, grant)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        text = _messages(check)
+        assert "NARROW it to `contents: read`" in text
+        assert "do not remove the scope" in text
 
     def test_no_permissions_block_warns_and_says_what_the_symptom_will_be(self, tmp_path: Path) -> None:
         """A job that declares nothing inherits the workflow default, which is not the same as
@@ -624,9 +661,8 @@ class TestCallerPermissions:
         scanning, and a legacy grant that passes silently survives the migration by being
         invisible."""
         both = _caller_with_grant(_SHA, "security-events: write\n      contents: write")
-        repo = _make_repo(
-            tmp_path, workflows={"ci.yml": both, "nightly.yml": _caller_with_grant(_SHA, "security-events: write")}
-        )
+        conformant = _caller_with_grant(_SHA, "contents: read\n      security-events: write")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": both, "nightly.yml": conformant})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
         assert check.status == "warn", _messages(check)
         assert "grants `contents: write` on the job calling the reusable lane" in _messages(check)
@@ -653,7 +689,7 @@ class TestCallerPermissions:
         """A job calling something else is not this check's business."""
         other = (
             "name: ci\non: [pull_request]\njobs:\n  tap:\n"
-            f"    permissions:\n      security-events: write\n    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            f"    permissions:\n      contents: read\n      security-events: write\n    uses: {REUSABLE_CALLER}@{_SHA}\n"
             "  extra:\n    uses: some-org/other/.github/workflows/x.yml@main\n"
         )
         repo = _make_repo(tmp_path, workflows={"ci.yml": other})
@@ -833,6 +869,301 @@ class TestWaiverLedger:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
         assert check.status == "fail"
 
+
+def _caller_with_workflow_grant_literal(ref: str, literal: str) -> str:
+    """A caller whose WORKFLOW `permissions:` is GitHub's scalar shorthand, not a mapping.
+
+    `permissions: read-all` and `write-all` are strings. The map-form helpers cannot express them,
+    and that is exactly why the shorthand went unhandled: nothing in the corpus had this shape.
+    """
+    return (
+        f"name: ci\non: [pull_request]\npermissions: {literal}\n\njobs:\n  tap:\n"
+        f"    uses: {REUSABLE_CALLER}@{ref}\n    with:\n      plugin_slug: shell_sample\n"
+    )
+
+
+class TestEffectiveGrantIsNotEquality:
+    """The grant arithmetic once compared scopes for EQUALITY, so shapes GitHub accepts were
+    failed. Fail-closed, so never a bypass — but a check that reds a runnable
+    repository teaches people to "fix" a working one, which is how the 2026-09-29 outage was
+    instructed in the first place. The same error class as the `-8` half of this change.
+    """
+
+    def test_inherited_contents_write_satisfies_the_read_requirement(self, tmp_path: Path) -> None:
+        """`write` includes `read`. A job inheriting `contents: write` can read contents, so the
+        callee's `contents: read` is satisfied and the run starts — it must not hard-fail."""
+        caller = _caller_with_workflow_grant(_SHA, "contents: write\n  security-events: write")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": caller})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn", _messages(check)
+        assert "missing `contents: read`" not in _messages(check)
+        assert check.details is not None
+        assert check.details["callers"][0]["granted"] is True
+
+    def test_the_inherited_over_grant_is_still_reported(self, tmp_path: Path) -> None:
+        """Satisfying the requirement is not the same as being narrow. An inherited
+        `contents: write` is repository write just as a job-level one is, and the old job-block-only
+        test for it reported nothing at all for the inheriting shape."""
+        caller = _caller_with_workflow_grant(_SHA, "contents: write\n  security-events: write")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": caller})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert "NARROW it to `contents: read`" in _messages(check)
+        assert check.details is not None
+        assert check.details["callers"][0]["contents_write"] is True
+
+    def test_read_all_shorthand_grants_contents_read(self, tmp_path: Path) -> None:
+        """`permissions: read-all` is a STRING, not a map, so the parser returned None and every
+        scope read as missing — including `contents`, which the shorthand plainly grants."""
+        caller = _caller_with_workflow_grant_literal(_SHA, "read-all")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": caller})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn", _messages(check)
+        assert "missing `security-events: write`" in _messages(check)
+        assert "missing `contents: read`" not in _messages(check)
+
+    def test_write_all_shorthand_satisfies_both_scopes(self, tmp_path: Path) -> None:
+        """`write-all` grants write on every scope, which covers both requirements — reported as an
+        over-grant rather than a missing one."""
+        caller = _caller_with_workflow_grant_literal(_SHA, "write-all")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": caller})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn", _messages(check)
+        assert "missing" not in _messages(check)
+        assert "NARROW it to `contents: read`" in _messages(check)
+
+
+class TestReleaseLane:
+    """`tap#892`: a repository configured to cut releases, with nothing configured to attest them.
+
+    Every direction, because the trigger is a DECLARATION rather than an event and it would be easy
+    to build a check that either reports every plugin that never releases or stays silent until the
+    first release — which is the run nobody watches, since it succeeds.
+    """
+
+    def _release_lane(
+        self, ref: str = _SHA, *, calls_shared: bool = True, grant: str | None = None
+    ) -> str:
+        """The conformant caller shape, which is the one the fleet actually carries.
+
+        The grant is part of the shape rather than decoration: the lane declares
+        `permissions: {}` and its jobs take subsets of `contents: read`, `id-token: write` and
+        `attestations: write`, so a caller granting less has its run refused at creation and
+        attests nothing. `grant=""` builds the caller with no block at all.
+        """
+        target = f"{REUSABLE_RELEASE}@{ref}" if calls_shared else f"./.github/workflows/local.yml@{ref}"
+        if grant is None:
+            grant = "contents: read\n      id-token: write\n      attestations: write"
+        block = f"    permissions:\n      {grant}\n" if grant else ""
+        return (
+            "name: release-sbom\non:\n  push:\n    tags: [\"v*\"]\njobs:\n  release-sbom:\n"
+            + block
+            + f"    uses: {target}\n    with:\n      plugin_slug: shell_sample\n"
+        )
+
+    def test_declares_releases_without_a_lane_fails(self, tmp_path: Path) -> None:
+        """The defect as measured in the fleet: release-please onboarded, no release lane."""
+        repo = _make_repo(tmp_path)
+        (repo / "release-please-config.json").write_text("{}\n")
+        (repo / ".release-please-manifest.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail"
+        text = _messages(check)
+        assert "release-please-config.json" in text
+        assert "nobody downstream can verify" in text
+
+    def test_the_manifest_alone_is_a_declaration(self, tmp_path: Path) -> None:
+        """A repository mid-onboarding has still said it intends to release."""
+        repo = _make_repo(tmp_path)
+        (repo / ".release-please-manifest.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail"
+
+    def test_declares_releases_with_a_lane_passes(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "release-please-config.json").write_text("{}\n")
+        (repo / ".github" / "workflows" / "release-sbom.yml").write_text(self._release_lane())
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
+    def test_a_repository_that_declares_no_releases_is_not_reported(self, tmp_path: Path) -> None:
+        """A plugin consumed only from a boot pin never cuts a tag. Silence is the correct answer,
+        and reporting it would teach authors to add configuration to quiet a checker."""
+        check = _check(validate_plugin(_make_repo(tmp_path), repo_scope=True), "repo-release-lane")
+        assert check.status == "pass"
+        assert "declares no releases" in _messages(check)
+
+    def test_a_lane_without_release_please_is_coherent(self, tmp_path: Path) -> None:
+        """A hand-cut tag still reaches the lane, so this pair is not an inconsistency."""
+        repo = _make_repo(tmp_path)
+        (repo / ".github" / "workflows" / "release-sbom.yml").write_text(self._release_lane())
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass"
+
+    def test_a_file_with_the_right_name_is_not_the_property(self, tmp_path: Path) -> None:
+        """The check asserts a caller of the shared lane, not a correctly-named file. A hand-rolled
+        release workflow produces no attestation a consumer can verify against."""
+        repo = _make_repo(tmp_path)
+        (repo / "release-please-config.json").write_text("{}\n")
+        (repo / ".github" / "workflows" / "release-sbom.yml").write_text(
+            self._release_lane(calls_shared=False)
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail"
+        assert "no job calls" in _messages(check)
+
+    def test_the_pin_is_not_this_check_s_business(self, tmp_path: Path) -> None:
+        """`repo-ci-caller-pin` owns pinning across the whole reusable prefix. Asserting it here too
+        would be a second place to fix one rule — so a branch ref passes THIS check and fails that
+        one, which is the division of labour the two checks are written to keep."""
+        repo = _make_repo(tmp_path)
+        (repo / "release-please-config.json").write_text("{}\n")
+        (repo / ".github" / "workflows" / "release-sbom.yml").write_text(self._release_lane("main"))
+        result = validate_plugin(repo, repo_scope=True)
+        assert _check(result, "repo-release-lane").status == "pass"
+        assert _check(result, "repo-ci-caller-pin").status == "fail"
+
+
+    def test_a_lookalike_reusable_path_is_not_the_shared_lane(self, tmp_path: Path) -> None:
+        """The call was once matched with `startswith`, so
+        `…/plugin-release-sbom.yml-disabled@<sha>` counted as the attestation lane.
+        A repository could pass this check while calling something else entirely — and the pin check
+        would accept it too, since it stays under `REUSABLE_PREFIX`. The target is compared exactly.
+        """
+        lane = self._release_lane().replace(
+            f"{REUSABLE_RELEASE}@{_SHA}", f"{REUSABLE_RELEASE}-disabled@{_SHA}"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "no job calls" in _messages(check)
+
+    def test_a_caller_that_cannot_grant_the_lane_fails(self, tmp_path: Path) -> None:
+        """Presence is not capability. The lane signs provenance and both SBOM predicates, so it
+        needs `id-token: write` and `attestations: write`; a caller granting only `contents: read`
+        has its run refused at creation and the release publishes an unattested wheel anyway."""
+        lane = self._release_lane(grant="contents: read")
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "`id-token: write`" in _messages(check)
+        assert "`attestations: write`" in _messages(check)
+        assert "startup_failure" in _messages(check)
+
+    def test_a_job_level_write_all_satisfies_the_grant_but_is_reported(self, tmp_path: Path) -> None:
+        """A job-level scalar shorthand DECLARES a block, so it replaces the workflow grant rather
+        than reading as an absent one — and `write-all` covers all three scopes the lane needs.
+
+        It is still not conformant-and-silent. The lane splits its jobs so no third-party step
+        shares a token that can sign (`req-cicd-runner-least-privilege-3`), and a caller handing it
+        every writable scope undoes that at the caller boundary. Capability is what this check
+        asserts, so the grant is satisfied and the breadth warns — the same shape `-8` uses for
+        `contents: write` on the CI caller, which this check was silent about until now.
+        """
+        lane = self._release_lane(grant=None).replace(
+            "    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n",
+            "    permissions: write-all\n",
+        )
+        assert "write-all" in lane
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "warn", _messages(check)
+        assert "NARROW it to" in _messages(check)
+        assert "`attestations: write`" in _messages(check)
+
+    def test_a_disabled_calling_job_fails(self, tmp_path: Path) -> None:
+        """`if: ${{ false }}` is accepted by GitHub and simply never runs the job. Target, trigger
+        and grant can all be correct while the repository publishes an unattested wheel on every
+        release tag, which is the invisible state this check exists to catch."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ false }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "never runs" in _messages(check)
+
+    def test_a_false_literal_comparison_disables_the_job(self, tmp_path: Path) -> None:
+        """`${{ 'a' == 'b' }}` is two constants, so the file itself decides the answer and the job
+        never runs. The guard's justification is that it decides what the file decides, so a
+        constant comparison has to be in scope or the justification is only half applied."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ 'a' == 'b' }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "never runs" in _messages(check)
+
+    def test_a_true_literal_comparison_is_accepted(self, tmp_path: Path) -> None:
+        """The other direction, so the guard is not just "any comparison fails"."""
+        lane = self._release_lane().replace(
+            "  release-sbom:\n", "  release-sbom:\n    if: ${{ 'v' == 'v' }}\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "pass", _messages(check)
+
+    def test_a_context_condition_warns_rather_than_passing_or_failing(self, tmp_path: Path) -> None:
+        """A condition needing the event is neither proven nor dead, and the verdict says so.
+
+        Passing it overstates what was checked — this requirement claims every release is attested,
+        which an unevaluable condition does not establish. Failing it would forbid a construct core
+        itself uses (`plugin-ci.yml` gates its upload job on `inputs.plugin_repo == ''`) and would
+        teach authors to delete a fork guard to quiet the checker. So it warns.
+        """
+        lane = self._release_lane().replace(
+            "  release-sbom:\n",
+            "  release-sbom:\n    if: ${{ github.repository_owner == 'someone-else' }}\n",
+        )
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "warn", _messages(check)
+        assert "cannot be established by reading the file" in _messages(check)
+
+    def test_an_unverifiable_trigger_fails_rather_than_passing(self, tmp_path: Path, monkeypatch) -> None:
+        """Unknown is not conformant, the same verdict the caller-presence half of this check
+        already reaches on an inconclusive parse.
+
+        With no YAML parser the lexical fallback still finds the `uses:` line, so the call is
+        proven — while the `on:` triggers cannot be read at all. Reporting that pair as conformant
+        is this check's own defect one level up: a repository declaring releases would pass while
+        GitHub never runs the lane, which is the unattested first release it exists to catch.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("no yaml for this test")
+            return real_import(name, *args, **kwargs)
+
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": self._release_lane()})
+        (repo / "release-please-config.json").write_text("{}\n")
+        monkeypatch.setattr(builtins, "__import__", _no_yaml)
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "could not be parsed" in _messages(check)
+        assert "An unknown shape is not a conformant one" in _messages(check)
+
+    def test_a_lane_that_cannot_fire_fails(self, tmp_path: Path) -> None:
+        """Presence of the caller does not prove a release reaches it. A lane triggered only by
+        `workflow_dispatch` passes every presence test and still lets each release tag publish
+        unattested — the check would report the property while the property was false."""
+        lane = self._release_lane().replace('on:\n  push:\n    tags: ["v*"]', "on:\n  workflow_dispatch:")
+        assert "workflow_dispatch" in lane
+        repo = _make_repo(tmp_path, workflows={"release-sbom.yml": lane})
+        (repo / "release-please-config.json").write_text("{}\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-lane")
+        assert check.status == "fail", _messages(check)
+        assert "does not trigger on a tag push" in _messages(check)
 
 class TestNightlyShapeBypasses:
     """Two ways the shape check could certify something it had not proven.
