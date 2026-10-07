@@ -268,6 +268,16 @@ def _save_may_insert(instance: models.Model, save_kwargs: dict[str, Any]) -> boo
     return instance._state.adding or save_kwargs.get("update_fields") is None
 
 
+def _snapshot_update_fields(save_kwargs: dict[str, Any]) -> None:
+    """Read a save's ``update_fields`` once, so the write guard and Django see the same fields.
+
+    A one-shot iterator would be used up by the guard and leave the save an empty field list;
+    any other iterable could yield different fields on a later pass (Issue# 980 - tap).
+    """
+    if save_kwargs.get("update_fields") is not None:
+        save_kwargs["update_fields"] = tuple(save_kwargs["update_fields"])
+
+
 def _save_may_update(save_kwargs: dict[str, Any]) -> bool:
     """True iff this save may change an existing row: any save but a forced insert.
 
@@ -325,7 +335,12 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
         objs = list(objs)
         # Django takes these options by position as well as by name; bind them as it will, so an
         # upsert passed positionally is still seen as one.
-        options = _BULK_CREATE_SIGNATURE.bind(self, objs, *args, **kwargs).arguments
+        # Django is then called with the same bound arguments, its update fields read once, so the
+        # guard and Django see the same fields.
+        bound = _BULK_CREATE_SIGNATURE.bind(self, objs, *args, **kwargs)
+        options = bound.arguments
+        if options.get("update_fields") is not None:
+            options["update_fields"] = tuple(options["update_fields"])
         if options.get("update_conflicts"):
             # An upsert inserts the rows that do not conflict and updates those that do: checked
             # as both. One naming no fields is refused, as an update without fields is.
@@ -342,10 +357,11 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
                 may_insert=True,
                 may_update=False,
             )
-        return super().bulk_create(objs, *args, **kwargs)
+        return super().bulk_create(*bound.args[1:], **bound.kwargs)
 
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
         objs = list(objs)
+        fields = tuple(fields)  # read once: the guard and Django see the same fields
         self._guard("bulk_update", lambda: [getattr(o, "entity_type", "") for o in objs], fields=fields)
         return super().bulk_update(objs, fields, *args, **kwargs)
 
@@ -515,6 +531,7 @@ class Entity(models.Model):
         """
         from tap_grid.write_guard import enforce_service_write
 
+        _snapshot_update_fields(kwargs)
         enforce_service_write(
             "save",
             "tap_grid.Entity",
@@ -1100,6 +1117,7 @@ class BaseModel(models.Model):
         # from a view/panel/command fails closed. Layer 1 of the write guard.
         from tap_grid.write_guard import enforce_service_write
 
+        _snapshot_update_fields(kwargs)
         enforce_service_write(
             "save",
             self._meta.label,

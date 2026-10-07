@@ -13,7 +13,7 @@ as in production. Every other test keeps the hatch, which stops at a gated body.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import pytest
@@ -25,7 +25,7 @@ from tap_auth.enforcement import requires_capability
 from tap_auth.errors import UnguardedOperation
 from tap_cares.models import Schedule
 from tap_grid.batch import create_batch
-from tap_grid.models import Batch, Entity, Search
+from tap_grid.models import Batch, BatchStatus, Entity, Search
 from tap_grid.services import create_node, delete_node
 from tap_grid.write_guard import (
     BELOW_PIPELINE_ENTITY_TYPES,
@@ -458,3 +458,70 @@ def test_an_upsert_is_checked_as_the_insert_and_the_update_it_can_be(monkeypatch
             ),
         )
     assert not Entity.objects.filter(name=name).exists()
+
+
+class _ShiftingFields:
+    """An iterable that yields ``first`` on its first pass and ``later`` on every pass after."""
+
+    def __init__(self, first: list[str], later: list[str]) -> None:
+        self.first, self.later, self.passes = first, later, 0
+
+    def __iter__(self) -> Iterator[str]:
+        self.passes += 1
+        return iter(self.first if self.passes == 1 else self.later)
+
+
+@pytest.mark.spec("req-tap-auth-write-batch-routing")
+def test_the_guard_and_the_write_read_the_same_fields(monkeypatch: pytest.MonkeyPatch):
+    """A write's fields are read once, and that one reading goes to both the guard and Django:
+    a one-shot iterator still writes, and an iterable that yields other fields on a later pass
+    writes only what the guard checked. No shipped writer may bulk-update or bulk-create; those
+    grants are temporary."""
+    import tap_grid.write_guard as write_guard
+
+    batch = _make_batch(f"fields-once-{uuid.uuid4()}")
+    batch.metadata = {"written": "once"}
+    _under_grid_write("bookkeeping", lambda: batch.save(update_fields=(f for f in ["metadata"])))
+    batch.refresh_from_db()
+    assert batch.metadata == {"written": "once"}
+
+    batch.metadata = {"written": "by save"}
+    batch.status = BatchStatus.FAILED
+    _under_grid_write("bookkeeping", lambda: batch.save(update_fields=_ShiftingFields(["metadata"], ["status"])))
+    batch.refresh_from_db()
+    assert (batch.metadata, batch.status) == ({"written": "by save"}, BatchStatus.OPEN)
+
+    # Django's bulk_update writes through a queryset update, which the guard checks too.
+    bookkeeping = {
+        **write_guard.BELOW_PIPELINE_WRITES["bookkeeping"],
+        ("queryset bulk_update", "tap_grid.Batch"): frozenset({"metadata"}),
+        ("queryset update", "tap_grid.Batch"): frozenset({"metadata"}),
+    }
+    monkeypatch.setitem(write_guard.BELOW_PIPELINE_WRITES, "bookkeeping", bookkeeping)
+    batch.metadata = {"written": "in bulk"}
+    batch.status = BatchStatus.FAILED
+    _under_grid_write(
+        "bookkeeping", lambda: Batch.objects.bulk_update([batch], _ShiftingFields(["metadata"], ["status"]))
+    )
+    batch.refresh_from_db()
+    assert (batch.metadata, batch.status) == ({"written": "in bulk"}, BatchStatus.OPEN)
+
+    batch_writer = {
+        **write_guard.BELOW_PIPELINE_WRITES["batch"],
+        ("queryset bulk_create", "tap_grid.Entity"): frozenset({ROW_INSERT, "name"}),
+    }
+    monkeypatch.setitem(write_guard.BELOW_PIPELINE_WRITES, "batch", batch_writer)
+    spine = _batch_spine(f"upsert-once-{uuid.uuid4()}")
+    renamed = f"renamed-{uuid.uuid4()}"
+    _under_grid_write(
+        "batch",
+        lambda: Entity.objects.bulk_create(
+            [Entity(id=spine.pk, entity_type="batch", name=renamed, dimensions={"shifted": "in"})],
+            update_conflicts=True,
+            update_fields=_ShiftingFields(["name"], ["dimensions"]),
+            unique_fields=["id"],
+        ),
+    )
+    spine.refresh_from_db()
+    assert spine.name == renamed
+    assert spine.dimensions != {"shifted": "in"}
