@@ -22,6 +22,7 @@ from django.core.exceptions import ImproperlyConfigured
 from tap_grid.grid_tables import (
     classified_models,
     grid_tables,
+    history_tables,
     read_guarded_tables,
     search_role_grant_tables,
     spine_models,
@@ -141,13 +142,29 @@ class TestForeignDeclarerFailsClosed:
 class TestConsumerSetRelationship:
     """req-grid-table-classification.sec-5: the one deliberate asymmetry, pinned."""
 
-    def test_grant_set_is_exactly_guarded_set_plus_entity(self):
-        assert search_role_grant_tables() == read_guarded_tables() | {Entity._meta.db_table}
+    def test_grant_set_is_exactly_guarded_set_minus_history(self):
+        assert search_role_grant_tables() == read_guarded_tables() - history_tables()
+        assert grid_tables() <= read_guarded_tables()
 
-    def test_entity_is_granted_but_not_read_guarded(self):
+    def test_entity_is_granted_and_read_guarded(self):
+        """Issue# 963 - tap: the spine's read-guard exemption is gone."""
         entity_table = Entity._meta.db_table
         assert entity_table in search_role_grant_tables()
-        assert entity_table not in read_guarded_tables()
+        assert entity_table in read_guarded_tables()
+
+    def test_every_classified_domain_table_has_its_history_guarded(self):
+        """Each BaseModel's simple_history table is read-guarded, and never granted to search."""
+        from django.apps import apps
+
+        expected = {
+            model.history.model._meta.db_table
+            for model in apps.get_models()
+            if issubclass(model, BaseModel) and not model._meta.abstract
+        }
+        assert expected
+        assert expected == history_tables()
+        assert expected <= read_guarded_tables()
+        assert not expected & search_role_grant_tables()
 
     def test_entity_type_catalog_is_in_both_sets(self):
         catalog_table = EntityType._meta.db_table
@@ -180,7 +197,8 @@ class TestConsumersUseTheSharedSource:
         regex = _guarded_regex()
         for table in read_guarded_tables():
             assert regex.search(f'SELECT * FROM "{table}"'), f"guarded table {table} not matched"
-        assert not regex.search(f'SELECT * FROM "{Entity._meta.db_table}"')
+        assert regex.search(f'SELECT * FROM "{Entity._meta.db_table}"')
+        assert not regex.search('SELECT * FROM "tap_user"')
 
     def test_search_role_module_returns_the_shared_grant_set(self):
         from tap_grid import search_role
