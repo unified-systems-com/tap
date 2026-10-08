@@ -92,7 +92,7 @@ def uses_endpoint_keys(document: dict[str, Any]) -> bool:
 def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_only) -> RefResolution:
     """Rewrite every ref in ``document`` to an id, on a copy; report what could not be resolved.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@8e10bce8f2dd/6d49a134f0d2 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/6d49a134f0d2 (derivation) — the one
         pass that turns a batch-local ref into the id every later stage and record sees
         (acceptance -3); the id itself is assigned by the resolver, never derived from the ref.
 

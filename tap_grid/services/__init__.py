@@ -1522,6 +1522,7 @@ def entity_liveness(
 
 
 @requires_capability(WRITE_CAPABILITY, operation="resolve_identity")
+@requires_capability(READ_CAPABILITY, operation="resolve_identity")
 def resolve_identity(
     type_slug: str,
     payload: Mapping[str, Any],
@@ -1559,7 +1560,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@91817a01cb5a/38bc29892d93 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@91817a01cb5a/af7e2a65f8ce (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).

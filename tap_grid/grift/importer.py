@@ -3878,7 +3878,7 @@ def _resolve_ref_identities(
     row to this one — sequential batches, not a collision. Resolving searches the live grid
     and reports what it finds, so a batch with a ref node first authorises ``grid.read``.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@8e10bce8f2dd/2f191f4abd80 (enforcement) — a ref
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/2f191f4abd80 (enforcement) — a ref
         node's search of the live grid runs only after grid.read is authorised (acceptance -5).
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw

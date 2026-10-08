@@ -392,3 +392,21 @@ class TestResolutionIsARead:
         assert Entity.objects.count() == before
         assert Entity.objects.get(pk=uuid.UUID(existing)).name == "Known"
         assert existing not in repr(result), "the existing row's id never reaches the submitter"
+
+    @pytest.mark.spec("req-grid-import-grift-identity-5")
+    def test_the_verb_itself_requires_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """resolve_identity searches the grid and returns what it finds, so it requires grid.read
+        itself, as resolve_edge_identity does: a caller that skips its own check is still refused."""
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        real_authorize = policy.authorize
+
+        def refuse_read(ctx: Any, capability: str, *args: Any, **kwargs: Any) -> Any:
+            if capability == READ_CAPABILITY and kwargs.get("operation") == "resolve_identity":
+                raise PermissionError("grid.read refused for this test")
+            return real_authorize(ctx, capability, *args, **kwargs)
+
+        monkeypatch.setattr(policy, "authorize", refuse_read)
+        with transaction.atomic(), pytest.raises(PermissionError, match="grid.read refused"):
+            resolve_identity("panel", {"slug": "anything"})
