@@ -72,6 +72,7 @@ DELETE_REASONS: frozenset[str] = frozenset(
         "resolved",
         "operator",
         "grift_import",
+        "authority",
         "unspecified",
     }
 )

@@ -68,6 +68,9 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "edges": [],
         "deletes": [],
         "purges": [],
+        "edge_authority": [],
+        "edge_authority_held": [],
+        "has_edge_authority": False,
         # Element id grammar is the contract with panel-table.js, which rebuilds it
         # from data-tap-table-panel-id. Built here rather than in the template because
         # json_script takes the id as a filter argument, and Django's `add` filter
@@ -75,7 +78,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         # paths render valid (empty) payloads too.
         **{
             f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}"
-            for k in ("nodes", "edges", "deletes", "purges", "completeness", "candidates", "verdicts")
+            for k in ("nodes", "edges", "deletes", "purges", "completeness", "candidates", "verdicts", "edge_authority")
         },
         "has_manifest": False,
     }
@@ -209,6 +212,51 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
     base["verdicts_authority"] = (verdicts or {}).get("authority") or ""
     base["verdicts_applied"] = (verdicts or {}).get("applied")
 
+    # The run's edge authority (req-grid-reconcile-edge-authority-15): what its complete claims
+    # removed, and any claim held because it would have emptied its scope, with the command that
+    # releases it. None = no reconcile phase reached this batch.
+    from tap_grid.reconcile import EDGE_AUTHORITY_KEY
+
+    edge_record = (verdicts or {}).get(EDGE_AUTHORITY_KEY)
+    base["has_edge_authority"] = edge_record is not None
+    base["edge_authority_mode"] = (edge_record or {}).get("authority") or ""
+    base["edge_authority_unapplied"] = (edge_record or {}).get("unapplied") or 0
+    base["edge_authority_counts"] = (edge_record or {}).get("counts") or {}
+    base["edge_authority_held"] = [
+        {
+            "claim_event_id": c.get("claim_event_id"),
+            "edge_type": c.get("edge_type"),
+            "direction": c.get("direction"),
+            "anchor_entity_id": c.get("anchor_entity_id"),
+            "in_scope": c.get("in_scope"),
+            "released": (
+                f"{(c.get('released') or {}).get('operator') or 'an operator'} at {(c.get('released') or {}).get('at')}"
+                if c.get("released")
+                else ""
+            ),
+            "superseded_by": c.get("superseded_by") or "",
+            "release_command": (
+                ""
+                if c.get("released") or c.get("superseded_by")
+                else (
+                    f"manage.py release_edge_authority_hold {batch.entity_id} "
+                    f"--claim {c.get('claim_event_id')} --as <operator>"
+                )
+            ),
+        }
+        for c in (edge_record or {}).get("held_claims", [])
+    ]
+    base["edge_authority"] = [
+        {
+            "edge_type": e.get("edge_type") or "",
+            "edge_id": e.get("edge_id"),
+            "outcome": e.get("outcome"),
+            "error": e.get("error") or "",
+            "claim_event_id": e.get("claim_event_id") or "",
+        }
+        for e in (edge_record or {}).get("entries", [])
+    ]
+
     base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
     base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))
     base["deletes"] = sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"]))
@@ -224,6 +272,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "candidates": sum(r["candidates"] for r in base["candidates"]),
         "verdicts": len(base["verdicts"]),
         "judged": sum(1 for r in base["verdicts"] if r["outcome"] == "judged"),
+        "edge_authority": len(base["edge_authority"]),
     }
     return base
 

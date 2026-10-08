@@ -141,21 +141,35 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
     if candidate_record is None:
         raise ReconcileError("no_candidates", f"batch {batch.entity_id} carries no candidate record")
     config = run_config_of(batch)
+    produced = {str(b) for b in candidate_record.get("observed_batches", [])}
+    produced.add(str(batch.entity_id))
     if not config["authority"]:
         record = record_not_judged(batch, reason="collector reconcile authority is off")
+        record[EDGE_AUTHORITY_KEY] = _edge_authority_off(produced)
+        _store(batch, record)
         logger.info(
             "[26c5] reconcile on batch %s: authority off, %d candidate(s) recorded not judged, nothing retired",
             batch.entity_id,
             record["candidates"],
         )
         return record
-    produced = {str(b) for b in candidate_record.get("observed_batches", [])}
-    produced.add(str(batch.entity_id))
     with transaction.atomic():
         record = falsify_candidates(batch, extra=extra, budget=config["budget"], authority="on")
         summary = _apply(batch, record, produced_batches=produced)
         record["applied"] = summary
+        # Edge authority after the node verdicts: an edge a tombstone already ended is then `gone`.
+        record[EDGE_AUTHORITY_KEY] = _apply_edge_authority(batch, produced_batches=produced)
         _store(batch, record)
+    edge_counts = record[EDGE_AUTHORITY_KEY]["counts"]
+    logger.info(
+        "[5f2c] reconcile on batch %s: edge authority %d applied, %d rejected stale, %d refused, %d gone, %d held",
+        batch.entity_id,
+        edge_counts[APPLIED],
+        edge_counts[REJECTED_STALE],
+        edge_counts[REFUSED],
+        edge_counts[GONE],
+        edge_counts[HELD],
+    )
     logger.info(
         "[b88a] reconcile on batch %s: %d applied, %d rejected stale, %d refused, %d not applicable, %d contradicted",
         batch.entity_id,
@@ -283,6 +297,319 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             counts[REFUSED] += 1
             logger.warning("[9f78] reconcile: %s on %s refused: %s", plan, entity_id, entry["applied"]["error"])
     return {"authority": "on", **counts}
+
+
+# ---------------------------------------------------------------------------
+# Applying edge authority (req-grid-reconcile-edge-authority-9, -11 to -13)
+# ---------------------------------------------------------------------------
+
+#: The key, inside the run's reconcile record, that holds the edge authority record.
+EDGE_AUTHORITY_KEY = "edge_authority"
+#: An edge no longer live when its proposal comes to be applied.
+GONE = "gone"
+#: A proposal of a held claim: deferred, not dropped (-13).
+HELD = "held"
+EDGE_AUTHORITY_OUTCOMES: frozenset[str] = frozenset({APPLIED, REJECTED_STALE, REFUSED, GONE, HELD})
+#: A claim that asserted none of a scope holding at least this many live edges is held (-13).
+WHOLE_SCOPE_HOLD_FLOOR = 3
+#: The delete reason an applied proposal records (req-grid-service-delete-reason).
+AUTHORITY_REASON = "authority"
+
+
+def _authority_records(produced_batches: set[str]) -> tuple[dict[tuple[str, str, str, str], Any], list[Any]]:
+    """The run's claimed claims, keyed by scope, and its ``proposed`` proposals in edge-id order.
+
+    Both are ``authority_proposed`` events written by the importer's dry-run on the run's own
+    batches. A claim's key is its batch and scope; a proposal names its claim by the same fields.
+    """
+    from tap_grid.models import BatchEvent, BatchEventType
+
+    run_batches = [uuid.UUID(b) for b in produced_batches]
+    claims = {
+        _claim_key(str(event.batch.entity_id), event.metadata): event
+        for event in BatchEvent.objects.filter(
+            event_type=BatchEventType.AUTHORITY_PROPOSED,
+            batch__entity_id__in=run_batches,
+            metadata__record="claim",
+            metadata__outcome="claimed",
+        ).select_related("batch")
+    }
+    proposals = list(
+        BatchEvent.objects.filter(
+            event_type=BatchEventType.AUTHORITY_PROPOSED,
+            batch__entity_id__in=run_batches,
+            metadata__record="proposal",
+            metadata__outcome="proposed",
+        )
+        .select_related("batch")
+        .order_by("entity_id", "id")
+    )
+    return claims, proposals
+
+
+def _claim_key(batch_id: str, scope: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    return (batch_id, str(scope.get("edge_type")), str(scope.get("anchor_entity_id")), str(scope.get("direction")))
+
+
+def _whole_scope(claim: Any) -> bool:
+    """True iff the claim asserted none of a scope holding ``WHOLE_SCOPE_HOLD_FLOOR`` or more live edges."""
+    m = claim.metadata
+    in_scope = int(m.get("proposed") or 0) + int(m.get("rejected_stale") or 0)
+    return int(m.get("asserted") or 0) == 0 and in_scope >= WHOLE_SCOPE_HOLD_FLOOR
+
+
+def _held_claim(claim: Any) -> dict[str, Any]:
+    m = claim.metadata
+    return {
+        "claim_event_id": str(claim.id),
+        "batch": str(claim.batch.entity_id),
+        "edge_type": m.get("edge_type"),
+        "anchor": m.get("anchor"),
+        "anchor_entity_id": m.get("anchor_entity_id"),
+        "direction": m.get("direction"),
+        "in_scope": int(m.get("proposed") or 0) + int(m.get("rejected_stale") or 0),
+        "proposed": int(m.get("proposed") or 0),
+        "released": None,
+        "superseded_by": None,
+    }
+
+
+def _edge_observed_since(edge_id: uuid.UUID, boundary: datetime, claiming_batch: str) -> list[str]:
+    """The batches, other than the claiming one, that created, updated or linked the edge since the
+    claim's read boundary: ``-8``'s fence, applied again at apply time (``-11``). This run's other
+    batches count, as they do in the dry-run."""
+    from tap_grid.models import BatchEvent, BatchEventType
+
+    return sorted(
+        {
+            str(b)
+            for b in BatchEvent.objects.filter(
+                entity_id=edge_id,
+                event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.LINK],
+                timestamp__gt=boundary,
+            )
+            .exclude(batch__entity_id=uuid.UUID(claiming_batch))
+            .values_list("batch__entity_id", flat=True)
+        }
+    )
+
+
+def _apply_proposal(
+    batch: Any, proposal: Any, claim: Any, removed: set[str], *, released_by: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Apply one proposal: lock, check it is live and claimable, fence it again, remove it."""
+    from dataclasses import replace
+
+    from tap_grid.caller_context import CallerContext, get_caller_context
+    from tap_grid.constraints import is_internal_edge_type
+    from tap_grid.models import Entity
+    from tap_grid.services import write_batch
+
+    edge_id = proposal.entity_id
+    edge_type = (proposal.metadata.get("identity") or {}).get("edge_type") or ""
+    if str(edge_id) in removed:
+        return {"outcome": GONE, "error": "already removed by another claim in this run"}
+    _lock_target(edge_id)
+    if not Entity.objects.filter(pk=edge_id, deleted_at__isnull=True).exists():
+        return {"outcome": GONE, "error": None}
+    if is_internal_edge_type(edge_type):
+        return {"outcome": REFUSED, "error": f"edge type {edge_type!r} is internal-only and cannot be claimed"}
+    boundary = _parse_boundary((claim.metadata if claim is not None else {}).get("read_boundary"))
+    if boundary is None:
+        return {"outcome": REFUSED, "error": "the claim recorded no read boundary; nothing can be fenced"}
+    observed = _edge_observed_since(edge_id, boundary, str(proposal.batch.entity_id))
+    if observed:
+        logger.warning(
+            "[e7a1] reconcile: authority proposal on edge %s rejected as stale at apply (observed by %s)",
+            edge_id,
+            ", ".join(observed),
+        )
+        return {"outcome": REJECTED_STALE, "error": f"observed since the claim's read by {', '.join(observed)}"}
+    audit = {
+        EDGE_AUTHORITY_KEY: {
+            "run": str(batch.entity_id),
+            "claim": proposal.metadata.get("claim"),
+            "proposal_event_id": str(proposal.id),
+            "released_by": dict(released_by) if released_by else None,
+        }
+    }
+    op = WriteOperation(verb="delete_edge", target=str(edge_id), reason=AUTHORITY_REASON, metadata=audit)
+    labelled = replace(
+        get_caller_context() or CallerContext(),
+        batch_name=f"Reconcile: authority unlink {edge_id}",
+        batch_description=(
+            f"The reconcile verb removed edge {edge_id} ({edge_type}) on a complete edge-authority claim, "
+            f"applied on collection run batch {batch.entity_id}."
+        ),
+    )
+    with reconcile_write_scope({str(edge_id)}):
+        result = write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile and the release, both gated
+            [op], caller_context=labelled, result_mode="minimal"
+        )
+    outcome = result.results[0] if result.results else None
+    if outcome is not None and outcome.success:
+        removed.add(str(edge_id))
+        return {"outcome": APPLIED, "error": None}
+    errors = (outcome.errors if outcome is not None else result.errors) or []
+    error = "; ".join(f"{e.code}: {e.message}" for e in errors)[:500] or "refused"
+    logger.warning("[c4d9] reconcile: authority unlink of edge %s refused: %s", edge_id, error)
+    return {"outcome": REFUSED, "error": error}
+
+
+def _parse_boundary(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _edge_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts = dict.fromkeys(sorted(EDGE_AUTHORITY_OUTCOMES), 0)
+    for entry in entries:
+        counts[entry["outcome"]] += 1
+    return counts
+
+
+def _apply_edge_authority(batch: Any, *, produced_batches: set[str]) -> dict[str, Any]:
+    """Apply the run's edge-authority proposals, holding any claim that would empty its scope.
+
+    Runs inside ``reconcile_run``'s transaction, after the node verdicts, with authority on.
+    """
+    claims, proposals = _authority_records(produced_batches)
+    held = {key: _held_claim(claim) for key, claim in claims.items() if _whole_scope(claim)}
+    removed: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    for proposal in proposals:
+        key = _claim_key(str(proposal.batch.entity_id), proposal.metadata.get("claim") or {})
+        entry: dict[str, Any] = {
+            "edge_id": str(proposal.entity_id),
+            "edge_type": (proposal.metadata.get("identity") or {}).get("edge_type"),
+            "proposal_event_id": str(proposal.id),
+            "claim_event_id": str(claims[key].id) if key in claims else None,
+        }
+        if key in held:
+            entry.update({"outcome": HELD, "error": None})
+        else:
+            entry.update(_apply_proposal(batch, proposal, claims.get(key), removed, released_by=None))
+        entries.append(entry)
+    for claim in held.values():
+        logger.warning(
+            "[9b3e] reconcile: edge authority claim %s held: it asserted none of %d live %s edge(s) %s of %s; "
+            "nothing applied until a later run supersedes it or an operator releases it",
+            claim["claim_event_id"],
+            claim["in_scope"],
+            claim["edge_type"],
+            claim["direction"],
+            claim["anchor_entity_id"],
+        )
+    return {"authority": "on", "counts": _edge_counts(entries), "held_claims": list(held.values()), "entries": entries}
+
+
+def _superseding_claim(claim: Mapping[str, Any]) -> str | None:
+    """The complete claim over the same scope whose read began after the held one's: a later read of
+    the scope supersedes the hold (``-14``). Ordered by each claim's recorded read boundary, not by
+    when its event was written: a run that read first can submit its claim after a run that read
+    later, and only the read order says which saw the scope more recently. Among several later
+    reads, the earliest names the hold's successor."""
+    from tap_grid.models import BatchEvent, BatchEventType
+
+    held = BatchEvent.objects.filter(id=claim["claim_event_id"]).values_list("metadata", flat=True).first()
+    held_boundary = _parse_boundary((held or {}).get("read_boundary"))
+    if held_boundary is None:
+        return None
+    later: list[tuple[datetime, uuid.UUID]] = []
+    for event_id, metadata in (
+        BatchEvent.objects.filter(
+            event_type=BatchEventType.AUTHORITY_PROPOSED,
+            metadata__record="claim",
+            metadata__outcome="claimed",
+            metadata__edge_type=claim["edge_type"],
+            metadata__anchor_entity_id=claim["anchor_entity_id"],
+            metadata__direction=claim["direction"],
+        )
+        .exclude(id=claim["claim_event_id"])
+        .values_list("id", "metadata")
+    ):
+        boundary = _parse_boundary((metadata or {}).get("read_boundary"))
+        if boundary is not None and boundary > held_boundary:
+            later.append((boundary, event_id))
+    return str(min(later)[1]) if later else None
+
+def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a run's held edge-authority proposals: an operator's release (``-14``).
+
+    Reached only through ``tap_grid.services.release_edge_authority_hold``, which gates the operator
+    on ``cares.arm_reconcile`` and runs this as the collector program actor under
+    ``grid.reconcile``, the way ``arm_reconcile`` writes; a collector never names it (the
+    collectors-never-retire walk). Each held proposal takes the same path as applying, re-locked
+    and re-fenced, so an edge observed since the claim's read is ``rejected_stale``. A held claim
+    whose scope a later complete claim has read is superseded: it is not released, and records
+    which claim superseded it. Each released claim records who released it and when. A claim
+    already released or superseded, or a run with nothing held, releases nothing.
+    ``claim_event_ids`` narrows the release to those claims; None means every held claim of the run.
+    """
+    from tap_grid.models import Batch, BatchEvent, Entity
+
+    with transaction.atomic():
+        # One release of a run at a time: lock its batch row, then read the record under the lock. A
+        # second operator waits here, re-reads, and finds the claims already released, so the record
+        # and the unlinks never disagree about who released what.
+        locked = cast(Batch, Batch.all_objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
+        record = verdicts_of(locked)
+        edge = (record or {}).get(EDGE_AUTHORITY_KEY) or {}
+        candidates = [
+            claim
+            for claim in edge.get("held_claims", [])
+            if claim.get("released") is None
+            and claim.get("superseded_by") is None
+            and (claim_event_ids is None or claim["claim_event_id"] in claim_event_ids)
+        ]
+        if record is None or not candidates:
+            return {"released_claims": [], "superseded_claims": [], "counts": _edge_counts([])}
+        # Hold every candidate's anchor before asking whether a later read superseded it, the lock the
+        # importer takes before it reads a scope: a newer claim over the scope either committed first
+        # and is seen below, or holds the anchor until it commits, and this waits for it. Id order, as
+        # the importer takes them, so the two never wait on each other.
+        list(
+            Entity.objects.select_for_update()
+            .filter(pk__in=sorted({uuid.UUID(c["anchor_entity_id"]) for c in candidates if c.get("anchor_entity_id")}))
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
+        superseded: list[str] = []
+        targets: list[dict[str, Any]] = []
+        for claim in candidates:
+            newer = _superseding_claim(claim)
+            if newer is None:
+                targets.append(claim)
+            else:
+                claim["superseded_by"] = newer
+                superseded.append(claim["claim_event_id"])
+        target_ids = {claim["claim_event_id"] for claim in targets}
+        released: list[dict[str, Any]] = []
+        removed: set[str] = set()
+        for entry in edge["entries"]:
+            if entry["outcome"] != HELD or entry["claim_event_id"] not in target_ids:
+                continue
+            proposal = BatchEvent.objects.select_related("batch").get(id=entry["proposal_event_id"])
+            claim_event = BatchEvent.objects.get(id=entry["claim_event_id"])
+            entry.update(_apply_proposal(batch, proposal, claim_event, removed, released_by=released_by))
+            released.append(entry)
+        for claim in targets:
+            claim["released"] = dict(released_by)
+        edge["counts"] = _edge_counts(edge["entries"])
+        record[EDGE_AUTHORITY_KEY] = edge
+        _store(locked, record)
+    batch.metadata = locked.metadata
+    return {"released_claims": sorted(target_ids), "superseded_claims": sorted(superseded), "counts": _edge_counts(released)}
+
+
+def _edge_authority_off(produced_batches: set[str]) -> dict[str, Any]:
+    """With authority off nothing is applied; the record says how many proposals stand unapplied."""
+    _claims, proposals = _authority_records(produced_batches)
+    return {"authority": "off", "unapplied": len(proposals), "counts": None, "held_claims": [], "entries": []}
 
 
 def _closure_observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set[str]) -> str | None:
@@ -443,9 +770,17 @@ def _observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set
 
 
 def _store(batch: Any, record: dict[str, Any]) -> None:
-    from tap_grid.falsifiers import METADATA_KEY
+    """Write the run's reconcile record, validated against the verdicts schema first: the record
+    the falsifier validated gains ``applied`` and ``edge_authority`` here, and a shape that drifted
+    from the schema is refused rather than stored."""
+    from tap.jsonfiles import JsonFileError, validate_json
+    from tap_grid.falsifiers import _SCHEMA, METADATA_KEY
     from tap_grid.models import Batch
 
+    try:
+        validate_json(record, _SCHEMA, source=f"verdicts on batch {batch.entity_id}")
+    except JsonFileError as exc:
+        raise ReconcileError("invalid_record", f"{exc} (at {exc.location})") from exc
     with transaction.atomic():
         locked = cast(Batch, Batch.objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
         metadata = dict(locked.metadata or {})
@@ -459,6 +794,12 @@ def _store(batch: Any, record: dict[str, Any]) -> None:
 
 __all__ = [
     "APPLIED",
+    "AUTHORITY_REASON",
+    "EDGE_AUTHORITY_KEY",
+    "EDGE_AUTHORITY_OUTCOMES",
+    "GONE",
+    "HELD",
+    "WHOLE_SCOPE_HOLD_FLOOR",
     "RUN_CONFIG_KEY",
     "APPLY_OUTCOMES",
     "NOT_APPLICABLE",

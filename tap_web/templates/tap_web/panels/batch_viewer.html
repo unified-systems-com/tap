@@ -183,6 +183,36 @@
     {% endif %}
   </section>
 
+  {# Edge authority — what the run's complete claims removed, and what a whole-scope hold stopped (req-grid-reconcile-edge-authority-15). #}
+  <section class="tw-card">
+    <div class="tw-card-head">
+      <h3>Edge authority ({{ counts.edge_authority }} proposal{{ counts.edge_authority|pluralize }})</h3>
+    </div>
+    {% if has_edge_authority %}
+    {% if edge_authority_mode == "on" %}
+    <p class="tw-note">Authority on: the reconcile verb applied the run's proposals behind the fence — {{ edge_authority_counts.applied }} removed, {{ edge_authority_counts.rejected_stale }} rejected as stale, {{ edge_authority_counts.refused }} refused, {{ edge_authority_counts.gone }} already gone, {{ edge_authority_counts.held }} held.</p>
+    {% else %}
+    <p class="tw-note">Authority off: {{ edge_authority_unapplied }} proposal{{ edge_authority_unapplied|pluralize }} recorded and not applied; nothing was removed.</p>
+    {% endif %}
+    {% for held in edge_authority_held %}
+    <p class="tw-note"><strong>Held:</strong> a claim asserted none of the {{ held.in_scope }} live <span class="tw-mono">{{ held.edge_type }}</span> edge{{ held.in_scope|pluralize }} {{ held.direction }} of <span class="tw-mono">{{ held.anchor_entity_id }}</span>, so nothing was removed for it. {% if held.released %}Released by {{ held.released }}.{% elif held.superseded_by %}Superseded by a later complete read of the same scope (claim <span class="tw-mono">{{ held.superseded_by }}</span>); nothing to release.{% else %}A later run that reads the scope again supersedes the hold; if the scope really is empty, an operator releases it: <code>{{ held.release_command }}</code>{% endif %}</p>
+    {% endfor %}
+    {% if counts.edge_authority %}
+    <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-edge_authority" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-edge_authority" class="tap-table-container"></div>
+    {{ edge_authority|json_script:edge_authority_script_id }}
+    <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-edge_authority">[
+      {"field": "edge_type", "title": "Edge type", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "edge_id", "title": "Edge id", "widthGrow": 3, "tooltip": "full_value"},
+      {"field": "outcome", "title": "Outcome", "width": 130},
+      {"field": "error", "title": "Why", "widthGrow": 3, "tooltip": "full_value"},
+      {"field": "claim_event_id", "title": "Claim event", "widthGrow": 2, "tooltip": "full_value"}
+    ]</script>
+    {% endif %}
+    {% else %}
+    <p class="tw-note">No edge authority record for this batch — no reconcile phase reached it, which says nothing about whether its edges are current (<code>req-grid-reconcile-edge-authority</code>).</p>
+    {% endif %}
+  </section>
+
   {# Batch metadata footer. #}
   <section class="tw-card">
     <h3>Batch Metadata</h3>

@@ -25,6 +25,8 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
         "purge_node",
         "purge_edge",
         "reconcile",
+        "release_edge_authority_hold",
+        "_release_held",
         "arm_run_for_tests",
         "write_batch",
         "_patch_node_internal",

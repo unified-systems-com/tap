@@ -150,6 +150,233 @@
         }
       }
     },
+    "edge_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "counts",
+        "held_claims",
+        "entries"
+      ],
+      "description": "What the reconcile verb did with the run's edge-authority proposals (req-grid-reconcile-edge-authority, Issue# 920 - tap): with authority on, what the run's complete claims removed behind the fence, and any claim held because it would have emptied its scope; with authority off, how many proposals stand unapplied. Absent on a record written before Issue# 920 - tap.",
+      "properties": {
+        "authority": {
+          "enum": [
+            "off",
+            "on"
+          ],
+          "description": "The run's reconcile authority when the record was written: off means nothing was applied and `unapplied` says how much."
+        },
+        "unapplied": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "With authority off: the run's proposals recorded by the dry-run and not applied. Absent with authority on."
+        },
+        "counts": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "applied",
+            "gone",
+            "held",
+            "refused",
+            "rejected_stale"
+          ],
+          "description": "With authority on: the proposals by outcome, summed over `entries`, updated by a release. Null with authority off.",
+          "properties": {
+            "applied": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Removed as an `unlink` with reason `authority` (-12)."
+            },
+            "gone": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "No longer live when its proposal came to be applied, or already removed by another claim of the run."
+            },
+            "held": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Proposals of a held claim, not yet released (-13)."
+            },
+            "refused": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Not removed: an internal-only edge type, a claim with no read boundary, or the service refused the delete (the error is on the entry)."
+            },
+            "rejected_stale": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Fenced out at apply or release: created, updated or linked by another batch since the claim's read (-11)."
+            }
+          }
+        },
+        "held_claims": {
+          "type": "array",
+          "description": "Each claim held because it asserted none of a scope of three or more live edges (-13), and whether an operator has released it (-14).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "claim_event_id",
+              "batch",
+              "edge_type",
+              "anchor",
+              "anchor_entity_id",
+              "direction",
+              "in_scope",
+              "proposed",
+              "released"
+            ],
+            "description": "One held claim, as the dry-run recorded it, with its release.",
+            "properties": {
+              "claim_event_id": {
+                "type": "string",
+                "description": "The claim's `authority_proposed` event (record `claim`); the release command names a claim by it."
+              },
+              "batch": {
+                "type": "string",
+                "description": "The claiming batch's entity id."
+              },
+              "edge_type": {
+                "type": "string",
+                "description": "The claim's edge type."
+              },
+              "anchor": {
+                "type": "object",
+                "description": "The claim's anchor as the producer named it: an id or a key form."
+              },
+              "anchor_entity_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The node the anchor resolved to."
+              },
+              "direction": {
+                "enum": [
+                  "outbound",
+                  "inbound"
+                ],
+                "description": "Which of the anchor's edges the claim covers."
+              },
+              "in_scope": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Live edges in the claim's scope at the dry-run: every one was proposed, none asserted."
+              },
+              "proposed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Of those, the ones proposed rather than fenced out as stale at the dry-run."
+              },
+              "released": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": false,
+                "required": [
+                  "operator",
+                  "shell_user",
+                  "at"
+                ],
+                "description": "Null while held; once an operator releases it, who and when (-14).",
+                "properties": {
+                  "operator": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The operator named on the release, who held cares.arm_reconcile."
+                  },
+                  "shell_user": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The OS user the release command ran as, when one could be read."
+                  },
+                  "at": {
+                    "type": "string",
+                    "description": "When the release was made (ISO 8601)."
+                  }
+                }
+              },
+                  "superseded_by": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The claim event of a later complete claim over the same scope, set when a release found the hold superseded: it is not released (-14). Absent on a record written before supersession was checked."
+                  }
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "description": "One entry per proposal the run's claims made, in edge-id order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "edge_id",
+              "edge_type",
+              "proposal_event_id",
+              "claim_event_id",
+              "outcome",
+              "error"
+            ],
+            "description": "One proposal and what became of it.",
+            "properties": {
+              "edge_id": {
+                "type": "string",
+                "description": "The proposed edge."
+              },
+              "edge_type": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Its edge type, from the proposal's identity."
+              },
+              "proposal_event_id": {
+                "type": "string",
+                "description": "The proposal's `authority_proposed` event (record `proposal`)."
+              },
+              "claim_event_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The claim that proposed it."
+              },
+              "outcome": {
+                "enum": [
+                  "applied",
+                  "gone",
+                  "held",
+                  "refused",
+                  "rejected_stale"
+                ],
+                "description": "What became of the proposal."
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why it was not applied, when it was not."
+              }
+            }
+          }
+        }
+      }
+    },
     "entries": {
       "type": "array",
       "description": "One entry per candidate, ordered by candidate-record surface index, then entity type, then entity id.",

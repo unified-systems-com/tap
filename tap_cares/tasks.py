@@ -519,7 +519,8 @@ def _reconcile(scoped_batch_id: str | None, instance: Any) -> None:
         batch = Batch.objects.get(entity_id=scoped_batch_id)
         if candidates_of(batch) is None:
             return
-        reconcile(scoped_batch_id)
+        record = reconcile(scoped_batch_id)
+        _report_edge_authority(instance, scoped_batch_id, record)
     except Exception as exc:
         # Visible on the job, not only in the log: the collection succeeded, the reconcile
         # phase did not, and a reader of the run must be able to tell (Codex on PR# 653 - tap).
@@ -532,6 +533,39 @@ def _reconcile(scoped_batch_id: str | None, instance: Any) -> None:
                 f"reconcile phase failed; nothing applied: {type(exc).__name__}: {exc}"[:500]
             )
 
+
+def _report_edge_authority(instance: Any, scoped_batch_id: str, record: Any) -> None:
+    """Put the run's edge-authority outcome on the job, where a reader of the run looks
+    (``req-grid-reconcile-edge-authority-13``): the removals applied, and each held claim with the
+    command that releases it. With authority off the reconcile record says what stands unapplied,
+    and the job says nothing more."""
+    from tap_grid.reconcile import EDGE_AUTHORITY_KEY
+
+    edge = (record or {}).get(EDGE_AUTHORITY_KEY) or {}
+    if edge.get("authority") != "on":
+        return
+    counts = edge.get("counts") or {}
+    # Held proposals were not applied: they are the warning below, never "applied".
+    worked = {outcome: n for outcome, n in sorted(counts.items()) if outcome != "held" and n}
+    if worked:
+        instance.record_info(
+            "4e14",
+            "EDGE_AUTHORITY_APPLIED",
+            "The reconcile phase applied the run's edge-authority proposals: "
+            + ", ".join(f"{n} {outcome}" for outcome, n in worked.items()),
+            message_data={"counts": counts},
+        )
+    for claim in edge.get("held_claims", []):
+        instance.record_warn(
+            "2802",
+            "EDGE_AUTHORITY_HELD",
+            f"An edge-authority claim asserted none of the {claim['in_scope']} live {claim['edge_type']} edge(s) "
+            f"{claim['direction']} of {claim['anchor_entity_id']}, so nothing was removed for it. A later run "
+            f"that reads the scope again supersedes the hold; if the scope really is empty, an operator "
+            f"releases it: manage.py release_edge_authority_hold {scoped_batch_id} "
+            f"--claim {claim['claim_event_id']} --as <operator>",
+            message_data=dict(claim),
+        )
 
 def _run_collection_job(
     collector_entity_id: str,
