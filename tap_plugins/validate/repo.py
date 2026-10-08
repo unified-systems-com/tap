@@ -117,7 +117,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@b6cfd92404c7/6391d18c654a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@b6cfd92404c7/afd26aebfe28 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
