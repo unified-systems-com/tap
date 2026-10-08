@@ -19,7 +19,7 @@
 | `req-grid-import-grift-edge-endpoints` | Implemented | Implemented | `_endpoint_key_is_sound`, `_resolve_endpoint_keys` | — |
 | `req-grid-import-grift-edge-removal` | Implemented | Implemented | `_parse_identity_removal`, `_resolve_removal_identities` | — |
 | `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
-| `req-grid-import-grift-identity` | Implemented | Verified | `resolve_refs` | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
+| `req-grid-import-grift-identity` | Implemented | Verified | `_resolve_ref_identities`, `resolve_refs` | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2`, `req-grid-import-grift-identity-5` |
 | `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
 | `req-grid-import-grift-provenance` | Implemented | Tested | — | `req-grid-import-grift-provenance-1` |
 | `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |

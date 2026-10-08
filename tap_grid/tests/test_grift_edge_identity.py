@@ -336,6 +336,27 @@ class TestALookupIsARead:
         assert result.success, result.errors
         assert len(_live("ALT_LINK__grid_fixtures", a, b)) == 1
 
+    @pytest.mark.spec("req-grid-import-grift-identity-5")
+    def test_a_batch_whose_only_refs_are_edges_is_not_asked_the_node_ref_read(
+        self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The node-ref read is asked only by a batch with a ref node to resolve. An edge ref is the
+        edge lookup's own business, and an undeclared type's ref in warn mode reads nothing."""
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        a, b = pair
+        real_authorize = policy.authorize
+
+        def refuse_node_ref_read(ctx: Any, capability: str, *args: Any, **kwargs: Any) -> Any:
+            if capability == READ_CAPABILITY and kwargs.get("operation") == "grift_import_ref_identity":
+                raise PermissionError("grid.read refused for this test")
+            return real_authorize(ctx, capability, *args, **kwargs)
+
+        monkeypatch.setattr(policy, "authorize", refuse_node_ref_read)
+        result = _import(_edge(a, b, "ALT_LINK__grid_fixtures", ref="u"))
+        assert result.success, result.errors
+
     @SPEC[13]
     def test_the_verb_itself_requires_read(self, pair: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
         """Gated at the service boundary, not only by the importer: any caller is refused."""
