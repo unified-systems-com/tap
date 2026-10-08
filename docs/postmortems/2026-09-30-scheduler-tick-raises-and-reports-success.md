@@ -90,13 +90,14 @@ The working hypothesis at the start was reaper work (`tap#471`, the stale-`RUNNI
 | --- | --- |
 | The reaper deactivated or deleted the actor | `tap_cares/services/reaper.py` only ever writes `CollectionJob` rows. It *reads* built-in actors exactly as the tick does, via `get_builtin_actor(COLLECTOR)`. |
 | The reaper is implicated on this path at all | The traceback dies at `task_backend.py:55` resolving `SCHEDULER`, **before** `evaluate_tick` is called. The reaper lives downstream and is never reached. |
-| The actor exists but is deactivated (the "zombie built-in" `get_builtin_actor`'s docstring warns about) | `get_builtin_actor` fails on absent **or** not-active, where active is `is_active AND deactivated_at IS NULL`. Nothing in the tree writes `deactivated_at` outside the model definition and two read-side filters. The actor is **absent**, not disabled. |
+| The actor exists but is deactivated (the "zombie built-in" `get_builtin_actor`'s docstring warns about) | `get_builtin_actor` fails on absent **or** not-active, where active is `is_active AND deactivated_at IS NULL`. Nothing in the tree writes `deactivated_at` outside the model definition and two read-side filters, so the deactivation half is ruled out. **`is_active=False` is NOT ruled out** — it produces the identical exception, and nothing here distinguishes it from absence. So "the row is gone" is the leading explanation rather than an established fact, and §4's probe should print the actor rows it finds (keys and flags) rather than only their absence. |
 | A change in the 09-28→09-29 window introduced it | `acting_as(get_builtin_actor(SCHEDULER))` arrived in `e5c24a8e`, 2026-07-03, and is an ancestor of the last green run's head. Nothing in the window touches `tap_cares` or `tap_auth`. |
 | It is a defect in the code generally | It does not reproduce on a normal dev stack: zero occurrences in this session's running instance, where `tap_cares.scheduler` is present with `is_active=True` and `deactivated_at=None`. |
 
 ## 4. What is NOT established
 
-**Why the actor is absent in the `core_ci` CI lane.** Stated plainly rather than
+**Why the actor does not RESOLVE in the `core_ci` CI lane.** Absent or inactive — the
+exception does not say which, and §4's own row above records why. Stated plainly rather than
 guessed at, because a postmortem that invents a root cause is worse than one that
 names its gap.
 
@@ -124,9 +125,20 @@ is no retained artifact that can settle it.
 
 **The probe that would settle it, in one dispatch:** run `core-ci` on a branch that
 (a) dumps the web log unconditionally rather than on failure, and (b) adds one step
-running `manage.py shell -c` to print the built-in actors and `settings.DATABASES`
-from inside the web container after boot. That distinguishes candidate 1 from
-candidate 2 directly and costs one lane run.
+running `manage.py shell -c` from inside the web container after boot to print the
+built-in actor keys and **the resolved database NAME only** —
+`connection.settings_dict["NAME"]`, or `settings.DATABASES["default"]["NAME"]`.
+
+**Do NOT print `settings.DATABASES` itself, and do not print the whole
+`settings_dict`.** Both carry `PASSWORD`, `USER` and `HOST` in plaintext, and this
+probe's whole point is a log retained unconditionally as a CI artifact — so dumping
+the mapping would disclose database credentials to everyone who can read the lane's
+logs. The database *name* is the only field that distinguishes candidate 1 from
+candidate 2; nothing else in that mapping answers the question. (Flagged by the AI
+review on the PR carrying this document, against an earlier draft of this paragraph
+that said to print the mapping.)
+
+That distinguishes candidate 1 from candidate 2 directly and costs one lane run.
 
 ## 5. Impact
 
@@ -153,7 +165,7 @@ candidate 2 directly and costs one lane run.
       mark the task failed, or at minimum distinguish "no fires" from "could not
       run". A caught fatal error that returns normally is indistinguishable from a
       healthy idle tick.
-- [ ] **Resolve the actor absence** via the dispatch probe in §4. Owner should be
+- [ ] **Resolve why the actor does not resolve** via the dispatch probe in §4. Owner should be
       someone with `tap_cares` context, who can tell a CI boot-ordering artifact
       from a live defect.
 - [ ] **Make the signal survivable.** A failure visible only in a container log that
