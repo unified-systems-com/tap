@@ -29,12 +29,26 @@ from tap_grid.reconcile import (
 )
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import write_batch
-from tap_grid.tests.test_grift_edge_authority import _claim, _edge, _import, _link, _run, _seed, star  # noqa: F401
+from tap_grid.tests.test_grift_edge_authority import OTHER, _claim, _edge, _import, _link, _run, _seed
 from tap_grid.tests.test_grift_edge_endpoints import _doc
 
 SPEC = {n: pytest.mark.spec(f"req-grid-reconcile-edge-authority-{n}") for n in (11, 12, 13)}
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def star() -> dict[str, str]:
+    """``hub`` with LINK edges out to ``b`` and ``c``, an OTHER edge out to ``d``, and a LINK edge in from
+    ``d``: all written before any run opens. The dry-run suite's own fixture, built from the same helpers."""
+    ids = _seed("hub", "b", "c", "d")
+    hub_b, hub_c, hub_d, d_hub = _link(
+        _edge(ids["hub"], ids["b"]),
+        _edge(ids["hub"], ids["c"]),
+        _edge(ids["hub"], ids["d"], edge_type=OTHER),
+        _edge(ids["d"], ids["hub"]),
+    )
+    return {**ids, "hub_b": hub_b, "hub_c": hub_c, "hub_d": hub_d, "d_hub": d_hub}
 
 
 def _apply(run: Any, *results: Any) -> dict[str, Any]:
