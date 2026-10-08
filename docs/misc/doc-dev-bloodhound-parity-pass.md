@@ -201,3 +201,96 @@ produced by authenticating to GitHub WITH the leaked secret (`githound.ps1:8426`
 | 85 | Tier Zero Apps (All-Repository Installations) `t0-apps-all-repos` | REWRITE | today | inline property map (works since 08-31) | — |
 | 86 | Tier Zero Enterprise Owners Role `t0-enterprise-owners-role` | REWRITE | not observable | inline property map (works since 08-31) | — |
 | 87 | Tier Zero PATs (All Repositories) `t0-pats-all-repos` | REWRITE | slice C (roles, PATs) | inline property map (works since 08-31) | — |
+
+---
+
+# Update, 2026-10-08 — where the corpus lives now, and a measurement from the pack itself
+
+The correction above says the authoritative per-query record moved into the pack. It did, and the
+pack has since become the thing everything else is generated from — which is worth recording here
+because the file's name invites exactly the wrong guess.
+
+## It is not a GRIFT pack. It is the source a GRIFT pack is generated from.
+
+Three layers, and only the middle one is GRIFT:
+
+| layer | file (in `git-serious-tap`) | what it is |
+| --- | --- | --- |
+| source | `tap_plugin/git_serious/data/bloodhound_queries.json` | the content pack, hand-maintained: one record per query id, attribution, upstream pins, the translation, `status`/`stage`, caveats. **No nodes, no edges, no batch envelope** — not GRIFT |
+| generated | `tap_plugin/git_serious/grift/queries.grift.json` | **this** is the GRIFT batch (`metadata` / `_reserved` / `batches`), seeding 35 `search`, 35 `object`, 2 `page`, 2 `panel`, 37 `edge`, 1 `batch` |
+| generator | `scripts/build_query_pack_grift.py` | compiles source → GRIFT |
+
+The generated file says so on every node it writes — *"GENERATED from data/bloodhound_queries.json —
+do not hand-edit"* and *"edit the pack, not this node."* The edit surface is the source file; the
+GRIFT batch is build output that happens to be committed.
+
+**Two consumers, not one.** `tap_plugin/git_serious/panels/query_pack.py` reads the **source**
+directly at runtime, so the page renders the whole corpus including queries that do not yet run;
+the generated batch seeds only the runnable ones into the grid.
+
+**That asymmetry is a cross-check worth keeping.** The GRIFT batch seeds exactly **35** `search`
+nodes, and tallying `status == "runs"` in the source independently gives **35**. The generator's
+contract is "seed what runs", so the two agreeing is evidence that both the tally and the generator
+are right — and if they ever diverge, one of them is stale.
+
+Declared in **git-serious-tap's** canon, not tap's: the query-pack requirement in
+`specs/spec-git-serious-query-pack.md` in that repository, at status Implemented. Its id is
+deliberately not reproduced here as a bare token — tap's `rids` guard resolves every `req-…` token
+in this tree against tap's own requirement set, and a plugin repository's id cannot resolve.
+
+## The ladder, re-measured from the pack
+
+Derived 2026-10-08 by reading the source file and tallying, not recalled:
+
+```
+git -C <git-serious-tap> show origin/main:tap_plugin/git_serious/data/bloodhound_queries.json > /tmp/bhq.json
+python3 -c "
+import json, collections
+q = json.load(open('/tmp/bhq.json'))['queries']
+print(collections.Counter(x['status'] for x in q))
+print(collections.Counter((x['status'], x['stage']) for x in q))
+"
+```
+
+| status | count | meaning |
+| --- | ---: | --- |
+| `runs` | **35** | translates and runs on a grid `github_core` has collected |
+| `expressible` | 20 | the translation exists; the data does not yet |
+| `blocked` | 10 | a grammar gap or an unbuilt type, not a data gap |
+| `not_observable` | 14 | Team-plan ceiling |
+| | **79** | |
+
+Cross-tabulated against `stage`, which shows *why* 35:
+
+| status \ stage | today | A | A2 | B | C | later | na |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `runs` | 15 | 20 | · | · | · | · | · |
+| `expressible` | · | · | 8 | 5 | 7 | · | · |
+| `blocked` | · | · | · | 3 | 2 | 5 | · |
+| `not_observable` | · | · | · | · | · | · | 14 |
+
+So **slice A has landed** — that is what moved its 20 into `runs`, matching the `15 → 35` step of the
+corrected ladder above. A2/B/C would add 20 more by translation alone.
+
+**The 79-vs-87 question, settled mechanically:** summing `len(sources)` across the 79 records gives
+exactly **87**. One record per query id, every upstream variant kept verbatim. Anyone comparing a
+figure here against an older one should establish which of the two it counted before concluding
+something regressed.
+
+## Two gaps still have no issue behind them
+
+Tallying `blocked_on` across the pack: `tap#259` owns variable-length path and alternation (6),
+`github-core#112` owns custom org roles (2), and a collector build owns the unbuilt types (2). The
+remaining two are tracked nowhere — **`OPTIONAL MATCH` beyond v0**, and the **derived eligibility and
+branch-creation edges**. The gap table above already recorded `'x' IN n.array_field` as "not yet
+filed" in September; it is still not filed. A gap counted in a stage table and owned by no issue is a
+gap nobody is working.
+
+## What did not survive
+
+The pass's working inventories — `bloodhound-inventory.json/.md`, `github-core-inventory.json/.md`,
+`query-verdicts.json`, and the `classify_queries.py` / `build_report.py` scripts behind the briefing
+— lived in a session scratchpad under `/private/tmp` and are gone. **The numbers survived only
+because this document put the verdict table inline**, which is exactly the lesson the header records
+after the August files were lost the same way. The pack now carries the per-id record, so a third
+loss would cost the derivation, not the data.
