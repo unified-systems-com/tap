@@ -170,6 +170,7 @@ class TestOptIn:
             "repo-caller-permissions",
             "repo-nightly-shape",
             "repo-release-lane",
+            "repo-release-please-pair",
             "repo-waiver-ledger",
         }
 
