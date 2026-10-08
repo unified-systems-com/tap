@@ -99,6 +99,19 @@ class TestEdgeAuthorityProjection:
         assert [e["outcome"] for e in context["edge_authority"]] == ["applied"] * 3
 
     @SPEC
+    def test_a_superseded_claim_names_what_superseded_it_and_offers_no_command(self) -> None:
+        edges = [str(uuid.uuid4()) for _ in range(3)]
+        record = _held_record(edges)
+        newer = str(uuid.uuid4())
+        record["held_claims"][0]["superseded_by"] = newer
+        run = _run_with_edge_authority(record)
+        context = build_context(_Panel(), _request(run.entity_id))
+        (held,) = context["edge_authority_held"]
+        assert (held["superseded_by"], held["release_command"]) == (newer, "")
+        html = render_to_string(BatchViewerPanelType.view, {"panel": _Panel(), **context})
+        assert "Superseded by a later complete read" in html and newer in html
+
+    @SPEC
     def test_authority_off_says_how_many_proposals_stand_unapplied(self) -> None:
         off = {"authority": "off", "unapplied": 2, "counts": None, "held_claims": [], "entries": []}
         run = _run_with_edge_authority(off)

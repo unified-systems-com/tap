@@ -4,7 +4,7 @@ A claim that asserted none of a scope of three or more live edges is held by the
 rather than applied (``req-grid-reconcile-edge-authority-13``): the shape of a read that silently came
 back empty. A later run that reads the scope again supersedes the hold on its own. When the scope
 really is empty, an operator releases it here, and the held removals go ahead, each re-locked and
-re-fenced (``-14``).
+re-fenced (``-14``). A hold a later complete read of the same scope superseded is not released.
 
 Releasing is the same kind of act as arming, so ``--as`` names an operator who must hold
 ``cares.arm_reconcile``, as ``arm_reconcile`` does. As there, the shell is a trusted surface: ``--as``
@@ -24,8 +24,8 @@ from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from tap_auth.actors import acting_as
 from tap_auth.errors import AuthzError
-from tap_cares.services import release_edge_authority_hold
 from tap_grid.models import Batch
+from tap_grid.services import release_edge_authority_hold
 
 
 class Command(BaseCommand):
@@ -53,6 +53,11 @@ class Command(BaseCommand):
             raise CommandError(f"refused: {exc}") from exc
         except Batch.DoesNotExist as exc:
             raise CommandError(f"no batch {options['run_batch_id']!r}") from exc
+        if result["superseded_claims"]:
+            self.stdout.write(
+                f"run {result['run']}: {len(result['superseded_claims'])} held claim(s) superseded by a later complete "
+                "read of the same scope; not released"
+            )
         if not result["released_claims"]:
             self.stdout.write(f"run {result['run']}: nothing held to release")
             return

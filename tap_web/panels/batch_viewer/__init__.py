@@ -234,9 +234,10 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
                 if c.get("released")
                 else ""
             ),
+            "superseded_by": c.get("superseded_by") or "",
             "release_command": (
                 ""
-                if c.get("released")
+                if c.get("released") or c.get("superseded_by")
                 else (
                     f"manage.py release_edge_authority_hold {batch.entity_id} "
                     f"--claim {c.get('claim_event_id')} --as <operator>"

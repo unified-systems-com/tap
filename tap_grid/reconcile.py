@@ -370,6 +370,7 @@ def _held_claim(claim: Any) -> dict[str, Any]:
         "in_scope": int(m.get("proposed") or 0) + int(m.get("rejected_stale") or 0),
         "proposed": int(m.get("proposed") or 0),
         "released": None,
+        "superseded_by": None,
     }
 
 
@@ -506,18 +507,43 @@ def _apply_edge_authority(batch: Any, *, produced_batches: set[str]) -> dict[str
     return {"authority": "on", "counts": _edge_counts(entries), "held_claims": list(held.values()), "entries": entries}
 
 
-def release_edge_authority_hold(
-    batch: Any, *, claim_event_ids: set[str] | None, released_by: Mapping[str, Any]
-) -> dict[str, Any]:
+def _superseding_claim(claim: Mapping[str, Any]) -> str | None:
+    """The first complete claim, made after the held one, over the same scope: a later read of the
+    scope supersedes the hold (``-14``). Its own run's outcome stands; the old hold is not released."""
+    from tap_grid.models import BatchEvent, BatchEventType
+
+    held_at = BatchEvent.objects.filter(id=claim["claim_event_id"]).values_list("timestamp", flat=True).first()
+    if held_at is None:
+        return None
+    newer = (
+        BatchEvent.objects.filter(
+            event_type=BatchEventType.AUTHORITY_PROPOSED,
+            metadata__record="claim",
+            metadata__outcome="claimed",
+            metadata__edge_type=claim["edge_type"],
+            metadata__anchor_entity_id=claim["anchor_entity_id"],
+            metadata__direction=claim["direction"],
+            timestamp__gt=held_at,
+        )
+        .order_by("timestamp", "id")
+        .values_list("id", flat=True)
+        .first()
+    )
+    return str(newer) if newer is not None else None
+
+
+def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a run's held edge-authority proposals: an operator's release (``-14``).
 
-    Called only by ``tap_cares.services.release_edge_authority_hold``, which gates the operator on
-    ``cares.arm_reconcile`` and runs this as the collector program actor under ``grid.reconcile``,
-    the way ``arm_reconcile`` writes. Each held proposal takes the same path as applying,
-    re-locked and re-fenced, so an edge observed since the claim's read is ``rejected_stale``.
-    Each released claim records who released it and when. A claim already released, or a run
-    with nothing held, releases nothing. ``claim_event_ids`` narrows the release to those
-    claims; None releases every held claim of the run.
+    Reached only through ``tap_grid.services.release_edge_authority_hold``, which gates the operator
+    on ``cares.arm_reconcile`` and runs this as the collector program actor under
+    ``grid.reconcile``, the way ``arm_reconcile`` writes; a collector never names it (the
+    collectors-never-retire walk). Each held proposal takes the same path as applying, re-locked
+    and re-fenced, so an edge observed since the claim's read is ``rejected_stale``. A held claim
+    whose scope a later complete claim has read is superseded: it is not released, and records
+    which claim superseded it. Each released claim records who released it and when. A claim
+    already released or superseded, or a run with nothing held, releases nothing.
+    ``claim_event_ids`` narrows the release to those claims; None means every held claim of the run.
     """
     from tap_grid.models import Batch, BatchEvent
 
@@ -528,14 +554,24 @@ def release_edge_authority_hold(
         locked = cast(Batch, Batch.all_objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
         record = verdicts_of(locked)
         edge = (record or {}).get(EDGE_AUTHORITY_KEY) or {}
-        targets = [
+        candidates = [
             claim
             for claim in edge.get("held_claims", [])
             if claim.get("released") is None
+            and claim.get("superseded_by") is None
             and (claim_event_ids is None or claim["claim_event_id"] in claim_event_ids)
         ]
-        if record is None or not targets:
-            return {"released_claims": [], "counts": _edge_counts([])}
+        if record is None or not candidates:
+            return {"released_claims": [], "superseded_claims": [], "counts": _edge_counts([])}
+        superseded: list[str] = []
+        targets: list[dict[str, Any]] = []
+        for claim in candidates:
+            newer = _superseding_claim(claim)
+            if newer is None:
+                targets.append(claim)
+            else:
+                claim["superseded_by"] = newer
+                superseded.append(claim["claim_event_id"])
         target_ids = {claim["claim_event_id"] for claim in targets}
         released: list[dict[str, Any]] = []
         removed: set[str] = set()
@@ -552,7 +588,7 @@ def release_edge_authority_hold(
         record[EDGE_AUTHORITY_KEY] = edge
         _store(locked, record)
     batch.metadata = locked.metadata
-    return {"released_claims": sorted(target_ids), "counts": _edge_counts(released)}
+    return {"released_claims": sorted(target_ids), "superseded_claims": sorted(superseded), "counts": _edge_counts(released)}
 
 
 def _edge_authority_off(produced_batches: set[str]) -> dict[str, Any]:
@@ -757,7 +793,6 @@ __all__ = [
     "REJECTED_STALE",
     "ReconcileError",
     "reconcile_run",
-    "release_edge_authority_hold",
     "run_config",
     "run_config_of",
     "verdicts_of",

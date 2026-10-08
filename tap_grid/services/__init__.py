@@ -105,6 +105,7 @@ __all__ = [
     "replace_node",
     "delete_node",
     "reconcile",
+    "release_edge_authority_hold",
     "patch_edge",
     "replace_edge",
     "delete_edge_by_entity",
@@ -698,6 +699,78 @@ def reconcile(
 
     batch = Batch.objects.get(entity_id=run_batch)
     return reconcile_run(batch, extra=extra)
+
+
+@requires_capability("cares.arm_reconcile", operation="release_edge_authority_hold")
+def release_edge_authority_hold(
+    run_batch: str | uuid.UUID,
+    *,
+    claim_event_id: str | None = None,
+    caller_context: CallerContext | None = None,
+) -> dict[str, Any]:
+    """Release a run's held edge-authority claims: the operator's decision to let the removals a
+    whole-scope hold stopped go ahead (``req-grid-reconcile-edge-authority-14``, Issue# 920 - tap).
+
+    Releasing is the same kind of act as arming, so the caller must hold ``cares.arm_reconcile``,
+    checked HERE, at the service boundary, and not ``grid.reconcile``: the collector program actor
+    holds ``grid.reconcile``, and a run must not be able to release its own hold. As
+    ``arm_reconcile`` does, the removals themselves are made as the collector program actor under
+    ``grid.reconcile``, and the operator's name rides on the record: each released claim says who
+    released it, the OS user behind the shell, and when. Each held proposal is re-locked and
+    re-fenced on the way. A hold that a later complete claim over the same scope has superseded is
+    not released. ``claim_event_id`` releases that one claim; None, every held claim of the run.
+
+    Args:
+        run_batch: The collection run's lifecycle Batch entity id.
+        claim_event_id: One held claim's event id, or None for all of the run's held claims.
+        caller_context: The operator; must hold ``cares.arm_reconcile``.
+
+    Returns:
+        ``released_claims``, ``superseded_claims``, ``counts`` of what the release did,
+        ``released_by`` and ``run``.
+
+    Raises:
+        MissingActor: no named operator.
+        Batch.DoesNotExist: no batch carries ``run_batch``.
+    """
+    import getpass
+    from datetime import UTC, datetime
+
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    from tap_auth.enforcement import authorized
+    from tap_auth.errors import MissingActor
+    from tap_grid.models import Batch
+    from tap_grid.reconcile import _release_held
+
+    ctx = caller_context if caller_context is not None else get_caller_context()
+    if ctx is None or ctx.user is None:
+        raise MissingActor("release_edge_authority_hold needs a named operator; refused before any read")
+    operator = getattr(ctx.user, "username", None)
+    try:
+        shell_user: str | None = getpass.getuser()  # the OS principal behind a shell invocation, for the audit
+    except Exception:  # noqa: BLE001 — no OS identity available (a request thread, a container without passwd)
+        shell_user = None
+    released_by = {"operator": operator, "shell_user": shell_user, "at": datetime.now(UTC).isoformat()}
+    actor = get_builtin_actor(COLLECTOR)
+    with (
+        acting_as(actor),
+        authorized(CallerContext(user=actor), RECONCILE_CAPABILITY, operation="release_edge_authority_hold.apply"),
+    ):
+        run = Batch.all_objects.get(entity_id=run_batch)
+        result = _release_held(
+            run,
+            claim_event_ids={claim_event_id} if claim_event_id is not None else None,
+            released_by=released_by,
+        )
+    logger.warning(
+        "[3e8d] edge authority hold on run %s: released by operator %r: %d claim(s), %d superseded, %s",
+        run_batch,
+        operator,
+        len(result["released_claims"]),
+        len(result["superseded_claims"]),
+        result["counts"],
+    )
+    return {**result, "released_by": released_by, "run": str(run_batch)}
 
 
 @requires_capability(WRITE_CAPABILITY, operation="patch_edge")

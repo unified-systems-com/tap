@@ -306,7 +306,14 @@
                     "description": "When the release was made (ISO 8601)."
                   }
                 }
-              }
+              },
+                  "superseded_by": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The claim event of a later complete claim over the same scope, set when a release found the hold superseded: it is not released (-14). Absent on a record written before supersession was checked."
+                  }
             }
           }
         },

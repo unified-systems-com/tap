@@ -195,7 +195,7 @@
     <p class="tw-note">Authority off: {{ edge_authority_unapplied }} proposal{{ edge_authority_unapplied|pluralize }} recorded and not applied; nothing was removed.</p>
     {% endif %}
     {% for held in edge_authority_held %}
-    <p class="tw-note"><strong>Held:</strong> a claim asserted none of the {{ held.in_scope }} live <span class="tw-mono">{{ held.edge_type }}</span> edge{{ held.in_scope|pluralize }} {{ held.direction }} of <span class="tw-mono">{{ held.anchor_entity_id }}</span>, so nothing was removed for it. {% if held.released %}Released by {{ held.released }}.{% else %}A later run that reads the scope again supersedes the hold; if the scope really is empty, an operator releases it: <code>{{ held.release_command }}</code>{% endif %}</p>
+    <p class="tw-note"><strong>Held:</strong> a claim asserted none of the {{ held.in_scope }} live <span class="tw-mono">{{ held.edge_type }}</span> edge{{ held.in_scope|pluralize }} {{ held.direction }} of <span class="tw-mono">{{ held.anchor_entity_id }}</span>, so nothing was removed for it. {% if held.released %}Released by {{ held.released }}.{% elif held.superseded_by %}Superseded by a later complete read of the same scope (claim <span class="tw-mono">{{ held.superseded_by }}</span>); nothing to release.{% else %}A later run that reads the scope again supersedes the hold; if the scope really is empty, an operator releases it: <code>{{ held.release_command }}</code>{% endif %}</p>
     {% endfor %}
     {% if counts.edge_authority %}
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-edge_authority" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-edge_authority" class="tap-table-container"></div>
