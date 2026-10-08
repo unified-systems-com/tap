@@ -32,7 +32,7 @@ from tap_grid.services import write_batch
 from tap_grid.tests.test_grift_edge_authority import OTHER, _claim, _edge, _import, _link, _run, _seed
 from tap_grid.tests.test_grift_edge_endpoints import _doc
 
-SPEC = {n: pytest.mark.spec(f"req-grid-reconcile-edge-authority-{n}") for n in (11, 12, 13)}
+SPEC = {n: pytest.mark.spec(f"req-grid-reconcile-edge-authority-{n}") for n in (11, 12, 13, 14)}
 
 pytestmark = pytest.mark.django_db
 
@@ -208,3 +208,45 @@ class TestTheRecord:
             _store(run, record)
         run.refresh_from_db()
         assert EDGE_AUTHORITY_KEY not in (verdicts_of(run) or {}), "nothing was stored"
+
+
+class TestSupersessionOrder:
+    @SPEC[14]
+    def test_the_later_read_supersedes_even_when_its_claim_was_written_first(self) -> None:
+        """Run A opens and reads first; run B opens and reads later. B writes its claim first, A after.
+        B's read is the more recent one, so it supersedes A's hold, and not the other way round."""
+        from collections.abc import Iterator
+        from contextlib import contextmanager
+
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.reconcile import _held_claim, _superseding_claim
+
+        @contextmanager
+        def bound(run: Any) -> Iterator[None]:
+            prior = get_caller_context()
+            set_caller_context(CallerContext(user=prior.user if prior else None, batch_id=str(run.entity_id)))
+            try:
+                yield
+            finally:
+                set_caller_context(prior)
+
+        def claim_of(result: Any) -> Any:
+            return BatchEvent.objects.get(
+                event_type=BatchEventType.AUTHORITY_PROPOSED,
+                metadata__record="claim",
+                batch__entity_id=result.imported_batches[0].batch_entity_id,
+            )
+
+        ids = _seed("anchor", *(f"t{i}" for i in range(WHOLE_SCOPE_HOLD_FLOOR)))
+        _link(*(_edge(ids["anchor"], ids[f"t{i}"]) for i in range(WHOLE_SCOPE_HOLD_FLOOR)))
+        with _run() as earlier_read:
+            pass
+        with _run() as later_read:
+            written_first = _import(_claim({"entity_id": ids["anchor"]}))
+        with bound(earlier_read):
+            written_second = _import(_claim({"entity_id": ids["anchor"]}))
+        assert later_read.started_at > earlier_read.started_at
+        a, b = claim_of(written_second), claim_of(written_first)
+        assert b.timestamp < a.timestamp, "the later read's claim was written first"
+        assert _superseding_claim(_held_claim(a)) == str(b.id)
+        assert _superseding_claim(_held_claim(b)) is None, "an earlier read never supersedes a later one"

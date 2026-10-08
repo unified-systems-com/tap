@@ -508,14 +508,19 @@ def _apply_edge_authority(batch: Any, *, produced_batches: set[str]) -> dict[str
 
 
 def _superseding_claim(claim: Mapping[str, Any]) -> str | None:
-    """The first complete claim, made after the held one, over the same scope: a later read of the
-    scope supersedes the hold (``-14``). Its own run's outcome stands; the old hold is not released."""
+    """The complete claim over the same scope whose read began after the held one's: a later read of
+    the scope supersedes the hold (``-14``). Ordered by each claim's recorded read boundary, not by
+    when its event was written: a run that read first can submit its claim after a run that read
+    later, and only the read order says which saw the scope more recently. Among several later
+    reads, the earliest names the hold's successor."""
     from tap_grid.models import BatchEvent, BatchEventType
 
-    held_at = BatchEvent.objects.filter(id=claim["claim_event_id"]).values_list("timestamp", flat=True).first()
-    if held_at is None:
+    held = BatchEvent.objects.filter(id=claim["claim_event_id"]).values_list("metadata", flat=True).first()
+    held_boundary = _parse_boundary((held or {}).get("read_boundary"))
+    if held_boundary is None:
         return None
-    newer = (
+    later: list[tuple[datetime, uuid.UUID]] = []
+    for event_id, metadata in (
         BatchEvent.objects.filter(
             event_type=BatchEventType.AUTHORITY_PROPOSED,
             metadata__record="claim",
@@ -523,14 +528,14 @@ def _superseding_claim(claim: Mapping[str, Any]) -> str | None:
             metadata__edge_type=claim["edge_type"],
             metadata__anchor_entity_id=claim["anchor_entity_id"],
             metadata__direction=claim["direction"],
-            timestamp__gt=held_at,
         )
-        .order_by("timestamp", "id")
-        .values_list("id", flat=True)
-        .first()
-    )
-    return str(newer) if newer is not None else None
-
+        .exclude(id=claim["claim_event_id"])
+        .values_list("id", "metadata")
+    ):
+        boundary = _parse_boundary((metadata or {}).get("read_boundary"))
+        if boundary is not None and boundary > held_boundary:
+            later.append((boundary, event_id))
+    return str(min(later)[1]) if later else None
 
 def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a run's held edge-authority proposals: an operator's release (``-14``).
