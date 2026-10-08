@@ -322,8 +322,10 @@ Optional; an owner with their own CI runs the same commands there.
 release-please runs centrally from `org-bots` against any repository carrying its own config +
 manifest pair — no local workflow file needed, just the two files the central job reads.
 Confirmed 2026-10-08: this is already standardized fleet-wide, 24/24 plugins carry the pair;
-`repo-release-please-pair` in `validate_plugin --repo` reports a missing or half-wired pair as a
-WARNING, never a failure, so anyone building their own plugin is free to decline it.
+`repo-release-please-pair` in `validate_plugin --repo` reports BOTH files absent as a WARNING,
+never a failure, so anyone building their own plugin is free to decline it — but exactly ONE
+file present, or either unparseable, is a FAILURE: a half-wired pair looks done from a directory
+listing and isn't, so it is never treated as a lesser form of warning.
 
 Renovate needs no per-plugin file at all: `org-bots`'s shared preset already covers every
 repository fleet-wide with no config of its own (`renovate/preset.js`, spread in by
