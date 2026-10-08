@@ -550,7 +550,7 @@ def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: 
     already released or superseded, or a run with nothing held, releases nothing.
     ``claim_event_ids`` narrows the release to those claims; None means every held claim of the run.
     """
-    from tap_grid.models import Batch, BatchEvent
+    from tap_grid.models import Batch, BatchEvent, Entity
 
     with transaction.atomic():
         # One release of a run at a time: lock its batch row, then read the record under the lock. A
@@ -568,6 +568,16 @@ def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: 
         ]
         if record is None or not candidates:
             return {"released_claims": [], "superseded_claims": [], "counts": _edge_counts([])}
+        # Hold every candidate's anchor before asking whether a later read superseded it, the lock the
+        # importer takes before it reads a scope: a newer claim over the scope either committed first
+        # and is seen below, or holds the anchor until it commits, and this waits for it. Id order, as
+        # the importer takes them, so the two never wait on each other.
+        list(
+            Entity.objects.select_for_update()
+            .filter(pk__in=sorted({uuid.UUID(c["anchor_entity_id"]) for c in candidates if c.get("anchor_entity_id")}))
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
         superseded: list[str] = []
         targets: list[dict[str, Any]] = []
         for claim in candidates:

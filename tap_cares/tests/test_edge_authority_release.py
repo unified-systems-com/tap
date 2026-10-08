@@ -122,6 +122,73 @@ class TestSupersession:
         assert newest["counts"]["applied"] == 3 and not any(_live(ids[f"hub_t{i}"]) for i in range(3))
 
 
+class TestSupersessionRace:
+    @SPEC
+    def test_a_newer_claim_still_being_written_is_waited_for(
+        self, isolate_collector_registry: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A newer complete claim over the scope is mid-transaction, its anchor locked, when the release
+        starts. The release waits for it, sees it, and releases nothing under the older read."""
+        import contextvars
+        import threading
+
+        import tap_grid.grift.importer as importer_module
+        from tap_cares.tests.test_edge_authority_run import LINK
+        from tap_grid.batch import create_batch
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.cascade_corpus.timing import JOIN_SECONDS, finish, in_thread, wait_until_blocked_by
+        from tap_grid.reconcile import RUN_CONFIG_KEY, run_config
+
+        ids, job = _held(monkeypatch)
+        run_id = str(_lifecycle_batch(job).entity_id)
+        operator: Any = _operator("cares.arm_reconcile")
+        pause: contextvars.ContextVar[bool] = contextvars.ContextVar("pause", default=False)
+        paused, go = threading.Event(), threading.Event()
+        real = importer_module._apply_authority_claims
+
+        def holding(*args: Any, **kwargs: Any) -> Any:
+            # The newer claim is recorded, its anchor and scope locked, its batch not yet committed.
+            out = real(*args, **kwargs)
+            if pause.get():
+                paused.set()
+                assert go.wait(JOIN_SECONDS)
+            return out
+
+        monkeypatch.setattr(importer_module, "_apply_authority_claims", holding)
+        newer_run = create_batch(
+            source="t:newer-run",
+            name="newer run",
+            description="a later read of the same scope",
+            metadata={RUN_CONFIG_KEY: run_config(authority=False, budget=None, collector="test")},
+        )
+
+        def newer_claim() -> Any:
+            pause.set(True)
+            ambient = get_caller_context()
+            set_caller_context(CallerContext(user=ambient.user if ambient else None, batch_id=str(newer_run.entity_id)))
+            container = _batch_container(str(uuid.uuid4()))
+            container["edge_cases"] = {
+                "authority": [
+                    {"edge_type": LINK, "anchor": {"entity_id": ids["hub"]}, "direction": "outbound", "read": "complete"}
+                ]
+            }
+            return grift_import(_minimal_doc([container]))
+
+        def release() -> Any:
+            with acting_as(operator):
+                return release_edge_authority_hold(run_id)
+
+        n = in_thread(newer_claim)
+        assert paused.wait(JOIN_SECONDS)
+        r = in_thread(release)
+        wait_until_blocked_by(r[1], n[1])
+        go.set()
+        finish(n, r)
+        assert n[1].value.success, n[1].value.errors
+        assert r[1].value["released_claims"] == [] and len(r[1].value["superseded_claims"]) == 1
+        assert all(_live(ids[f"hub_t{i}"]) for i in range(3)), "nothing removed under the older read"
+
+
 class TestTwoOperators:
     @SPEC
     def test_two_concurrent_releases_release_once_and_name_the_first(
