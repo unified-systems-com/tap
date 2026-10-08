@@ -1,0 +1,49 @@
+"""Read-only, memory-only probes; run with the project container's Python.
+
+Executes selected, unmodified AST blocks from the importer with observation doubles.
+This establishes control flow, not end-to-end database behavior.
+"""
+import ast
+import hashlib
+from pathlib import Path
+from types import SimpleNamespace as NS
+import uuid
+
+path = Path('/app/tap_grid/grift/importer.py')
+source = path.read_text()
+tree = ast.parse(source)
+print('importer sha256:', hashlib.sha256(source.encode()).hexdigest())
+fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_execute_grift_batch')
+block = next(n for n in ast.walk(fn) if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == 'ops')
+
+class BatchFailed(Exception):
+    pass
+
+for count in (0, 1):
+    calls = []
+    batch_result = NS(success=False, errors=[NS(code='internal_error', message='injected precommit failure')],
+                      results=[NS(success=True)] * count)
+    env = dict(ops=[object()], ctx=None, write_batch=lambda *a, **k: batch_result,
+               op_meta=[dict(kind='node')], nodes_imported=0, edges_imported=0,
+               edges_deleted=0, nodes_deleted=0, replace_spine_intents=[dict(entity_id='existing')],
+               _sync_spine_for_replaced_nodes=lambda intents: calls.append('spine_sync'),
+               _BatchFailed=BatchFailed)
+    exec(compile(ast.Module(body=[block], type_ignores=[]), str(path), 'exec'), env)
+    print('failed batch result:', dict(successful_prefix=count, imported=env['nodes_imported'],
+          any_failure=env['any_failure'], subsequent_calls=calls))
+
+sync = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_sync_spine_for_replaced_nodes')
+class Query:
+    def __init__(self):
+        self.updates = []
+    def values(self, *args): return self
+    def get(self, **kwargs): return dict(name='same', dimensions={'old': 'value'})
+    def filter(self, **kwargs): return self
+    def update(self, **kwargs): self.updates.append(kwargs)
+query = Query()
+env = dict(Entity=NS(objects=query, DoesNotExist=LookupError), timezone=NS(now=lambda: 'now'), uuid=uuid)
+mod = ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), sync], type_ignores=[])
+ast.fix_missing_locations(mod)
+exec(compile(mod, str(path), 'exec'), env)
+env['_sync_spine_for_replaced_nodes']([dict(entity_id=str(uuid.uuid4()), envelope_name='same', envelope_dims={})])
+print('explicit empty dimensions: writes issued =', query.updates)
