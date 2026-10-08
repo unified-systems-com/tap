@@ -1673,7 +1673,7 @@ def resolve_edge_identity(
     it found (an id, or every candidate), so a caller that may write but not read is refused here
     whoever calls it, not only when the importer remembers to ask (``req-grid-edge-identity-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/60d4179c54e3 (derivation) — the one place
+    TAP-IMPLEMENTS: req-grid-edge-identity@3d07c18ed609/60d4179c54e3 (derivation) — the one place
         a relationship's declared identity becomes the id written under: incomplete-key refusal,
         the lock before any read, the bound search among live edges and the assignment on a
         miss all happen here, inside the caller's transaction.

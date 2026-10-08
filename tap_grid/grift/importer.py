@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5785c4b9ecb7 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/603c3fde26f2 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -1020,7 +1020,7 @@ def _endpoint_key_is_sound(
     (``req-grid-import-grift-edge-endpoints-3``). ``""`` is observed-empty and is a value, as for
     nodes (``req-grid-entity-natural-key-16``).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/736330ee28b7 (enforcement) —
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@95496010e8c8/736330ee28b7 (enforcement) —
         the preflight refusal of a key endpoint that could never resolve honestly: an unkeyed
         type, a missing or null declared property, or a property the type does not declare.
     """
@@ -3875,11 +3875,21 @@ def _resolve_ref_identities(
     606 - tap): preflight's duplicate and upsert-versus-removal checks saw the provisional id,
     so they are re-applied here against the id the ref actually resolved to. Refs are
     batch-local, so a row another batch of the file wrote explicitly is simply an existing
-    row to this one — sequential batches, not a collision.
+    row to this one — sequential batches, not a collision. Resolving searches the live grid
+    and reports what it finds, so a batch with a ref node first authorises ``grid.read``.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@8e10bce8f2dd/2f191f4abd80 (enforcement) — a ref
+        node's search of the live grid runs only after grid.read is authorised (acceptance -5).
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
 
     ref_of = {pid: ref for ref, pid in refs.items()}
+    if any(node["entity"]["entity_id"] in ref_of for node in batch_container.get("nodes", [])):
+        # Resolving a ref searches the live grid and reports what it finds, a found row's id or
+        # every candidate on ambiguity, so it is a read (req-grid-import-grift-identity-5).
+        policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_ref_identity")
     substitutions: dict[str, str] = {}
     taken: set[str] = set()
     keys_seen: dict[str, tuple[str, str | None]] = {}  # identity key -> (who, its entity_id if explicit)
@@ -3910,7 +3920,7 @@ def _resolve_ref_identities(
         entity_type = node_obj["entity"]["entity_type"]
         path = f"{batch_path}.nodes[{node_idx}].entity.ref"
         try:
-            resolution = resolve_identity(  # TAP-AUTHZ-COV: gated by grift_import
+            resolution = resolve_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
                 entity_type, node_obj["node"], caller_context=ctx, provisional=provisional
             )
         except ServiceValidationError as exc:
@@ -4043,7 +4053,7 @@ def _resolve_endpoint_keys(
     Resolving a key reads the grid and tells the submitter what it found, so the import
     authorises ``grid.read`` first (``req-grid-import-grift-edge-endpoints-9``).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/1bce761f7421 (derivation) —
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@95496010e8c8/1bce761f7421 (derivation) —
         the resolution of a key endpoint: batch first, then the live grid, ambiguity refused,
         nothing minted, an unresolved endpoint left to the dangling-edge mode, under grid.read.
     """
@@ -4342,7 +4352,7 @@ def _resolve_edge_identities(
     switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
     a read of the grid, so the import authorises ``grid.read`` first (``-13``).
 
-    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/185c91e3f9f1 (enforcement) — the importer
+    TAP-IMPLEMENTS: req-grid-edge-identity@3d07c18ed609/185c91e3f9f1 (enforcement) — the importer
         step that applies edge identity to a batch: which edges are looked up, the in-batch and
         keyless duplicate rules, the read authorisation, and the warn-mode switch for
         undeclared types (acceptance -5, -6, -9, -13).

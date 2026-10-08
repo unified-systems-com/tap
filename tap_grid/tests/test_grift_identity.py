@@ -363,3 +363,32 @@ def test_the_lock_key_is_a_function_of_the_declaration() -> None:
     # so it is locked too: the search and the lock must not disagree about what an identity is.
     assert identity_lock_key("panel", {"slug": None}) is None
     assert identity_lock_key("panel", {"slug": ""}) is not None
+
+
+@pytest.mark.django_db
+class TestResolutionIsARead:
+    @pytest.mark.spec("req-grid-import-grift-identity-5")
+    def test_an_actor_refused_read_is_refused_the_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ref resolution reports what the grid holds, so an actor who may import and write but
+        not read is refused before the search: nothing written, and the row's id not disclosed."""
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        existing = _resolved(grift_import(_bundle("known", "Known")))
+        before = Entity.objects.count()
+        real_authorize = policy.authorize
+        asked: list[str] = []
+
+        def refuse_read(ctx: Any, capability: str, *args: Any, **kwargs: Any) -> Any:
+            if capability == READ_CAPABILITY and kwargs.get("operation") == "grift_import_ref_identity":
+                asked.append(capability)
+                raise PermissionError("grid.read refused for this test")
+            return real_authorize(ctx, capability, *args, **kwargs)
+
+        monkeypatch.setattr(policy, "authorize", refuse_read)
+        result = grift_import(_bundle("known", "Renamed"))
+        assert asked == [READ_CAPABILITY]
+        assert not result.success
+        assert Entity.objects.count() == before
+        assert Entity.objects.get(pk=uuid.UUID(existing)).name == "Known"
+        assert existing not in repr(result), "the existing row's id never reaches the submitter"
