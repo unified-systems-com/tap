@@ -545,12 +545,14 @@ def _report_edge_authority(instance: Any, scoped_batch_id: str, record: Any) -> 
     if edge.get("authority") != "on":
         return
     counts = edge.get("counts") or {}
-    if any(counts.values()):
+    # Held proposals were not applied: they are the warning below, never "applied".
+    worked = {outcome: n for outcome, n in sorted(counts.items()) if outcome != "held" and n}
+    if worked:
         instance.record_info(
             "4e14",
             "EDGE_AUTHORITY_APPLIED",
             "The reconcile phase applied the run's edge-authority proposals: "
-            + ", ".join(f"{n} {outcome}" for outcome, n in sorted(counts.items()) if n),
+            + ", ".join(f"{n} {outcome}" for outcome, n in worked.items()),
             message_data={"counts": counts},
         )
     for claim in edge.get("held_claims", []):

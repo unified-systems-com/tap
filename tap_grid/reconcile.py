@@ -519,20 +519,25 @@ def release_edge_authority_hold(
     with nothing held, releases nothing. ``claim_event_ids`` narrows the release to those
     claims; None releases every held claim of the run.
     """
-    from tap_grid.models import BatchEvent
+    from tap_grid.models import Batch, BatchEvent
 
-    record = verdicts_of(batch)
-    edge = (record or {}).get(EDGE_AUTHORITY_KEY) or {}
-    targets = [
-        claim
-        for claim in edge.get("held_claims", [])
-        if claim.get("released") is None and (claim_event_ids is None or claim["claim_event_id"] in claim_event_ids)
-    ]
-    if record is None or not targets:
-        return {"released_claims": [], "counts": _edge_counts([])}
-    target_ids = {claim["claim_event_id"] for claim in targets}
-    released: list[dict[str, Any]] = []
     with transaction.atomic():
+        # One release of a run at a time: lock its batch row, then read the record under the lock. A
+        # second operator waits here, re-reads, and finds the claims already released, so the record
+        # and the unlinks never disagree about who released what.
+        locked = cast(Batch, Batch.all_objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
+        record = verdicts_of(locked)
+        edge = (record or {}).get(EDGE_AUTHORITY_KEY) or {}
+        targets = [
+            claim
+            for claim in edge.get("held_claims", [])
+            if claim.get("released") is None
+            and (claim_event_ids is None or claim["claim_event_id"] in claim_event_ids)
+        ]
+        if record is None or not targets:
+            return {"released_claims": [], "counts": _edge_counts([])}
+        target_ids = {claim["claim_event_id"] for claim in targets}
+        released: list[dict[str, Any]] = []
         removed: set[str] = set()
         for entry in edge["entries"]:
             if entry["outcome"] != HELD or entry["claim_event_id"] not in target_ids:
@@ -545,7 +550,8 @@ def release_edge_authority_hold(
             claim["released"] = dict(released_by)
         edge["counts"] = _edge_counts(edge["entries"])
         record[EDGE_AUTHORITY_KEY] = edge
-        _store(batch, record)
+        _store(locked, record)
+    batch.metadata = locked.metadata
     return {"released_claims": sorted(target_ids), "counts": _edge_counts(released)}
 
 

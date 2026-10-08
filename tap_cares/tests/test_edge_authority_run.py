@@ -215,3 +215,5 @@ class TestArmedRuns:
         assert (held["in_scope"], edge["counts"]["held"], edge["counts"]["applied"]) == (3, 3, 0)
         (warning,) = [e for e in job.results["warn"] if e["message_code"] == "EDGE_AUTHORITY_HELD"]
         assert f"--claim {held['claim_event_id']}" in warning["message"]
+        applied = [e for e in job.results.get("info", []) if e["message_code"] == "EDGE_AUTHORITY_APPLIED"]
+        assert applied == [], "a run whose only outcome is a hold applied nothing, and does not say it did"

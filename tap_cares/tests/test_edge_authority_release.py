@@ -89,6 +89,52 @@ class TestTheRelease:
         assert _live(ids["hub_t0"]) and not _live(ids["hub_t1"]) and not _live(ids["hub_t2"])
 
 
+class TestTwoOperators:
+    @SPEC
+    def test_two_concurrent_releases_release_once_and_name_the_first(
+        self, isolate_collector_registry: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second release waits on the first's lock on the run, re-reads, and finds the claim
+        released: the record and every unlink name the operator who released it."""
+        import threading
+
+        import tap_grid.reconcile as reconcile_module
+        from tap_grid.cascade_corpus.timing import JOIN_SECONDS, finish, in_thread, wait_until_blocked_by
+
+        ids, job = _held(monkeypatch)
+        run_id = str(_lifecycle_batch(job).entity_id)
+        first, second = _operator("cares.arm_reconcile"), _operator("cares.arm_reconcile", "grid.read")
+        first_name = first.username  # type: ignore[attr-defined]
+        inside, go = threading.Event(), threading.Event()
+        real = reconcile_module._apply_proposal
+
+        def paused(*args: Any, **kwargs: Any) -> Any:
+            # Hold the first release inside its transaction, past its read of the record.
+            if kwargs["released_by"]["operator"] == first_name and not inside.is_set():
+                inside.set()
+                assert go.wait(JOIN_SECONDS)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(reconcile_module, "_apply_proposal", paused)
+
+        def release_as(operator: Any) -> Any:
+            with acting_as(operator):
+                return release_edge_authority_hold(run_id)
+
+        a = in_thread(lambda: release_as(first))
+        assert inside.wait(JOIN_SECONDS)
+        b = in_thread(lambda: release_as(second))
+        wait_until_blocked_by(b[1], a[1])
+        go.set()
+        finish(a, b)
+        assert len(a[1].value["released_claims"]) == 1 and a[1].value["counts"]["applied"] == 3
+        assert b[1].value["released_claims"] == [], "the second release found nothing still held"
+        (claim,) = _edge_record(job)["held_claims"]
+        assert claim["released"]["operator"] == first_name
+        unlinks = BatchEvent.objects.filter(event_type=BatchEventType.UNLINK, entity_id__in=[uuid.UUID(ids[f"hub_t{i}"]) for i in range(3)])
+        assert {u.metadata["edge_authority"]["released_by"]["operator"] for u in unlinks} == {first_name}
+
+
 class TestTheCommand:
     @SPEC
     def test_the_command_releases_as_the_named_operator(
