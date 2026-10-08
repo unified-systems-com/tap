@@ -29,7 +29,7 @@
 # minimal, tap-code-free reproduction, 100% reproducible on real CI hardware. A from-scratch,
 # Docker-free, Wolfi-free bare-Ubuntu reproduction (2026-10-05, L18) then ruled out the
 # version-mismatch itself: a vanilla-upstream OpenSSL 4.0.2 host library paired with this same
-# self-built 3.0.22 FIPS provider does NOT reproduce the failure, which points at something
+# self-built 3.0.22 FIPS provider (the pin at the time) does NOT reproduce the failure, which points at something
 # specific to Wolfi/Chainguard's own `openssl-4.0` build (or their `python-3.14`/`libpq` builds),
 # not at OpenSSL 4.0 as a release line.
 #
@@ -38,7 +38,7 @@
 # (the 3.6.x line) rather than `openssl-4.0`'s `libcrypto.so.4`/`libssl.so.4` — `python-3.14-base`
 # and `postgresql-18-dev` each cut over at exactly ONE revision ahead of what is pinned here.
 # This keeps every FIPS-relevant consumer in this image (CPython's own `_hashlib`, `cryptography`,
-# libpq) on the SAME major OpenSSL line as the self-built 3.0.22 FIPS provider — the condition a
+# libpq) on the SAME major OpenSSL line (3.x) as the self-built FIPS provider — the condition a
 # clean bare-Ubuntu test (L18) already confirmed does not reproduce the failure, 20/20. These are
 # revision pins, not a track pin: narrower and more likely to need re-verifying on any apk bump
 # than a simple version pin would be, tracked the same way the FIPS provider's own pin is (a
