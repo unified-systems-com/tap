@@ -34,7 +34,16 @@ CAP_CODE = "cascade_closure_too_large"
 INVALID_REASON_CODE = "invalid_reason"
 INVALID_CASCADE_CODE = "validation_error"
 DELETE_REASONS = frozenset(
-    {"dropped_from_observation", "scope_withdrawn", "cascaded", "resolved", "operator", "grift_import", "unspecified"}
+    {
+        "dropped_from_observation",
+        "scope_withdrawn",
+        "cascaded",
+        "resolved",
+        "operator",
+        "grift_import",
+        "authority",
+        "unspecified",
+    }
 )
 CASCADE_MODES = frozenset({"none", "contained"})
 #: Keys the walk writes itself on every cascaded record; an inherited value never overrides them.

@@ -4616,7 +4616,7 @@ def _apply_authority_claims(
     Raises ``_BatchFailed`` for two claims over one scope, and for an anchor key that names more
     than one node. Computing proposals reads the grid, so ``grid.read`` is authorised first.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@c4551f3f9ef9/6489bf991327 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@012662063913/6489bf991327 (derivation) — the one
         place a claim's scope, its asserted set and its proposals are derived, fenced and recorded.
     """
     from tap_auth import policy

@@ -304,6 +304,69 @@ def arm_reconcile(
     return {**audit[ARM_RECONCILE_AUDIT_KEY], "batch": str(batch.entity_id)}
 
 
+@requires_capability("cares.arm_reconcile")
+def release_edge_authority_hold(
+    run_batch_id: str,
+    *,
+    claim_event_id: str | None = None,
+    caller_context: CallerContext | None = None,
+) -> dict[str, Any]:
+    """Release a run's held edge-authority claims: the operator's decision to let the removals a
+    whole-scope hold stopped go ahead (``req-grid-reconcile-edge-authority-14``, Issue# 920 - tap).
+
+    Releasing is the same kind of act as arming, so the OPERATOR is gated by
+    ``cares.arm_reconcile``, not by ``grid.reconcile``: the collector program actor holds
+    ``grid.reconcile``, and a run must not be able to release its own hold. As in
+    ``arm_reconcile``, the removals themselves are made as the collector program actor, under
+    ``grid.reconcile``, and the operator's name rides on the record: each released claim says who
+    released it, the OS user behind the shell, and when. Each held proposal is re-locked and
+    re-fenced on the way (``tap_grid.reconcile.release_edge_authority_hold``). ``claim_event_id``
+    releases that one claim; None releases every held claim of the run. A claim already released
+    releases nothing.
+
+    Raises:
+        MissingActor: no named operator.
+        Batch.DoesNotExist: no batch carries ``run_batch_id``.
+    """
+    import getpass
+
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    from tap_auth.capabilities import RECONCILE_CAPABILITY
+    from tap_auth.errors import MissingActor
+    from tap_grid.reconcile import release_edge_authority_hold as release_held
+
+    ctx = caller_context if caller_context is not None else _ambient_context()
+    if ctx is None or ctx.user is None:
+        raise MissingActor("release_edge_authority_hold needs a named operator; refused before any read")
+    operator = getattr(ctx.user, "username", None)
+    try:
+        shell_user: str | None = getpass.getuser()  # the OS principal behind a shell invocation, for the audit
+    except Exception:  # noqa: BLE001 — no OS identity available (a request thread, a container without passwd)
+        shell_user = None
+    released_by = {"operator": operator, "shell_user": shell_user, "at": datetime.now(UTC).isoformat()}
+    actor = get_builtin_actor(COLLECTOR)
+    with (
+        acting_as(actor),
+        authorized(
+            CallerContext(user=actor), RECONCILE_CAPABILITY, operation="tap_cares.release_edge_authority_hold"
+        ),
+    ):
+        run = Batch.all_objects.get(entity_id=run_batch_id)
+        result = release_held(
+            run,
+            claim_event_ids={claim_event_id} if claim_event_id is not None else None,
+            released_by=released_by,
+        )
+    logger.warning(
+        "[3e8d] edge authority hold on run %s released by operator %r: %d claim(s), %s",
+        run_batch_id,
+        operator,
+        len(result["released_claims"]),
+        result["counts"],
+    )
+    return {**result, "released_by": released_by, "run": str(run_batch_id)}
+
+
 def _ambient_context() -> CallerContext | None:
     from tap_grid.caller_context import get_caller_context
 

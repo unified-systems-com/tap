@@ -110,6 +110,7 @@ class TestDeleteReason:
             "resolved",
             "operator",
             "grift_import",
+            "authority",
             "unspecified",
         }
 
