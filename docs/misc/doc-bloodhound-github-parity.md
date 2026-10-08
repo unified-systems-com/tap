@@ -57,8 +57,12 @@ Two consumers, not one:
 generator's contract is "seed what runs", and the two numbers agreeing is evidence that both the
 tally above and the generator are correct. If they ever diverge, one of the two is stale.
 
-Declared in canon: `specs/spec-git-serious-query-pack.md`, `req-git-serious-query-pack`, status
-**Implemented**, naming `data/bloodhound_queries.json` + `/git-serious/queries` as the deliverable.
+Declared in canon — **git-serious-tap's** canon, not tap's: `specs/spec-git-serious-query-pack.md`
+in that repository carries the query-pack requirement at status **Implemented**, naming
+`data/bloodhound_queries.json` + `/git-serious/queries` as the deliverable. Its requirement id is
+deliberately not reproduced here as a bare citation: tap's `rids` guard resolves every `req-…` token
+in this tree against tap's own requirement set, and a plugin repository's id cannot resolve. Quoting
+it verbatim is what reds that guard — which it did, on the first push of this document.
 
 ## Method, so this can be re-derived rather than trusted
 
@@ -186,7 +190,7 @@ derived from, with the command that re-derives them.
 - The generated GRIFT batch: `tap_plugin/git_serious/grift/queries.grift.json` — build output, do not hand-edit.
 - The generator: `scripts/build_query_pack_grift.py`.
 - The runtime reader: `tap_plugin/git_serious/panels/query_pack.py`.
-- Canon: `specs/spec-git-serious-query-pack.md`, `req-git-serious-query-pack` (Implemented).
+- Canon: the query-pack requirement in `specs/spec-git-serious-query-pack.md`, in git-serious-tap (Implemented). Its id is not cited verbatim here — see the note above on tap's `rids` guard.
 - Slices: `github-core#109` (epic), `#110` (A, settings), `#111` (B, people), `#112` (C, org roles and PAT grants), `#114` (A2, flattened ruleset rules).
 - Grammar gaps: `tap#259` (variable-length path and alternation), `tap#433` (correlated multi-MATCH).
 - Unfiled gaps: `OPTIONAL MATCH`; the derived eligibility and branch-creation edges.
