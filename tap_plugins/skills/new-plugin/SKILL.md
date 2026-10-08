@@ -314,10 +314,32 @@ thin `.github/workflows/ci.yml` that calls `<tap-core-owner>/tap/.github/workflo
 `permissions: {contents: read, security-events: write}` (the workflow's SARIF upload job needs the second, and
 GitHub refuses the whole call at startup without it — tap#772). Two independent pins:
 the workflow SHA picks the validation logic; the manifest's `requires_tap` picks the core it runs against.
-It boots the plugin's in-package `ci` record and runs its tests — the same gates as Step 11, on every PR.
+It boots the plugin's in-package `ci` record and runs its tests — the same gates as Step 12, on every PR.
 Optional; an owner with their own CI runs the same commands there.
 
-## Step 11: Validate, in layers
+## Step 11: Release automation (optional — ASK, default yes for your own plugins)
+
+release-please runs centrally from `org-bots` against any repository carrying its own config +
+manifest pair — no local workflow file needed, just the two files the central job reads.
+Confirmed 2026-10-08: this is already standardized fleet-wide, 24/24 plugins carry the pair;
+`repo-release-please-pair` in `validate_plugin --repo` reports a missing or half-wired pair as a
+WARNING, never a failure, so anyone building their own plugin is free to decline it.
+
+Renovate needs no per-plugin file at all: `org-bots`'s shared preset already covers every
+repository fleet-wide with no config of its own (`renovate/preset.js`, spread in by
+`renovate/global.js`'s `requireConfig: "optional"`) — nothing to scaffold here.
+
+**Ask the author, every time, rather than assume either way:** "Want release-please wired up for
+this plugin?" Default the recommendation to **yes** when the author is the plugin standard's own
+maintainer building on the happy path; anyone else is free to say no and carry neither file;
+`repo-release-please-pair` simply stays silent (warn-only) if they do.
+
+If yes: `release-please-config.json` + `.release-please-manifest.json` — the shape every plugin
+already carries (`release-type: "python"`, `packages: {".": {"package-name": "<dist>"}}`); copy
+an existing plugin's pair and change the name. `validate_plugin --repo --strict` then reports
+`repo-release-please-pair` as `pass`, not `warn`.
+
+## Step 12: Validate, in layers
 
 1. Structure, no Django: `python -m tap_plugins.validate_plugin tap_plugin/<slug> --strict` (inside the
    session's `web` container — never host Python).
@@ -329,7 +351,7 @@ Optional; an owner with their own CI runs the same commands there.
 
 Fix every gate failure before opening the PR; they fail closed by design.
 
-## Step 12: Land and release
+## Step 13: Land and release
 
 Every change rides a PR to the plugin repository's default branch; the org ruleset (where one exists)
 refuses direct pushes. Commit trailers name the issue (`Closes:` / `Part-of:`). Releases are immutable
@@ -337,7 +359,7 @@ refuses direct pushes. Commit trailers name the issue (`Closes:` / `Part-of:`). 
 `validate_plugin --strict` + the plugin's tests; PR-based landing; tag). A release changes no boot pin —
 consumers bump their own records deliberately.
 
-## Step 13: Spec back in sync
+## Step 14: Spec back in sync
 
 Flip every implemented requirement to `Implemented`; head the design-time Model catalog / Edge types
 sections "Superseded by the manifest as of v<x>" and keep only rows that record a decision

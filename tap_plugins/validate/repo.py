@@ -24,6 +24,7 @@ repaired. Measure first (req-tap-plugin-validate-repo-5).
 
 from __future__ import annotations
 
+import json
 import re
 from fnmatch import fnmatch
 from pathlib import Path
@@ -59,6 +60,16 @@ CI_WORKFLOW = ".github/workflows/ci.yml"
 #: The scheduled lane that probes the ceiling of the declared `requires_tap` range against
 #: core `main` — C2's instrument, not its gate.
 NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml"
+
+#: release-please's own two files, by name — distinct from `RELEASE_PLEASE_FILES` above, which
+#: this module already uses to ask "does this repository declare releases at all" for the
+#: release-LANE check. This check asks a narrower, orthogonal question: given either file is
+#: present, is the PAIR internally consistent? A manifest with no config has nothing reading
+#: it; a config with no manifest has no version to bump from. Neither half of
+#: `_check_release_lane` catches that, since `_declares_releases` only asks whether at least
+#: one exists.
+RELEASE_PLEASE_CONFIG_FILE = "release-please-config.json"
+RELEASE_PLEASE_MANIFEST_FILE = ".release-please-manifest.json"
 
 #: The release lane: a thin caller of core's reusable `plugin-release-sbom.yml`, triggered by the
 #: release tag push. It is what turns a published wheel into one a stranger can verify — the
@@ -116,6 +127,7 @@ def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     _check_caller_permissions(repo_root, result)
     _check_nightly_shape(repo_root, result)
     _check_release_lane(repo_root, result)
+    _check_release_please(repo_root, result)
     _check_waiver_ledger(repo_root, result)
 
 
@@ -1901,4 +1913,78 @@ def _check_waiver_ledger(repo_root: Path, result: ValidationResult) -> None:
         )
     if not missing:
         check.info(f"{len(entries)} waiver(s), each under a reason comment")
+    result.checks.append(check)
+
+
+# ---------------------------------------------------------------------------
+# release-please pair consistency (optional)
+# ---------------------------------------------------------------------------
+
+
+def _check_release_please(repo_root: Path, result: ValidationResult) -> None:
+    """Does this repository have release-please's config AND manifest, consistently? A WARNING
+    when both are absent, deliberately — but one without the other is a failure, not a lesser
+    pass.
+
+    Distinct from `repo-release-lane` above, which asks whether a repository that DECLARES
+    releases (``_declares_releases`` — at least one of the two files present) also carries the
+    attestation lane. That check never looks at whether the declaration itself is a matched
+    pair; this one does, and only that.
+
+    Confirmed standardised across the fleet already (24/24 repositories, 2026-10-08) via a
+    separate retrofit — unlike Renovate, this was never missing org-wide. This check exists so
+    it stays that way going forward rather than relying on everyone remembering the convention,
+    and so a plugin that genuinely does not want release-please (the same "not required of
+    others building their own" ruling as Renovate) can say so by omitting both files cleanly.
+
+    A manifest with no config has nothing that reads its version. A config with no manifest has
+    no version to bump from. Either alone is a broken half-setup that looks, from a directory
+    listing, like release-please is wired up — which is exactly the shape worth failing on
+    rather than warning about.
+    """
+    check = CheckResult(
+        id="repo-release-please-pair", name="Repository carries release-please config + manifest (optional)"
+    )
+    config_path = repo_root / RELEASE_PLEASE_CONFIG_FILE
+    manifest_path = repo_root / RELEASE_PLEASE_MANIFEST_FILE
+    has_config = config_path.is_file()
+    has_manifest = manifest_path.is_file()
+    check.details = {"config": has_config, "manifest": has_manifest}
+
+    if not has_config and not has_manifest:
+        check.warn(
+            f"no {RELEASE_PLEASE_CONFIG_FILE} or {RELEASE_PLEASE_MANIFEST_FILE} — optional: `new-plugin` "
+            "offers to scaffold both; nothing requires them"
+        )
+        result.checks.append(check)
+        return
+
+    if has_config != has_manifest:
+        present, absent = (
+            (RELEASE_PLEASE_CONFIG_FILE, RELEASE_PLEASE_MANIFEST_FILE)
+            if has_config
+            else (RELEASE_PLEASE_MANIFEST_FILE, RELEASE_PLEASE_CONFIG_FILE)
+        )
+        check.fail(
+            f"{present} exists but {absent} does not — release-please needs both together: the manifest "
+            "with no config has nothing driving it, the config with no manifest has no version to bump "
+            "from. A half-setup, not a lesser form of done",
+            path=present,
+        )
+        result.checks.append(check)
+        return
+
+    for path, name in (
+        (config_path, RELEASE_PLEASE_CONFIG_FILE),
+        (manifest_path, RELEASE_PLEASE_MANIFEST_FILE),
+    ):
+        try:
+            json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            check.fail(f"{name} exists but does not parse as JSON: {exc}", path=name)
+    if check.status == "fail":
+        result.checks.append(check)
+        return
+
+    check.info(f"{RELEASE_PLEASE_CONFIG_FILE} and {RELEASE_PLEASE_MANIFEST_FILE} are both present and parse as JSON")
     result.checks.append(check)
