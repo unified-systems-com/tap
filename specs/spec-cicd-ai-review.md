@@ -698,10 +698,10 @@ design absorbs a steered verdict rather than pretending to prevent steering.
   judgement, which a CPU-class local model is not.
 - **Agent-facing files are flagged by path, deterministically (2026-10-03).** A change to `SKILL.md`,
   `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.mcp.json`, `.cursorrules`, `copilot-instructions.md`, or
-  anything under `.claude/`, `.cursor/` or `.codex/`, is a prompt for every future agent session that
-  reads it. The deterministic screen names each such file, so it is reviewed as a prompt, whatever any
-  seat says. This widens the reviewer-config list above from "files that steer *this* review" to
-  "files that steer *any* agent".
+  anything under `.claude/`, `.cursor/`, `.codex/` or `.github/instructions/`, is a prompt for every
+  future agent session that reads it. The deterministic screen names each such file, so it is
+  reviewed as a prompt, whatever any seat says. This widens the reviewer-config list above from
+  "files that steer *this* review" to "files that steer *any* agent".
 - **Injection is a finding with an out-of-band response path.** A malicious input aimed at the
   reviewers is not an ordinary review finding to be argued down in the PR thread the attacker
   controls: it fails the run red and raises a signal outside the PR conversation, loudly.
