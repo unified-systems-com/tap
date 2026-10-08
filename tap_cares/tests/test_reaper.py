@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from tap_cares.models import CollectionJob, CollectionJobStatus, Collector
 from tap_cares.services.reaper import _reap_stale_collection_jobs
+from tap_grid.write_guard import unguarded_write
 
 
 def _make_collector(suffix: str = "") -> Collector:
@@ -262,9 +263,12 @@ class TestReapStaleCollectionJobs:
             close_old_connections()
             assert lock_acquired.wait(timeout=5), "reap never signalled it took the lock"
             started = time_module.monotonic()
-            CollectionJob.objects.filter(entity_id=job.entity_id).update(
-                status=CollectionJobStatus.SUCCESSFUL, summary="real success, arrived mid-reap"
-            )
+            # A fixture standing in for another worker's write. Context variables do not cross
+            # into a new thread, so the harness's write hatch is opened here explicitly.
+            with unguarded_write():
+                CollectionJob.objects.filter(entity_id=job.entity_id).update(
+                    status=CollectionJobStatus.SUCCESSFUL, summary="real success, arrived mid-reap"
+                )
             outcome["elapsed"] = time_module.monotonic() - started
             connection.close()
 

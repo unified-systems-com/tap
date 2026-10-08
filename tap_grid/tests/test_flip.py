@@ -214,10 +214,10 @@ class TestUpdateFlipMapIntegration:
         """Default-on FLIP writes flip_map for service-writeable fields on create."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
         with batch_ctx(source="test:flip") as batch_id:
-            entity = create_entity("grid_fixtures__constrained_source", name="Frodo")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Frodo")
             char = ConstrainedSource.objects.create(entity=entity, name="Frodo", description="A hobbit")
 
         char.refresh_from_db()
@@ -228,10 +228,10 @@ class TestUpdateFlipMapIntegration:
         """Partial save (update_fields) stamps only the changed tracked field."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
         with batch_ctx(source="test:flip-create"):
-            entity = create_entity("grid_fixtures__constrained_source", name="Sam")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Sam")
             char = ConstrainedSource.objects.create(entity=entity, description="A gardener")
 
         with batch_ctx(source="test:flip-update") as batch_id2:
@@ -245,10 +245,10 @@ class TestUpdateFlipMapIntegration:
         """System-managed fields (not in SERVICE_CRUD_SCHEMA) are absent from flip_map."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
         with batch_ctx(source="test:flip-untracked"):
-            entity = create_entity("grid_fixtures__constrained_source", name="Gandalf")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Gandalf")
             char = ConstrainedSource.objects.create(entity=entity, name="Gandalf", description="A wizard")
 
         char.refresh_from_db()
@@ -263,9 +263,9 @@ class TestUpdateFlipMapIntegration:
         """Direct ORM save without CallerContext leaves flip_map empty."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
-        entity = create_entity("grid_fixtures__constrained_source", name="Tom Bombadil")
+        entity = make_spine_entity("grid_fixtures__constrained_source", name="Tom Bombadil")
         char = ConstrainedSource.objects.create(entity=entity, description="A mystery")
         char.refresh_from_db()
         assert char.flip_map == {}

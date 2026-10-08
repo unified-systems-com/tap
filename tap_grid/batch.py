@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
+from tap_auth.capabilities import WRITE_CAPABILITY
+from tap_auth.enforcement import requires_capability
 from tap_grid.context import get_batch_id
 from tap_grid.history import get_history_user
-from tap_grid.services import create_entity
+from tap_grid.write_guard import below_pipeline_write
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -43,6 +45,7 @@ logger = logging.getLogger(__name__)
 # "producer not recorded" (`source=""`, which after this only pre-existing rows
 # carry). See spec-grid-service-batch.md req-grid-service-batch-metadata-7.
 AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
+
 
 def _clamp_batch_name(name: str) -> str:
     """Clamp a batch name to what BOTH ends of the spine can hold.
@@ -110,29 +113,45 @@ def create_batch(
 
     resolved_name = _clamp_batch_name(name or f"Batch {datetime.now().isoformat()}")
 
-    # Create backing Entity for the Batch, optionally with a pre-specified ID.
-    if entity_id is not None:
-        resolved_id = uuid.UUID(str(entity_id)) if not isinstance(entity_id, uuid.UUID) else entity_id
-        entity = Entity.objects.create(
-            id=resolved_id,
-            entity_type="batch",
+    # A batch is the pipeline's own bookkeeping and cannot be written in a batch, so its rows
+    # are a named below-pipeline writer: they pass the write guard only under a grid write
+    # gate the caller already holds (req-tap-auth-write-batch-routing).
+    with below_pipeline_write("batch"):
+        # Create backing Entity for the Batch, optionally with a pre-specified ID.
+        if entity_id is not None:
+            resolved_id = uuid.UUID(str(entity_id)) if not isinstance(entity_id, uuid.UUID) else entity_id
+            entity = Entity.objects.create(
+                id=resolved_id,
+                entity_type="batch",
+                name=resolved_name,
+            )
+        else:
+            entity = _create_batch_spine(resolved_name)
+
+        return Batch.objects.create(
+            entity=entity,
+            source=source,
+            actor=actor,
             name=resolved_name,
-        )
-    else:
-        entity = create_entity(
-            entity_type="batch",
-            name=resolved_name,
+            description=description,
+            description_json=description_json,
+            metadata=metadata or {},
         )
 
-    return Batch.objects.create(
-        entity=entity,
-        source=source,
-        actor=actor,
-        name=resolved_name,
-        description=description,
-        description_json=description_json,
-        metadata=metadata or {},
-    )
+
+@requires_capability(WRITE_CAPABILITY, operation="create_batch")
+def _create_batch_spine(name: str) -> Entity:
+    """The backing Entity of a batch that names no id of its own.
+
+    A batch is the pipeline's own bookkeeping and cannot live inside a batch, so its spine row is
+    written here rather than through ``write_batch``. Gated with ``grid.write``, as the general
+    Entity helper it replaces was (Issue# 957 - tap); a batch given an id joins a write that is
+    already authorised and takes the other path.
+    """
+    from tap_grid.models import Entity
+
+    with below_pipeline_write("batch"):
+        return Entity.objects.create(entity_type="batch", name=name)
 
 
 def close_batch(batch: Batch) -> Batch:
@@ -154,7 +173,8 @@ def close_batch(batch: Batch) -> Batch:
 
     batch.status = BatchStatus.CLOSED
     batch.closed_at = timezone.now()
-    batch.save(update_fields=["status", "closed_at"])
+    with below_pipeline_write("batch"):
+        batch.save(update_fields=["status", "closed_at"])
     return batch
 
 
@@ -179,7 +199,8 @@ def fail_batch(batch: Batch, error_message: str = "") -> Batch:
     batch.status = BatchStatus.FAILED
     batch.closed_at = timezone.now()
     batch.error_message = error_message
-    batch.save(update_fields=["status", "closed_at", "error_message"])
+    with below_pipeline_write("batch"):
+        batch.save(update_fields=["status", "closed_at", "error_message"])
     return batch
 
 
@@ -226,6 +247,36 @@ def record_batch_event(
         model_name=model_name,
         actor=actor,
         metadata=metadata or {},
+    )
+
+
+def record_skip_event(batch_id: str, edge_entity_id: str, metadata: dict[str, Any]) -> BatchEvent:
+    """Record that a batch declined to write an edge because an endpoint did not resolve.
+
+    Written inside the batch's own transaction, so it commits and rolls back with the batch
+    (``req-grid-import-grift-edge-endpoints-7``, ruled 2026-10-02). ``entity_id`` is the edge's
+    provisional id: no entity has it, because the edge was never written, but it is the id the
+    import result and the batch's issues name the edge by.
+
+    Args:
+        batch_id: The entity id of the batch that skipped the edge.
+        edge_entity_id: The edge's provisional id.
+        metadata: The edge type, each unresolved endpoint, and the reason.
+
+    Returns:
+        The recorded event.
+    """
+    from tap_grid.models import Batch, BatchEvent, BatchEventType
+
+    actor: Any = get_history_user()
+    return BatchEvent.objects.create(
+        batch=Batch.objects.get(entity_id=batch_id),
+        event_type=BatchEventType.SKIP,
+        entity_id=edge_entity_id,
+        entity_type="edge",
+        model_name="Edge",
+        actor=actor,
+        metadata=metadata,
     )
 
 
@@ -395,6 +446,22 @@ def produced_batches_by_producer(
         if bucket is not None and disposition in bucket:
             bucket[disposition].append(str(to_id))
     return grouped
+
+
+def imported_by(batch_entity_id: uuid.UUID | str) -> list[str]:
+    """The producers holding a live ``imported`` PRODUCED_BATCH edge to one batch.
+
+    At most one, by ``req-grid-edge-produced-batch-claims-4``: a batch is produced by one job. A
+    caller about to record a new ``imported`` claim reads this with the batch's row locked, so the
+    check and its write cannot interleave with another job's.
+    """
+    from tap_grid.models import Edge
+
+    # django-stubs types the live manager as BaseModel's, which has no from_entity_id.
+    rows = Edge.objects.filter(  # type: ignore[misc]
+        edge_type="PRODUCED_BATCH", to_entity_id=batch_entity_id, properties__disposition="imported"
+    ).values_list("from_entity_id", flat=True)
+    return [str(producer) for producer in rows]
 
 
 def produced_batches(producer_entity_id: uuid.UUID | str) -> dict[str, list[str]]:

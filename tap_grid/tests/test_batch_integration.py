@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from tap.pytest_harness import batch_ctx
 from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
 from tap_grid.history import get_historical_records, is_history_enabled, set_history_user
-from tap_grid.services import create_entity
+from tap_grid.tests.support import make_spine_entity
 
 User = get_user_model()
 
@@ -28,7 +28,7 @@ class TestFullHistoryFlow:
         set_history_user(user)
         try:
             with batch_ctx(source="test:history-create"):
-                entity = create_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
+                entity = make_spine_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
                 character = ConstrainedSource.objects.create(entity=entity, description="A hobbit.")
 
             with batch_ctx(source="test:history-update"):
@@ -45,7 +45,7 @@ class TestFullHistoryFlow:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         with batch_ctx(source="test:history-v1"):
-            entity = create_entity("grid_fixtures__constrained_source", name="Gandalf")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Gandalf")
             character = ConstrainedSource.objects.create(entity=entity, description="Version 1")
 
         with batch_ctx(source="test:history-v2"):
@@ -71,7 +71,7 @@ class TestFullHistoryFlow:
         set_history_user(user)
 
         with batch_ctx(source="test:history-user"):
-            entity = create_entity("grid_fixtures__constrained_source", name="User Test")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="User Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
         latest_record = character.history.latest("history_id")
@@ -86,7 +86,7 @@ class TestFullHistoryFlow:
         set_history_user(None)
 
         with batch_ctx(source="test:history-no-user"):
-            entity = create_entity("grid_fixtures__constrained_source", name="No User Test")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="No User Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
         latest_record = character.history.latest("history_id")
@@ -102,7 +102,7 @@ class TestBatchIdFieldExists:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         with batch_ctx(source="test:batch-id") as batch_id:
-            entity = create_entity("grid_fixtures__constrained_source", name="Batch ID Test")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Batch ID Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
         assert hasattr(character, "batch_id")
@@ -114,7 +114,7 @@ class TestBatchIdFieldExists:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         with batch_ctx(source="test:batch-id-create") as first_batch_id:
-            entity = create_entity("grid_fixtures__constrained_source", name="Batch Set Test")
+            entity = make_spine_entity("grid_fixtures__constrained_source", name="Batch Set Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
         second_batch_id = str(uuid.uuid7())

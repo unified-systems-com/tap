@@ -48,6 +48,69 @@
         "type": "string"
       },
       "description": "Dimensions applied to edges of this type on creation."
+    },
+    "internal_only": {
+      "type": "boolean",
+      "description": "The type is bookkeeping that only subsystem code writes (req-grid-edge-internal): the generic edge verbs and GRIFT import refuse it, and GRIFT export leaves it out. Defaults to false."
+    },
+    "identity": {
+      "type": "object",
+      "description": "How a relationship of this type is found again (req-grid-edge-identity-declaration). Exactly one of discriminators (an empty array is the plain key: type, source and target) or keyless. Optional while declarations roll out; a ref-addressed edge of a type without one is refused at import (req-grid-edge-identity-6).",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "discriminators"
+          ]
+        },
+        {
+          "required": [
+            "keyless"
+          ]
+        }
+      ],
+      "properties": {
+        "discriminators": {
+          "type": "array",
+          "description": "The properties that, beside the type and the two endpoints, tell one relationship of this type from another. A property belongs here only if two edges that differ in it can be true at the same time. Empty for the plain key.",
+          "items": {
+            "type": "object",
+            "description": "One discriminator.",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "description"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A place inside the edge's properties, in the natural-key path grammar: \"scope\", or \"rule.type\" for a nested key. Must resolve through property_schema."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "For a human and a robot: what the value is, how it is set, and why it is in the key."
+              }
+            }
+          }
+        },
+        "keyless": {
+          "type": "object",
+          "description": "The type observes no source relationship, so nothing finds an edge of it again: a re-sent identical edge fails its batch (req-grid-edge-identity-5).",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Why the type has no key, for a reader judging whether that is still right."
+            }
+          }
+        }
+      }
     }
   }
 }

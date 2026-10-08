@@ -74,10 +74,25 @@ def uses_refs(document: dict[str, Any]) -> bool:
     return False
 
 
+def uses_endpoint_keys(document: dict[str, Any]) -> bool:
+    """True when any edge endpoint names a node by type and natural key (``from_key`` / ``to_key``).
+
+    Such an endpoint is rewritten to an id inside the batch transaction
+    (``req-grid-import-grift-edge-endpoints``), so a document carrying one is resolved on a copy,
+    exactly as a document carrying refs is: the caller's dict is never rewritten.
+    """
+    for batch in _batches(document):
+        for edge in _items(batch, "edges"):
+            payload = edge.get("edge")
+            if isinstance(payload, dict) and ("from_key" in payload or "to_key" in payload):
+                return True
+    return False
+
+
 def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_only) -> RefResolution:
     """Rewrite every ref in ``document`` to an id, on a copy; report what could not be resolved.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@ce374e22e149/ffd1838762d5 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@ce374e22e149/6d49a134f0d2 (derivation) — the one
         pass that turns a batch-local ref into the id every later stage and record sees
         (acceptance -3); the id itself is assigned by the resolver, never derived from the ref.
 
@@ -87,6 +102,8 @@ def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_
     the same batch. A batch entity is never a ref — it is the import identity.
     """
     if not uses_refs(document):
+        if uses_endpoint_keys(document):
+            return RefResolution(document=copy.deepcopy(document))
         return RefResolution(document=document)
 
     resolved_document = copy.deepcopy(document)
@@ -186,12 +203,13 @@ def _envelope(value: Any) -> dict[str, Any]:
 
 
 def substitute_ids(batch: dict[str, Any], mapping: Mapping[str, str]) -> None:
-    """Rewrite node ids and edge endpoints of one batch in place — the execution-time half.
+    """Rewrite node ids, edge ids and edge endpoints of one batch in place — the execution-time half.
 
     Preflight mints a provisional id per ref; inside the batch transaction the resolver may
     find that the source object already has a row, and this swaps the provisional id for
-    the found one everywhere the batch names it. Edge envelope ids are never substituted:
-    edges are ``KEYLESS`` and keep their assignment.
+    the found one everywhere the batch names it. A ref-addressed edge found by its type's
+    declared identity (``req-grid-edge-identity``) has its envelope id swapped the same way;
+    an edge addressed by an explicit id is never in the mapping and keeps its assignment.
     """
     if not mapping:
         return
@@ -200,6 +218,9 @@ def substitute_ids(batch: dict[str, Any], mapping: Mapping[str, str]) -> None:
         if envelope.get("entity_id") in mapping:
             envelope["entity_id"] = mapping[envelope["entity_id"]]
     for edge in _items(batch, "edges"):
+        envelope = _envelope(edge.get("entity"))
+        if envelope.get("entity_id") in mapping:
+            envelope["entity_id"] = mapping[envelope["entity_id"]]
         payload = edge.get("edge")
         if not isinstance(payload, dict):
             continue

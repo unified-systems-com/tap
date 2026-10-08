@@ -17,7 +17,8 @@ from tap_grid.batch import (
 from tap_grid.context import set_batch_id
 from tap_grid.history import set_history_user
 from tap_grid.models import BatchEventType, BatchStatus
-from tap_grid.services import create_edge, create_entity
+from tap_grid.services import create_edge
+from tap_grid.tests.support import make_spine_entity
 
 User = get_user_model()
 
@@ -170,7 +171,7 @@ class TestRecordBatchEvent:
         set_batch_id(str(batch.entity.id))
 
         try:
-            entity = create_entity("concept", name="Test")
+            entity = make_spine_entity("concept", name="Test")
             event = record_batch_event(
                 entity=entity,
                 event_type=BatchEventType.CREATE,
@@ -187,7 +188,7 @@ class TestRecordBatchEvent:
 
     def test_returns_none_without_context(self):
         """No event recorded when no batch context."""
-        entity = create_entity("concept", name="Test")
+        entity = make_spine_entity("concept", name="Test")
 
         event = record_batch_event(
             entity=entity,
@@ -204,7 +205,7 @@ class TestRecordBatchEvent:
         set_batch_id(str(batch1.entity.id))
 
         try:
-            entity = create_entity("concept", name="Test")
+            entity = make_spine_entity("concept", name="Test")
             event = record_batch_event(
                 entity=entity,
                 event_type=BatchEventType.CREATE,
@@ -249,8 +250,8 @@ class TestGetBatchEvents:
         set_batch_id(batch_id)
 
         try:
-            entity1 = create_entity("concept", name="Test 1")
-            entity2 = create_entity("concept", name="Test 2")
+            entity1 = make_spine_entity("concept", name="Test 1")
+            entity2 = make_spine_entity("concept", name="Test 2")
 
             record_batch_event(entity1, BatchEventType.CREATE, "Concept")
             record_batch_event(entity2, BatchEventType.CREATE, "Concept")
@@ -278,7 +279,7 @@ class TestGetEntityBatches:
         set_batch_id(str(batch.entity.id))
 
         try:
-            entity = create_entity("concept", name="Test")
+            entity = make_spine_entity("concept", name="Test")
             record_batch_event(entity, BatchEventType.CREATE, "Concept")
 
             batches = get_entity_batches(entity.id)
@@ -290,7 +291,7 @@ class TestGetEntityBatches:
 
     def test_returns_empty_for_untracked_entity(self):
         """get_entity_batches returns empty list for entity not in any batch."""
-        entity = create_entity("concept", name="Untracked")
+        entity = make_spine_entity("concept", name="Untracked")
 
         batches = get_entity_batches(entity.id)
 
@@ -307,15 +308,14 @@ class TestProducedBatches:
     """
 
     def _producer(self, name="run"):
-        return create_entity("concept", name=name)
+        return make_spine_entity("concept", name=name)
 
     def _link(self, producer, batch, disposition):
-        create_edge(
-            from_entity=producer,
-            to_entity=batch.entity,
-            edge_type="PRODUCED_BATCH",
-            properties={"disposition": disposition},
-        )
+        from tap_grid.services import _create_edge_internal_for_test
+
+        # PRODUCED_BATCH is internal-only (req-grid-edge-internal): fixtures build it through the
+        # trusted-internal path the claims path uses.
+        _create_edge_internal_for_test(producer, batch.entity, "PRODUCED_BATCH", {"disposition": disposition})
 
     def test_groups_by_disposition(self):
         producer = self._producer()
@@ -552,20 +552,18 @@ class TestCallerNamedServiceBatches:
 
     @pytest.mark.spec("req-grid-service-batch-caller-name-2")
     def test_create_edge_names_the_batch_not_the_edge(self):
-        """`create_edge` already takes `name` for the edge; `batch_name` is the batch's."""
-        producer = create_entity("concept", name="producer")
-        target = create_batch(source="t:target")
+        """`batch_name` on `create_edge` names the batch the edge lands in, never the edge."""
+        # A public edge type: PRODUCED_BATCH is internal-only (req-grid-edge-internal).
+        producer = make_spine_entity("grid_fixtures__constrained_source", name="producer")
+        target = make_spine_entity("grid_fixtures__constrained_target", name="target")
 
         edge = create_edge(
             from_entity=producer,
-            to_entity=target.entity,
-            edge_type="PRODUCED_BATCH",
-            properties={"disposition": "imported"},
-            name="the edge",
+            to_entity=target,
+            edge_type="CONSTRAINED_LINK__grid_fixtures",
             batch_name="the batch",
         )
 
-        assert edge.entity.name == "the edge"
         names = [b.name for b in get_entity_batches(edge.entity.id)]
         assert "the batch" in names
 
@@ -816,15 +814,11 @@ class TestMintedBatchLabelRequired:
         from tap_grid.exceptions import EdgePropertyValidationError
         from tap_grid.services import create_edge
 
-        producer = create_entity("concept", name="producer")
-        target = create_batch(source="t:target")
+        # A public edge type: PRODUCED_BATCH is internal-only (req-grid-edge-internal).
+        producer = make_spine_entity("grid_fixtures__constrained_source", name="producer")
+        target = make_spine_entity("grid_fixtures__constrained_target", name="target")
         with pytest.raises(EdgePropertyValidationError, match="batch_description"):
-            create_edge(
-                from_entity=producer,
-                to_entity=target.entity,
-                edge_type="PRODUCED_BATCH",
-                properties={"disposition": "imported"},
-            )
+            create_edge(from_entity=producer, to_entity=target, edge_type="CONSTRAINED_LINK__grid_fixtures")
 
     @pytest.mark.spec("req-grid-service-batch-label-required-4")
     def test_a_context_label_names_the_minted_batch(self):
@@ -871,3 +865,42 @@ class TestMintedBatchLabelRequired:
         batch = get_batch(result.batch_id)
         assert batch is not None
         assert (batch.name, batch.description) == ("ambient", "ambient why")
+
+
+@pytest.mark.django_db
+class TestABatchSpineNeedsWrite:
+    """``create_batch`` with no id writes the batch's own spine row, gated by ``grid.write``, as the
+    general Entity helper it replaced was (Issue# 957 - tap)."""
+
+    @pytest.mark.parametrize("holds_write", [True, False], ids=["holds write", "lacks write"])
+    def test_minting_a_batch_needs_grid_write(self, holds_write: bool) -> None:
+        from django.contrib.auth.models import Group, Permission
+        from django.contrib.contenttypes.models import ContentType
+
+        from tap_auth import capabilities as caps
+        from tap_auth import sync
+        from tap_auth.errors import CapabilityDenied
+        from tap_auth.models import Capability
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+
+        sync.sync_auth()
+        group = Group.objects.create(name=f"t957-batch-{holds_write}")
+        content_type = ContentType.objects.get_for_model(Capability)
+        held = [caps.READ_CAPABILITY] + ([caps.WRITE_CAPABILITY] if holds_write else [])
+        for capability in held:
+            group.permissions.add(
+                Permission.objects.get(content_type=content_type, codename=caps.codename_for(capability))
+            )
+        actor = get_user_model().objects.create_user(username=f"t957-batch-{holds_write}", password="x")
+        actor.groups.add(group)
+
+        prior = get_caller_context()
+        set_caller_context(CallerContext(user=actor))
+        try:
+            if holds_write:
+                assert create_batch(source="t:spine").entity.entity_type == "batch"
+            else:
+                with pytest.raises(CapabilityDenied):
+                    create_batch(source="t:spine")
+        finally:
+            set_caller_context(prior)

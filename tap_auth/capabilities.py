@@ -108,11 +108,8 @@ RECONCILE_CAPABILITY: str = "grid.reconcile"
 
 # The remaining write-class capabilities: hard-purge and GRIFT batch import. Named
 # here with the other grid.* names so every consumer derives the spelling from one
-# place. TAP-KNOWN-DUPE(write-scope-caps): tap_grid/write_guard.py restates the
-# four write-class names in its module-scope frozenset — it cannot import this
-# module without closing the import cycle through tap_auth.enforcement (which
-# imports write_guard at module scope). Editing these means putting eyes on the
-# partner frozenset.
+# place (tap_grid/write_guard.py reads them on call, not at import, to keep clear of
+# the import cycle through tap_auth.enforcement).
 PURGE_CAPABILITY: str = "grid.purge"
 IMPORT_GRIFT_CAPABILITY: str = "grid.import_grift"
 

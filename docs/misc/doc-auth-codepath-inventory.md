@@ -153,10 +153,9 @@ Several read routes manually authorize `grid.read` before ORM access. That is
 good. There are still write endpoints that resolve objects before hitting a
 decorated service function:
 
-- `tap_api/routers/entities.py` resolves `Entity` via `get_object_or_404()`
-  before `update_entity()` or `delete_entity()`.
-- `tap_api/routers/edges.py` resolves endpoint `Entity` rows before
-  `create_edge()`, and resolves `Edge` before `delete_edge()`.
+- (Resolved 2026-10-04, Issue# 957 - tap: the entity and edge routers, and the
+  `create_entity` / `update_entity` / `delete_entity` / `delete_edge` helpers they
+  called, were removed. They wrote through the ORM past the write pipeline.)
 
 The mutation eventually reaches a decorated service function, but the preflight
 lookup can leak existence or create inconsistent error behavior before AuthZ

@@ -119,7 +119,7 @@ Delete operations are exposed through the same explicit service-layer entry poin
 #### Status Details
 `delete_node(target)` and `delete_edge_by_entity(target)` both accept entity UUIDs and route through `write_batch()`. They participate in the same batching, dry-run, error taxonomy, and response envelope conventions as other write verbs.
 
-Note: `delete_edge_by_entity` is the spec-compliant pipeline-based entry point for edge deletes. The legacy compat wrapper `delete_edge(edge: Edge)` is deprecated and kept only for backward compatibility with existing callers.
+Note: `delete_edge_by_entity` is the pipeline entry point for edge deletes. The object-taking compat wrapper `delete_edge(edge: Edge)` hard-deleted outside the pipeline and was removed (Issue# 957 - tap).
 
 #### Implementation
 Delete entry points:

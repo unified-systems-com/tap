@@ -22,10 +22,14 @@ class TapWebConfig(AppConfig):
 
     # Same format as TapPluginConfig.edge_types.
     # Processed by register_edge_types_from_list() on startup.
+    # Every entry declares its identity (req-grid-edge-identity-declaration). All three are plain
+    # keys: one relationship per (source, target) is the whole fact. USES_PANEL's hotlink mirrors
+    # the page's panel list as a set, so a panel placed twice on one page is still one edge.
     edge_types: list[dict[str, Any]] = [
         {
             "slug": "USES_PANEL",
             "name": "Uses Panel",
+            "identity": {"discriminators": []},
             "description": "Page embeds a panel.",
             "sources": [{"type": "page"}],
             "targets": [{"type": "panel"}],
@@ -67,6 +71,7 @@ class TapWebConfig(AppConfig):
         {
             "slug": "USES_SEARCH",
             "name": "Uses Search",
+            "identity": {"discriminators": []},
             "description": "Panel references a Search object as its data source (req-web-stdpanel-table-search).",
             "sources": [{"type": "panel"}],
             "targets": [{"type": "search"}],
@@ -82,6 +87,7 @@ class TapWebConfig(AppConfig):
             # containment: retiring the parent never retires the child.
             "slug": "NESTS_UNDER",
             "name": "Nests Under",
+            "identity": {"discriminators": []},
             "description": (
                 "The source page NESTS_UNDER the target page: navigation surfaces show the source as a child "
                 "of the target instead of its URL-derived parent. The source page's URL does not change. When "

@@ -45,10 +45,11 @@ class TestLoginWall:
     def test_api_prefix_not_html_redirected(self):
         """/api/ is exempt from the HTML wall — anonymous API access is the API's
         own session_auth 401, never a 302 to a login page (which would corrupt a
-        JSON client)."""
-        response = Client().get("/api/v1/entities/")
+        JSON client). The route is one that exists, so the 401 is the API's own answer
+        and not a 404 standing in for it."""
+        response = Client().get("/api/v1/entity-types/")
         assert response.status_code != 302
-        assert response.status_code in (401, 403, 404)
+        assert response.status_code == 401
 
     def test_admin_prefix_uses_admin_login_not_auth_login(self):
         """/admin/ is exempt — Django admin handles its own staff login, so an

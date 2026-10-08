@@ -222,17 +222,12 @@ class TestHasJobEdge:
         )
 
     def test_allowed_endpoints_create(self):
-        from tap_grid.caller_context import CallerContext
-        from tap_grid.services import create_edge
+        from tap_grid.services import _create_edge_internal_for_test
 
         col = _make_collector("edge-ok")
         job = CollectionJob.objects.create(**_job_kwargs(name="edge-ok-job"))
-        edge = create_edge(
-            from_entity=col.entity,
-            to_entity=job.entity,
-            edge_type="HAS_COLLECTION_JOB",
-            caller_context=CallerContext(),
-        )
+        # HAS_COLLECTION_JOB is internal-only (req-grid-edge-internal): the trusted-internal path.
+        edge = _create_edge_internal_for_test(col.entity, job.entity, "HAS_COLLECTION_JOB")
         assert edge is not None
         assert edge.edge_type == "HAS_COLLECTION_JOB"
 

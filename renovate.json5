@@ -66,6 +66,45 @@
       groupName: "base-image digests",
     },
     {
+      // The apk datasource (Renovate 44.63.0+; confirmed available at our pinned 44.103.1)
+      // reads a Wolfi/Alpine repo's APKINDEX directly. Without a registryUrl the dockerfile
+      // manager skips every `pkg=version` apk pin with skipReason: unknown-registry — this is
+      // what turns that skip into a real lookup, for the apk packages pinned in both
+      // Dockerfiles — tap#932/#933, L18 (the Wolfi `openssl-4.0` package family incident).
+      //
+      // Was just `openssl-4.0`/`openssl-4.0-dev`, pinned so the next bump stayed deliberate
+      // rather than repeating the silent jump that caused the incident. That pin alone wasn't
+      // the fix: `python-3.14-base`/`python-3.14`/`python-3.14-dev` and `postgresql-18-dev`
+      // (web image) each independently hard-depend on `libcrypto.so.4` at their own current
+      // versions regardless of which OpenSSL package is requested, confirmed directly (apk
+      // info / a real `apk add`). The actual fix pins the whole OpenSSL-touching closure one
+      // apk revision behind each package's own cutover to `openssl-4.0`, onto `openssl-3.6`/
+      // `openssl-3.6-dev` — these are REVISION pins, narrower than a version pin, and every
+      // one of these six names needs Renovate to keep proposing (and a human reviewing) the
+      // next bump individually rather than this group silently re-drifting past the next
+      // cutover the same way the original floating alias did.
+      //
+      // Scoped to exactly these names (originally Codex, PR#933; extended here): an unscoped
+      // matchDatasources: ["apk"] would silently assign the Wolfi registry and this group to
+      // any future apk pin anywhere in the repo. If another package ever needs pinning, add
+      // its name here deliberately rather than widen the match.
+      matchDatasources: ["apk"],
+      matchPackageNames: [
+        "openssl-3.6",
+        "openssl-3.6-dev",
+        "python-3.14",
+        "python-3.14-base",
+        "python-3.14-dev",
+        "postgresql-18-client",
+        "postgresql-18-dev",
+        "libpq-18",
+        "krb5-libs",
+      ],
+      registryUrls: ["https://packages.wolfi.dev/os?arch=x86_64"],
+      groupName: "pinned apk packages (security-relevant, reviewed individually)",
+      groupSlug: "apk-pins",
+    },
+    {
       matchManagers: ["github-actions"],
       groupName: "github-actions",
     },

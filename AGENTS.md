@@ -75,6 +75,26 @@ For non-OpenAI frameworks and libraries, prefer official upstream documentation 
 
 **`specs/archive/` is historical record, never canon.** Retired specs live there for the archeologists; every scanner excludes the directory. Do not load, cite, or build from anything in it — a grep hit inside `specs/archive/` is a pointer to the past, not an instruction.
 
+**To find the spec that governs a piece of code, follow its requirement ids.** Code points back at
+its requirements in four ways. From strongest to weakest:
+
+- A `TAP-IMPLEMENTS: req-…` line in a docstring is a hash-checked claim that this function *is* the
+  requirement's authoritative derivation, enforcement or surface. `scripts/implements-tag --check`
+  reports any claim whose requirement text or code has moved since it was stamped, so a claim it
+  passes is current.
+- `@pytest.mark.spec("req-…")` on a test names the requirement that test checks.
+- A bare `req-…` id in a comment or docstring is a pointer with no hash. It is a lead to verify, not
+  proof that the code still does what the requirement says.
+- A `[xxxx]` log site token (`scripts/log-site-id`) leads from a log line to the call that wrote it,
+  and from there to the claims around it.
+
+Then open the spec that defines it, the one whose requirements table has a row for it:
+`git grep -l -E '^\| <rid> \|' -- '*/specs/*.md' 'specs/*.md' ':!*/archive/*' ':!*/traceability/*'`.
+A plain `git grep '<rid>'` also returns the specs that merely cite it and the generated traceability
+fragments. A plugin's requirements live in that plugin's own repository, under its `specs/`. The
+requirement's row and section are the canon: the code is checked against them, never the other way
+round.
+
 ## Post-Mortems & the Paladin Foundation
 
 Two co-located incident corpora live under `docs/`, answering different questions — keep them distinct and cross-link when one caused the other:
@@ -88,6 +108,15 @@ Two co-located incident corpora live under `docs/`, answering different question
 - Nodes are concrete `BaseModel` subclasses with a one-to-one backing `Entity`.
 - Edges are first-class graph objects with their own backing `Entity`.
 - Dimensions live on `Entity` as flat JSON metadata used for scoping and interpretation.
+- **Absence is declared, never invented as a value.** `null` means unobserved, concrete-empty
+  (`""`/`[]`/`{}`) means a source looked and found nothing, and FLIP's presence-or-absence for a
+  field distinguishes a known unknown (explicitly asserted) from an unknown unknown (untouched) —
+  three states, never collapsed into a sentinel value or invented in-band. Before proposing a new
+  absence reason, a per-key delete primitive, or a merge/patch semantic, check
+  `req-grid-node-observation` in `tap_grid/specs/spec-grid-node.md` (decided 2026-06-30) — it is
+  very likely already decided there. Two independent design threads missed this and nearly
+  duplicated or contradicted it in 2026-09, which is why this is stated here rather than left to be
+  found only by opening that spec.
 - TAP-managed node and edge mutations go through the service layer.
 - **Direct ORM writes — the code rule and the agent rule are different, and the agent rule is a hard stop.**
   - *In the codebase*, direct ORM access is permitted in **migrations, deliberate model-level tests, service-layer internals, and the Search `orm`-mode compiler**. Anything else is flagged by `tap/guards/direct_write.py` and ratchets toward zero; a sanctioned below-service write carries a per-site `# TAP-WRITE-COV: <reason>`, which `DirectWriteExemptionGuard` fails the moment it stops suppressing a flagged write.

@@ -49,6 +49,7 @@ from typing import Any
 from tap.edge_declarations import edge_types_in
 from tap.jsonfiles import JsonFileError, load_schema, validate_json
 from tap_grid.completeness import completeness_of
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def derive_candidates(
 ) -> dict[str, Any]:
     """Derive the candidate record for a run from its completeness statement — no write.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-candidates@c9e033a1643f/a0b7ba9e0554 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-candidates@122cccd2c7d9/a0b7ba9e0554 (derivation) — the one
     place the candidate set is computed: fan-out through the declared containment edge type,
     minus the run's committed observations, per-parent prerequisite, withdrawal from the
     previous statement.
@@ -200,7 +201,9 @@ def record_candidates(
     metadata = dict(batch.metadata or {})
     metadata[METADATA_KEY] = record
     batch.metadata = metadata
-    batch.save(update_fields=["metadata"])
+    # Run bookkeeping on the lifecycle batch: a named below-pipeline writer.
+    with below_pipeline_write("bookkeeping"):
+        batch.save(update_fields=["metadata"])
     derived = sum(len(s["candidates"]) for s in record["surfaces"])
     logger.info(
         "[0bd2] candidates recorded on batch %s: %d surface(s), %d candidate(s), authority off",

@@ -60,6 +60,12 @@ from tap_cares.exceptions import GriftRejectedError
 # record_* call-site token (minted via scripts/log-site-id; unique within
 # this file, enforced by the repo-wide site-uniqueness test).
 _SITE_GRIFT_REJECTED = "4613"
+_SITE_GRIFT_EDGES_SKIPPED = "7381"
+_SITE_EDGE_AUTHORITY = "a19a"
+#: How many skipped edges a run record lists by event id; the count is always exact.
+_SKIPS_RECORDED = 100
+#: How many authority claims a run record lists; the counts are always exact.
+_CLAIMS_RECORDED = 100
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "collection_job_results.schema.json"
 _SCHEMA: dict[str, Any] = load_schema(_SCHEMA_PATH)
@@ -340,6 +346,67 @@ class CollectorBase(ABC):
 
         self._produced_batches.extend((str(b.batch_entity_id), "imported") for b in result.imported_batches)
         self._produced_batches.extend((str(b.batch_entity_id), "skipped") for b in result.skipped_batches)
+
+        # Edges a permissive import declined to write for an unresolved endpoint: each has a
+        # `skip` BatchEvent of its batch, and the run record names them by event id, so a reader
+        # of the run finds them without the logs (req-grid-import-grift-edge-endpoints-8).
+        skips = [skip for b in result.imported_batches for skip in b.skips]
+        if skips:
+            self.record_warn(
+                _SITE_GRIFT_EDGES_SKIPPED,
+                "GRIFT_EDGES_SKIPPED",
+                f"{len(skips)} edge(s) were not written because an endpoint did not resolve; each is recorded as "
+                "a skip event of its batch.",
+                message_data={
+                    "count": len(skips),
+                    # Capped so a run that skips many edges keeps a readable record; every skip is
+                    # still a BatchEvent of its batch, queryable in full.
+                    "skips": [
+                        {
+                            "event_id": s["event_id"],
+                            "edge_entity_id": s["edge_entity_id"],
+                            "edge_type": s["edge_type"],
+                            "unresolved": s["unresolved"],
+                        }
+                        for s in skips[:_SKIPS_RECORDED]
+                    ],
+                },
+            )
+
+        # Authority claims are a dry-run: the run record counts what they would remove and names each
+        # claim's batch event, so the proposals can be checked by hand before anything applies them
+        # (req-grid-reconcile-edge-authority-7).
+        claims = [claim for b in result.imported_batches for claim in b.authority]
+        if claims:
+            proposed = sum(c["proposed"] for c in claims)
+            stale = sum(c["rejected_stale"] for c in claims)
+            not_claimed = sum(1 for c in claims if c["outcome"] == "not_claimed")
+            self.record_info(
+                _SITE_EDGE_AUTHORITY,
+                "EDGE_AUTHORITY_PROPOSED",
+                f"{len(claims)} authority claim(s) would remove {proposed} edge(s); {stale} proposal(s) were "
+                f"rejected as stale and {not_claimed} claim(s) proposed nothing. Dry-run: no edge was removed.",
+                message_data={
+                    "claims": len(claims),
+                    "proposed": proposed,
+                    "rejected_stale": stale,
+                    "not_claimed": not_claimed,
+                    "claim_records": [
+                        {
+                            "event_id": c["event_id"],
+                            "edge_type": c["edge_type"],
+                            "anchor_entity_id": c["anchor_entity_id"],
+                            "direction": c["direction"],
+                            "read": c["read"],
+                            "outcome": c["outcome"],
+                            "reason": c["reason"],
+                            "proposed": c["proposed"],
+                            "rejected_stale": c["rejected_stale"],
+                        }
+                        for c in claims[:_CLAIMS_RECORDED]
+                    ],
+                },
+            )
 
         if result.errors and on_rejection == "abort":
             # Name the offender: the importer's issues carry entity_type + path —

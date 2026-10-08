@@ -524,10 +524,10 @@ class TestEdgeValidationCompatibility:
     def test_edge_full_validate_noop(self) -> None:
         """Edge.full_validate() is a no-op when Edge has no FIELD_VALIDATION_SCHEMA."""
         from tap_grid.models import Edge
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
-        a = create_entity("grid_fixtures__unconstrained")
-        b = create_entity("grid_fixtures__unconstrained")
+        a = make_spine_entity("grid_fixtures__unconstrained")
+        b = make_spine_entity("grid_fixtures__unconstrained")
         edge = Edge(from_entity=a, to_entity=b, edge_type="ANY_EDGE", properties={})
         edge.full_validate()  # must not raise
 
@@ -536,7 +536,7 @@ class TestEdgeValidationCompatibility:
         from tap_grid.constraints import _edge_property_schema_registry, register_edge_property_schema
         from tap_grid.exceptions import EdgePropertyValidationError
         from tap_grid.models import Edge
-        from tap_grid.services import create_entity
+        from tap_grid.tests.support import make_spine_entity
 
         saved = _edge_property_schema_registry.all()
         _edge_property_schema_registry._reset_for_testing()
@@ -545,8 +545,8 @@ class TestEdgeValidationCompatibility:
                 "TYPED_COMPAT",
                 {"type": "object", "required": ["x"], "properties": {"x": {"type": "integer"}}},
             )
-            a = create_entity("grid_fixtures__unconstrained")
-            b = create_entity("grid_fixtures__unconstrained")
+            a = make_spine_entity("grid_fixtures__unconstrained")
+            b = make_spine_entity("grid_fixtures__unconstrained")
             edge = Edge(from_entity=a, to_entity=b, edge_type="TYPED_COMPAT", properties={})
             with pytest.raises(EdgePropertyValidationError):
                 edge.save()

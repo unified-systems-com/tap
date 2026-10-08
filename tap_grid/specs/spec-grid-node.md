@@ -19,7 +19,7 @@ Nodes are the typed participants of the grid. Each node type is a concrete `Base
 | --- | --- | :---: | --- |
 | req-grid-node-model | [Node Model Declaration](#node-model-declaration) | Implemented | `BaseModel` provides the abstract pattern all node types inherit |
 | req-grid-node-display | [Node Display Name](#node-display-name) | Implemented | `get_display_name()` produces the label stored on the backing Entity at creation time |
-| req-grid-node-service | [Node Service Layer](#node-service-layer) | Implemented | `create_entity()`, `update_entity()`, and `delete_entity()` as the canonical Entity-level service API |
+| req-grid-node-service | [Node Service Layer](#node-service-layer) | Deprecated | Retired (Issue# 957 - tap): `create_entity()`, `update_entity()` and `delete_entity()` wrote the spine outside the write pipeline and were removed; node writes go through `create_node`, `patch_node`, `replace_node` and `delete_node` |
 | req-grid-node-constraints | [Node Constraint Declaration](#node-constraint-declaration) | Implemented | `OUTBOUND_EDGES` / `INBOUND_EDGES` declared on node types; registered at class-definition time |
 | req-grid-node-observation | [Field Observation Semantics](#field-observation-semantics) | Approved for Development | `null` = unobserved, concrete-empty = observed-empty, declared per-field via `x-tap-absence`; FLIP distinguishes known vs unknown unknown. Phase 2 (Codd's not-applicable, via extended FLIP) reserved |
 
@@ -184,36 +184,20 @@ Net effect: every `BaseModel.save()` writes exactly one history row (on the type
 ----
 RID: `req-grid-node-service`
 
-Status: `Implemented`
-
-`tap_grid/services.py` provides the canonical service-layer API for Entity-level node operations. Application code that creates, updates, or deletes entity spine records should use these functions rather than direct ORM calls, so that FLIP can be wired in at these call sites without changing callers.
+Status: `Deprecated`
 
 #### Status Details
-Implemented in `tap_grid/services.py`. Retroactively specified here.
+Deprecated (Issue# 957 - tap, ruled 2026-10-04). `create_entity()`, `update_entity()` and `delete_entity()` were Entity-level helpers that wrote the spine directly. They passed the `grid.write` / `grid.delete` gate, then skipped the write pipeline: no batch, no provenance event, no history, no tombstone, and none of the per-type gates. `delete_entity()` was a hard delete that cascaded to the typed row, every attached edge and, for a batch, its events. They were reachable from the REST API and from nothing else in production, and they were removed with it.
 
-#### Implementation
-**`create_entity(entity_type, display_name="", **kwargs) -> Entity`**:
-Creates a bare Entity record directly on the spine. Intended for cases where a typed domain model does not exist or is not needed — e.g., tests that need an entity as an edge endpoint, or raw entity creation where the type has no domain model. For typed node creation, `ModelClass.objects.create(...)` is the standard path; `BaseModel.save()` auto-creates the backing Entity atomically.
-
-**`update_entity(entity, **kwargs) -> Entity`**:
-Updates the named fields on an Entity instance and calls `save(update_fields=[...])`. Avoids clobbering unspecified fields. Returns the updated Entity.
-
-**`delete_entity(entity) -> None`**:
-Deletes the Entity row. Cascades to the typed domain model row via the `OneToOneField` and to all `Edge` rows that reference this Entity as `from_entity` or `to_entity`.
-
-#### Development
+Node writes go through the pipeline verbs: `create_node`, `patch_node`, `replace_node` and `delete_node` (`spec-grid-service-*`). A batch's own spine row is the batch subsystem's (`tap_grid/batch.py`). Rebuilding the guard so a gated helper can no longer write past the pipeline is Issue# 959 - tap.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-node-service-1 | create_entity Creates Spine Record | Implemented | `create_entity()` creates and returns an `Entity` with the given `entity_type` and optional `display_name`. | |
-| req-grid-node-service-2 | update_entity Uses update_fields | Implemented | `update_entity()` calls `entity.save(update_fields=[...] + ["updated_at"])` to avoid clobbering unrelated fields. | |
-| req-grid-node-service-3 | delete_entity Cascades | Implemented | `delete_entity()` deletes the Entity; the DB cascade removes the domain model row and all referencing edges. | |
-
-#### Future
-Once FLIP is active, `create_entity()`, `update_entity()`, and `delete_entity()` should record provenance events. The integration points are already identified; no call-site changes will be needed.
-Consider whether typed node creation should route through a `create_node(model_cls, **kwargs)` service function to enforce FLIP recording uniformly across both the bare-entity and typed-model creation paths.
+| req-grid-node-service-1 | create_entity Creates Spine Record | Deprecated | `create_entity()` creates and returns an `Entity` with the given `entity_type` and optional `display_name`. | Removed, Issue# 957 - tap. |
+| req-grid-node-service-2 | update_entity Uses update_fields | Deprecated | `update_entity()` calls `entity.save(update_fields=[...] + ["updated_at"])` to avoid clobbering unrelated fields. | Removed, Issue# 957 - tap. |
+| req-grid-node-service-3 | delete_entity Cascades | Deprecated | `delete_entity()` deletes the Entity; the DB cascade removes the domain model row and all referencing edges. | Removed, Issue# 957 - tap: a hard delete outside the pipeline. |
 
 
 ### Node Constraint Declaration

@@ -21,7 +21,7 @@ class TestListEntityTypes:
     def test_no_cap_denied_403(self, no_cap_client):
         """An authenticated caller without grid.read is denied the type catalog
         (finding cs-tap-api-typecat-003) — the catalog is graph metadata, so it is
-        a graph read like /api/v1/entities/. Authorization runs before the query."""
+        a graph read like any other. Authorization runs before the query."""
         EntityType.objects.create(slug="server", name="Server", plugin_name="infra")
         response = no_cap_client.get("/api/v1/entity-types/")
         assert response.status_code == 403

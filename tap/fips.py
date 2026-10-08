@@ -16,7 +16,11 @@ otherwise. Two disciplines from the assessment record govern how:
 * **Every positive check is paired with a negative control.** "sha256 works" evidences
   nothing about enforcement; "md5 (for security use) is *refused*" does. Probe the lowest
   layer that cannot fall back — `_hashlib`, not the `hashlib` façade, which can fall back to
-  a compiled-in `_md5` on some bases (L5).
+  a compiled-in `_md5` on some bases (L5). Every probe in this module, positive or negative,
+  uses `_hashlib` directly and never imports `hashlib` itself: the wrapper's own import-time
+  bulk-construction of every standard hash name was found to corrupt the process's crypto
+  context on a refused MD5 fetch badly enough to take out *later names in the same loop*,
+  including the approved SHA-256 this module's own positive control needs (L18).
 
 This module is pure stdlib + `cryptography` (webauthn's engine — the real integration point,
 whose wheel would otherwise bundle its own non-FIPS OpenSSL, L9). It imports no `tap_*` app,
@@ -29,7 +33,6 @@ Run as the boot gate: ``python -m tap.fips`` — exit 0 on a proven-consistent m
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 
@@ -78,20 +81,41 @@ def _md5_for_security_refused() -> bool:
 
 
 def _approved_python_hash_works() -> None:
-    """Positive control: an approved hash (SHA-256) works AND is OpenSSL-backed."""
-    hashlib.sha256(b"probe").hexdigest()
-    module = type(hashlib.sha256()).__module__
+    """Positive control: an approved hash (SHA-256) works AND is OpenSSL-backed.
+
+    Uses ``_hashlib`` directly rather than the ``hashlib`` wrapper module (tap#933/#931, L18):
+    merely IMPORTING ``hashlib`` makes CPython eagerly pre-build a constructor for every
+    standard hash name in one loop, including MD5. Under FIPS that MD5 build attempt is a
+    refused fetch, and the fetch-cache corruption it leaves behind was found to take out
+    *later names in that same loop* — including SHA-256 itself (observed:
+    ``AttributeError: module 'hashlib' has no attribute 'sha256'``, real CI hardware). A lazy,
+    deferred ``import hashlib`` was not sufficient for this reason: the hazard is the import
+    itself, not its timing. ``_hashlib`` has no such bulk-construction loop — it is exactly
+    the "layer that cannot fall back" L5 already uses for the negative control below, now also
+    used for the positive one, so this function never imports ``hashlib`` at all.
+    """
+    import _hashlib
+
+    digest = _hashlib.new("sha256", b"probe")
+    digest.hexdigest()
+    module = type(digest).__module__
     if module != "_hashlib":
         raise FipsSelfCheckError(f"SHA-256 is not OpenSSL-backed (module={module!r}); cannot trust the FIPS boundary.")
 
 
-def _cryptography_fips_consistent(*, expect_enforced: bool) -> None:
-    """Assert `cryptography` (webauthn's engine) agrees with the declared mode.
+def _cryptography_positive_control(*, expect_enforced: bool) -> None:
+    """Positive control: `cryptography` (webauthn's engine) executes the approved passkey path.
 
     This is THE integration point (L9): its wheel would statically bundle a private OpenSSL
     that ignores the system FIPS config, so we build it --no-binary and verify here that it
-    links the system provider. Positive control: P-256 ECDSA sign+verify — the exact passkey
-    assertion path. Negative control (FIPS only): MD5 via `cryptography` is refused.
+    links the system provider. P-256 ECDSA sign+verify — the exact passkey assertion path.
+
+    Deliberately separate from the MD5 negative control below (tap#933/#931, L18): a function
+    that ran its own positive control then its own negative control, back to back, was found to
+    poison the shared context for whatever ran NEXT regardless — the negative control's refused
+    fetch doesn't care that ITS OWN positive control already succeeded; it still leaves the
+    context unable to satisfy the following caller's fetch. Every positive control across this
+    whole self-check must run before every negative one, not just within one function.
     """
     try:
         from cryptography.hazmat.primitives import hashes
@@ -103,15 +127,19 @@ def _cryptography_fips_consistent(*, expect_enforced: bool) -> None:
             ) from exc
         return
 
-    # Positive control (both modes): the approved passkey path executes.
     key = ec.generate_private_key(ec.SECP256R1())
     signature = key.sign(b"assertion", ec.ECDSA(hashes.SHA256()))
     key.public_key().verify(signature, b"assertion", ec.ECDSA(hashes.SHA256()))
 
-    if not expect_enforced:
-        return
 
-    # Negative control (FIPS only): a non-approved digest is refused by the same engine.
+def _cryptography_md5_refused() -> None:
+    """Negative control (FIPS only): a non-approved digest is refused by `cryptography`.
+
+    Run this LAST, after every positive control this self-check needs (L18) — see
+    `_cryptography_positive_control`'s docstring for why.
+    """
+    from cryptography.hazmat.primitives import hashes
+
     try:
         digest = hashes.Hash(hashes.MD5())
         digest.update(b"probe")
@@ -124,6 +152,76 @@ def _cryptography_fips_consistent(*, expect_enforced: bool) -> None:
     )
 
 
+def openssl_cores(maps_text: str) -> set[str]:
+    """Return the distinct libcrypto files mapped into a process, from its ``/proc/<pid>/maps`` text.
+
+    One path per OpenSSL *core*: every segment of one library shares one path, so two paths
+    mean two independent OpenSSL engines in one process.
+    """
+    cores = set()
+    for line in maps_text.splitlines():
+        fields = line.split()
+        if len(fields) < 6:
+            continue
+        name = fields[-1].rsplit("/", 1)[-1]
+        # The system's `libcrypto.so.3`, and the hashed names a wheel bundles its own copy
+        # under (`libcrypto-1a2b3c.so.3`, auditwheel's convention): either is a core.
+        if name.startswith(("libcrypto.so", "libcrypto-")) and ".so" in name:
+            cores.add(fields[-1])
+    return cores
+
+
+def _assert_single_openssl_core(maps_text: str | None = None) -> None:
+    """Refuse to boot if more than one OpenSSL core is loaded (tap#933 root cause).
+
+    Two libcrypto builds in one process both read the FIPS config and both load the one
+    ``fips.so``, whose static state a second loader cannot use (openssl/openssl#27691). The
+    failure then surfaces much later and far away, e.g. ``rand_new_drbg: unable to fetch
+    drbg`` in an unrelated keygen. tap#933 hit it from a uv cache that served a
+    ``cryptography`` wheel compiled against OpenSSL 3.6 into an image whose CPython uses 4.0.
+    The same collision has other roads: a dependency bundling its own OpenSSL (L17), or libpq
+    linked to a different OpenSSL than Python (tap#933's libpq-18). So this checks the
+    outcome, not any one cause.
+
+    Every library that does crypto in this process is IMPORTED first, which maps it without
+    running any crypto; that has to come before the first positive control, because in the
+    two-core case that control is exactly what dies.
+
+    Bounded: this sees cores that are mapped as their own file. An OpenSSL linked *statically*
+    into an extension maps as that extension (`_rust.abi3.so`) and is invisible here. TAP builds
+    `cryptography` and `psycopg` from source against the system OpenSSL (D7/L9), and a
+    `cryptography` carrying its own non-FIPS copy would compute MD5, which
+    `_cryptography_md5_refused` refuses; any other native crypto is the crypto-BOM gate's
+    (`tap.crypto_bom`, ELF fingerprints), which runs right after this self-check.
+    """
+    if maps_text is None:
+        import _hashlib  # noqa: F401 - CPython's OpenSSL binding.
+
+        for module in ("cryptography.hazmat.bindings._rust", "psycopg"):
+            try:
+                __import__(module)
+            except ImportError:
+                continue  # absent here; the positive controls below report what matters.
+        try:
+            with open("/proc/self/maps", encoding="utf-8") as handle:
+                maps_text = handle.read()
+        except OSError as exc:
+            # Fail closed: this runs only under a FIPS declaration, and an unreadable maps file
+            # would turn the check into a pass. The image always has /proc; tests pass the text in.
+            raise FipsSelfCheckError(
+                f"cannot read /proc/self/maps ({exc}), so a second OpenSSL core cannot be ruled out."
+            ) from exc
+    cores = openssl_cores(maps_text)
+    if len(cores) > 1:
+        raise FipsSelfCheckError(
+            f"{len(cores)} OpenSSL libraries are loaded in one process ({', '.join(sorted(cores))}); "
+            "under FIPS they share one fips.so and break each other. A package was built against "
+            "a different OpenSSL than this image's Python: a stale uv cache or venv volume from an "
+            "older image, or a wheel bundling its own OpenSSL. Clear the venv and uv_cache "
+            "volumes and reboot."
+        )
+
+
 def assert_declared_mode() -> str:
     """Prove the declared FIPS mode is the mode actually enforced, or raise.
 
@@ -131,6 +229,19 @@ def assert_declared_mode() -> str:
     """
     mode = declared_mode()
     if mode == "1":
+        # Before any crypto runs: in the two-core case the first positive control is what dies,
+        # with an error that points nowhere near the cause.
+        _assert_single_openssl_core()
+        # ALL positive controls run first, THEN all negative ones (tap#933/#931, L18): a
+        # correctly-refused MD5 fetch in the process's default OSSL_LIB_CTX leaves that context
+        # unable to satisfy a LATER, unrelated fetch from anything — CTR-DRBG, SHA-256, any of
+        # it — for the rest of the process's life. Proven on real CI hardware to be 100%
+        # reproducible with any MD5 touch (via `_hashlib`, `hashlib`'s own import-time behavior,
+        # or `cryptography`'s own negative control) before a later positive operation, and 100%
+        # absent when every positive runs first. `_cryptography_positive_control` and
+        # `_cryptography_md5_refused` are deliberately separate functions, not one function run
+        # twice, so this ordering is enforced across the whole self-check, not just within it.
+        _cryptography_positive_control(expect_enforced=True)
         _approved_python_hash_works()
         if not _md5_for_security_refused():
             raise FipsSelfCheckError(
@@ -138,17 +249,19 @@ def assert_declared_mode() -> str:
                 "NOT refused — the OpenSSL FIPS provider config did not take effect (the L1 "
                 "fail-open trap). Refusing to serve."
             )
-        _cryptography_fips_consistent(expect_enforced=True)
+        _cryptography_md5_refused()
     else:
         # Non-FIPS declared: prove it does NOT enforce, so the image cannot silently lie about
         # its posture in the other direction. A refusal here means the image claims non-FIPS
-        # while FIPS is actually active — a declaration mismatch, also fail-closed.
+        # while FIPS is actually active — a declaration mismatch, also fail-closed. No ordering
+        # hazard in this branch: MD5 is expected to SUCCEED (not be refused) when FIPS is off,
+        # so there is no refused fetch here to poison anything.
         if _md5_for_security_refused():
             raise FipsSelfCheckError(
                 "image declares FIPS off (TAP_FIPS_MODE=0) but MD5 for security use is refused — "
                 "the running crypto posture does not match the declared mode."
             )
-        _cryptography_fips_consistent(expect_enforced=False)
+        _cryptography_positive_control(expect_enforced=False)
     return mode
 
 

@@ -1,8 +1,9 @@
 """Do a model's edge declarations name edge types that exist?
 
-A model declares the edges it may emit or accept (``OUTBOUND_EDGES`` / ``INBOUND_EDGES``)
-and the subset that means containment for the cascade (``CONTAINMENT_EDGES``). Each names
-edge types by slug. Nothing used to check that those slugs resolve to a DEFINED edge type
+A model declares the edges it may emit or accept (``OUTBOUND_EDGES`` / ``INBOUND_EDGES``),
+the subset that means containment for the cascade (``CONTAINMENT_EDGES``), and the edges
+that mirror references embedded in its own fields (``HOTLINKS``, each entry's
+``edge_type``; Issue# 910 - tap). Each names edge types by slug. Nothing used to check that those slugs resolve to a DEFINED edge type
 (a ``.edge.json`` in some plugin's manifest, or a grid-standard core edge): rename the
 definition and every declaration still reads as valid — a citation that does not resolve
 reads as verification — while the cascade follows an edge nothing will ever carry
@@ -23,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DECLARATION_ATTRIBUTES: tuple[str, ...] = ("OUTBOUND_EDGES", "INBOUND_EDGES", "CONTAINMENT_EDGES")
+DECLARATION_ATTRIBUTES: tuple[str, ...] = ("OUTBOUND_EDGES", "INBOUND_EDGES", "CONTAINMENT_EDGES", "HOTLINKS")
 _SKIP_DIRS = frozenset({"tests", "migrations", "__pycache__"})
 
 
@@ -50,7 +51,9 @@ def edge_types_in(attribute: str, value: Any) -> list[str]:
     """The edge-type slugs an attribute value names, in declaration order, de-duplicated.
 
     ``OUTBOUND_EDGES`` / ``INBOUND_EDGES`` are lists of ``{"nodes": [...], "edges":
-    [{"type": slug}, ...]}`` entries; ``CONTAINMENT_EDGES`` is a tuple of slugs.
+    [{"type": slug}, ...]}`` entries; ``CONTAINMENT_EDGES`` is a tuple of slugs; ``HOTLINKS``
+    is a list of hotlink definitions, each naming one slug as ``edge_type``
+    (req-grid-hotlink-model-5).
     """
     seen: list[str] = []
 
@@ -61,6 +64,10 @@ def edge_types_in(attribute: str, value: Any) -> list[str]:
     if attribute == "CONTAINMENT_EDGES":
         for slug in value or ():
             add(slug)
+    elif attribute == "HOTLINKS":
+        for entry in value or []:
+            if isinstance(entry, dict):
+                add(entry.get("edge_type"))
     else:
         for entry in value or []:
             if not isinstance(entry, dict):
@@ -98,7 +105,7 @@ def read_declarations(package_dir: Path) -> tuple[list[EdgeDeclaration], list[Un
     """Statically read every model's edge declarations under ``package_dir``.
 
     Walks ``*.py`` (skipping tests, migrations and caches), and for every class body reads
-    the three declaration attributes as literals. A value that is not a literal (a name, a
+    the declaration attributes as literals. A value that is not a literal (a name, a
     call, a comprehension) is reported as unreadable rather than guessed: the caller says
     so, and the boot-time check — which sees the evaluated value — is the authority.
     """

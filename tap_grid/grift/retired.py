@@ -98,7 +98,12 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
         )
     from tap_grid.models import Entity
 
-    live = sorted(str(x) for x in Entity.objects.filter(pk__in=stripped_ids).values_list("pk", flat=True))
+    # Only id-named nodes can collide with the grid; a strip of refs alone reads nothing.
+    live = (
+        sorted(str(x) for x in Entity.objects.filter(pk__in=stripped_ids).values_list("pk", flat=True))
+        if stripped_ids
+        else []
+    )
     if live:
         raise RetiredCollisionError(f"retired-type node(s) reuse the entity id of a live grid entity: {live}")
 

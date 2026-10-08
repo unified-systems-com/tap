@@ -5,8 +5,10 @@ Design philosophy: See DESIGN.md in this directory.
 """
 
 import hashlib
+import inspect
 import uuid
-from typing import Any, ClassVar
+from collections.abc import Callable, Iterable
+from typing import Any, ClassVar, TypeVar
 
 import jsonschema
 from django.conf import settings
@@ -248,7 +250,123 @@ def clamp_to_fields(text: str, *fields: tuple[type[models.Model], str]) -> str:
     return text[: min(limits)]
 
 
-class EntityQuerySet(models.QuerySet["Entity"]):
+_ModelT = TypeVar("_ModelT", bound=models.Model)
+
+
+def _save_may_insert(instance: models.Model, save_kwargs: dict[str, Any]) -> bool:
+    """True iff Django may INSERT a row on this save (Issue# 980 - tap).
+
+    ``force_insert`` always inserts, as ``QuerySet.create`` passes, and ``force_update`` never
+    does. Otherwise a save of an instance not loaded from the database may insert even when it
+    names ``update_fields``: for a key with a default, ``Model._save_table`` skips the UPDATE. A
+    loaded instance saved without ``update_fields`` falls back to an INSERT when no row matches.
+    """
+    if save_kwargs.get("force_insert"):
+        return True
+    if save_kwargs.get("force_update"):
+        return False
+    return instance._state.adding or save_kwargs.get("update_fields") is None
+
+
+def _snapshot_update_fields(save_kwargs: dict[str, Any]) -> None:
+    """Read a save's ``update_fields`` once, so the write guard and Django see the same fields.
+
+    A one-shot iterator would be used up by the guard and leave the save an empty field list;
+    any other iterable could yield different fields on a later pass (Issue# 980 - tap).
+    """
+    if save_kwargs.get("update_fields") is not None:
+        save_kwargs["update_fields"] = tuple(save_kwargs["update_fields"])
+
+
+def _save_may_update(save_kwargs: dict[str, Any]) -> bool:
+    """True iff this save may change an existing row: any save but a forced insert.
+
+    A fresh instance carrying an existing row's id is still "adding", and ``save(force_update=True)``
+    on it updates that row, so being new to this process does not make a save an insert.
+    """
+    return not save_kwargs.get("force_insert")
+
+
+_BULK_CREATE_SIGNATURE = inspect.signature(models.QuerySet.bulk_create)
+
+
+class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
+    """Queryset writes on a graph table pass the write guard, as instance writes do.
+
+    ``update``, ``delete``, ``bulk_create`` and ``bulk_update`` never call a model's
+    ``save``/``delete``, so the instance hooks cannot see them: ``Model.objects.filter(...)
+    .delete()``, including Django admin's ``delete_queryset``, reached the table with no
+    check at all (Issue# 959 - tap). Each now calls ``enforce_service_write`` first.
+    """
+
+    def _guard(
+        self,
+        operation: str,
+        row_types: Callable[[], Iterable[str]] | None = None,
+        *,
+        fields: Iterable[str] | None = None,
+        may_insert: bool = False,
+        may_update: bool = True,
+    ) -> None:
+        from tap_grid.write_guard import enforce_service_write
+
+        enforce_service_write(
+            f"queryset {operation}",
+            self.model._meta.label,
+            row_types=row_types,
+            fields=fields,
+            may_insert=may_insert,
+            may_update=may_update,
+        )
+
+    def _queryset_row_types(self) -> Callable[[], Iterable[str]] | None:
+        """The entity types this queryset's rows carry, read only if a type-held writer asks."""
+        return None
+
+    def update(self, **kwargs: Any) -> int:
+        self._guard("update", self._queryset_row_types(), fields=kwargs.keys())
+        return super().update(**kwargs)
+
+    def delete(self) -> tuple[int, dict[str, int]]:
+        self._guard("delete", self._queryset_row_types())
+        return super().delete()
+
+    def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[_ModelT]:
+        objs = list(objs)
+        # Django takes these options by position as well as by name; bind them as it will, so an
+        # upsert passed positionally is still seen as one.
+        # Django is then called with the same bound arguments, its update fields read once, so the
+        # guard and Django see the same fields.
+        bound = _BULK_CREATE_SIGNATURE.bind(self, objs, *args, **kwargs)
+        options = bound.arguments
+        if options.get("update_fields") is not None:
+            options["update_fields"] = tuple(options["update_fields"])
+        if options.get("update_conflicts"):
+            # An upsert inserts the rows that do not conflict and updates those that do: checked
+            # as both. One naming no fields is refused, as an update without fields is.
+            self._guard(
+                "bulk_create",
+                lambda: [getattr(o, "entity_type", "") for o in objs],
+                fields=options.get("update_fields"),
+                may_insert=True,
+            )
+        else:
+            self._guard(
+                "bulk_create",
+                lambda: [getattr(o, "entity_type", "") for o in objs],
+                may_insert=True,
+                may_update=False,
+            )
+        return super().bulk_create(*bound.args[1:], **bound.kwargs)
+
+    def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
+        objs = list(objs)
+        fields = tuple(fields)  # read once: the guard and Django see the same fields
+        self._guard("bulk_update", lambda: [getattr(o, "entity_type", "") for o in objs], fields=fields)
+        return super().bulk_update(objs, fields, *args, **kwargs)
+
+
+class EntityQuerySet(_GuardedWriteQuerySet["Entity"]):
     """QuerySet for Entity exposing `.live()` and `.tombstoned()` filters.
 
     The filter is on this very table (``deleted_at IS NULL`` for live).
@@ -259,6 +377,18 @@ class EntityQuerySet(models.QuerySet["Entity"]):
 
     def tombstoned(self) -> EntityQuerySet:
         return self.filter(deleted_at__isnull=False)
+
+    def _queryset_row_types(self) -> Callable[[], Iterable[str]] | None:
+        return lambda: self.values_list("entity_type", flat=True).distinct()
+
+    def _fetch_all(self) -> None:
+        # Read backstop, Layer 1, as on BaseModelQuerySet: a spine read re-checks grid.read
+        # (req-tap-auth-orm-read-backstop; the spine's exemption ended with Issue# 963 - tap).
+        if self._result_cache is None:
+            from tap_grid.read_guard import enforce_managed_read
+
+            enforce_managed_read(f"orm read {self.model._meta.label}")
+        super()._fetch_all()
 
 
 EntityManager = models.Manager.from_queryset(EntityQuerySet)
@@ -395,20 +525,28 @@ class Entity(models.Model):
         """Save the spine Entity — must route through the service layer.
 
         Write backstop (req-tap-auth-write-batch-routing): the Entity spine is
-        written only via the service layer (create_entity / update_entity, or the
-        node write pipeline, all of which open the write scope). A direct
+        written only via the service layer (the write pipeline, or the batch
+        subsystem's own spine row, both of which open the write scope). A direct
         Entity.save() outside a scope fails closed.
         """
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write("save tap_grid.Entity")
+        _snapshot_update_fields(kwargs)
+        enforce_service_write(
+            "save",
+            "tap_grid.Entity",
+            row_types=lambda: (self.entity_type,),
+            fields=kwargs.get("update_fields"),
+            may_insert=_save_may_insert(self, kwargs),
+            may_update=_save_may_update(kwargs),
+        )
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Delete the Entity (cascades to edges + domain rows) — service layer only."""
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write("delete tap_grid.Entity")
+        enforce_service_write("delete", "tap_grid.Entity", row_types=lambda: (self.entity_type,))
         return super().delete(*args, **kwargs)
 
 
@@ -478,7 +616,7 @@ class EntityType(models.Model):
 # one home for the live filter, no risk of drift between them.
 
 
-class BaseModelQuerySet(models.QuerySet["BaseModel"]):
+class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
     """QuerySet for BaseModel subclasses exposing `.live()` and `.tombstoned()`.
 
     The filter joins through the FK to Entity (``entity__deleted_at IS NULL``
@@ -979,7 +1117,14 @@ class BaseModel(models.Model):
         # from a view/panel/command fails closed. Layer 1 of the write guard.
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write(f"save {self._meta.label}")
+        _snapshot_update_fields(kwargs)
+        enforce_service_write(
+            "save",
+            self._meta.label,
+            fields=kwargs.get("update_fields"),
+            may_insert=_save_may_insert(self, kwargs),
+            may_update=_save_may_update(kwargs),
+        )
 
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
@@ -1064,12 +1209,12 @@ class BaseModel(models.Model):
         """Delete the node/edge — must route through the service layer.
 
         Write backstop (req-tap-auth-write-batch-routing): a direct instance delete
-        outside a service-layer write scope fails closed. The service delete path
-        (delete_node / delete_edge → entity.delete()) opens the scope.
+        outside a service-layer write scope fails closed. A service-layer delete
+        tombstones through the write pipeline; a hard delete is purge's alone.
         """
         from tap_grid.write_guard import enforce_service_write
 
-        enforce_service_write(f"delete {self._meta.label}")
+        enforce_service_write("delete", self._meta.label)
         return super().delete(*args, **kwargs)
 
 
@@ -1082,10 +1227,10 @@ class Edge(BaseModel):
 
     ENTITY_TYPE: ClassVar[str] = "edge"
     # Keyless (req-grid-entity-natural-key):
-    # edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling.
+    # the Edge MODEL has no constituting properties, because an edge's identity depends on its type: each edge TYPE declares how one of its edges is found again (req-grid-edge-identity-declaration, tap_grid/edge_identity.py). This model-level KEYLESS is not where edge identity lives.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
     NATURAL_KEY_REASON: ClassVar[str] = (
-        "edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling"
+        "the Edge model has no constituting properties, because an edge's identity depends on its type: each edge type declares how one of its edges is found again (req-grid-edge-identity-declaration); this model-level declaration is not where edge identity lives"
     )
 
     # from_entity, to_entity, and edge_type are dedicated create_edge() parameters,
@@ -1490,6 +1635,14 @@ class BatchEventType(models.TextChoices):
     LINK = "link", "Link (edge creation)"
     UNLINK = "unlink", "Unlink (edge deletion)"
     FORCE_REIMPORT = "force_reimport", "Force Re-Import"
+    # An edge the importer declined to write because an endpoint did not resolve
+    # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own
+    # transaction; entity_id is the edge's provisional id, which no entity has.
+    SKIP = "skip", "Skip (edge not written)"
+    # An edge an authority claim would remove (req-grid-reconcile-edge-authority-6). A dry-run
+    # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
+    # each proposal, and on the batch for each claim's outcome.
+    AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
 
 
 class BatchEvent(models.Model):

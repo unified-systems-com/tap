@@ -85,11 +85,6 @@ Current groups (authoritative list is the code — `grep -rn "TAP-KNOWN-DUPE("`)
   commands in the helper would run during an ordinary spawn even when the user declines.
   Parity is guard-enforced (`tap/guards/localexec_consent.py`); a drift would record consent
   over one file set and verify another.
-- `TAP-KNOWN-DUPE(write-scope-caps)` — the write-class capability names, spelled in the
-  `*_CAPABILITY` constants of `tap_auth/capabilities.py` and restated in the
-  `tap_grid/write_guard.py` module-scope frozenset (importing the constants there would
-  close the cycle through `tap_auth.enforcement`, which imports `write_guard` at module
-  scope), owned by `req-tap-auth-capabilities` in `tap_auth/specs/spec-tap-auth-v0.md`.
 - `TAP-KNOWN-DUPE(plugin-slug-alphabet)` — the plugin slug alphabet `[a-z0-9_]+`, spelled
   as `SLUG_ALPHABET_PATTERN` in `tap/plugin_identity.py` and again as the `pattern` on
   both slug-bearing fields of `tap_boot/schemas/boot.schema.json`

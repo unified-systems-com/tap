@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from tap.jsonfiles import JsonFileError, load_schema, validate_json
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,9 @@ def record_completeness(
     metadata = dict(batch.metadata or {})
     metadata[METADATA_KEY] = statement
     batch.metadata = metadata
-    batch.save(update_fields=["metadata"])
+    # Run bookkeeping on the lifecycle batch: a named below-pipeline writer.
+    with below_pipeline_write("bookkeeping"):
+        batch.save(update_fields=["metadata"])
     return statement
 
 

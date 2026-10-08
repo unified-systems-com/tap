@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 13 |
+| mapped | 15 |
 | unbuilt | 3 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 4 |
@@ -16,6 +16,8 @@
 | `req-grid-import-grift-batch` | Implemented | Implemented | `_execute_grift_batch` | — |
 | `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
 | `req-grid-import-grift-dangling` | Implemented | Tested | — | `req-grid-import-grift-dangling-1` |
+| `req-grid-import-grift-edge-endpoints` | Implemented | Implemented | `_endpoint_key_is_sound`, `_resolve_endpoint_keys` | — |
+| `req-grid-import-grift-edge-removal` | Implemented | Implemented | `_parse_identity_removal`, `_resolve_removal_identities` | — |
 | `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
 | `req-grid-import-grift-identity` | Implemented | Verified | `resolve_refs` | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
 | `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |

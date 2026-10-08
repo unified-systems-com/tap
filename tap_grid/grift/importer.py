@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/0c50944318b9 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5785c4b9ecb7 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -15,13 +15,13 @@ import json
 import logging
 import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -33,12 +33,19 @@ from tap_grid.grift.refs import resolve_refs, substitute_ids
 from tap_grid.models import BaseModel, Entity
 from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
 from tap_grid.service_types import WriteOperation
-from tap_grid.services import resolve_identity, write_batch
+from tap_grid.services import (
+    find_by_natural_key,
+    find_edge_by_identity,
+    resolve_edge_identity,
+    resolve_identity,
+    write_batch,
+)
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Iterable
 
 
 GRIFT_VERSION = "0"
@@ -98,6 +105,8 @@ class GriftCounts:
     edges_retired: int = 0
     nodes_retired: int = 0
     retirements_skipped: int = 0
+    # Edges authority claims would remove; a dry-run removes none (req-grid-reconcile-edge-authority-6).
+    edges_proposed: int = 0
     errors: int = 0
     warnings: int = 0
 
@@ -169,10 +178,23 @@ class GriftImportedBatch:
     # Batch-local refs and the ids they resolved to (the gate, shape A —
     # Issue# 593 - tap): the one place a collector learns what its refs became.
     resolved_refs: dict[str, str] = None  # type: ignore[assignment]
+    # Edges this batch declined to write because an endpoint did not resolve, each with the id of
+    # its `skip` BatchEvent (req-grid-import-grift-edge-endpoints-8). Empty for a batch that
+    # failed: its skip events rolled back with it, and its issues name the endpoints instead.
+    skips: list[dict[str, Any]] = None  # type: ignore[assignment]
+    # Each authority claim's outcome, with the id of its batch-level `authority_proposed` event
+    # (req-grid-reconcile-edge-authority-7), and how many edges the claims would remove. Empty for a
+    # batch that failed: its events rolled back with it.
+    authority: list[dict[str, Any]] = None  # type: ignore[assignment]
+    edges_proposed: int = 0
 
     def __post_init__(self):
         if self.resolved_refs is None:
             self.resolved_refs = {}
+        if self.skips is None:
+            self.skips = []
+        if self.authority is None:
+            self.authority = []
         if self.swept_entities is None:
             self.swept_entities = []
         if self.sweep_skipped is None:
@@ -248,7 +270,9 @@ _BATCH_REQUIRED = frozenset(["batch_entity", "batch_node", "nodes", "edges"])
 # Removal sections (`deletes`, `purges`) are optional per
 # req-grift-import-deletes; presence is detected at parse time and validated
 # in removal preflight. They are NOT in _BATCH_REQUIRED.
-_BATCH_ALLOWED = frozenset(["batch_entity", "batch_node", "nodes", "edges", "deletes", "purges", "contents"])
+_BATCH_ALLOWED = frozenset(
+    ["batch_entity", "batch_node", "nodes", "edges", "deletes", "purges", "contents", "edge_cases"]
+)
 _NODE_REQUIRED = frozenset(["entity", "node"])
 _NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
@@ -269,8 +293,14 @@ _ENVELOPE_ALLOWED = frozenset(
         "entity_expected_version",
     ]
 )
-_EDGE_PAYLOAD_REQUIRED = frozenset(["from_entity_id", "to_entity_id", "edge_type", "properties"])
-_EDGE_PAYLOAD_ALLOWED = frozenset(["from_entity_id", "to_entity_id", "edge_type", "properties"])
+_EDGE_PAYLOAD_REQUIRED = frozenset(["edge_type", "properties"])
+_EDGE_PAYLOAD_ALLOWED = frozenset(["from_entity_id", "to_entity_id", "from_key", "to_key", "edge_type", "properties"])
+#: Each endpoint is named by exactly one of these after the ref pass: an id, or a type and natural
+#: key resolved inside the batch transaction (req-grid-import-grift-edge-endpoints-1).
+_EDGE_ENDPOINT_FORMS: tuple[tuple[str, str, str], ...] = (
+    ("from", "from_entity_id", "from_key"),
+    ("to", "to_entity_id", "to_key"),
+)
 
 # Removal-section schema (req-grift-import-deletes). `entity_expected_version`
 # is the optional OCC declaration on a removal target (same contract as on
@@ -318,6 +348,7 @@ _ERROR_CODES = frozenset(
         # req-grid-import-grift-removal-preflight).
         "duplicate_removal_target",
         "entity_id_in_upsert_and_removal",
+        "removal_identity_unkeyed",
         "removal_target_missing",
         "removal_target_tombstoned",
         "removal_entity_type_mismatch",
@@ -337,10 +368,25 @@ _ERROR_CODES = frozenset(
         # type has declared no search at all.
         "identity_ambiguous",
         "identity_undeclared",
+        # Edge identity (req-grid-edge-identity, Issue# 913 - tap): an edge whose declared key
+        # has a hole, and two edges of one batch (or a keyless edge and a live one) that are
+        # the same relationship. An undeclared type is a logged warning in warn mode and
+        # `identity_undeclared` after the flip (Issue# 928 - tap).
+        "incomplete_edge_key",
+        "duplicate_edge",
+        # Endpoints by natural key (req-grid-import-grift-edge-endpoints): refused at preflight.
+        "incomplete_endpoint_key",
+        "endpoint_type_unkeyed",
+        "endpoint_key_mismatch",
         # The contents declaration (req-grift-contents): a declaration the batch does not
         # match, or an aspect this importer does not accept.
         "contents_mismatch",
         "unsupported_contents",
+        # Authority claims (req-grid-reconcile-edge-authority): a claim refused at preflight, and two
+        # claims over one scope in a batch.
+        "authority_dimensions_reserved",
+        "authority_internal_edge_type",
+        "duplicate_authority_claim",
     ]
 )
 
@@ -958,6 +1004,69 @@ def _validate_node_payload(
 # ---------------------------------------------------------------------------
 
 
+def _endpoint_key_is_sound(
+    endpoint: Any,
+    path: str,
+    issues: list[GriftIssue],
+    *,
+    batch_entity_id: str | None,
+    entity_id: str | None,
+) -> bool:
+    """Check an endpoint named by type and natural key, without reading the grid.
+
+    The type must declare a ``NATURAL_KEY`` (a ``KEYLESS`` or undeclared type has nothing to find
+    it by), and the key must carry exactly the declared properties, none of them null: a hole
+    would find nothing and look like an unresolved endpoint, so it is refused here instead
+    (``req-grid-import-grift-edge-endpoints-3``). ``""`` is observed-empty and is a value, as for
+    nodes (``req-grid-entity-natural-key-16``).
+
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/736330ee28b7 (enforcement) —
+        the preflight refusal of a key endpoint that could never resolve honestly: an unkeyed
+        type, a missing or null declared property, or a property the type does not declare.
+    """
+    from tap_grid.natural_key import Keyless
+    from tap_grid.registry import get_model_class
+
+    def refuse(code: str, message: str) -> bool:
+        issues.append(_issue(code, message, "validation", path, entity_id=entity_id, batch_entity_id=batch_entity_id))
+        return False
+
+    if (
+        not isinstance(endpoint, dict)
+        or set(endpoint) != {"entity_type", "key"}
+        or not isinstance(endpoint["key"], dict)
+    ):
+        return refuse("schema_validation_failed", f"An endpoint key at {path} is {{entity_type, key: {{...}}}}")
+    entity_type = endpoint["entity_type"]
+    try:
+        model_cls = get_model_class(entity_type)
+    except KeyError:
+        return refuse("unknown_entity_type", f"Unknown entity type {entity_type!r} for the endpoint at {path}")
+    declared = getattr(model_cls, "NATURAL_KEY", None)
+    if declared is None or isinstance(declared, Keyless):
+        state = "is keyless" if isinstance(declared, Keyless) else "declares no NATURAL_KEY"
+        return refuse(
+            "endpoint_type_unkeyed",
+            f"{entity_type} {state}, so an endpoint cannot name it by key at {path}; address it by id or ref",
+        )
+    key = endpoint["key"]
+    undeclared = sorted(set(key) - set(declared))
+    if undeclared:
+        return refuse(
+            "endpoint_key_mismatch",
+            f"The endpoint key at {path} names {undeclared}, which {entity_type} does not declare; its NATURAL_KEY is "
+            f"{list(declared)}",
+        )
+    holes = [name for name in declared if key.get(name) is None]
+    if holes:
+        return refuse(
+            "incomplete_endpoint_key",
+            f"The endpoint key at {path} has no value for {holes} of {entity_type}'s NATURAL_KEY {list(declared)}; "
+            "an incomplete key is refused, never looked up",
+        )
+    return True
+
+
 def _validate_edge_payload(
     payload: Any,
     path: str,
@@ -1007,6 +1116,25 @@ def _validate_edge_payload(
             )
 
     ok = True
+    for side, id_field, key_field in _EDGE_ENDPOINT_FORMS:
+        given = [f for f in (id_field, key_field) if f in payload]
+        if len(given) != 1:
+            issues.append(
+                _issue(
+                    "schema_validation_failed",
+                    f"The {side} endpoint at {path} needs exactly one of {id_field} and {key_field} "
+                    f"(or a {side}_ref, resolved before this check); found {given or 'neither'}",
+                    "schema",
+                    f"{path}.{id_field}",
+                    entity_id=entity_id,
+                    batch_entity_id=batch_entity_id,
+                )
+            )
+            ok = False
+        elif key_field in payload and not _endpoint_key_is_sound(
+            payload[key_field], f"{path}.{key_field}", issues, batch_entity_id=batch_entity_id, entity_id=entity_id
+        ):
+            ok = False
     for uuid_field in ("from_entity_id", "to_entity_id"):
         if uuid_field not in payload:
             continue
@@ -1076,6 +1204,23 @@ class _ParsedRemovalTarget:
 
 
 @dataclass
+class _ParsedIdentityRemoval:
+    """One `deletes.edges` target that names its edge by identity (req-grid-import-grift-edge-removal).
+
+    It has no id until the batch executes: it ends whichever live edge of ``edge_type`` matches
+    between the two endpoints then. Each endpoint is ``{"entity_id": ...}`` (canonical) or a key
+    form ``{"entity_type", "key"}``; ``discriminators`` holds each declared path's value.
+    """
+
+    edge_type: str
+    endpoints: dict[str, dict[str, Any]]  # "from" / "to" -> the endpoint as the target names it
+    discriminators: dict[str, Any]
+    reason: str
+    path: str
+    batch_entity_id: str
+
+
+@dataclass
 class _ParsedRemovalSections:
     """Parsed removal sections for one batch.
 
@@ -1092,6 +1237,7 @@ class _ParsedRemovalSections:
     deletes_nodes: list[_ParsedRemovalTarget] = None  # type: ignore[assignment]
     purges_edges: list[_ParsedRemovalTarget] = None  # type: ignore[assignment]
     purges_nodes: list[_ParsedRemovalTarget] = None  # type: ignore[assignment]
+    deletes_edge_identities: list[_ParsedIdentityRemoval] = None  # type: ignore[assignment]
 
     def __post_init__(self):
         if self.deletes_edges is None:
@@ -1102,15 +1248,71 @@ class _ParsedRemovalSections:
             self.purges_edges = []
         if self.purges_nodes is None:
             self.purges_nodes = []
+        if self.deletes_edge_identities is None:
+            self.deletes_edge_identities = []
 
     def has_purge_targets(self) -> bool:
         return bool(self.purges_edges or self.purges_nodes)
 
     def has_any_targets(self) -> bool:
-        return bool(self.deletes_edges or self.deletes_nodes or self.purges_edges or self.purges_nodes)
+        return bool(
+            self.deletes_edges
+            or self.deletes_nodes
+            or self.purges_edges
+            or self.purges_nodes
+            or self.deletes_edge_identities
+        )
 
     def all_targets(self) -> list[_ParsedRemovalTarget]:
+        """Every id-addressed target; an identity-addressed one has no id until the batch executes."""
         return self.deletes_edges + self.deletes_nodes + self.purges_edges + self.purges_nodes
+
+
+def _validate_edge_cases(
+    edge_cases: dict[str, Any],
+    path: str,
+    issues: list[GriftIssue],
+    *,
+    batch_entity_id: str | None,
+) -> None:
+    """Refuse at preflight an authority claim that could never be judged honestly.
+
+    The schema has already held the shape: a claim's ``edge_type``, ``anchor``, ``direction`` and
+    ``read`` are present, the last two from their closed sets, and ``edge_cases`` has no other
+    member (``req-grift-edge-identity-surface-3``). Here: ``dimensions`` is reserved and refused
+    while present (Issue# 907 - tap); the edge type must not be internal-only, because what a claim
+    proposes is a removal the generic path would refuse (``req-grid-edge-internal``); a key anchor
+    must be one that could resolve. Edge types are open, as for the edges themselves: a type with no
+    live edge in scope proposes nothing.
+    """
+    from tap_grid.constraints import is_internal_edge_type
+
+    for idx, claim in enumerate(edge_cases.get("authority", [])):
+        claim_path = f"{path}.authority[{idx}]"
+
+        def refuse(code: str, message: str, where: str = claim_path) -> None:
+            issues.append(_issue(code, message, "validation", where, batch_entity_id=batch_entity_id))
+
+        if "dimensions" in claim:
+            refuse(
+                "authority_dimensions_reserved",
+                f"The claim at {claim_path} carries dimensions, which are reserved until dimension-scoped claims "
+                "exist (Issue# 907 - tap); a claim scoped by them cannot be honoured yet, so it is refused",
+                f"{claim_path}.dimensions",
+            )
+        edge_type = claim["edge_type"]
+        if is_internal_edge_type(edge_type):
+            refuse(
+                "authority_internal_edge_type",
+                f"The claim at {claim_path} covers {edge_type!r}, an internal-only edge type: only the subsystem "
+                "that owns it writes or removes it (req-grid-edge-internal)",
+                f"{claim_path}.edge_type",
+            )
+        anchor = claim["anchor"]
+        if "entity_id" not in anchor:
+            _endpoint_key_is_sound(
+                anchor, f"{claim_path}.anchor", issues, batch_entity_id=batch_entity_id, entity_id=None
+            )
 
 
 def _validate_removal_section(
@@ -1124,14 +1326,16 @@ def _validate_removal_section(
     Literal["error", "warn", "ignore"] | None,
     list[_ParsedRemovalTarget],
     list[_ParsedRemovalTarget],
+    list[_ParsedIdentityRemoval],
 ]:
     """Validate one `deletes` or `purges` section's shape and collect targets.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/ece62aaf6f8f (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/f26d5e3424bb (derivation)
         — the file-level (state-free) phase of removal preflight.
 
-    Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets)``.
-    ``on_tombstoned`` is always ``None`` for the purges section. Invalid
+    Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets, identity_targets)``.
+    ``on_tombstoned`` is always ``None`` for the purges section, and ``identity_targets`` (the
+    `deletes.edges` targets that name their edge by identity) is empty for it. Invalid
     targets are skipped with hard-error issues recorded against ``issues``;
     valid targets are returned in declaration order. Cross-section and
     cross-document duplicate checks happen at the caller level after every
@@ -1149,7 +1353,7 @@ def _validate_removal_section(
                 batch_entity_id=batch_entity_id,
             )
         )
-        return None, None, [], []
+        return None, None, [], [], []
 
     required = _DELETES_REQUIRED if section_kind == "deletes" else _PURGES_REQUIRED
     allowed = _DELETES_ALLOWED if section_kind == "deletes" else _PURGES_ALLOWED
@@ -1237,6 +1441,14 @@ def _validate_removal_section(
                         batch_entity_id=batch_entity_id,
                     )
                 )
+                continue
+
+            # A `deletes.edges` target without an id names its edge by identity; the document
+            # schema has already held the exclusive-or (req-grid-import-grift-edge-removal-1).
+            if section_kind == "deletes" and sub_kind == "edges" and "entity_id" not in target:
+                by_identity = _parse_identity_removal(target, target_path, batch_entity_id, issues)
+                if by_identity is not None:
+                    identity_targets.append(by_identity)
                 continue
 
             for key in target:
@@ -1378,10 +1590,95 @@ def _validate_removal_section(
 
         return parsed
 
+    identity_targets: list[_ParsedIdentityRemoval] = []
     edge_targets = _parse_targets(section_obj.get("edges", []), "edges")
     node_targets = _parse_targets(section_obj.get("nodes", []), "nodes")
 
-    return on_missing, on_tombstoned, edge_targets, node_targets
+    return on_missing, on_tombstoned, edge_targets, node_targets, identity_targets
+
+
+def _parse_identity_removal(
+    target: dict[str, Any],
+    path: str,
+    batch_entity_id: str,
+    issues: list[GriftIssue],
+) -> _ParsedIdentityRemoval | None:
+    """Check a `deletes.edges` target that names its edge by identity, without reading the grid.
+
+    The type must declare a plain identity: a keyless type has no identity to name and an
+    undeclared one has none yet, so neither can be addressed this way. ``discriminators`` must
+    carry exactly the declared paths, none absent, null or empty
+    (``req-grid-import-grift-edge-removal-5``), and each endpoint is an id or a sound key.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/acbf43103511 (enforcement) — the
+        preflight refusal of an identity-addressed delete that could never match honestly: an
+        unkeyed type, an incomplete or undeclared discriminator, an unsound endpoint.
+    """
+    from tap_grid.edge_identity import get_edge_identity, incomplete_paths
+
+    def refuse(code: str, message: str, at: str = path) -> None:
+        issues.append(_issue(code, message, "preflight", at, batch_entity_id=batch_entity_id, entity_type="edge"))
+
+    edge_type = target["edge_type"]
+    identity = get_edge_identity(edge_type)
+    if identity is None or identity.keyless:
+        state = "is keyless" if identity is not None else "declares no identity"
+        refuse(
+            "removal_identity_unkeyed",
+            f"{edge_type} {state}, so the delete at {path} cannot name its edge by identity; name it by entity_id",
+            f"{path}.edge_type",
+        )
+        return None
+    given = target.get("discriminators")
+    if given is None and identity.paths:
+        given = {}
+    if given is not None and not identity.paths:
+        refuse(
+            "schema_validation_failed",
+            f"{edge_type} declares no discriminators, so the delete at {path} carries none",
+            f"{path}.discriminators",
+        )
+        return None
+    discriminators: dict[str, Any] = dict(given or {})
+    undeclared = sorted(set(discriminators) - set(identity.paths))
+    if undeclared:
+        refuse(
+            "schema_validation_failed",
+            f"The delete at {path} names discriminators {undeclared}, which {edge_type} does not declare; "
+            f"it declares {list(identity.paths)}",
+            f"{path}.discriminators",
+        )
+        return None
+    holes = incomplete_paths({p: discriminators.get(p) for p in identity.paths})
+    if holes:
+        refuse(
+            "incomplete_edge_key",
+            f"The delete at {path} has no value for {holes} of {edge_type}'s discriminators; an incomplete "
+            "identity is refused, never looked up",
+            f"{path}.discriminators",
+        )
+        return None
+    endpoints: dict[str, dict[str, Any]] = {}
+    for side in ("from", "to"):
+        endpoint = target[side]
+        at = f"{path}.{side}"
+        if "entity_id" in endpoint:
+            canonical = _check_uuid(endpoint["entity_id"], f"{at}.entity_id", issues, batch_entity_id=batch_entity_id)
+            if canonical is None:
+                return None
+            endpoints[side] = {"entity_id": canonical}
+        elif _endpoint_key_is_sound(endpoint, at, issues, batch_entity_id=batch_entity_id, entity_id=None):
+            endpoints[side] = endpoint
+        else:
+            return None
+    return _ParsedIdentityRemoval(
+        edge_type=edge_type,
+        endpoints=endpoints,
+        discriminators=discriminators,
+        reason=target["reason"],
+        path=path,
+        batch_entity_id=batch_entity_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1442,13 +1739,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/82e93521ac55 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/b274eab851e8 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/82e93521ac55 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/b274eab851e8 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1940,6 +2237,10 @@ def _run_preflight(
                 issues=issues,
                 batch_entity_id=batch_entity_id,
             )
+        if "edge_cases" in batch_container:
+            _validate_edge_cases(
+                batch_container["edge_cases"], f"{batch_path}.edge_cases", issues, batch_entity_id=batch_entity_id
+            )
 
         # --- Removal section preflight (req-grid-import-grift-removal-preflight) ---
         # Validate optional `deletes` and `purges` sections: shape, target
@@ -1954,6 +2255,7 @@ def _run_preflight(
                 parsed_removals.deletes_on_tombstoned,
                 parsed_removals.deletes_edges,
                 parsed_removals.deletes_nodes,
+                parsed_removals.deletes_edge_identities,
             ) = _validate_removal_section(
                 batch_container["deletes"],
                 "deletes",
@@ -1967,6 +2269,7 @@ def _run_preflight(
                 _ignored,
                 parsed_removals.purges_edges,
                 parsed_removals.purges_nodes,
+                _no_identities,
             ) = _validate_removal_section(
                 batch_container["purges"],
                 "purges",
@@ -2041,7 +2344,7 @@ def _run_preflight(
             # upsert-only batches; for removal-bearing batches we add a
             # distinct warning with the --force-batches recipe.
             if parsed_removals.has_any_targets():
-                de = len(parsed_removals.deletes_edges)
+                de = len(parsed_removals.deletes_edges) + len(parsed_removals.deletes_edge_identities)
                 dn = len(parsed_removals.deletes_nodes)
                 pe = len(parsed_removals.purges_edges)
                 pn = len(parsed_removals.purges_nodes)
@@ -2573,20 +2876,29 @@ def _execute_grift_batch(
     purge: bool = False,
     parsed_removals: _ParsedRemovalSections | None = None,
     refs: dict[str, str] | None = None,
+    read_boundary: datetime | None = None,
 ) -> tuple[GriftImportedBatch, list[GriftIssue]]:
     """Import one GRIFT batch atomically. Returns (batch_summary, issues).
+
+    ``read_boundary`` is when the run that submitted the document opened, derived by
+    ``grift_import`` from the caller's bound batch and never from the document; ``None`` when no
+    run submitted it, and then an authority claim proposes nothing.
 
     ``refs`` is the batch's ``ref → provisional id`` map from preflight; inside the
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/68bde357beb7 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/ad93e08e70c9 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
 
     batch_path = f"$.batches[{batch_idx}]"
     issues: list[GriftIssue] = []
+    # This batch's own copy: key endpoints that do not resolve join it at execution.
+    dangling_edge_ids = set(dangling_edge_ids)
+    unresolved_keys: dict[str, list[dict[str, Any]]] = {}
+    skips: list[dict[str, Any]] = []
     nodes_imported = 0
     edges_imported = 0
     edges_skipped = 0
@@ -2602,6 +2914,9 @@ def _execute_grift_batch(
     sweep_skipped: list[GriftSweepSkipped] = []
     sweep_strict_aborted = False
     upserted_entities: list[GriftUpsertedEntity] = []
+    authority: list[dict[str, Any]] = []
+    edges_proposed = 0
+    committed = False
 
     batch_entity = batch_container["batch_entity"]
     batch_node = batch_container["batch_node"]
@@ -2674,7 +2989,8 @@ def _execute_grift_batch(
                     if new_name != batch.name or new_description != batch.description:
                         batch.name = new_name
                         batch.description = new_description
-                        batch.save(update_fields=["name", "description"])
+                        with below_pipeline_write("batch"):
+                            batch.save(update_fields=["name", "description"])
                     # If the batch was previously closed, reopen-then-reclose on
                     # success. Status is managed by close_batch at the bottom.
                     from tap_grid.models import BatchStatus
@@ -2682,7 +2998,8 @@ def _execute_grift_batch(
                     if batch.status != BatchStatus.OPEN:
                         batch.status = BatchStatus.OPEN
                         batch.closed_at = None
-                        batch.save(update_fields=["status", "closed_at"])
+                        with below_pipeline_write("batch"):
+                            batch.save(update_fields=["status", "closed_at"])
                 else:
                     # Normal path: create the batch with the preserved entity_id.
                     batch = create_batch(
@@ -2704,6 +3021,9 @@ def _execute_grift_batch(
             # transaction and the verb's lock, so resolution and creation commit
             # together (req-grid-entity-natural-key-13). A found row's id replaces the
             # provisional one the preflight minted, everywhere this batch names it.
+            # Every identity lock the batch will take, in one order: node keys first (an edge's key
+            # needs its endpoints' final ids), each kind sorted (Issue# 943 - tap).
+            _take_identity_locks(_ref_node_lock_keys(batch_container, final_refs))
             if final_refs:
                 substitutions = _resolve_ref_identities(
                     batch_container,
@@ -2717,6 +3037,41 @@ def _execute_grift_batch(
                 if substitutions:
                     substitute_ids(batch_container, substitutions)
                     final_refs = {ref: substitutions.get(pid, pid) for ref, pid in final_refs.items()}
+
+            # Endpoints named by type and natural key resolve against this batch's nodes, then the
+            # live grid (req-grid-import-grift-edge-endpoints), after node refs and before edge
+            # identity, so every endpoint is final when edges are looked up.
+            unresolved_keys = _resolve_endpoint_keys(
+                batch_container,
+                batch_path=batch_path,
+                batch_entity_id=batch_entity_id,
+                ctx=ctx,
+                issues=issues,
+                dangling_edge_ids=dangling_edge_ids,
+                dangling_edge_mode=dangling_edge_mode,
+            )
+
+            # Then every edge lock: ref edges, keyless duplicate checks and deletes by identity
+            # together, sorted, so no two batches take any of them in opposite orders.
+            _take_identity_locks(_edge_lock_keys(batch_container, final_refs, dangling_edge_ids, parsed_removals, ctx))
+
+            # Edges are found by their type's declared identity, after the nodes, so every
+            # endpoint is final (req-grid-edge-identity). A found edge's id replaces the
+            # provisional one, and the op builder below then routes it to replace_edge,
+            # the same write path a found node takes (req-grid-edge-identity-10).
+            edge_substitutions = _resolve_edge_identities(
+                batch_container,
+                final_refs,
+                batch_path=batch_path,
+                batch_entity_id=batch_entity_id,
+                ctx=ctx,
+                issues=issues,
+                parsed_removals=parsed_removals,
+                dangling_edge_ids=dangling_edge_ids,
+            )
+            if edge_substitutions:
+                substitute_ids(batch_container, edge_substitutions)
+                final_refs = {ref: edge_substitutions.get(pid, pid) for ref, pid in final_refs.items()}
 
             # Build operations: determine create vs replace per entity before executing.
             ops: list[WriteOperation] = []
@@ -2857,6 +3212,15 @@ def _execute_grift_batch(
                             edge_entity_id=edge_entity_id,
                         )
                     )
+                    skips.append(
+                        _record_edge_skip(
+                            batch_entity_id,
+                            edge_entity_id,
+                            edge,
+                            unresolved_keys.get(edge_entity_id, []),
+                            {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])},
+                        )
+                    )
                     continue
 
                 if "retirement" in edge_obj:
@@ -2960,9 +3324,19 @@ def _execute_grift_batch(
             # batch transaction. ---
             removal_plan: _RemovalPhasePlan | None = None
             if parsed_removals is not None and parsed_removals.has_any_targets():
+                # A delete that names its edge by identity becomes an id target here, once it has
+                # matched the live edge it ends (req-grid-import-grift-edge-removal).
+                by_identity, identity_skips = _resolve_removal_identities(
+                    parsed_removals, batch_container, batch_entity_id=batch_entity_id, ctx=ctx, issues=issues
+                )
+                parsed_removals = replace(
+                    parsed_removals,
+                    deletes_edges=parsed_removals.deletes_edges + by_identity,
+                    deletes_edge_identities=[],
+                )
                 removal_plan = _check_and_lock_removal_targets(parsed_removals, batch_path, batch_entity_id)
                 issues.extend(removal_plan.issues)
-                removals_skipped = removal_plan.removals_skipped
+                removals_skipped = removal_plan.removals_skipped + identity_skips
                 if any(i.code in _ERROR_CODES for i in removal_plan.issues):
                     raise _BatchFailed()
 
@@ -3220,6 +3594,7 @@ def _execute_grift_batch(
                     caller_ctx=ctx,
                     sweep_strict=sweep_strict,
                     purge=purge,
+                    skipped_edge_ids=frozenset(dangling_edge_ids),
                 )
                 # Emit the FORCE_REIMPORT batch event.
                 _emit_force_reimport_event(
@@ -3234,12 +3609,35 @@ def _execute_grift_batch(
                     actor=actor,
                 )
 
+            # Authority claims are judged last, against the grid as this batch leaves it
+            # (req-grid-reconcile-edge-authority): a dry-run that records and removes nothing.
+            claims = (batch_container.get("edge_cases") or {}).get("authority") or []
+            if claims:
+                authority = _apply_authority_claims(
+                    claims,
+                    batch_container,
+                    batch=batch,
+                    batch_path=batch_path,
+                    batch_entity_id=batch_entity_id,
+                    ctx=ctx,
+                    actor=actor,
+                    read_boundary=read_boundary,
+                    dangling_edge_ids=dangling_edge_ids,
+                    skips=skips,
+                    issues=issues,
+                )
+                edges_proposed = sum(claim["proposed"] for claim in authority)
+
             close_batch(batch)
+        # Set only once the transaction has committed: a failure at commit (a deferred constraint)
+        # raises out of the block above and leaves this False, so its records are not reported.
+        committed = True
 
     except _BatchFailed:
         # Atomic block already rolled back; clear upsert tracking since none
-        # of those replaces actually persisted.
+        # of those replaces actually persisted. Its skip events rolled back too.
         upserted_entities = []
+        skips = []
     except _SweepStrictAborted as exc:
         # Strict mode: surface an error and keep the skipped list for the report.
         sweep_strict_aborted = True
@@ -3253,6 +3651,7 @@ def _execute_grift_batch(
         edges_skipped = 0
         swept_entities = []
         upserted_entities = []
+        skips = []
         issues.append(
             _issue(
                 "sweep_strict_aborted",
@@ -3276,11 +3675,23 @@ def _execute_grift_batch(
     except Exception as exc:
         issues.append(_issue("execution_failed", str(exc), "execution", batch_path, batch_entity_id=batch_entity_id))
 
-    errors_count = sum(
-        1
-        for i in issues
-        if i.code in ("execution_failed", "sweep_strict_aborted", "removal_execution_failed") or i.code in _ERROR_CODES
-    )
+    if not committed:
+        # The batch's transaction rolled back, and its authority events with it.
+        authority = []
+        edges_proposed = 0
+
+    def is_error(issue: GriftIssue) -> bool:
+        # The document-level classification's permissive carve-out (`_is_error` in
+        # `_grift_import_impl`): a dangling edge skipped in permissive mode is a warning, and the
+        # batch committed (Issue# 962 - tap).
+        if issue.code == "dangling_edge" and dangling_edge_mode == "permissive":
+            return False
+        return (
+            issue.code in ("execution_failed", "sweep_strict_aborted", "removal_execution_failed")
+            or issue.code in _ERROR_CODES
+        )
+
+    errors_count = sum(1 for i in issues if is_error(i))
     warnings_count = sum(
         1
         for i in issues
@@ -3295,8 +3706,10 @@ def _execute_grift_batch(
 
     # On rollback the removal counters are stale (the work didn't persist).
     # `_BatchFailed` clears upserted_entities above for the same reason;
-    # mirror that for removal stats so they don't lie about partial success.
-    if any(i.code in _ERROR_CODES for i in issues) or sweep_strict_aborted:
+    # mirror that for removal stats so they don't lie about partial success. Keyed on the
+    # rollback itself, not on an error code being present: a permissive dangling edge is an
+    # issue whose batch committed, so its removals did persist (Issue# 962 - tap).
+    if not committed:
         edges_deleted = 0
         nodes_deleted = 0
         edges_purged = 0
@@ -3327,6 +3740,9 @@ def _execute_grift_batch(
             nodes_retired=nodes_retired,
             retirements_skipped=retirements_skipped,
             resolved_refs=final_refs,
+            skips=skips,
+            authority=authority,
+            edges_proposed=edges_proposed,
         ),
         issues,
     )
@@ -3344,6 +3760,96 @@ def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
     if declared is None or isinstance(declared, Keyless):
         return None
     return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))
+
+
+def _take_identity_locks(keys: Iterable[str]) -> None:
+    """Take each identity lock a batch is about to need, once, in one canonical order (Issue# 943 - tap).
+
+    The identity verbs lock as they look up, in the order they meet the batch's objects. Two
+    batches naming the same relationships in opposite orders would then each hold one lock while
+    waiting for the other's, and Postgres would fail one of them. Taken here first, sorted by key,
+    every batch acquires the locks it shares with another in the same order. Advisory transaction
+    locks are re-entrant within a session, so each verb's own lock call then returns at once.
+    """
+    with connection.cursor() as cursor:
+        for key in sorted(set(keys)):
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+
+
+def _ref_node_lock_keys(batch_container: dict[str, Any], refs: dict[str, str]) -> list[str]:
+    """The identity lock key of every ref node of the batch whose type declares a natural key."""
+    ref_ids = set(refs.values())
+    return [
+        key
+        for node_obj in batch_container.get("nodes", [])
+        if node_obj["entity"]["entity_id"] in ref_ids
+        for key in [_explicit_identity_key(node_obj)]
+        if key is not None
+    ]
+
+
+def _edge_lock_keys(
+    batch_container: dict[str, Any],
+    refs: dict[str, str],
+    dangling_edge_ids: set[str],
+    parsed_removals: _ParsedRemovalSections | None,
+    ctx: CallerContext,
+) -> list[str]:
+    """The lock key of every edge identity the batch will look up, with its endpoints final.
+
+    The same set the verbs lock: a ref edge of a declared type, a keyless edge's duplicate check,
+    and each delete by identity. An edge whose key is incomplete, or whose endpoint did not
+    resolve, takes no lock here; its own step refuses or skips it as before.
+    """
+    from tap_grid.edge_identity import edge_identity_values, edge_lock_key, get_edge_identity, incomplete_paths
+
+    ref_ids = set(refs.values())
+    keys: list[str] = []
+
+    def add(edge_type: str, from_id: Any, to_id: Any, values: dict[str, object]) -> None:
+        if from_id is None or to_id is None or incomplete_paths(values):
+            return
+        try:
+            keys.append(edge_lock_key(edge_type, from_id, to_id, values))
+        except ValueError:
+            return
+
+    for edge_obj in batch_container.get("edges", []):
+        envelope_id = edge_obj["entity"]["entity_id"]
+        payload = edge_obj["edge"]
+        identity = get_edge_identity(payload["edge_type"])
+        if envelope_id in dangling_edge_ids or identity is None:
+            continue
+        if identity.keyless or envelope_id in ref_ids:
+            values = edge_identity_values(identity, payload.get("properties") or {})
+            add(payload["edge_type"], payload.get("from_entity_id"), payload.get("to_entity_id"), values)
+
+    targets = parsed_removals.deletes_edge_identities if parsed_removals is not None else []
+    if targets:
+        from tap_auth import policy
+        from tap_auth.capabilities import READ_CAPABILITY
+
+        policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_removal_identity")
+        batch_keys = _batch_node_keys(batch_container)
+        for target in targets:
+            try:
+                source = _removal_endpoint_id(target.endpoints["from"], batch_keys, ctx)
+                sink = _removal_endpoint_id(target.endpoints["to"], batch_keys, ctx)
+            except AmbiguousIdentity:
+                continue  # the delete's own step reports the ambiguity
+            add(target.edge_type, source, sink, dict(target.discriminators))
+    return keys
+
+
+def _removal_endpoint_id(endpoint: dict[str, Any], batch_keys: dict[str, list[str]], ctx: CallerContext) -> str | None:
+    """A delete-by-identity endpoint's entity id: given, or found by key (this batch first, then the grid)."""
+    from tap_grid.registry import get_model_class
+
+    if "entity_id" in endpoint:
+        return str(endpoint["entity_id"])
+    model_cls: Any = get_model_class(endpoint["entity_type"])
+    properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
+    return _find_node_by_key(endpoint["entity_type"], properties, batch_keys, ctx)
 
 
 def _resolve_ref_identities(
@@ -3514,9 +4020,790 @@ def _resolve_ref_identities(
     return substitutions
 
 
+def _resolve_endpoint_keys(
+    batch_container: dict[str, Any],
+    *,
+    batch_path: str,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    issues: list[GriftIssue],
+    dangling_edge_ids: set[str],
+    dangling_edge_mode: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Resolve every endpoint named by type and natural key; return the ones that resolved to nothing.
+
+    Runs inside the batch transaction after the batch's node refs resolved, so this batch's nodes
+    carry their final ids. Each key is looked up among this batch's own nodes first, then the
+    live grid through the type's generated search (a tombstoned node is never found). A match
+    rewrites the endpoint to an id; more than one match fails the batch as ``identity_ambiguous``.
+    Nothing is ever created for an endpoint. An endpoint that names nothing is unresolved: strict
+    mode fails the batch as ``dangling_edge``; permissive mode adds the edge to this batch's skip
+    set, and the returned map says which endpoint did not resolve, for its skip event.
+
+    Resolving a key reads the grid and tells the submitter what it found, so the import
+    authorises ``grid.read`` first (``req-grid-import-grift-edge-endpoints-9``).
+
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-endpoints@36d488ac168c/1bce761f7421 (derivation) —
+        the resolution of a key endpoint: batch first, then the live grid, ambiguity refused,
+        nothing minted, an unresolved endpoint left to the dangling-edge mode, under grid.read.
+    """
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid.registry import get_model_class
+
+    edges = batch_container.get("edges", [])
+    keyed = [e for e in edges if "from_key" in e["edge"] or "to_key" in e["edge"]]
+    if not keyed:
+        return {}
+    policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_endpoint_keys")
+    batch_keys = _batch_node_keys(batch_container)
+
+    unresolved: dict[str, list[dict[str, Any]]] = {}
+    strict_unresolved = False
+    for edge_idx, edge_obj in enumerate(edges):
+        payload = edge_obj["edge"]
+        edge_id = edge_obj["entity"]["entity_id"]
+        for side, id_field, key_field in _EDGE_ENDPOINT_FORMS:
+            if key_field not in payload:
+                continue
+            endpoint = payload[key_field]
+            entity_type = endpoint["entity_type"]
+            model_cls: Any = get_model_class(entity_type)
+            properties = {name: endpoint["key"][name] for name in model_cls.NATURAL_KEY}
+            path = f"{batch_path}.edges[{edge_idx}].edge.{key_field}"
+            try:
+                found = _find_node_by_key(entity_type, properties, batch_keys, ctx)
+            except AmbiguousIdentity as exc:
+                issues.append(
+                    _issue(
+                        "identity_ambiguous",
+                        f"The {side} endpoint at {path}: {exc}",
+                        "execution",
+                        path,
+                        entity_id=edge_id,
+                        batch_entity_id=batch_entity_id,
+                        entity_type="edge",
+                        operation="resolve_endpoint_key",
+                    )
+                )
+                raise _BatchFailed() from exc
+            if found is not None:
+                payload[id_field] = found
+                del payload[key_field]
+                continue
+            if dangling_edge_mode == "strict":
+                # Every unresolved endpoint is listed before the batch fails, so one run names
+                # them all (req-grid-import-grift-edge-endpoints-7).
+                issues.append(
+                    _issue(
+                        "dangling_edge",
+                        f"The {side} endpoint at {path} names no live {entity_type} with {properties!r}",
+                        "execution",
+                        path,
+                        entity_id=edge_id,
+                        batch_entity_id=batch_entity_id,
+                        entity_type="edge",
+                        operation="resolve_endpoint_key",
+                        edge_entity_id=edge_id,
+                    )
+                )
+                strict_unresolved = True
+                continue
+            dangling_edge_ids.add(edge_id)
+            unresolved.setdefault(edge_id, []).append({"endpoint": side, "entity_type": entity_type, "key": properties})
+    if strict_unresolved:
+        raise _BatchFailed()
+    return unresolved
+
+
+def _batch_node_keys(batch_container: dict[str, Any]) -> dict[str, list[str]]:
+    """This batch's nodes by (type, identity key): the batch is the first place a key is found."""
+    from tap_grid.registry import get_model_class
+
+    batch_keys: dict[str, list[str]] = {}
+    for node_obj in batch_container.get("nodes", []):
+        entity_type = node_obj["entity"]["entity_type"]
+        declared = getattr(get_model_class(entity_type), "NATURAL_KEY", None)
+        if not isinstance(declared, tuple):
+            continue
+        key = identity_lock_key(entity_type, constituting_properties(declared, node_obj["node"]))
+        if key is not None:
+            batch_keys.setdefault(key, []).append(node_obj["entity"]["entity_id"])
+    return batch_keys
+
+
+def _find_node_by_key(
+    entity_type: str, properties: dict[str, Any], batch_keys: dict[str, list[str]], ctx: CallerContext
+) -> str | None:
+    """The node a type and natural key name: this batch's nodes first, then the live grid. Never mints.
+
+    The caller has authorised ``grid.read``. Raises ``AmbiguousIdentity`` when more than one
+    node of the batch, or more than one live row, matches.
+    """
+    in_batch = batch_keys.get(identity_lock_key(entity_type, properties) or "", [])
+    if len(in_batch) > 1:
+        raise AmbiguousIdentity(entity_type, properties, list[object](in_batch))
+    if in_batch:
+        return in_batch[0]
+    row_id = find_by_natural_key(entity_type, properties, caller_context=ctx)  # TAP-AUTHZ-COV: grid.read by caller
+    return str(row_id) if row_id is not None else None
+
+
+def _resolve_removal_identities(
+    parsed_removals: _ParsedRemovalSections,
+    batch_container: dict[str, Any],
+    *,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    issues: list[GriftIssue],
+) -> tuple[list[_ParsedRemovalTarget], int]:
+    """Find the live edge each identity-addressed delete names now; return them as id targets.
+
+    Runs inside the batch transaction, after this batch's nodes and edges have their final ids.
+    Each endpoint is an id, or a key found among this batch's nodes, then the live grid; then the
+    edge is found among live edges between the two, under the identity lock, through
+    :func:`find_edge_by_identity`. The delete ends whichever live edge matches at this moment, so
+    a relationship that was retired and came back under a new id is the new edge. A target that
+    matches nothing is missing and follows ``deletes.on_missing``; a tombstoned edge never
+    matches, so ``on_tombstoned`` does not apply. More than one match, a target naming an edge
+    another target of this batch names, or an edge this batch also upserts, fails the batch, every
+    such target listed first. Resolving reads the grid, so the import authorises ``grid.read``.
+
+    The endpoints are found first, since that takes no lock; then the edges are looked up in the
+    order of their lock keys, not the document's, so two batches ending overlapping relationships
+    take those locks in one order and never each hold one while waiting for the other's.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-edge-removal@9b28437e0c32/1fe1eb71af7a (derivation) — the
+        resolution of a delete by identity: the live match at execution, missing by on_missing,
+        ambiguity and duplicates refused, under grid.read and the identity lock.
+
+    Returns:
+        The resolved targets, as id-addressed `deletes.edges` targets, and how many were skipped
+        as missing under ``on_missing`` warn or ignore.
+    """
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid.edge_identity import edge_lock_key
+
+    targets = parsed_removals.deletes_edge_identities
+    if not targets:
+        return [], 0
+    policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_removal_identity")
+    on_missing = parsed_removals.deletes_on_missing or "error"
+    batch_keys = _batch_node_keys(batch_container)
+    named = {t.entity_id: t.path for t in parsed_removals.all_targets()}
+    upserted = {edge_obj["entity"]["entity_id"] for edge_obj in batch_container.get("edges", [])}
+    resolved: list[_ParsedRemovalTarget] = []
+    skipped = 0
+    failed = False
+
+    def note(code: str, message: str, path: str, entity_id: str | None = None) -> None:
+        issues.append(
+            _issue(
+                code,
+                message,
+                "execution",
+                path,
+                entity_id=entity_id,
+                batch_entity_id=batch_entity_id,
+                entity_type="edge",
+                operation="delete",
+            )
+        )
+
+    def missing(target: _ParsedIdentityRemoval) -> bool:
+        """Apply ``deletes.on_missing`` to a target that matched nothing; True when it fails the batch."""
+        nonlocal skipped
+        message = f"The delete at {target.path} matches no live {target.edge_type} edge"
+        if on_missing == "error":
+            note("removal_target_missing", f"{message} (section=deletes, on_missing=error).", target.path)
+            return True
+        if on_missing == "warn":
+            note("removal_target_missing_warned", f"{message}; on_missing=warn — skipping.", target.path)
+        skipped += 1
+        return False
+
+    def endpoint_id(endpoint: dict[str, Any]) -> str | None:
+        return _removal_endpoint_id(endpoint, batch_keys, ctx)
+
+    located: list[tuple[str, _ParsedIdentityRemoval, str, str]] = []  # (lock key, target, from, to)
+    for target in targets:
+        try:
+            source, sink = endpoint_id(target.endpoints["from"]), endpoint_id(target.endpoints["to"])
+        except AmbiguousIdentity as exc:
+            note("identity_ambiguous", f"The delete at {target.path}: {exc}", target.path)
+            failed = True
+            continue
+        if source is None or sink is None:
+            failed = missing(target) or failed
+            continue
+        located.append((edge_lock_key(target.edge_type, source, sink, target.discriminators), target, source, sink))
+
+    for _, target, source, sink in sorted(located, key=lambda entry: entry[0]):
+        try:
+            found_id = find_edge_by_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                target.edge_type, source, sink, target.discriminators, caller_context=ctx
+            )
+        except AmbiguousIdentity as exc:
+            note("identity_ambiguous", f"The delete at {target.path}: {exc}", target.path)
+            failed = True
+            continue
+        if found_id is None:
+            failed = missing(target) or failed
+            continue
+        found = str(found_id)
+        if found in named:
+            note(
+                "duplicate_removal_target",
+                f"The delete at {target.path} matches edge {found}, which {named[found]} also names",
+                target.path,
+                found,
+            )
+            failed = True
+            continue
+        if found in upserted:
+            note(
+                "entity_id_in_upsert_and_removal",
+                f"The delete at {target.path} matches edge {found}, which this batch also upserts. Split into "
+                "separate documents if upsert-then-remove is intended.",
+                target.path,
+                found,
+            )
+            failed = True
+            continue
+        named[found] = target.path
+        resolved.append(
+            _ParsedRemovalTarget(
+                entity_id=found,
+                entity_type="edge",
+                reason=target.reason,
+                section="deletes",
+                kind="edge",
+                path=target.path,
+                batch_entity_id=batch_entity_id,
+            )
+        )
+    if failed:
+        raise _BatchFailed()
+    return resolved, skipped
+
+
+def _record_edge_skip(
+    batch_entity_id: str,
+    edge_entity_id: str,
+    edge: dict[str, Any],
+    unresolved_keys: list[dict[str, Any]],
+    batch_node_ids: set[str],
+) -> dict[str, Any]:
+    """Write the skip event for one edge a permissive batch left out, and describe it for the result.
+
+    Each endpoint that did not resolve is named as the batch named it: a key that found no live
+    node, or an id that names neither a node of this batch nor a live entity. This runs while the
+    batch's operations are being assembled, before its nodes are written, so a node this batch
+    creates is resolved by membership in ``batch_node_ids``, as preflight resolves it, never by a
+    database lookup that cannot see it yet.
+    """
+    from tap_grid.batch import record_skip_event
+
+    endpoints = list(unresolved_keys)
+    for side, id_field, _ in _EDGE_ENDPOINT_FORMS:
+        endpoint_id = edge.get(id_field)
+        if endpoint_id is None or endpoint_id in batch_node_ids:
+            continue
+        if not Entity.objects.filter(pk=uuid.UUID(endpoint_id), deleted_at__isnull=True).exists():
+            endpoints.append({"endpoint": side, "entity_id": endpoint_id})
+    metadata = {"edge_type": edge["edge_type"], "unresolved": endpoints, "reason": "unresolved_endpoint"}
+    event = record_skip_event(batch_entity_id, edge_entity_id, metadata)
+    return {"event_id": str(event.id), "edge_entity_id": edge_entity_id, **metadata}
+
+
+def _resolve_edge_identities(
+    batch_container: dict[str, Any],
+    refs: dict[str, str],
+    *,
+    batch_path: str,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    issues: list[GriftIssue],
+    parsed_removals: _ParsedRemovalSections | None,
+    dangling_edge_ids: set[str],
+) -> dict[str, str]:
+    """Find each ref-addressed edge of one batch by its type's declared identity.
+
+    Returns ``provisional id -> found id`` for the edges that already exist. Runs after the
+    batch's node refs resolved, so every endpoint is a final id. Fails the batch
+    (``_BatchFailed``) on an incomplete key, an ambiguous match, a keyless edge that duplicates
+    another, or two edges of this batch that are one relationship.
+
+    Which edges are looked up: an edge whose own envelope is a ``ref``. An edge addressed by
+    an explicit id keeps today's behaviour (``req-grid-edge-identity-6``); only its keyless
+    duplicate check runs, since a keyless edge equal to another is refused however it is
+    addressed (``-5``). An undeclared type is created as before, with a warning, until the
+    switch flips (``ENFORCE_EDGE_IDENTITY_DECLARED``, Issue# 928 - tap). Looking an edge up is
+    a read of the grid, so the import authorises ``grid.read`` first (``-13``).
+
+    TAP-IMPLEMENTS: req-grid-edge-identity@28420acbd841/185c91e3f9f1 (enforcement) — the importer
+        step that applies edge identity to a batch: which edges are looked up, the in-batch and
+        keyless duplicate rules, the read authorisation, and the warn-mode switch for
+        undeclared types (acceptance -5, -6, -9, -13).
+    """
+    from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid import edge_identity as edge_identity_module
+    from tap_grid.edge_identity import (
+        IncompleteEdgeKey,
+        KeylessEdgeExists,
+        edge_identity_values,
+        edge_lock_key,
+        get_edge_identity,
+        incomplete_paths,
+    )
+
+    edges = batch_container.get("edges", [])
+    if not edges:
+        return {}
+    ref_of = {pid: ref for ref, pid in refs.items()}
+
+    def reads_the_grid(edge_obj: dict[str, Any]) -> bool:
+        """A declared type's ref is looked up; a keyless type's edge is checked for a live duplicate.
+
+        An undeclared type's ref reads nothing in warn mode, so it must not need read either: warn
+        mode leaves the import exactly as it was (req-grid-edge-identity-6).
+        """
+        identity = get_edge_identity(edge_obj["edge"]["edge_type"])
+        if identity is None:
+            return False
+        return identity.keyless or edge_obj["entity"]["entity_id"] in ref_of
+
+    # Reading the grid for an edge tells the submitter what is there, so it needs read, not only
+    # import (req-grid-edge-identity-13). The verb is gated on read too; asking once here fails the
+    # batch before any write with one clear refusal.
+    if any(reads_the_grid(e) for e in edges if e["entity"]["entity_id"] not in dangling_edge_ids):
+        policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_edge_identity")
+
+    explicit_ids = {
+        item["entity"]["entity_id"]
+        for section in ("nodes", "edges")
+        for item in batch_container.get(section, [])
+        if item["entity"]["entity_id"] not in ref_of
+    }
+    removal_targets = {t.entity_id: t for t in parsed_removals.all_targets()} if parsed_removals else {}
+    substitutions: dict[str, str] = {}
+    taken: set[str] = set()
+    keys_seen: dict[str, str] = {}  # lock key -> who in this batch already named that relationship
+    keyless_pairs: dict[tuple[str, str, str], str] = {}
+    # An explicitly addressed edge keeps today's behaviour (no lookup), but it still names a
+    # relationship: a ref in the same batch describing the same one must not create it twice.
+    # Its key is the derivation the verb uses, read once from the declaration; an undeclared or
+    # keyless type, or an incomplete key, has none.
+    for edge_obj in edges:
+        envelope_id = edge_obj["entity"]["entity_id"]
+        if envelope_id in ref_of or envelope_id in dangling_edge_ids:
+            continue
+        payload = edge_obj["edge"]
+        identity = get_edge_identity(payload["edge_type"])
+        if identity is None or identity.keyless:
+            continue
+        values = edge_identity_values(identity, payload.get("properties") or {})
+        if not incomplete_paths(values):
+            explicit_key = edge_lock_key(
+                payload["edge_type"], payload["from_entity_id"], payload["to_entity_id"], values
+            )
+            keys_seen.setdefault(explicit_key, f"entity_id {envelope_id}")
+
+    def fail(code: str, message: str, path: str, edge_type: str, entity_id: str | None = None) -> _BatchFailed:
+        issues.append(
+            _issue(
+                code,
+                message,
+                "execution",
+                path,
+                entity_id=entity_id,
+                batch_entity_id=batch_entity_id,
+                entity_type="edge",
+                operation="resolve_edge_identity",
+            )
+        )
+        return _BatchFailed()
+
+    for edge_idx, edge_obj in enumerate(edges):
+        envelope_id = edge_obj["entity"]["entity_id"]
+        payload = edge_obj["edge"]
+        edge_type = payload["edge_type"]
+        path = f"{batch_path}.edges[{edge_idx}]"
+        if envelope_id in dangling_edge_ids:
+            continue  # skipped in permissive mode; there is no relationship to identify
+        identity = get_edge_identity(edge_type)
+        from_id, to_id = payload["from_entity_id"], payload["to_entity_id"]
+        is_ref = envelope_id in ref_of
+        who = f"ref {ref_of[envelope_id]!r}" if is_ref else f"entity_id {envelope_id}"
+
+        if identity is not None and identity.keyless:
+            # One spelling per endpoint, as the lock key and the verb read it (preflight already
+            # canonicalises GRIFT ids, req-grid-import-grift-identity-4; this keeps the guard right
+            # whoever fills the payload).
+            pair = (edge_type, str(uuid.UUID(str(from_id))), str(uuid.UUID(str(to_id))))
+            if pair in keyless_pairs:
+                raise fail(
+                    "duplicate_edge",
+                    f"{who} and {keyless_pairs[pair]} of this batch are both {edge_type} {from_id} -> {to_id}; "
+                    "the type is keyless, so two identical edges cannot be told apart (req-grid-edge-identity-5)",
+                    path,
+                    edge_type,
+                    envelope_id,
+                )
+            keyless_pairs[pair] = who
+        if not is_ref:
+            if identity is not None and identity.keyless:
+                try:
+                    resolve_edge_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                        edge_type, from_id, to_id, payload.get("properties") or {}, caller_context=ctx
+                    )
+                except KeylessEdgeExists as exc:
+                    others = [str(c) for c in exc.candidates if str(c) != envelope_id]
+                    if others:
+                        raise fail("duplicate_edge", f"{who}: {exc}", path, edge_type, envelope_id) from exc
+            continue
+
+        ref = ref_of[envelope_id]
+        if identity is None:
+            if edge_identity_module.ENFORCE_EDGE_IDENTITY_DECLARED:
+                raise fail(
+                    "identity_undeclared",
+                    f"ref {ref!r}: edge type {edge_type} declares no identity, so a ref-addressed edge of it "
+                    "cannot be found again (req-grid-edge-identity-6). Declare discriminators or keyless on "
+                    "its edge definition.",
+                    f"{path}.entity.ref",
+                    edge_type,
+                )
+            # Warn mode logs, as the edge-schema rule's warn mode does ([d393]): the import's result
+            # is unchanged until the flip, so producers can declare first.
+            logger.warning(
+                "[9acf] ref %s of batch %s: edge type %s declares no identity; created without a lookup, as "
+                "before. Declare one on its edge definition before Issue# 928 - tap makes this a refusal "
+                "(req-grid-edge-identity-6).",
+                ref,
+                batch_entity_id,
+                edge_type,
+            )
+            continue
+        try:
+            resolution = resolve_edge_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
+                edge_type,
+                from_id,
+                to_id,
+                payload.get("properties") or {},
+                caller_context=ctx,
+                provisional=envelope_id,
+            )
+        except IncompleteEdgeKey as exc:
+            raise fail("incomplete_edge_key", f"ref {ref!r}: {exc}", f"{path}.edge.properties", edge_type) from exc
+        except KeylessEdgeExists as exc:
+            raise fail("duplicate_edge", f"ref {ref!r}: {exc}", path, edge_type) from exc
+        except AmbiguousIdentity as exc:
+            candidates = [str(c) for c in exc.candidates]
+            AppFlaw.report(
+                invariant_id="identity_ambiguous",
+                tags=["data", "integration"],
+                handling=HANDLING_ABORT_OPERATION,
+                message=(
+                    f"Batch {batch_entity_id} failed: {edge_type} ref {ref!r} matched {len(candidates)} live "
+                    "edges — the edge type's identity declaration cannot tell them apart."
+                ),
+                logger=logger,
+                batch_entity_id=batch_entity_id,
+                entity_type="edge",
+                candidates=candidates,
+            )
+            raise fail("identity_ambiguous", f"ref {ref!r}: {exc}", f"{path}.entity.ref", edge_type) from exc
+        if resolution.key is not None and not identity.keyless:
+            if resolution.key in keys_seen:
+                raise fail(
+                    "duplicate_edge",
+                    f"ref {ref!r} and {keys_seen[resolution.key]} of this batch are the same {edge_type} "
+                    "relationship (identical endpoints and discriminators); one relationship, one edge "
+                    "(req-grid-edge-identity-9)",
+                    f"{path}.entity.ref",
+                    edge_type,
+                )
+            keys_seen[resolution.key] = f"ref {ref!r}"
+        if not resolution.found:
+            continue
+        found = str(resolution.entity_id)
+        if found in explicit_ids:
+            raise fail(
+                "duplicate_entity_id",
+                f"ref {ref!r} resolves to edge {found}, which this batch also addresses by entity_id; one "
+                "relationship, one write",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        if found in removal_targets:
+            target = removal_targets[found]
+            raise fail(
+                "entity_id_in_upsert_and_removal",
+                f"ref {ref!r} resolves to edge {found}, which this batch also names as a removal target "
+                f"({target.section}.{target.kind}s at {target.path}); split upsert-then-remove into separate "
+                "documents if that is intended",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        if found in taken:
+            raise fail(
+                "duplicate_entity_id",
+                f"ref {ref!r} resolves to edge {found}, which another ref of this batch already resolved to",
+                f"{path}.entity.ref",
+                edge_type,
+                found,
+            )
+        taken.add(found)
+        substitutions[envelope_id] = found
+        logger.debug(
+            "[fff7] edge ref %s of batch %s resolved to existing %s %s", ref, batch_entity_id, edge_type, found
+        )
+    return substitutions
+
+
 # ---------------------------------------------------------------------------
 # Spine-field sync for replaced nodes (req-grid-import-grift-batch / Spine Sync)
 # ---------------------------------------------------------------------------
+
+
+def _apply_authority_claims(
+    claims: list[dict[str, Any]],
+    batch_container: dict[str, Any],
+    *,
+    batch: Any,
+    batch_path: str,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    actor: Any,
+    read_boundary: datetime | None,
+    dangling_edge_ids: set[str],
+    skips: list[dict[str, Any]],
+    issues: list[GriftIssue],
+) -> list[dict[str, Any]]:
+    """Judge each authority claim and record what it would remove, removing nothing.
+
+    Runs inside the batch's transaction after every write the batch makes, so the scope is read
+    as this batch leaves it. A claim states that, for its edge type at its anchor in its
+    direction, the batch's edges are the total allowed set; every other live edge in that scope,
+    whoever wrote it, is a proposed removal (``req-grid-reconcile-edge-authority``). This is the
+    dry-run: each proposal is an ``authority_proposed`` event on the edge, each claim's outcome one
+    on the batch, and no edge is removed, ended or changed.
+
+    Only a ``complete`` read licenses a proposal; a claim with no producing run has no read
+    boundary and proposes nothing. Each proposal is fenced against its locked row: an edge any
+    batch but this one created, updated or linked after the run opened, this run's other batches
+    included, is ``rejected_stale``.
+
+    Every claimed anchor is locked before any scope is read, so the record is the whole scope: an
+    edge created concurrently at an anchor either committed before the read or waits for this batch.
+
+    Raises ``_BatchFailed`` for two claims over one scope, and for an anchor key that names more
+    than one node. Computing proposals reads the grid, so ``grid.read`` is authorised first.
+
+    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@c4551f3f9ef9/6489bf991327 (derivation) — the one
+        place a claim's scope, its asserted set and its proposals are derived, fenced and recorded.
+    """
+    from tap_auth import policy
+    from tap_auth.capabilities import READ_CAPABILITY
+    from tap_grid.edge_identity import edge_identity_values, get_edge_identity
+    from tap_grid.models import BatchEvent, BatchEventType, Edge
+    from tap_grid.registry import get_model_class
+
+    policy.authorize(ctx, READ_CAPABILITY, operation="grift_import_edge_authority")
+
+    batch_keys = _batch_node_keys(batch_container)
+    claims_path = f"{batch_path}.edge_cases.authority"
+
+    def anchor_id(anchor: dict[str, Any]) -> str | None:
+        if "entity_id" in anchor:
+            live = Entity.objects.filter(pk=uuid.UUID(anchor["entity_id"]), deleted_at__isnull=True)
+            return anchor["entity_id"] if live.exclude(entity_type="edge").exists() else None
+        model_cls: Any = get_model_class(anchor["entity_type"])
+        properties = {name: anchor["key"][name] for name in model_cls.NATURAL_KEY}
+        return _find_node_by_key(anchor["entity_type"], properties, batch_keys, ctx)
+
+    resolved: list[str | None] = []
+    failed = False
+    for idx, claim in enumerate(claims):
+        try:
+            resolved.append(anchor_id(claim["anchor"]))
+        except AmbiguousIdentity as exc:
+            issues.append(
+                _issue(
+                    "identity_ambiguous",
+                    f"The claim at {claims_path}[{idx}]: {exc}",
+                    "execution",
+                    f"{claims_path}[{idx}].anchor",
+                    batch_entity_id=batch_entity_id,
+                )
+            )
+            resolved.append(None)
+            failed = True
+
+    # One claim per scope (-4): an anchor named twice, by id and by key, is one scope.
+    first_at: dict[tuple[str, str, str], int] = {}
+    for idx, (claim, found) in enumerate(zip(claims, resolved, strict=True)):
+        named = found if found is not None else json.dumps(claim["anchor"], sort_keys=True)
+        scope = (claim["edge_type"], named, claim["direction"])
+        if scope in first_at:
+            issues.append(
+                _issue(
+                    "duplicate_authority_claim",
+                    f"The claims at {claims_path}[{first_at[scope]}] and [{idx}] cover one scope ({claim['edge_type']} "
+                    f"{claim['direction']} at {named}); a batch makes one claim per scope, after every rule "
+                    "that emits the type has contributed",
+                    "execution",
+                    f"{claims_path}[{idx}]",
+                    batch_entity_id=batch_entity_id,
+                )
+            )
+            failed = True
+        else:
+            first_at[scope] = idx
+    if failed:
+        raise _BatchFailed()
+
+    # Hold every claimed anchor before reading any scope. An edge is created only under a lock on
+    # both its endpoints, so no edge can join a scope between the read below and this batch's
+    # commit: a concurrent create either committed first and is read, or waits for this batch.
+    # One lock set in id order, so two batches claiming the same anchors in opposite orders never
+    # wait on each other (the lesson of Issue# 943 - tap).
+    list(
+        Entity.objects.select_for_update()
+        .filter(pk__in=sorted({uuid.UUID(found) for found in resolved if found is not None}))
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+
+    written = {
+        e["entity"]["entity_id"]
+        for e in batch_container.get("edges", [])
+        if e["entity"]["entity_id"] not in dangling_edge_ids
+    }
+    edges_by_id = {e["entity"]["entity_id"]: e["edge"] for e in batch_container.get("edges", [])}
+    summaries: list[dict[str, Any]] = []
+    for idx, (claim, found) in enumerate(zip(claims, resolved, strict=True)):
+        edge_type, direction, read = claim["edge_type"], claim["direction"], claim["read"]
+        anchor_field, far_field = (
+            ("from_entity_id", "to_entity_id") if direction == "outbound" else ("to_entity_id", "from_entity_id")
+        )
+        scope_record = {
+            "edge_type": edge_type,
+            "anchor": claim["anchor"],
+            "anchor_entity_id": found,
+            "direction": direction,
+        }
+        summary: dict[str, Any] = {
+            "path": f"{claims_path}[{idx}]",
+            **scope_record,
+            "read": read,
+            "read_boundary": read_boundary.isoformat() if read_boundary is not None else None,
+            "outcome": "not_claimed",
+            "reason": None,
+            "asserted": 0,
+            "asserted_skipped": [],
+            "proposed": 0,
+            "rejected_stale": 0,
+        }
+        if read != "complete":
+            summary["reason"] = read
+        elif read_boundary is None:
+            summary["reason"] = "no_read_boundary"
+        elif found is None:
+            summary["reason"] = "anchor_unresolved"
+        else:
+            summary["outcome"] = "claimed"
+            in_scope = {
+                str(entity_id)
+                for entity_id in Edge.objects.filter(edge_type=edge_type, **{anchor_field: found}).values_list(
+                    "entity_id", flat=True
+                )
+            }
+            asserted = in_scope & written
+            # A skipped edge names an endpoint nothing live answers to, so no live edge in scope can be
+            # it; it counts as asserted and is listed, so a relationship the batch could not wire is
+            # never read as one it denied (-3).
+            summary["asserted_skipped"] = [
+                skip["event_id"]
+                for skip in skips
+                if skip["edge_type"] == edge_type
+                and edges_by_id.get(skip["edge_entity_id"], {}).get(anchor_field) == found
+            ]
+            summary["asserted"] = len(asserted) + len(summary["asserted_skipped"])
+            candidates = sorted(in_scope - asserted)
+            # Lock in id order, so two writers judging overlapping scopes never wait on each other
+            # (the lesson of Issue# 943 - tap), then keep only what is still live under the lock.
+            locked = list(
+                Entity.objects.select_for_update()
+                .filter(pk__in=[uuid.UUID(c) for c in candidates], deleted_at__isnull=True)
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            observed: dict[str, set[str]] = {}
+            for entity_id, observer in (
+                BatchEvent.objects.filter(
+                    entity_id__in=locked,
+                    event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.LINK],
+                    timestamp__gt=read_boundary,
+                )
+                .exclude(batch__entity_id=batch_entity_id)
+                .values_list("entity_id", "batch__entity_id")
+            ):
+                observed.setdefault(str(entity_id), set()).add(str(observer))
+            declaration = get_edge_identity(edge_type)
+            events = []
+            # django-stubs types the LiveManager's rows as BaseModel, not Edge.
+            for edge in cast("list[Edge]", list(Edge.objects.filter(entity_id__in=locked).order_by("entity_id"))):
+                edge_id = str(edge.entity_id)
+                stale = sorted(observed.get(edge_id, ()))
+                outcome = "rejected_stale" if stale else "proposed"
+                summary[outcome] += 1
+                discriminators = (
+                    edge_identity_values(declaration, edge.properties or {})
+                    if declaration is not None and not declaration.keyless
+                    else {}
+                )
+                events.append(
+                    BatchEvent(
+                        batch=batch,
+                        event_type=BatchEventType.AUTHORITY_PROPOSED,
+                        entity_id=edge.entity_id,
+                        entity_type="edge",
+                        model_name="Edge",
+                        actor=actor,
+                        metadata={
+                            "record": "proposal",
+                            "outcome": outcome,
+                            "claim": {**scope_record, "read": read},
+                            "identity": {
+                                "edge_type": edge_type,
+                                "from_entity_id": str(edge.from_entity_id),
+                                "to_entity_id": str(edge.to_entity_id),
+                                "discriminators": discriminators,
+                            },
+                            "far_entity_id": str(getattr(edge, far_field)),
+                            "observed_by": stale,
+                        },
+                    )
+                )
+            BatchEvent.objects.bulk_create(events)
+        claim_event = BatchEvent.objects.create(
+            batch=batch,
+            event_type=BatchEventType.AUTHORITY_PROPOSED,
+            entity_id=batch.entity.id,
+            entity_type="batch",
+            model_name="Batch",
+            actor=actor,
+            metadata={"record": "claim", **summary},
+        )
+        summaries.append({"event_id": str(claim_event.id), **summary})
+    return summaries
 
 
 def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> None:
@@ -3561,7 +4848,10 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
 
         if update_fields:
             update_fields["updated_at"] = now
-            Entity.objects.filter(pk=entity_uuid).update(**update_fields)
+            # A named below-pipeline writer, open only under grift_import's gate: the replace
+            # of this node in the same batch carries the version bump and the update event.
+            with below_pipeline_write("spine_sync"):
+                Entity.objects.filter(pk=entity_uuid).update(**update_fields)
 
 
 # ---------------------------------------------------------------------------
@@ -3576,10 +4866,11 @@ def _run_batch_scoped_sweep(
     caller_ctx: CallerContext,
     sweep_strict: bool,
     purge: bool,
+    skipped_edge_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[GriftSweptEntity], list[GriftSweepSkipped]]:
     """Detect and remove entities the prior version of this batch created that
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/a9d9579e4368 (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/c098e4b6e7fc (derivation)
         — the force-reimport omission sweep.
     are absent in the revised content. Returns (swept_entities, sweep_skipped).
 
@@ -3602,33 +4893,38 @@ def _run_batch_scoped_sweep(
     """
     from django.db.models import Q
 
-    from tap_grid.models import BatchEvent, BatchEventType, Edge
+    from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
 
     # --- Build the new-version id sets (post-apply state). ---
     new_node_ids: set[str] = {n["entity"]["entity_id"] for n in batch_container.get("nodes", [])}
-    new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in batch_container.get("edges", [])}
+    # An edge this revision skipped for an unresolved endpoint (``skipped_edge_ids``, permissive
+    # mode) was not written by it: it is absent from the new state, so its earlier write is a sweep
+    # candidate, and it keeps no endpoint alive (req-grid-import-grift-edge-endpoints-6).
+    written_edges = [e for e in batch_container.get("edges", []) if e["entity"]["entity_id"] not in skipped_edge_ids]
+    new_edge_ids: set[str] = {e["entity"]["entity_id"] for e in written_edges}
     new_edge_endpoints: list[tuple[str, str]] = [
-        (e["edge"]["from_entity_id"], e["edge"]["to_entity_id"]) for e in batch_container.get("edges", [])
+        (e["edge"]["from_entity_id"], e["edge"]["to_entity_id"]) for e in written_edges
     ]
 
-    # --- Candidates: entities this batch CREATEd that are absent from the new sets. ---
-    create_events = BatchEvent.objects.filter(
-        batch__entity_id=batch_entity_id,
-        event_type=BatchEventType.CREATE,
-    ).values("entity_id", "entity_type")
-
-    candidate_entity_ids: list[tuple[str, str]] = []  # (entity_id, entity_type)
-    swept_node_ids: set[str] = set()
-    swept_edge_ids: set[str] = set()
-    for ev in create_events:
-        eid = str(ev["entity_id"])
-        etype = ev["entity_type"]
-        if etype == "edge" and eid not in new_edge_ids:
-            candidate_entity_ids.append((eid, etype))
-            swept_edge_ids.add(eid)
-        elif etype != "edge" and eid not in new_node_ids:
-            candidate_entity_ids.append((eid, etype))
-            swept_node_ids.add(eid)
+    # --- Candidates: live entities this batch first wrote that are absent from the new sets. ---
+    # A node's first write is a ``create`` event and an edge's a ``link`` event. An entity already
+    # tombstoned (by an earlier sweep, an explicit removal or a cascade) is not a candidate.
+    first_writes: dict[str, str] = {
+        str(ev["entity_id"]): ev["entity_type"]
+        for ev in BatchEvent.objects.filter(batch__entity_id=batch_entity_id)
+        .filter(Q(event_type=BatchEventType.CREATE) | Q(event_type=BatchEventType.LINK, entity_type="edge"))
+        .values("entity_id", "entity_type")
+    }
+    first_write_ids = [uuid.UUID(e) for e in first_writes]
+    live = set(Entity.objects.filter(pk__in=first_write_ids, deleted_at__isnull=True).values_list("pk", flat=True))
+    candidate_entity_ids: list[tuple[str, str]] = [  # (entity_id, entity_type)
+        (eid, etype)
+        for eid, etype in first_writes.items()
+        if uuid.UUID(eid) in live and eid not in (new_edge_ids if etype == "edge" else new_node_ids)
+    ]
+    # Edges first: a node's referential guardrail discounts only an edge already cleared to go,
+    # never one this sweep will keep.
+    candidate_entity_ids.sort(key=lambda c: c[1] != "edge")
 
     if not candidate_entity_ids:
         return [], []
@@ -3636,6 +4932,7 @@ def _run_batch_scoped_sweep(
     swept: list[GriftSweptEntity] = []
     skipped: list[GriftSweepSkipped] = []
     cleared: list[tuple[str, str]] = []  # candidates that passed both guardrails
+    cleared_edge_ids: list[uuid.UUID] = []
 
     # --- Evaluate guardrails per candidate. ---
     for entity_id_str, entity_type in candidate_entity_ids:
@@ -3663,7 +4960,7 @@ def _run_batch_scoped_sweep(
             surviving_existing = (
                 Edge.all_objects.filter(Q(from_entity_id=candidate_uuid) | Q(to_entity_id=candidate_uuid))
                 .filter(entity__deleted_at__isnull=True)
-                .exclude(entity_id__in=[uuid.UUID(e) for e in swept_edge_ids])
+                .exclude(entity_id__in=cleared_edge_ids)
             )
             if surviving_existing.exists():
                 skipped.append(
@@ -3688,6 +4985,8 @@ def _run_batch_scoped_sweep(
                 continue
 
         cleared.append((entity_id_str, entity_type))
+        if entity_type == "edge":
+            cleared_edge_ids.append(uuid.UUID(entity_id_str))
 
     # --- Strict-mode abort: any skip cancels the entire force re-import. ---
     if sweep_strict and skipped:
@@ -3747,7 +5046,7 @@ def _apply_sweep_purge(
 ) -> list[GriftSweptEntity]:
     """Hard-delete each cleared candidate along with this batch's BatchEvent
 
-    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/ce9bc321fb52 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/b4224857f9f1 (derivation) — the
         opt-in hard-delete escalation of the sweep.
     rows and any domain-model history tied to the candidate.
 
@@ -3809,8 +5108,10 @@ def _apply_sweep_purge(
                     batch__entity_id=batch_entity_id,
                 ).delete()
                 # Deleting the edge's Entity spine cascades the Edge row via
-                # the OneToOneField(on_delete=CASCADE) on BaseModel.
-                Entity.objects.filter(pk__in=attached_edges).delete()
+                # the OneToOneField(on_delete=CASCADE) on BaseModel. A named
+                # below-pipeline writer, open only under grift_import's gate.
+                with below_pipeline_write("sweep_purge"):
+                    Entity.objects.filter(pk__in=attached_edges).delete()
 
         # Finally, hard-delete the candidate Entity itself. For edge candidates,
         # this removes the Edge row and its history via cascade; for node
@@ -3818,7 +5119,8 @@ def _apply_sweep_purge(
         # the Entity.
         if entity_type == "edge":
             Edge.history.filter(entity_id=candidate_uuid).delete()
-        Entity.objects.filter(pk=candidate_uuid).delete()
+        with below_pipeline_write("sweep_purge"):
+            Entity.objects.filter(pk=candidate_uuid).delete()
 
         swept.append(
             GriftSweptEntity(
@@ -3897,8 +5199,8 @@ def grift_import(
     from tap_auth.enforcement import authorized
     from tap_grid.caller_context import CallerContext, get_caller_context
 
+    _active = get_caller_context()
     if actor is None:
-        _active = get_caller_context()
         actor = _active.user if _active is not None else None
     _auth_ctx = CallerContext(user=actor)
     with authorized(_auth_ctx, IMPORT_GRIFT_CAPABILITY, operation="grift_import"):
@@ -3911,7 +5213,34 @@ def grift_import(
             force_batches=force_batches,
             sweep_strict=sweep_strict,
             purge=purge,
+            read_boundary=_producing_run_opened(_active),
         )
+
+
+def _producing_run_opened(active: Any) -> datetime | None:
+    """When the run that submitted this import opened, or ``None`` when no run did.
+
+    A collection run opens its lifecycle batch before any collector code executes and binds it as
+    the caller's batch for the whole run (``req-tap-cares-collector-run-collection-10``), stamped at
+    creation with the run's reconcile configuration, which nothing writes afterwards. So the bound
+    batch carrying that stamp is the producing run, and its opening precedes every read a claim
+    rests on (``req-grid-reconcile-edge-authority-8``). Derived from the caller, never from the
+    document: a document cannot name its own boundary.
+    """
+    from collections.abc import Mapping
+
+    from tap_grid.models import Batch
+    from tap_grid.reconcile import RUN_CONFIG_KEY
+
+    batch_id = getattr(active, "batch_id", None)
+    if not batch_id:
+        return None
+    # django-stubs types the manager's rows as BaseModel, not Batch.
+    run = cast("Batch | None", Batch.all_objects.filter(entity_id=batch_id).first())
+    if run is None or not isinstance((run.metadata or {}).get(RUN_CONFIG_KEY), Mapping):
+        return None
+    opened: datetime = run.started_at
+    return opened
 
 
 def _grift_import_impl(
@@ -3922,6 +5251,7 @@ def _grift_import_impl(
     force_batches: list[str] | set[str] | None = None,
     sweep_strict: bool = False,
     purge: bool = False,
+    read_boundary: datetime | None = None,
 ) -> GriftImportResult:
     """Import a GRIFT v0 document into the local TAP grid.
 
@@ -4121,6 +5451,7 @@ def _grift_import_impl(
             purge=purge,
             parsed_removals=preflight.parsed_removals_by_idx.get(batch_idx),
             refs=preflight.resolved_refs.get(batch_container["batch_entity"]["entity_id"], {}),
+            read_boundary=read_boundary,
         )
         imported_batches.append(summary)
         exec_issues.extend(batch_issues)
@@ -4162,6 +5493,7 @@ def _grift_import_impl(
         edges_retired=sum(b.edges_retired for b in imported_batches),
         nodes_retired=sum(b.nodes_retired for b in imported_batches),
         retirements_skipped=sum(b.retirements_skipped for b in imported_batches),
+        edges_proposed=sum(b.edges_proposed for b in imported_batches),
         errors=len(all_errors),
         warnings=len(all_warnings),
     )

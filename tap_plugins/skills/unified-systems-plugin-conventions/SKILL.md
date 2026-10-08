@@ -46,7 +46,7 @@ every new repo). Record the source commit in the PR body.
 | --- | --- | --- |
 | `.github/workflows/ai-review-capture.yml` | tap `.github/workflows/ai-review-capture.yml` | Stage 1 of the Unified AI Review: unprivileged capture of the PR diff (`specs/spec-cicd-ai-review.md`). |
 | `.github/workflows/ai-review.yml` | tap `.github/workflows/ai-review.yml` | Stage 2: the privileged review with the vendor keys; posts the Codex / Grok verdicts. Runs the **default-branch** definition, so both files must be on `main` before any PR in the repo gets a seat — a repo without them fails silently. |
-| `.github/workflows/ci.yml` | `_dev-plugins/zizmor/.github/workflows/ci.yml` shape | Thin caller of tap's reusable `plugin-ci.yml` (`req-tap-plugin-extdev-repo-ci`), pinned to a tap `main` SHA, `plugin_slug: <slug>`, `secrets.harness_pat: ${{ secrets.TAP_CORE_RO_PAT }}`, and on the calling job `permissions: {contents: read, security-events: write}` — without the second the whole run is `startup_failure` (tap#772); never `contents: write`. Boots the plugin's in-package `ci` record, runs `pytest --pyargs tap_plugin.<slug>` on every PR, and gates on a Trivy scan of the plugin's own dependency closure (waivers: a root `.trivyignore`, every entry under a reason comment). The same grant goes on `nightly.yml`'s calling job. |
+| `.github/workflows/ci.yml` | `_dev-plugins/zizmor/.github/workflows/ci.yml` shape | Thin caller of tap's reusable `plugin-ci.yml` (`req-tap-plugin-extdev-repo-ci`), pinned to a tap `main` SHA, `plugin_slug: <slug>` (no `harness_pat`: tap is public, and that input was retired on 2026-09-29; pass `plugins_ro_pat` only if the boot profile git-installs a private sibling plugin), and on the calling job `permissions: {contents: read, security-events: write}` — without the second the whole run is `startup_failure` (tap#772); never `contents: write`. Boots the plugin's in-package `ci` record, runs `pytest --pyargs tap_plugin.<slug>` on every PR, and gates on a Trivy scan of the plugin's own dependency closure (waivers: a root `.trivyignore`, every entry under a reason comment). The same grant goes on `nightly.yml`'s calling job. |
 | `.codacy.yaml` | any sibling plugin repo | Bandit B101 excluded from tests only; committed engine config, never UI state. |
 | `.sonarcloud.properties` | any sibling plugin repo | Migrations excluded from duplication; committed, never UI state. |
 | `LICENSE` | any sibling | Apache-2.0. |
@@ -57,9 +57,9 @@ tap's copy; the pins must not.
 
 ## Things only an org admin can do (ask George; do not guess they are done)
 
-- **Org secrets visibility.** `OPENAI_API_KEY`, `XAI_API_KEY` (AI review) and `TAP_CORE_RO_PAT` (plugin-ci)
+- **Org secrets visibility.** `OPENAI_API_KEY` and `XAI_API_KEY` (AI review)
   are org secrets. Whether a NEW repo sees them depends on their visibility setting, which an agent token
-  cannot read. If the review stage or the ci lane fails on a missing secret, this is the cause.
+  cannot read. If the review stage fails on a missing secret, this is the cause.
 - **SonarCloud and Codacy project onboarding** — the repo must be added in each tool's UI before the
   committed config does anything.
 - **Renovate** tracks only tap core (`RENOVATE_REPOSITORIES`, tap#446); plugin repos get no bot PRs until
@@ -78,6 +78,20 @@ tap's copy; the pins must not.
   itself at a commit.
 - **Release** with `scripts/release-plugin.sh` from a `--dev-plugins` workspace: strict validation + the
   plugin's tests, PR-based landing, immutable `v<x.y.z>` tag. A release advances no consumer's pin.
+- **A release lane is part of the bootstrap, not part of releasing.** `.github/workflows/release-sbom.yml`
+  is a thin caller of core's `plugin-release-sbom.yml`, pinned by SHA, triggered by the release tag push,
+  granting `contents: read`, `id-token: write` and `attestations: write` on the calling job — the same
+  shape as the `plugin-ci.yml` caller. The grant is not optional: the lane declares `permissions: {}`
+  and its jobs take subsets of those three, so a caller granting less has its run refused before any
+  job exists and the release publishes an unattested wheel anyway. It builds the wheel at the tag, derives the SBOM from that
+  wheel, and signs provenance plus both SBOM predicates into GitHub's attestation store, which is what lets
+  a consumer run `gh attestation verify <wheel> --owner unified-systems-com`. **Ship it on bootstrap day,
+  before the repository ever releases.** Omitting it is invisible until the first release, and the first
+  release is the run nobody watches, because it succeeds: the tag lands, the wheel publishes, and the only
+  thing missing is evidence nobody has asked for yet. This bullet exists because it was absent — eleven of
+  twenty-four repositories were bootstrapped correctly against this skill and still had no release lane
+  (`tap#892`, measured 2026-09-29); `repo-release-lane` now fails a repository that declares releases and
+  carries no lane.
 - **Never `ruff format` / `black` a plugin's existing file** (no formatter config in plugin repos; it
   reformats the world). Never `git add -A` in a shared worktree.
 - **AI-review triage:** after opening any PR, `scripts/pr-review-triage <pr> --wait` from the tap checkout;

@@ -32,6 +32,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 | req-tap-plugin-manifest-v0-models | [Model Mappings](#model-mappings) | Implemented | Exact slug-to-class mapping for declared TAP model types |
 | req-tap-plugin-manifest-v0-edges | [Edge Mappings](#edge-mappings) | Implemented | Exact slug-to-file mapping for declared edge types |
 | req-tap-plugin-manifest-v0-edge-file | [Edge Definition File](#edge-definition-file) | Implemented | Strict JSON shape for individual edge definition files |
+| req-tap-plugin-manifest-v0-edge-identity | [Edge Identity Declaration In The Definition File](#edge-identity-declaration-in-the-definition-file) | Implemented | The optional `identity` member of an edge definition file: declared discriminators or keyless, per `req-grid-edge-identity-declaration` |
 | req-tap-plugin-manifest-v0-editors | [Editor Mappings](#editor-mappings) | Implemented | Exact entity-type-to-descriptor mapping for declared editors |
 | req-tap-plugin-manifest-v0-searches | [Search Mappings](#search-mappings) | Implemented | Exact runner-key-to-callable mapping for declared search runners |
 | req-tap-plugin-manifest-v0-falsifiers | [Falsifier Mappings](#falsifier-mappings) | Implemented | Exact entity-type-to-class mapping for declared per-type falsifiers; owned types only |
@@ -39,6 +40,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 | req-tap-plugin-manifest-v0-paths | [Path Rules And Conventions](#path-rules-and-conventions) | Implemented | Required directories, relative paths, data/ subdirectory support |
 | req-tap-plugin-manifest-v0-validation | [Validation Rules](#validation-rules) | Implemented | Strict validation and loader checks |
 | req-tap-plugin-manifest-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred manifest concerns |
+| req-tap-plugin-manifest-capability-declaration | [Capability Declaration: Binaries And Network](#capability-declaration-binaries-and-network) | Backlog | Plugins declare invoked binaries (with sandboxing restrictions) and network destinations, as a small artifact a party who does not trust our runtime can independently verify and enforce against |
 
 ### Plugin Package Scaffold
 ----
@@ -288,6 +290,7 @@ Optional fields:
 - `targets`: array of strings
 - `property_schema`: object
 - `default_dimensions`: object
+- `internal_only`: boolean, default false; true makes the type internal-only (`req-grid-edge-internal`)
 
 Unknown keys are invalid.
 
@@ -327,9 +330,57 @@ Example:
 | req-tap-plugin-manifest-v0-edge-file-4 | Optional Property Schema | Implemented | `property_schema` may be declared as an object. | |
 | req-tap-plugin-manifest-v0-edge-file-5 | Optional Default Dimensions | Implemented | `default_dimensions` may be declared as an object. | |
 | req-tap-plugin-manifest-v0-edge-file-6 | Unknown Keys Rejected | Implemented | Unknown keys in an edge definition file are invalid. | |
+| req-tap-plugin-manifest-v0-edge-file-7 | Optional Internal-Only Flag | Implemented | `internal_only` may be declared as a boolean; `true` registers the type internal-only (`req-grid-edge-internal-1`), and a non-boolean value fails the load. | `tap_plugins/manifest.py::_load_edge_file`, `tap_plugins/base.py::_register_edges_from_manifest`. `tap_grid/tests/test_edge_internal.py::TestTheDeclaration`. |
 
 #### Future
 If TAP later needs richer endpoint selectors, it can introduce them in a later manifest version without forcing them into v0.
+
+### Edge Identity Declaration In The Definition File
+----
+RID: `req-tap-plugin-manifest-v0-edge-identity`
+
+Status: `Implemented`
+
+Refines `req-tap-plugin-manifest-v0-edge-file`, whose text stands. An edge definition file gains one optional member, `identity`, carrying the declaration `req-grid-edge-identity-declaration` specifies: an object with exactly one of `discriminators` (an array of `{path, description}` objects, empty for the plain key) and `keyless` (an object with a `reason`).
+
+#### Status Details
+Built (Issue# 913 - tap): the loader and `edge-definition.schema.json` accept the member, the loader and `validate_plugin` run the declaration's checks, and the registry refuses a second declaration. The importer finds a ref-addressed edge by its type's declaration (`req-grid-edge-identity`). The member is optional so a plugin written before the rollout still loads, and an undeclared type is only warned about at import until Issue# 928 - tap makes it a refusal (`req-grid-edge-identity-6`), so plugins can ship their declarations before anything requires them.
+
+#### Implementation
+Example, a type whose key adds one discriminator:
+
+```json
+{
+  "slug": "DEPENDS_ON",
+  "name": "Depends on",
+  "description": "A package depends on another package.",
+  "sources": ["package"],
+  "targets": ["package"],
+  "property_schema": {
+    "type": "object",
+    "properties": { "scope": { "type": "string", "enum": ["runtime", "build", "test"] } }
+  },
+  "identity": {
+    "discriminators": [
+      {
+        "path": "scope",
+        "description": "The dependency scope as the manifest declares it. Set by the collector from the manifest section the dependency appears in. In the key because one package can depend on another at two scopes at once."
+      }
+    ]
+  }
+}
+```
+
+The loader checks each discriminator `path` against `property_schema` (`req-grid-edge-identity-declaration-3`) and registers the declaration once per slug (`-4`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-manifest-v0-edge-identity-1 | Optional Identity Member | Implemented | `identity` is an optional member of an edge definition file; its shape is `req-grid-edge-identity-declaration-1` and `-2`, and an invalid declaration fails the plugin load. | `tap_plugins/manifest.py::_load_edge_file`. `tap_plugins/tests/test_manifest_edge_identity.py::TestTheLoaderReadsIt`. |
+| req-tap-plugin-manifest-v0-edge-identity-2 | Checked Against The Property Schema | Implemented | A discriminator path that does not resolve through the file's `property_schema`, or discriminators declared with no `property_schema`, fail the plugin load. | `req-grid-edge-identity-declaration-3`; author time through `validate_plugin`. `tap_plugins/tests/test_manifest_edge_identity.py::TestValidatePluginSeesWhatBootWouldRefuse`. |
+| req-tap-plugin-manifest-v0-edge-identity-3 | Registered Once | Implemented | The loader registers the declaration under the edge slug; a second declaration for one slug across plugins fails the load. | `req-grid-edge-identity-declaration-4`; `tap_plugins/base.py::_register_edges_from_manifest`. `tap_grid/tests/test_edge_identity_declaration.py::TestTheRegistry`. |
+
 
 ### Editor Mappings
 ----
@@ -727,3 +778,131 @@ The v0 manifest does not define:
 
 #### Future
 The next likely additions are broader UI contribution surfaces and search-related declarations once enough real plugins exist to justify them.
+
+### Capability Declaration: Binaries And Network
+----
+RID: `req-tap-plugin-manifest-capability-declaration`
+
+Status: `Backlog`
+
+A plugin declares, in the manifest, which binaries it invokes and what network destinations it
+needs — as a small, legible, independently-fetchable artifact that a party who does **not** trust
+our own deployment can read, verify, and build their own deterministic enforcement against, entirely
+outside our process boundary.
+
+#### Status Details
+Backlog (2026-09-27; tap#859). Motivated by tap#858, which proved self-applied Landlock + seccomp
+can sandbox a plugin's binary execution today with zero change to our own deployment's security
+policy — genuine defense-in-depth, but only for an operator who already trusts our runtime to apply
+it. This requirement is the other half: the same declaration should let an operator who trusts
+*nothing* about our deployment — including whether our own enforcement code is running honestly —
+bound what we can do anyway, from outside.
+
+#### Implementation
+**The manifest is the artifact; enforcement is plural and none of it is load-bearing for the
+security claim.** Two separate consumer classes read the same declaration:
+
+- **Internal, self-applied enforcement** (Landlock + seccomp per binary; optionally an internal
+  egress proxy) — genuinely useful, assumes our own core process is honest, does not require any
+  change to how it's already proven to work (tap#858).
+- **External, operator-controlled enforcement** — a firewall or egress proxy the operator builds and
+  runs themselves, reading nothing but the manifest, independent of and not trusting our deployment
+  at all. We may ship a reference generator (manifest → nftables ruleset, or → an egress-proxy
+  config) as a convenience, explicitly documented as something the operator runs on their own
+  infrastructure, never as part of our own trusted process.
+
+**Declared fields, sketch:**
+- **Binaries.** Which executables a plugin invokes (e.g. zizmor, git-pkgs, brief), and per-binary
+  restrictions: filesystem paths it may read/write (the Landlock allow-list), whether it needs
+  network at all.
+- **Network.** Destinations a plugin's binaries or collector code need to reach, at whichever
+  granularity is actually available: IP address or DNS hostname now; URL path is a later, harder
+  tier — inspecting a path on an HTTPS connection requires terminating TLS at the enforcement point,
+  which means an egress *proxy* (hostname/SNI rules first, path rules as a natural extension of the
+  same mechanism later), not a passive firewall rule. A DNS name resolved once into a static IP
+  allow-list goes stale the moment the destination rotates IPs (common behind a CDN);
+  hostname-aware proxy enforcement doesn't have that problem.
+
+  **`HTTPS_PROXY` alone is not enforcement, and must not be described as if it were.** That
+  environment variable is a voluntary convention well-behaved HTTP clients honor; a compromised or
+  malicious process can simply ignore it and open a direct socket. For an operator who trusts
+  nothing about our runtime — the whole premise of this section — the proxy is only a real boundary
+  if paired with a network-level rule that blocks *all* direct egress except to the proxy itself, so
+  there is no path to the network that isn't through it. That firewall rule, not the environment
+  variable, is what makes the proxy mandatory rather than opt-in.
+
+**Fail-closed by default.** An undeclared network destination or an undeclared binary invocation is
+refused, not silently allowed — the same default `CONTAINMENT_EDGES` uses in `tap_grid` (an
+unconstrained relation is not followed) and the opposite of the permissive default edge-permission
+validation uses (`tap#397`). A manifest that under-declares should fail loud, not fail open.
+
+**What makes the manifest worth eyeballing, not just present:** the schema alone is necessary but
+not sufficient, and neither leg below is a completeness proof — both are named for what they
+actually are, not oversold.
+1. `validate_plugin` schema validation — well-formed, not necessarily accurate.
+2. A **declared-vs-observed drift check**, the same pattern as github-core's App-permissions drift requirement (github-core-tap, `specs/spec-github-core-app-permissions.md`, "Noticing New Permissions"; a different repository, so it is cited by path, not as a requirement ID)
+   one level down: run the plugin's own test/collector suite under an explicit access-tracing
+   mechanism, record what it actually touches, fail CI if observed access exceeds declared access.
+   **Named precisely, because it's easy to overclaim here**: Landlock and seccomp, as used elsewhere
+   in this section, are enforcement primitives, not general-purpose non-blocking tracers — Landlock
+   has no "observe only" mode, and seccomp's own logging surfaces raw syscall arguments (a bare
+   pointer or file descriptor), not an already-resolved file path or hostname. Turning "a syscall
+   was made" into "this path" / "this destination" for the drift check needs a real tracer —
+   `ptrace`, `fanotify`, or an eBPF program — that resolves those arguments; this AC does not itself
+   specify which, and that choice is open implementation work, not settled by this backlog entry.
+   **This is a coverage-limited regression signal, not a completeness guarantee** —
+   it only observes code paths the test suite actually exercises; conditional, environment-specific,
+   or deliberately untested access stays invisible to it, the same blind spot any test-suite-driven
+   check has. Reading public CI config and logs establishes that the check ran and passed against
+   whatever it covers; it does not by itself establish runner integrity or that the suite exercises
+   every path. A stronger guarantee — exhaustive tracing, fuzzing, or independent review — is future
+   work, not something this AC claims to deliver.
+
+The manifest itself must be fetchable and mechanically consumable without running or trusting any
+TAP code — a plain, versioned file at a fixed, well-known location, in a shape dumb enough that
+someone else's generic tooling can turn it into a firewall ruleset or proxy config without
+understanding anything about TAP itself.
+
+**Detecting an attempted breakout, not just preventing it.** Enforcement alone answers "did the
+binary get away with it" (no); it does not by itself tell anyone that the attempt happened at all.
+Verified 2026-09-27, in the same unprivileged nonroot posture as the rest of this section: kernel
+audit-log-based detection (seccomp's `SCMP_ACT_LOG` routed through the Linux audit subsystem) does
+**not** work here — no `auditd` runs in this deployment, and configuring an audit rule to route
+`SCMP_ACT_LOG` records anywhere requires privilege an unprivileged container does not have; opening
+the audit netlink socket succeeds, but no record ever arrives, confirmed by actually triggering a
+logged syscall and watching the socket rather than stopping at "the socket opened." The working,
+fully self-contained alternative: `SCMP_ACT_KILL_PROCESS` instead of `SCMP_ACT_ERRNO` on a denied
+syscall kills the child with `SIGSYS`, which Python's own `subprocess.run()` already surfaces as a
+negative return code (`-31`) — no kernel-audit access, no new privilege, observable entirely from
+the parent process that invoked the sandboxed binary in the first place.
+
+**This covers seccomp-denied syscalls (network) only, not Landlock-denied filesystem access.**
+Landlock returns `EACCES` to the same process rather than killing it (as observed earlier in this
+section), so it produces no parent-visible signal on its own; real-time detection of a filesystem
+breakout attempt needs the same access tracer the drift check (AC5) still has to choose, not this
+mechanism. Don't read the paragraph above as covering both.
+
+That return code is the trigger for a new `tap.flaws` function, following the exact shape of
+`report_readonly_write_blocked` / `report_db_permission_denied` (an OS-level backstop already fired
+silently; the Flaw is the layer that makes it loud) — `report_sandbox_violation`, always `AppFlaw`
+(the violator is structurally the invoked binary, not our own code, so no callsite-blame heuristic
+is needed the way the existing bypass-detection functions require one), always `security`-tagged,
+`HANDLING_ABORT_OPERATION`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-manifest-capability-declaration-1 | Binaries Declared | Backlog | A plugin manifest declares each binary it invokes, with a filesystem allow-list and a network-needed flag. | |
+| req-tap-plugin-manifest-capability-declaration-2 | Network Destinations Declared | Backlog | A plugin manifest declares network destinations by IP or DNS hostname; URL-path granularity is explicitly a later tier, not v0. | |
+| req-tap-plugin-manifest-capability-declaration-3 | Fail Closed On Omission | Backlog | A binary invocation or network call not covered by the declaration is refused by our own internal enforcement, never silently permitted. | Mirrors `CONTAINMENT_EDGES`'s undeclared-is-not-followed default. |
+| req-tap-plugin-manifest-capability-declaration-4 | Schema Validated | Backlog | `validate_plugin` refuses a malformed capability declaration the same way it refuses other malformed manifest sections. | |
+| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under a real access tracer (`ptrace`/`fanotify`/eBPF, chosen later — not "Landlock + seccomp in logging mode," which cannot itself resolve syscall arguments into paths/hostnames) and fails if observed access exceeds the declaration. A coverage-limited regression signal, not a completeness proof — it cannot see access outside what the suite exercises. | Mirrors github-core's App-permissions drift requirement (github-core-tap, `specs/spec-github-core-app-permissions.md`). |
+| req-tap-plugin-manifest-capability-declaration-6 | Enforcement Is Plural, None Load-Bearing | Backlog | Our own internal enforcement and any reference external-proxy generator are both documented as optional consumers of the declaration; neither is presented as the security boundary itself. | |
+| req-tap-plugin-manifest-capability-declaration-7 | Manifest Independently Fetchable | Backlog | The capability declaration lives at a fixed, versioned location consumable by generic tooling, without executing or trusting any TAP code. | |
+| req-tap-plugin-manifest-capability-declaration-8 | Seccomp-Denied Breakout Attempts Raise A Flaw | Backlog | A syscall denied by the seccomp filter (e.g. a network call outside the declaration) kills the sandboxed subprocess with `SIGSYS` via `SCMP_ACT_KILL_PROCESS`; the parent detects the negative return code and reports `tap.flaws.report_sandbox_violation` (`AppFlaw`, `security`-tagged, `abort_operation`) — not merely blocked, but alerted on. Filesystem (Landlock) denials are explicitly NOT covered by this AC: Landlock returns `EACCES` to the same process rather than killing it, so real-time detection of a Landlock breakout attempt has the same open tracer question as AC5, not this one. | Verified 2026-09-27: kernel audit-log detection (`SCMP_ACT_LOG`) does not work in this deployment's unprivileged posture (no `auditd`, no permission to route audit records); `SCMP_ACT_KILL_PROCESS` + observing the child's return code does, tested end to end (`returncode == -31`, `SIGSYS`) — for the seccomp case only. |
+
+#### Future
+A reference "manifest → firewall/proxy config" generator, explicitly documented as operator-run
+infrastructure, not part of our own deployment's trust boundary. URL-path-level network granularity,
+once an egress-proxy mechanism exists to enforce hostname rules on top of.

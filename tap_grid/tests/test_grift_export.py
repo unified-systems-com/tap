@@ -194,7 +194,7 @@ def _populate() -> dict[str, Entity]:
     )
     delta = _node(TARGET, {"name": "delta"})
 
-    create_edge(alpha, gamma, CONSTRAINED, properties={"weight": 4, "note": "primary"}, name="alpha->gamma")
+    create_edge(alpha, gamma, CONSTRAINED, properties={"weight": 4, "note": "primary"})
     create_edge(alpha, delta, ALT, properties={})
     create_edge(gamma, delta, NESTING, properties={"depth": 1})
 
@@ -508,13 +508,17 @@ def test_an_empty_grid_exports_an_importable_empty_document() -> None:
 def test_edge_names_do_not_survive_the_round_trip() -> None:
     """A tombstone for `Issue# 743 - tap` — invert this when the importer is fixed.
 
-    The exporter emits the edge's declared `Entity.name`; the importer's
-    `create_edge` write operation has no field to carry it, so the replayed edge
+    The exporter emits the edge's `Entity.name`; the importer's `create_edge`
+    write operation has no field to carry a declared one, so the replayed edge
     is labelled by `Edge.get_name()` instead. Every shipped bundle declares edge
     names (19 of 19 across zizmor's and git_serious_double_tap's bundles, counted
     2026-09-21) and all of them are discarded — a declaration that is present and
     false, which is why this is pinned rather than left to be discovered by a
     stale label on a demo grid.
+
+    A grid edge's name is derived from its endpoints and type (`Edge.get_name()`),
+    so the curated name a bundle carries is declared here in the document itself,
+    the way an authored bundle declares it.
     """
     created = _populate()
     export = export_grid()
@@ -526,8 +530,10 @@ def test_edge_names_do_not_survive_the_round_trip() -> None:
         and edge["edge"]["to_entity_id"] == str(created["gamma"].id)
     ]
     assert len(exported) == 1
-    # The EXPORT side is correct: the curated name is in the document.
-    assert exported[0]["entity"]["name"] == "alpha->gamma"
+    # The EXPORT side carries the edge's name ...
+    assert exported[0]["entity"]["name"] == f"{created['alpha'].id} --[{CONSTRAINED}]--> {created['gamma'].id}"
+    # ... and a bundle authored elsewhere declares its own.
+    exported[0]["entity"]["name"] = "alpha->gamma"
 
     _empty_the_grid()
     assert grift_import(export.document).success

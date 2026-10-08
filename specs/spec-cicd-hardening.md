@@ -480,6 +480,90 @@ Still open under this RID: promoting the *same bytes* through deploy environment
 idea (bake the migrated DB into the image), and product release versioning (semver for the
 app, not just plugins).
 
+### Build The Dependency Closure Into The Artifact
+
+RID: `req-cicd-build-once-artifact-2`
+
+Status: `Proposed`
+
+Trace: `non-python` — docker/entrypoint.sh
+
+(the grammar takes one path; `uv sync --all-packages` running there today is this proposal's
+starting point — Dockerfile, docker-compose.yml and docker-compose.ci.yml are the other
+build-time surfaces it would touch, named in the prose below)
+
+**"Build once" above covers the OS layer, FIPS provider, and base packages — every
+image-build input. The Python dependency closure is the one thing still assembled AFTER
+the image is built.** `uv sync --all-packages` runs in `docker/entrypoint.sh` on every
+container start, against whatever the uv-cache volume (or, in CI, GitHub's
+`actions/cache`) happens to contain at that moment — a cache keyed only on
+`uv.lock`/`pyproject.toml` content, with no awareness of which image (which system
+OpenSSL, which base digest) it is being synced into. Found while closing out tap#933/#931
+(`doc-fips-assessment-record.md` L18): a branch-scoped cache hit served a `cryptography`
+wheel `--no-binary`-compiled against a system OpenSSL major version the image had since
+moved off of, producing two independent OpenSSL cores in one process — confirmed as the
+actual root cause, reproduced exactly. CI's green checkmark proved that *a* `uv sync`
+succeeded, not that *the published image's own* dependency closure was what got tested —
+a gap the same shape as every other thing this RID already closed for the OS layer.
+
+**Proposed:** fold Python dependency installation into the image build for every
+artifact that is supposed to be immutable (the published image, and anything CI boots
+from it), and confine install-at-boot to the one case that genuinely needs it — the dev
+inner loop, where a bind-mounted checkout's code changes must take effect without a
+rebuild, and `uv.lock` itself can change between one `git pull` and the next without a
+new image existing yet to carry it.
+
+This cannot be "just move the `uv sync` call into the Dockerfile" — that was tried
+once already and is why today's design looks the way it does. The venv and the uv cache
+are both runtime-mounted named volumes (`spec-dev-multisession.md`): whatever a build
+stage writes under `/app/.venv` or `$UV_CACHE_DIR` is invisible at container start,
+hidden by the volume mount. `deps-warm` already runs `uv sync --frozen` at build time
+today, but only to produce the wheel *cache* seed (`/opt/uv-cache-seed`) — its own venv
+is discarded, deliberately, because **"a cp-seeded venv proved uv-hostile on the CI
+runner" (2026-08-09)**: copying a venv built at one path into another broke assumptions
+`uv` itself makes about the venv it manages (absolute paths recorded in `pyvenv.cfg` and
+activation scripts, and/or `uv`'s own environment-identity bookkeeping). Any design here
+has to not re-create that failure. Candidate shape, to be worked out in full before any
+code lands:
+
+- A build stage runs `uv sync --all-packages --frozen` and creates the venv **in place,
+  at its real final runtime path** (not a different build-time path later copied) — the
+  distinction `deps-warm` already avoids today for the opposite reason (it deliberately
+  does NOT want its venv to persist). No `cp` of a venv across paths; `uv` creates it once,
+  where it will actually run.
+- **That build stage MUST derive from the exact same base-image digest and the exact same
+  OS/OpenSSL packages as the final runtime stage it feeds — enforced, not assumed.** This
+  is the invariant tap#933's own root cause violated, and a spec that fixes where the venv
+  gets created without also fixing what it gets compiled against would let a future
+  Dockerfile refactor reproduce the identical two-cores failure while still technically
+  conforming to every other bullet here (raised in review of PR#976, correctly: creating
+  the venv at the right *path* says nothing about which *libraries* it was linked
+  against). Concretely: the dependency-build stage's `FROM` must resolve to the same
+  stage (or an argument-identical sibling of it) as the runtime stage — never a
+  separately-pinned or separately-dated base — and CI must assert this ancestry the same
+  way `tap/tests/test_container_healthcheck.py` already asserts the `HEALTHCHECK`-owning
+  stage's ancestry for every selectable final target, not merely document it in prose.
+- For the published image and any CI lane that boots from it: do not mount a volume over
+  that path at all. The container runs directly against what the image shipped — "build
+  once, promote the artifact" now covers the full closure, and CI testing the image tests
+  the thing that gets published, not a boot-time reconstruction of it.
+- For the dev stack (`docker-compose.yml`, bind-mounted source tree): keep the existing
+  named-volume-over-`/app/.venv` + boot-time `uv sync` behavior exactly as it is today.
+  Live-editing requires it, and nothing here should regress `spec-dev-multisession.md`'s
+  per-session isolation story.
+- Key the image's own build cache (not a separate `actions/cache` layer) on the base
+  image digest plus `uv.lock`/`pyproject.toml` — so a dependency-only bump doesn't
+  recompile anything whose actual inputs (OS packages, OpenSSL) have not changed, and so
+  a change to EITHER axis invalidates the cache instead of silently serving stale bytes
+  for the one that changed. This directly closes the gap tap#933's root cause exploited:
+  a cache key blind to which image it is feeding.
+
+Separate from, and not blocking, Q92a's work on the current boot-time path (the CI
+`actions/cache` removal, the image-identity stamp, the two-OpenSSL boot guard) — that
+hardens the existing design against the same root cause without waiting on this one;
+this spec is the longer-term fix that removes the boot-time install from the trusted
+(CI/production) path entirely.
+
 ### Sign Artifacts, Emit SBOM
 
 RID: `req-cicd-supply-chain-provenance`
@@ -523,6 +607,8 @@ precedents for both faces — one signing story, two layers (image artifact + pl
 | req-cicd-supply-chain-provenance-1 | Digest-Threaded Publish Pipeline | Implemented | Every inter-job hop in the image publish pipeline (`publish-images.yml`) MUST be content-addressed: build legs push by digest (no staging tags), digests travel to the manifest job as workflow artifacts, the merge consumes `ref@digest` only, and the merge MUST verify fail-closed — before attesting — that the just-tagged index's children are exactly the built digests. No attestation may be produced for bytes that were ever referenced through a mutable name between build and signature. | Built 2026-08-20. Rationale: tags are the registry's only mutable references, so a tag-based hop gives any `packages:write` holder a TOCTOU window to swap content between jobs — and the attestation step would then *sign the tampered bytes*, laundering the tamper behind an honest signature. Workflow artifacts are integrity-held by the same GitHub infra that signs the attestation (no new trust root). BuildKit's embedded provenance is disabled on the build legs (`provenance: false`) — the provenance lane is GitHub attestations, and a bare single-platform manifest is what makes the strict children-equality check possible. Named residual (open, accepted): registry **build-cache poisoning** — the `buildcache-<arch>` tags are mutable and a forged cache entry could inject layers into an honest build *before* the first digest exists; digest threading cannot see it. Same blast-radius answer as the runner-compromise residual: confined to our own `packages:write` surface. |
 | req-cicd-supply-chain-provenance-2 | Verified Wheel-Cache Seed | Implemented | The web image's pre-compiled wheel-cache seed (`/opt/uv-cache-seed`, Dockerfile `deps-warm` stage) MUST ship with a hash manifest generated INSIDE the attested build — per-file sha256 keyed by **relative path**, **excluding the manifest itself** (it is generated under `/root/.cache/uv` in `deps-warm` and verified under `/opt/uv-cache-seed`; absolute paths would never match), stored alongside the seed and therefore covered by the image digest. Before seeding an empty uv-cache volume the entrypoint MUST verify the seed against the manifest as a **full bidirectional reconciliation**: hash mismatch, files MISSING from the seed, and EXTRA unmanifested files are all failures — a partial or padded seed must not pass as "mostly fine." Semantics split three ways: an **absent** seed MAY degrade cleanly (uv compiles/downloads with lock-hash verification — the existing path); a seed **with a manifest that fails verification** is a fail-closed boot abort (`TAP-ABORT`, req-boot-abort-signal), never a degrade, because a corrupt seed inside an immutable image means image corruption or tamper, not staleness; a seed **without any manifest** (a legacy image predating this requirement, running under a newer tree — a DESIGNED state: compose executes the entrypoint from the dev bind mount while the image lags until the next pull) is NOT seeded and NOT fatal — warn loudly and degrade to the lock-hash-verified slow path. The invariant is NEVER SEED UNVERIFIED BYTES, not 'every image must carry a manifest': manifest-stripping is not a distinct attack (whoever could strip it could modify the seed; image immutability is that boundary), and abort-on-absent bricked every legacy-image boot on first contact (PR #86 lean-boot red, 2026-08-20). The verification result MUST be emitted as machine-legible boot evidence when the boot-record/observability surface is available (the check runs before tap.preboot / `manage.py boot` — an early pre-boot scratch record that the boot record later absorbs satisfies this). | Proposed and BUILT 2026-08-20 (groundwork record §3.4; `docker/seed_manifest.py` + `deps-warm` generation + entrypoint verify; proven against the live 11,989-file seed incl. tamper/padding/relocation cases; Validation Map row synced). Closes the boot half of the content-addressing story: build-time inputs are verified by `uv.lock` sha256 hashes and the build is attested, but the boot-time seed copy was a bare `cp` and warm-cache `uv sync` does NOT re-verify hashes on cache hits — so "first boot runs the attested bytes" was implied by image immutability, never verified at use. Scope honesty: verifies image→volume at SEED time only. Explicit non-goals, unchanged: re-verifying a non-empty volume on later boots (the volume is HOST-trust domain — an attacker who can write it can equally patch the venv or the process; verification there adds no boundary), and the compile-output/runner residual (a hash manifest a compromised builder writes attests the tampered bytes — that layer belongs to provenance, not manifests). Cache MISSES still verify via lock hashes at acquisition. At implementation the boot check is a validation surface → Validation Map row in the same change (spec-dev-validation.md). Implementation guidance (Codex review 2026-08-20): generator + verifier as one tiny **stdlib-only Python** module (python exists in-container before `uv sync`; avoids BusyBox/coreutils find-sort-quoting divergence — and stdlib-only is already the house rule for pre-venv code, req/host-runnable boundary); the `docker/entrypoint.sh` "degrades cleanly" comment MUST be split when this lands (absent → degrade; invalid → abort) — a stale comment contradicting a fail-closed check is exactly the drift the docs discipline exists to catch. |
 | req-cicd-supply-chain-provenance-3 | Verified FIPS Provider Source | Implemented | The OpenSSL source that becomes the shipped FIPS provider (`/usr/lib/ossl-modules/fips.so`) MUST pass **two independent integrity gates before a compiler is invoked**, in EVERY image that builds it: (a) a **sha256 digest** pinned in the repo, checked by coreutils; and (b) the upstream **detached PGP signature**, verified against a committed release key, asserting that the machine-readable `VALIDSIG` line names the authorized **PRIMARY** fingerprint — keyring membership alone (all `gpgv` proves) is NOT sufficient. Both gates MUST fail closed. The gates and the pins MUST have **exactly one authoring site** shared by every image that builds the provider (`docker/build-openssl-fips.sh`), so a bump or a fix cannot land in one image and not another. The signature check — the step that parses attacker-supplied bytes — MUST run **unprivileged** with `--no-new-privs`, against root-owned read-only inputs, in a throwaway `GNUPGHOME`, with keyserver access disabled; and **the privilege drop MUST be self-tested at build time and fail closed if it is not in effect**, because a confinement that silently stops working still succeeds. | Built 2026-08-28 (web), extracted to the shared script 2026-08-29 (DB image gap closed, #232). Before it, the one artifact whose entire purpose is compliance was the one with no declared integrity: `openssl fipsinstall` pins the bytes we **built** and says nothing about whether the source was authentic (#221). **Two gates, not one, because they fail differently** — the digest proves we got the bytes we expected (and, checked first by coreutils, means a compromised gpg cannot swap the tarball); the signature proves those bytes are the ones OpenSSL published, which is the half a pin transcribed from a compromised release page would miss. Confinement bounds what a compromised verifier can **do** to the image; it cannot make a liar's verdict true — that is the digest's job, and the script says so rather than implying it. **THE TRAP:** `VALIDSIG`'s first field is the signing **subkey** and its last is the **primary**, while `doc/fingerprints.txt` lists **primaries** — comparing the two directly makes an authorized key look unlisted (cost real time on #221). And the **tag's own** `fingerprints.txt` is the authority: the currently-published list names only ACTIVE signers and will not vouch for an older release. **Named residual (#231):** the pins are asserted once in a reviewed diff and never re-checked against upstream — nothing watches whether CMVP #4282 is still Active or whether the signing key has been delisted, and neither has any failure mode today. **Not a Renovate surface:** 3.0.9 is frozen by *validation*, not stale, and an automated bump would leave the certified boundary while every declaration still read "validated". **But frozen is not permanent:** a critical vulnerability in the provider is a sanctioned reason to move off the validated version — patching a serious flaw is the higher duty, and "we could not patch, we were validated" is not defensible. The pin exists to stop a CASUAL bump, not a bump. That makes CVE *visibility* a requirement rather than a nicety, and today nothing provides it: no Renovate manager parses the pin, and Trivy cannot see a self-built binary that is in no package database. #231 carries the fix (a CPE on the SBOM component). |
+| req-cicd-supply-chain-provenance-4 | Seeded State Belongs To Its Image | Implemented | The entrypoint MUST stamp the uv cache, when it seeds it, with the identity of the image that filled it (the sha256 of `/opt/uv-cache-seed.manifest.json`, which changes whenever the compiled wheels do). At every boot, any stamp other than this image's (missing, different, or an empty cache with no stamp at all) MUST empty both the cache and `/app/.venv`, so the seed step refills both from this image; a venv volume can outlive its cache volume, and `uv sync` keeps what it finds either way. Both are named volumes that outlive the image, and `uv sync` keeps an installed `cryptography` compiled for the previous image's OpenSSL (tap#933). An image with no manifest has no identity and wipes nothing. | `tap_clear_if_other_image` in `docker/entrypoint.sh`; `tap/tests/test_entrypoint_image_stamp.py`. Covers CI, dev stacks, and self-hosted upgrades through the shipped compose file |
+| req-cicd-supply-chain-provenance-5 | No Cross-Run Wheel Cache In CI | Implemented | CI MUST NOT restore the uv cache from an earlier run. Each lane boots on a fresh `uv_cache` volume seeded from its own image. A cache keyed on the lockfile alone, with prefix fallbacks, served a wheel compiled against a different OpenSSL than the image under test and broke FIPS at boot (tap#933); the image seed already supplies every compiled wheel. | The `actions/cache` steps and the `TAP_CI_UV_CACHE` bind were removed from `core-ci.yml`, `api-fuzz.yml` and `docker-compose.ci.yml` |
 
 ### Product Releases
 

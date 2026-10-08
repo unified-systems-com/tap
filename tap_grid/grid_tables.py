@@ -20,12 +20,15 @@ non-BaseModel plugin model claiming ``"spine"``, the door
 ``BaseModel.__init_subclass__`` cannot see — is a fail-closed error plus a
 ``security`` Flaw, never silently honored and never silently skipped.
 
-The one deliberate consumer asymmetry, pinned by test
-(tap_grid/tests/test_grid_tables.py): ``Entity`` IS granted to the search role
-(the executor always reads the spine) but is NOT read-guarded (its reads are
-pervasive below the service boundary and the Entity API carries its own gate —
-the named open edge of req-tap-auth-orm-read-backstop). Hence
-``search_role_grant_tables() == read_guarded_tables() | {Entity's table}``.
+The consumer relationship, pinned by test (tap_grid/tests/test_grid_tables.py):
+the read backstop guards every classified table, ``Entity`` included, and the
+history table of each (simple_history's ``Historical*`` tables, which carry no
+classification of their own); the search role is granted the classified tables
+only. Hence ``search_role_grant_tables() == read_guarded_tables() - history_tables()``.
+``Entity`` was exempt from the read guard until Issue# 963 - tap, on the stated
+ground that the Entity API carried its own gate; that API was removed in
+Issue# 957 - tap, and a full-suite run with the spine guarded broke no
+production path, so the exemption was dropped.
 """
 
 from __future__ import annotations
@@ -68,7 +71,7 @@ def _declaring_class(model: type[models.Model]) -> type:
 def classified_models() -> dict[type[models.Model], str]:
     """Every loaded, concrete, classified model, mapped to its role.
 
-    TAP-IMPLEMENTS: req-grid-table-classification.sec@cfce29c3a97f/f4b1ca0afdf2 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-table-classification.sec@472c1b337f63/f4b1ca0afdf2 (derivation) — the one
         derivation of "which tables are grid tables". The ORM read backstop and the
         search-role DB grant both read this; they must never re-derive it, which is the
         divergence that made this the audit's highest-severity finding.
@@ -130,22 +133,32 @@ def grid_tables() -> set[str]:
     return {model._meta.db_table for model in classified_models()}
 
 
-def read_guarded_tables() -> set[str]:
-    """Tables the ORM read backstop enforces on: every classified table except Entity.
+def history_tables() -> set[str]:
+    """The simple_history tables of the classified models.
 
-    ``Entity`` is the deliberate exemption (see module docstring); it is
-    expressed against the model class, never a table-name string.
+    A graph row's history is graph data too: each ``Historical*`` model is built on
+    ``models.Model``, so it carries no ``GRID_TABLE_ROLE`` and would otherwise be
+    readable without ``grid.read``. Derived from each model's own ``history``
+    manager, never a table-name string.
     """
-    from tap_grid.models import Entity
+    tables: set[str] = set()
+    for model in classified_models():
+        historical = getattr(getattr(model, "history", None), "model", None)
+        if historical is not None and historical is not model:
+            tables.add(historical._meta.db_table)
+    return tables
 
-    return grid_tables() - {Entity._meta.db_table}
+
+def read_guarded_tables() -> set[str]:
+    """Tables the ORM read backstop enforces on: every classified table, and its history."""
+    return grid_tables() | history_tables()
 
 
 def search_role_grant_tables() -> set[str]:
     """Tables the read-only search role may ``SELECT``: every classified table.
 
-    Invariant (pinned by test): equals :func:`read_guarded_tables` plus
-    ``Entity``'s table. Provisioning additionally reconciles this set against
+    Invariant (pinned by test): equals :func:`read_guarded_tables` minus
+    :func:`history_tables`; the search role reads no history. Provisioning additionally reconciles this set against
     the tables that actually exist in the database before granting
     (req-grid-table-classification.sec-6, in :mod:`tap_grid.search_role`).
     """

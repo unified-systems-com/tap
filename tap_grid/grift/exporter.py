@@ -526,8 +526,15 @@ def _collect_edges(
     counts: dict[str, int] = defaultdict(int)
     seen_spine_ids: set[uuid.UUID] = set()
 
+    from tap_grid.constraints import is_internal_edge_type
+
     for edge in cast("Iterable[Edge]", queryset.order_by("entity__created_at", "entity_id").iterator(chunk_size=2_000)):
         seen_spine_ids.add(edge.entity_id)
+        if is_internal_edge_type(edge.edge_type):
+            # Bookkeeping the importer would refuse (req-grid-edge-internal), as for an
+            # internal-only node type; named before the endpoint check, which is the less exact reason.
+            ledger.record(SKIP_INTERNAL_ONLY_TYPE, edge.entity_id)
+            continue
         if edge.from_entity_id not in exported_node_ids or edge.to_entity_id not in exported_node_ids:
             ledger.record(SKIP_EDGE_ENDPOINT_NOT_EXPORTED, edge.entity_id)
             continue

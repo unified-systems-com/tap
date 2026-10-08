@@ -1,5 +1,7 @@
 """tap_cares application configuration."""
 
+from typing import Any
+
 from django.apps import AppConfig
 
 
@@ -7,6 +9,67 @@ class TapCaresConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "tap_cares"
     verbose_name = "TAP Cares"
+
+    # The edge types tap_cares writes, as definitions (same format as TapWebConfig.edge_types;
+    # processed by register_edge_types_from_list() on startup). Each declares its identity
+    # (req-grid-edge-identity-declaration). The three lifecycle edges are keyless: each records
+    # something this grid did once, its target minted in the same code path as the edge, so
+    # there is no source relationship to find again. SCHEDULED_TARGET is a standing,
+    # operator-declared relationship and a plain key. The three lifecycle edges are also
+    # internal-only (req-grid-edge-internal): bookkeeping this subsystem writes about itself, which
+    # the generic edge verbs and GRIFT refuse; SCHEDULED_TARGET stays public because schedules are
+    # authored in GRIFT.
+    edge_types: list[dict[str, Any]] = [
+        {
+            "slug": "HAS_COLLECTION_JOB",
+            "internal_only": True,
+            "sources": [{"type": "collector"}],
+            "targets": [{"type": "collection_job"}],
+            "identity": {
+                "keyless": {
+                    "reason": (
+                        "One edge per collection run, written by run_collection beside the job it creates; "
+                        "it records an act of this grid, not an observed relationship."
+                    )
+                }
+            },
+        },
+        {
+            # Scheduler edges — req-tap-cares-scheduler-edges.
+            "slug": "SCHEDULED_TARGET",
+            "sources": [{"type": "schedule"}],
+            "targets": [{"type": "collector"}],
+            "identity": {"discriminators": []},
+        },
+        {
+            "slug": "HAS_FIRED",
+            "internal_only": True,
+            "sources": [{"type": "schedule"}],
+            "targets": [{"type": "schedule_fire"}],
+            "identity": {
+                "keyless": {
+                    "reason": (
+                        "One edge per scheduler fire, written with the fire it records; it is the "
+                        "fire history of this grid, not an observed relationship."
+                    )
+                }
+            },
+        },
+        {
+            "slug": "TRIGGERED_JOB",
+            "internal_only": True,
+            "sources": [{"type": "schedule_fire"}],
+            "targets": [{"type": "collection_job"}],
+            "identity": {
+                "keyless": {
+                    "reason": (
+                        "One edge per fire that starts a run, written when the job is created; it "
+                        "records an act of this grid, not an observed relationship."
+                    )
+                }
+            },
+        },
+    ]
 
     def ready(self) -> None:
         # Load runtime secrets from the configured mount root into
@@ -40,31 +103,11 @@ class TapCaresConfig(AppConfig):
         register_health_probe("secrets", probe_secrets, sets=(READINESS,), group="tap_cares", critical=True)
 
         # Register tap_cares-owned edge types. Plugins use the manifest path
-        # (tap-plugin.toml + edges/*.edge.json); first-party apps register
-        # programmatically through the same constraints registry.
-        from tap_grid.constraints import register_edge_type_constraints
+        # (tap-plugin.toml + edges/*.edge.json); first-party apps declare an
+        # `edge_types` class attribute (above) and register it through the same registries.
+        from tap_plugins.base import register_edge_types_from_list
 
-        register_edge_type_constraints(
-            "HAS_COLLECTION_JOB",
-            sources=[{"type": "collector"}],
-            targets=[{"type": "collection_job"}],
-        )
-        # Scheduler edges — req-tap-cares-scheduler-edges.
-        register_edge_type_constraints(
-            "SCHEDULED_TARGET",
-            sources=[{"type": "schedule"}],
-            targets=[{"type": "collector"}],
-        )
-        register_edge_type_constraints(
-            "HAS_FIRED",
-            sources=[{"type": "schedule"}],
-            targets=[{"type": "schedule_fire"}],
-        )
-        register_edge_type_constraints(
-            "TRIGGERED_JOB",
-            sources=[{"type": "schedule_fire"}],
-            targets=[{"type": "collection_job"}],
-        )
+        register_edge_types_from_list(self.edge_types)
 
         # Import the Steady Queue task module so its @recurring scheduler
         # tick is registered with steady_queue at startup. Steady Queue's

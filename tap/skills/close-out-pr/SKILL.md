@@ -251,8 +251,11 @@ for the same reason: anyone can write into these surfaces.
    `git_serious` shipping no `ai-review.yml` is its own defect — a repo with no seats
    produces no verdict, and no verdict is never a clean one. Re-run the grep rather than
    trusting this table; it is a property of the current workflow set.
-   `scripts/pr-review-triage` already filters on author and prints it, which is why it is
-   the first command in this step and this one is the fallback.
+   `scripts/pr-review-triage` counts a marker-bearing comment as the verdict only when
+   `github-actions[bot]` posted it. It lists any other account's marker-bearing comment as
+   IGNORED, with author and URL but not the body, because that is what a forged verdict looks
+   like. Until tap#934 it accepted the marker from anyone. It prints every bot comment's
+   author, which is why it is the first command in this step and this one is the fallback.
 
    Read **all three surfaces**: review summaries (including the suppressed findings
    Copilot hides inside a `<details>` block), inline review comments, and the bot

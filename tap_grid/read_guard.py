@@ -26,8 +26,9 @@ The predicate (`enforce_managed_read`) is capability-based, matching the existin
 backstops rather than tracking "was authorize() called":
 
 - **bypass active** → allow. `unguarded_read()` is the explicit escape hatch for
-  sanctioned direct-ORM consumers below/around the service boundary (admin,
-  management commands, low-level model tests, internal maintenance).
+  sanctioned direct-ORM consumers below/around the service boundary (management
+  commands, low-level model tests, internal maintenance). Django admin is not one:
+  it authorizes `grid.read` like any other web surface (req-tap-auth-policy-6).
 - **no CallerContext at all** (`get_caller_context() is None`) → allow. This is
   the out-of-scope infrastructure zone that CLAUDE.md sanctions for direct ORM
   (migrations, `manage.py shell`, ad-hoc commands). A real request always carries
@@ -39,9 +40,10 @@ backstops rather than tracking "was authorize() called":
   `policy.can` re-check). Otherwise fail closed via `assert_read_authorized`,
   which emits the loud security log and raises `UnguardedOperation`.
 
-Not covered here (named open edges): `Entity` reads (separate manager, pervasive
-internally, and the Entity API already carries its own gate) and the ctx-None
-infrastructure zone above. See req-tap-auth-orm-read-backstop.
+`Entity` (the spine) and the simple_history tables of every classified model are
+guarded too, since Issue# 963 - tap: the spine's exemption rested on an Entity API
+that no longer exists, and history is graph data. Not covered here (named open
+edge): the ctx-None infrastructure zone above. See req-tap-auth-orm-read-backstop.
 """
 
 from __future__ import annotations
@@ -80,10 +82,10 @@ def unguarded_read() -> Iterator[None]:
     """Suspend the TAP-managed read backstop for the wrapped block.
 
     For sanctioned direct-ORM consumers below/around the service boundary only —
-    admin, management commands, low-level model tests, internal maintenance.
-    NOT for above-service-layer application code: web views and API routes must
-    authorize `grid.read` (which flows an actor that holds it into the context),
-    not reach for this hatch.
+    management commands, low-level model tests, internal maintenance.
+    NOT for above-service-layer application code: web views, Django admin and API
+    routes must authorize `grid.read` (which flows an actor that holds it into the
+    context), not reach for this hatch.
     """
     token = _read_guard_bypass.set(True)
     try:
@@ -182,11 +184,9 @@ def _guarded_regex() -> re.Pattern[str]:
     """Compiled alternation matching a quoted guarded-table identifier in SQL.
 
     The guarded set comes from the shared single source of truth
-    (`tap_grid.grid_tables.read_guarded_tables`): every concrete `BaseModel`
-    table plus `EntityType` (the type/plugin catalog — not a BaseModel, so
-    invisible to Layer 1). `Entity` (`tap_entity`) is deliberately excluded:
-    its reads are pervasive below the service boundary and the Entity API
-    already carries its own gate. Computed once and cached — the model set is
+    (`tap_grid.grid_tables.read_guarded_tables`): every classified table — every
+    concrete `BaseModel` table, the `Entity` spine and the `EntityType` catalog —
+    and the history table of each. Computed once and cached — the model set is
     fixed at process start.
     """
     global _guarded_regex_cache

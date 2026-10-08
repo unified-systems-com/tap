@@ -41,12 +41,14 @@ from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.models import Batch, BatchStatus, Edge, Entity, clamp_to_fields
 from tap_grid.services import (
+    _create_edge_internal,
     _create_node_internal,
     _patch_node_internal,
     create_edge,
     create_node,
     patch_node,
 )
+from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
 
@@ -361,9 +363,13 @@ def set_schedule_enabled(
         if not result.success:
             raise SchedulerError(f"set_schedule_enabled failed: " f"{[(e.code, e.message) for e in result.errors]}")
         if transitioning:
-            Schedule.objects.filter(pk=schedule.pk).update(
-                enabled_at=datetime.now(UTC)
-            )  # TAP-WRITE-COV: program-actor scheduler enabled_at bookkeeping
+            # The scheduler's own cursor, not a user-editable field: a named below-pipeline
+            # writer, open under this function's cares.toggle_schedules gate. It runs as the
+            # caller who toggled the schedule, not as the scheduler program actor.
+            with below_pipeline_write("scheduler_cursor"):
+                Schedule.objects.filter(pk=schedule.pk).update(
+                    enabled_at=datetime.now(UTC)
+                )  # TAP-WRITE-COV: scheduler cursor (enabled_at) under the caller's cares.toggle_schedules gate
     schedule.refresh_from_db()
     return schedule
 
@@ -384,13 +390,16 @@ def _claim_and_create_fire(
     batch back with it.
     """
     with transaction.atomic():
-        claimed = (
-            Schedule.objects.filter(
-                pk=schedule.pk
-            )  # TAP-WRITE-COV: atomic compare-and-set claim must be one SQL UPDATE (req-tap-cares-scheduler-dedupe)
-            .filter(Q(last_schedule_fired__lt=current_slot) | Q(last_schedule_fired__isnull=True))
-            .update(last_schedule_fired=current_slot)
-        )
+        # The claim is the scheduler's own cursor and must be one SQL UPDATE: a named
+        # below-pipeline writer, open under evaluate_tick's cares.run_scheduler gate.
+        with below_pipeline_write("scheduler_cursor"):
+            claimed = (
+                Schedule.objects.filter(
+                    pk=schedule.pk
+                )  # TAP-WRITE-COV: atomic compare-and-set claim must be one SQL UPDATE (req-tap-cares-scheduler-dedupe)
+                .filter(Q(last_schedule_fired__lt=current_slot) | Q(last_schedule_fired__isnull=True))
+                .update(last_schedule_fired=current_slot)
+            )
         if claimed == 0:
             return None
 
@@ -426,7 +435,7 @@ def _claim_and_create_fire(
             raise SchedulerError(f"ScheduleFire create failed: " f"{[(e.code, e.message) for e in fire_result.errors]}")
         fire = ScheduleFire.objects.get(entity_id=fire_result.entity_id)
 
-        create_edge(
+        _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             from_entity=schedule.entity,
             to_entity=fire.entity,
             edge_type="HAS_FIRED",
@@ -493,7 +502,7 @@ def _finalize_fire_triggered(
             raise SchedulerError(
                 f"TRIGGERED patch failed for fire {fire.entity_id}: " f"{[(e.code, e.message) for e in result.errors]}"
             )
-        create_edge(
+        _create_edge_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             from_entity=fire.entity,
             to_entity=job.entity,
             edge_type="TRIGGERED_JOB",
