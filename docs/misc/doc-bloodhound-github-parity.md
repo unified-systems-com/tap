@@ -30,6 +30,36 @@ Upstream pins, from the file's `upstream` field:
 
 `built: 2026-09-11`.
 
+## It is not a GRIFT pack — it is the source a GRIFT pack is generated from
+
+Worth stating because the filename invites the wrong guess. There are three layers, and only the
+middle one is GRIFT:
+
+| layer | file | what it is |
+| --- | --- | --- |
+| source | `tap_plugin/git_serious/data/bloodhound_queries.json` | the content pack, hand-maintained: one record per query id, attribution, upstream pins, the Gryphon translation, `status`/`stage`, caveats. **No nodes, no edges, no batch envelope** — not GRIFT |
+| generated | `tap_plugin/git_serious/grift/queries.grift.json` | **this** is the GRIFT batch (`metadata` / `_reserved` / `batches`). Seeds 35 `search`, 35 `object`, 2 `page`, 2 `panel`, 37 `edge`, 1 `batch` |
+| generator | `scripts/build_query_pack_grift.py` | compiles source → GRIFT |
+
+The generated file says so itself, on every node it writes: *"GENERATED from
+data/bloodhound_queries.json — do not hand-edit"* and *"Seeded from data/bloodhound_queries.json by
+scripts/build_query_pack_grift.py; edit the pack, not this node."* So the edit surface is the source
+file; the GRIFT batch is build output that happens to be committed.
+
+Two consumers, not one:
+
+- `tap_plugin/git_serious/panels/query_pack.py` reads the **source** file directly at runtime
+  (`PACK_PATH`), so the panel renders the whole corpus including the queries that do not yet run;
+- the **generated** batch seeds the grid, and it seeds only the runnable ones.
+
+**That second point is a useful cross-check rather than a detail.** The GRIFT batch seeds exactly
+**35** `search` nodes, and tallying `status == "runs"` in the source independently gives **35**. The
+generator's contract is "seed what runs", and the two numbers agreeing is evidence that both the
+tally above and the generator are correct. If they ever diverge, one of the two is stale.
+
+Declared in canon: `specs/spec-git-serious-query-pack.md`, `req-git-serious-query-pack`, status
+**Implemented**, naming `data/bloodhound_queries.json` + `/git-serious/queries` as the deliverable.
+
 ## Method, so this can be re-derived rather than trusted
 
 Every count below comes from reading that one file and tallying its `queries` array:
@@ -152,7 +182,11 @@ derived from, with the command that re-derives them.
 
 ## Pointers
 
-- The pack: `tap_plugin/git_serious/data/bloodhound_queries.json` in `unified-systems-com/git-serious-tap`.
+- The source pack: `tap_plugin/git_serious/data/bloodhound_queries.json` in `unified-systems-com/git-serious-tap` — the edit surface.
+- The generated GRIFT batch: `tap_plugin/git_serious/grift/queries.grift.json` — build output, do not hand-edit.
+- The generator: `scripts/build_query_pack_grift.py`.
+- The runtime reader: `tap_plugin/git_serious/panels/query_pack.py`.
+- Canon: `specs/spec-git-serious-query-pack.md`, `req-git-serious-query-pack` (Implemented).
 - Slices: `github-core#109` (epic), `#110` (A, settings), `#111` (B, people), `#112` (C, org roles and PAT grants), `#114` (A2, flattened ruleset rules).
 - Grammar gaps: `tap#259` (variable-length path and alternation), `tap#433` (correlated multi-MATCH).
 - Unfiled gaps: `OPTIONAL MATCH`; the derived eligibility and branch-creation edges.
