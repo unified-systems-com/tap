@@ -61,7 +61,7 @@ thing*, not a product:
 
 | Plugin | Gives you |
 | --- | --- |
-| `computing_core` | `file`, `program`, `user`, `port`, `ip_address`, `network_interface`, `tcp_connection`, `private_key`, `public_key`, `web_host`, `web_document` |
+| `computing_core` | `host`, `os_user`, `os_group`, `file`, `program`, `port`, `ip_address`, `network_interface`, `tcp_connection`, `private_key`, `public_key`, `web_host`, `web_document` (a person is `identity_core`'s `human`, not a computing type) |
 | `git_core` | Repositories, refs and commits, with identities any source can mint |
 | `identity_core` | `human`, `organization`, `oidc_issuer` |
 | `compliance_core` | `compliance_boundary`, `compliance_context`, `compliance_finding`, `compliance_evidence`, `compliance_artifact`, `compliance_exception` |
