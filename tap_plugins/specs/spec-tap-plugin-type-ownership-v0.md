@@ -5,7 +5,7 @@
 A TAP plugin contributes **types** — node types (each a `BaseModel` with its own table) and edge types (relationship labels). Today those type identifiers live in a flat global namespace, and two failure modes have already bitten or can bite:
 
 - **Edges merge silently.** Duplicate edge-type registrations union their source/target constraints (`req-grid-registry-3b`). That is intentional for *co-extension* (two plugins legitimately extending one shared edge) but it silently absorbs *homonym collisions* — two plugins independently using the same slug for unrelated relationships. This actually happened: `tap_cares` and `github_core` both registered `HAS_JOB`; the registry unioned `collector→collection_job` with `github_actions_run→github_actions_job`. It was caught by luck (an order-dependent test) and fixed by renaming both.
-- **Nodes hard-block.** Node types hard-fail on duplicate slug (`EntityType.slug` is `unique=True`; `register_entity_type` raises `ImproperlyConfigured`). That is *safe* (loud, never silent) but *strict*: when a `salesforce` plugin wants its own platform-specific `user` node and `computing_core` already owns `user`, the system **refuses to boot** until someone renames. That is the "force one author to rename (awful)" outcome the platform explicitly rejects elsewhere (`spec-tap-logging.md`).
+- **Nodes hard-block.** Node types hard-fail on duplicate slug (`EntityType.slug` is `unique=True`; `register_entity_type` raises `ImproperlyConfigured`). That is *safe* (loud, never silent) but *strict*: when a `salesforce` plugin wants its own platform-specific `user` node and another plugin already owns `user` (as `computing_core` did until its `user` type was retired, computing-core-tap#27), the system **refuses to boot** until someone renames. That is the "force one author to rename (awful)" outcome the platform explicitly rejects elsewhere (`spec-tap-logging.md`).
 
 Both are the same underlying gap: **plugin-contributed type identifiers have no owner**, so the platform cannot tell *intended sharing* from *accidental collision*, and it resolves the ambiguity badly in both directions (silent-merge for edges, boot-block for nodes).
 
@@ -186,9 +186,9 @@ Cross-plugin reuse of a canonical type is done by **referencing the owner's full
 
 #### Implementation
 
-- To reuse `computing_core`'s person type, a plugin references `computing_core__user` — it does not redeclare it.
+- To reuse `identity_core`'s person type, a plugin references `identity_core__human` — it does not redeclare it. (`computing_core__user` played this role until 2026-10-08, when it was retired as a duplicate of `human`; computing-core-tap#27.)
 - To own a distinct platform-specific type, a plugin declares its own `<slug>__user` — legitimate and collision-free (the Salesforce case).
-- A lint/validation **nudges** (does not block) when a plugin declares a type whose unqualified name matches an existing canonical type ("`computing_core__user` already exists — reuse it, or confirm you want a distinct `salesforce__user`?"). This preserves the healthy reuse pressure the old node hard-raise provided, without the boot-block.
+- A lint/validation **nudges** (does not block) when a plugin declares a type whose unqualified name matches an existing canonical type ("`computing_core__host` already exists — reuse it, or confirm you want a distinct `salesforce__host`?"). This preserves the healthy reuse pressure the old node hard-raise provided, without the boot-block.
 
 #### Acceptance Criteria
 
