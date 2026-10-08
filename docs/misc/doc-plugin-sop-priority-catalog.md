@@ -54,9 +54,16 @@ fails closed without one. Both were written when they were true. A catalog that 
 is a different failure from one that overstates it, and the cheaper one, but it still misdirects
 whoever reads it next.
 
-**Two rows' stated limits have closed.** SOP-07's limit was that the workflow guard scans core
-workflows only — the repository-scope checks now read plugin repositories directly, per-PR and
-fleet-wide, so the gap is filled by a different mechanism rather than by the guard. SOP-08's updater
+**Two rows' stated limits have closed, one of them only in part.** SOP-07's limit was that the
+workflow guard scans core workflows only, and the repository-scope checks now read plugin
+repositories directly, per-PR and fleet-wide — but they close ONE SLICE of it, not the whole gap,
+and the row says so while this summary previously did not. The guard covers permissions, write-job
+co-tenancy and external SHA pins; of those, the repo-scope checks cover the caller's grant
+(`repo-caller-permissions`) and its pin (`repo-ci-caller-pin`). **Write-job co-tenancy and persisted
+checkout credentials remain uncovered in plugin repositories** — measured against `origin/main`,
+neither term appears anywhere in the seven `repo-*` checks (`repo-caller-permissions`,
+`repo-ci-caller-pin`, `repo-codeowners`, `repo-nightly-shape`, `repo-release-lane`,
+`repo-waiver-ledger`, `repo-workflows`). SOP-07 therefore stays P0. SOP-08's updater
 is now central and topic-discovered rather than per-repository.
 
 **One evidence link had gone dead** and is repointed: core's own Renovate workflow, retired
