@@ -39,6 +39,8 @@ def _make_repo(path: Path, origin: str) -> Path:
 def repos(tmp_path: Path) -> dict[str, Path]:
     """A project repository with a plugin checkout nested inside it, as `_dev-plugins/` is."""
     project = _make_repo(tmp_path / "project", f"https://github.com/{PROJECT_SLUG}.git")
+    # A spawned session checkout: HEAD on a session/<name> branch (limit 6).
+    (project / ".git" / "HEAD").write_text("ref: refs/heads/session/test\n", encoding="utf-8")
     plugin = _make_repo(project / "_dev-plugins" / "github_core", "git@github.com:example-org/github-core-tap.git")
     (project / "tap").mkdir()
     return {"project": project, "plugin": plugin, "subdir": project / "tap"}
@@ -203,3 +205,38 @@ def test_the_hook_states_its_limits_and_is_executable() -> None:
     header = HOOK.read_text(encoding="utf-8").split('"""')[1]
     for claim in ("It reads its stdin payload", "fails open", "only refuses PRs against this repository"):
         assert claim in header, claim
+
+
+def _outside_clone(tmp_path: Path, head: str, env_local: str | None = None) -> Path:
+    clone = _make_repo(tmp_path / "clone", f"https://github.com/{PROJECT_SLUG}.git")
+    (clone / ".git" / "HEAD").write_text(head, encoding="utf-8")
+    if env_local is not None:
+        (clone / ".env.local").write_text(env_local, encoding="utf-8")
+    return clone
+
+
+@pytest.mark.spec("req-dev-multisession-pr-open-redirect-6")
+@pytest.mark.parametrize(
+    "head",
+    ["ref: refs/heads/main\n", "ref: refs/heads/fix-readme-typo\n", "0123456789abcdef0123456789abcdef01234567\n"],
+)
+def test_outside_a_session_worktree_the_hook_says_nothing_at_all(tmp_path: Path, head: str) -> None:
+    """An outside contributor running Claude Code in their own clone never meets the redirect:
+    no deny, and no triage reminder either. The promote and session branches it would point at
+    do not exist for them."""
+    clone = _outside_clone(tmp_path, head)
+    for command in (f"{VERB} -f", f"{VERB} -R {PROJECT_SLUG} -f", f"{VERB} -R someone/else -f"):
+        result = _run({"tool_name": "Bash", "cwd": str(clone), "tool_input": {"command": command}}, clone)
+        assert result.returncode == 0
+        assert result.stdout.strip() == "", command
+
+
+@pytest.mark.spec("req-dev-multisession-pr-open-redirect-6")
+def test_a_spawned_session_is_recognised_by_its_env_local_too(tmp_path: Path) -> None:
+    """spawn-session.sh writes COMPOSE_PROJECT_NAME=tap_<name>; that marks a session even when HEAD
+    is momentarily on another branch."""
+    clone = _outside_clone(tmp_path, "ref: refs/heads/main\n", "COMPOSE_PROJECT_NAME=tap_idea-factory\nWEB_PORT=8123\n")
+    assert _decision(f"{VERB} -f", clone, clone) == "deny"
+    other = _outside_clone(tmp_path / "x", "ref: refs/heads/main\n", "COMPOSE_PROJECT_NAME=something-else\n")
+    result = _run({"tool_name": "Bash", "cwd": str(other), "tool_input": {"command": f"{VERB} -f"}}, other)
+    assert result.stdout.strip() == ""
