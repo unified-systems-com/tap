@@ -36,8 +36,19 @@ Its limits, stated so they can be checked:
      for a PR against this repository; or, for a PR against any other repository, no
      decision at all plus the review-triage reminder the retired PostToolUse nudge carried
      (plugin PRs open outside the promote, so nothing else prompts their triage). Besides
-     stdin it reads only `.git` entries (to find a repository root) and, when `-R` is
-     given, this repository's git config (to learn `origin`'s owner/name).
+     stdin it reads only `.git` entries (to find a repository root and, for limit 6, the
+     project's HEAD), the project's `.env.local` (limit 6), and, when `-R` is given, this
+     repository's git config (to learn `origin`'s owner/name).
+  6. It acts only inside a spawned TAP session: the project checkout's `.env.local` names a
+     `tap_` compose project (scripts/spawn-session.sh writes it), or its HEAD is on a
+     `session/<name>` branch. Anywhere else, including an ordinary outside clone (no such
+     `.env.local`, not on a `session/` branch), it outputs nothing at all
+     (req-dev-multisession-pr-open-redirect-6). The promote, the session branches and the
+     triage watch it points at exist only there. Both markers live in the writable checkout,
+     so they describe a session rather than prove one: an agent that deletes `.env.local` and
+     leaves its session branch is no longer redirected, and an outside clone that names a
+     branch `session/<x>` is. Limit 2 already holds: this is a redirect, not a boundary, and
+     anything that must hold for every road to a pull request belongs in CI.
 
 Matching is shell-aware on purpose. The regex in the hook it replaced matched
 `rg -n "x|gh pr create"` as an invocation, because the `|` sat inside a quoted pattern;
@@ -118,6 +129,30 @@ class Unresolvable(Exception):
     """The target of a `gh pr create` cannot be determined without running anything."""
 
 
+def _gitdir(root: str) -> str:
+    """The repository's own git directory: `.git` itself, or the worktree gitdir its file names."""
+    dot_git = os.path.join(root, ".git")
+    if os.path.isfile(dot_git):
+        with open(dot_git, encoding="utf-8") as fh:
+            return os.path.join(root, fh.read().strip().removeprefix("gitdir:").strip())
+    return dot_git
+
+
+def in_session_worktree(root: str) -> bool:
+    """True when `root` is a spawned TAP session (limit 6): a `tap_` compose project in
+    `.env.local`, or HEAD on a `session/<name>` branch. Read, never run."""
+    env_local = os.path.join(root, ".env.local")
+    if os.path.isfile(env_local):
+        with open(env_local, encoding="utf-8") as fh:
+            if any(line.strip().startswith("COMPOSE_PROJECT_NAME=tap_") for line in fh):
+                return True
+    head_file = os.path.join(_gitdir(root), "HEAD")
+    if os.path.isfile(head_file):
+        with open(head_file, encoding="utf-8") as fh:
+            return fh.read().strip().startswith("ref: refs/heads/session/")
+    return False
+
+
 def _git_root(path: str) -> str | None:
     current = os.path.realpath(path)
     while True:
@@ -156,17 +191,11 @@ def _origin_repo_id(root: str) -> tuple[str | None, str]:
     A worktree's `.git` is a file naming its gitdir; the shared config lives in the common
     dir that gitdir's `commondir` file points at.
     """
-    dot_git = os.path.join(root, ".git")
-    if os.path.isfile(dot_git):
-        with open(dot_git, encoding="utf-8") as fh:
-            gitdir = fh.read().strip().removeprefix("gitdir:").strip()
-        gitdir = os.path.join(root, gitdir)
-        commondir_file = os.path.join(gitdir, "commondir")
-        if os.path.isfile(commondir_file):
-            with open(commondir_file, encoding="utf-8") as fh:
-                gitdir = os.path.join(gitdir, fh.read().strip())
-    else:
-        gitdir = dot_git
+    gitdir = _gitdir(root)
+    commondir_file = os.path.join(gitdir, "commondir")
+    if os.path.isfile(commondir_file):
+        with open(commondir_file, encoding="utf-8") as fh:
+            gitdir = os.path.join(gitdir, fh.read().strip())
     in_origin = False
     with open(os.path.join(gitdir, "config"), encoding="utf-8") as fh:
         for raw in fh:
@@ -277,6 +306,8 @@ def main() -> int:
         cwd = payload.get("cwd") or os.getcwd()
         project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or ""
         if not isinstance(command, str) or not project_dir:
+            return 0
+        if not in_session_worktree(os.path.realpath(project_dir)):
             return 0
         decision = pr_create_decision(command, cwd, project_dir)
     except Exception:  # noqa: BLE001 — fail open: never break an unrelated Bash call
