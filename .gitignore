@@ -96,14 +96,11 @@ console-current.log
 # command. The farm is per-worktree; nothing here pollutes the user's global
 # ~/.claude/skills/ namespace.
 #
-# Exception: get-api-docs.md — a harness-side skill that lives standalone in
-# this repo rather than under an app's skills/ dir.
 # Exception: get-started — the ONE symlink that must exist in a fresh clone,
 # because it is the skill that drives the first spawn everything else (including
 # wire-skills, which spawn runs at Step 3.6) rides on. Committing more symlinks
 # than this would just shadow wire-skills.
 .claude/skills/*
-!.claude/skills/get-api-docs.md
 !.claude/skills/get-started
 # Harness-managed state under .claude/ — not committed (per-user / per-worktree).
 .claude/scheduled_tasks.lock
