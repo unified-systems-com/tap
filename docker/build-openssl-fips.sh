@@ -69,8 +69,8 @@ set -eu
 # OSSL_SHA256 and OSSL_SIGNING_PRIMARY are deliberately NOT derived from anything: a digest
 # computed from the file it checks verifies nothing. They are independent assertions,
 # transcribed by a human from upstream and reviewed in the diff.
-OSSL_VERSION=3.0.22
-OSSL_SHA256=67ebca7e50d17383028045486653492195b83db95f8558709701bb47b5c1ef81
+OSSL_VERSION=3.5.8
+OSSL_SHA256=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
 OSSL_SIGNING_PRIMARY=B146647E45A7B33947AB226B2A2C87D161692D40
 
 # ---------------------------------------------------------------------------- CMVP validations

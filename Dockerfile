@@ -29,7 +29,7 @@
 # minimal, tap-code-free reproduction, 100% reproducible on real CI hardware. A from-scratch,
 # Docker-free, Wolfi-free bare-Ubuntu reproduction (2026-10-05, L18) then ruled out the
 # version-mismatch itself: a vanilla-upstream OpenSSL 4.0.2 host library paired with this same
-# self-built 3.0.22 FIPS provider does NOT reproduce the failure, which points at something
+# self-built 3.0.22 FIPS provider (the pin at the time) does NOT reproduce the failure, which points at something
 # specific to Wolfi/Chainguard's own `openssl-4.0` build (or their `python-3.14`/`libpq` builds),
 # not at OpenSSL 4.0 as a release line.
 #
@@ -38,7 +38,7 @@
 # (the 3.6.x line) rather than `openssl-4.0`'s `libcrypto.so.4`/`libssl.so.4` — `python-3.14-base`
 # and `postgresql-18-dev` each cut over at exactly ONE revision ahead of what is pinned here.
 # This keeps every FIPS-relevant consumer in this image (CPython's own `_hashlib`, `cryptography`,
-# libpq) on the SAME major OpenSSL line as the self-built 3.0.22 FIPS provider — the condition a
+# libpq) on the SAME major OpenSSL line (3.x) as the self-built FIPS provider — the condition a
 # clean bare-Ubuntu test (L18) already confirmed does not reproduce the failure, 20/20. These are
 # revision pins, not a track pin: narrower and more likely to need re-verifying on any apk bump
 # than a simple version pin would be, tracked the same way the FIPS provider's own pin is (a
@@ -539,7 +539,11 @@ COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modul
 # fipsinstall runs the module self-tests and writes the integrity MAC (pinning fips.so's
 # exact bytes). It MUST run in the final image (D5); it also proves binary-compat, since the
 # base's modern `openssl` loads + self-tests our pinned module (D4).
-RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+# -pedantic (D18) is REQUIRED from the 3.5 module on: it honours the per-check switches
+# fipsinstall writes (security/EMS/DRBG/key-size and the rest), and without -pedantic they are
+# all written as 0, so the 3.5 module would ALLOW SHA-1 signatures the 3.0 module refused.
+# tap/tests/test_fips_pedantic.py pins the flag and proves the refusal in FIPS mode.
+RUN openssl fipsinstall -pedantic -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
 
 # ============================================================================
 # fips-1-legacy — the ORIGINAL activation mechanism: a separate generated file + an
