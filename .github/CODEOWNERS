@@ -99,6 +99,13 @@
 /scripts/check-issue-link                @notgeorge @criticalsec
 /scripts/pr_bot_identity.py              @notgeorge @criticalsec
 /tap/tap.pr-bots.json                    @notgeorge @criticalsec
+# The session-author scope: which accounts carry the session conventions ([via] titles, issue
+# trailers, the promote marker). REMOVING an account silently exempts its sessions from the
+# procedure, and adding one imposes it, so both directions want the owner's eyes.
+/scripts/pr_session_identity.py          @notgeorge @criticalsec
+/scripts/check-pr-title                  @notgeorge @criticalsec
+/scripts/check-pr-opened-by              @notgeorge @criticalsec
+/tap/tap.pr-session-authors.json         @notgeorge @criticalsec
 
 # every guards/ package — core, per-app, and per-plugin
 **/guards/                               @notgeorge @criticalsec

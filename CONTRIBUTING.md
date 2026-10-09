@@ -55,7 +55,9 @@ Write the body for someone who was not there. The summary line says what changed
 
 ### Name the issue
 
-Every change names the issue it serves, as a trailer beside `Signed-off-by`, in the qualified `owner/repo#n` form:
+**Contributing from outside the project?** Mention the issue your change relates to in the pull request description, if there is one. You do not need the trailers below: they are a convention of the maintainer's own working sessions, and a maintainer adds the link when merging. Your pull request title is yours to write, too. Only the `Signed-off-by` line (the DCO, below) is required of every contributor.
+
+Changes from the maintainer's session accounts name the issue they serve, as a trailer beside `Signed-off-by`, in the qualified `owner/repo#n` form:
 
 ```
 Closes: unified-systems-com/tap#327       the change completes the issue
@@ -63,7 +65,7 @@ Part-of: unified-systems-com/tap#211      the change advances it without complet
 No-issue: <reason>                        deliberately serves no issue — say why
 ```
 
-One trailer per branch is enough (a review fix-up need not repeat it); several references may be listed. `scripts/check-issue-link` enforces this on both roads to `main`, and the promote's generated PR body places the trailers first in GitHub's own `Closes …` form, so the issue links before merge and closes on it. `Closes` means the issue's done-test is met by merged code plus its tests — an observation on a running instance is a separate issue when one is wanted, not a reason to leave the build issue open. A bare `#n` is rejected: two repositories are always in play.
+One trailer per branch is enough (a review fix-up need not repeat it); several references may be listed. `scripts/check-issue-link` enforces this on both roads to `main` for the maintainer's session accounts (listed by GitHub account id in `tap/tap.pr-session-authors.json`), and the promote's generated PR body places the trailers first in GitHub's own `Closes …` form, so the issue links before merge and closes on it. `Closes` means the issue's done-test is met by merged code plus its tests — an observation on a running instance is a separate issue when one is wanted, not a reason to leave the build issue open. A bare `#n` is rejected: two repositories are always in play.
 
 ## Pull Requests
 

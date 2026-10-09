@@ -31,6 +31,8 @@ APPROVED_SCHEMA = REPO_ROOT / "tap" / "schemas" / "pr-bots.schema.json"
 # Verified against GitHub's /users/<login> on 2026-09-08 (tap#342); the allowlist file is the record.
 TAP_RENOVATE = ("tap-renovate[bot]", "315114127")
 STOCK_RENOVATE = ("renovate[bot]", "29139614")
+# The one session account in tap/tap.pr-session-authors.json (verified 2026-10-09).
+SESSION_ACCOUNT = ("notgeorge", "286052")
 
 # The throwaway-repo fixture is shared with test_check_dco.py (one copy, so the suites cannot drift).
 from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
@@ -131,6 +133,7 @@ def test_the_approved_fork_bot_exempts_the_range_as_its_recorded_user_type(repo:
 
 
 @pytest.mark.spec("req-cicd-issue-link-6")
+@pytest.mark.spec("req-cicd-issue-link-7")
 @pytest.mark.parametrize(
     ("login", "ident", "kind", "why"),
     [
@@ -139,21 +142,43 @@ def test_the_approved_fork_bot_exempts_the_range_as_its_recorded_user_type(repo:
         (TAP_RENOVATE[0], TAP_RENOVATE[1], "User", "matching id, wrong type"),
         (STOCK_RENOVATE[0], STOCK_RENOVATE[1], "Bot", "stock renovate[bot] is not ours"),
         ("github-actions[bot]", "41898282", "Bot", "never authored a PR here; removed from the list"),
-        ("octocat", "583231", "User", "a human"),
-        ("tap-renovate[bot]", "", "Bot", "no id at all"),
-        ("tap-renovate[bot]", "not-a-number", "Bot", "malformed id"),
+        ("octocat", "583231", "User", "an outside contributor"),
+        ("criticalsec", "25269251", "User", "the approver account is deliberately not a session account"),
     ],
 )
-def test_anything_but_an_approved_id_and_bot_type_needs_a_trailer(
+def test_a_well_formed_identity_that_is_not_a_session_account_needs_no_trailer(
     repo: Path, login: str, ident: str, kind: str, why: str
 ) -> None:
-    _commit(repo, "chore(deps): bump x")
+    """Since 2026-10-09 the trailer is a session convention (req-cicd-issue-link-7). These
+    identities are still NOT approved bots, and the output must not say they are: they pass
+    because they are outside contributors, on the session-scope path."""
+    _commit(repo, "fix: x")
     result = _as(repo, login, ident, kind)
+    assert result.returncode == 0, why
+    assert "not a session account" in result.stdout, why
+    assert "approved bot" not in result.stdout, why
+
+
+@pytest.mark.spec("req-cicd-issue-link-6")
+@pytest.mark.parametrize(
+    ("login", "ident", "why"),
+    [("tap-renovate[bot]", "", "no id at all"), ("tap-renovate[bot]", "not-a-number", "malformed id")],
+)
+def test_a_missing_or_malformed_id_fails_closed(repo: Path, login: str, ident: str, why: str) -> None:
+    """A workflow wiring mistake must surface as a red, never quietly exempt everyone."""
+    _commit(repo, "chore(deps): bump x")
+    result = _as(repo, login, ident, "Bot")
     assert result.returncode == 1, why
-    assert "names its issue" in result.stdout and login in result.stdout, why
-    # A trailer still passes for the same identity: the identity only decides the exemption.
-    _commit(repo, "chore(deps): bump y\n\nNo-issue: dependency bump carried by a human review")
-    assert _as(repo, login, ident, kind).returncode == 0
+    assert "names its issue" in result.stdout, why
+
+
+@pytest.mark.spec("req-cicd-issue-link-7")
+def test_the_session_account_still_needs_a_trailer(repo: Path) -> None:
+    _commit(repo, "fix: x")
+    result = _as(repo, *SESSION_ACCOUNT, "User")
+    assert result.returncode == 1 and "names its issue" in result.stdout
+    _commit(repo, "fix: y\n\nNo-issue: a maintainer's change that serves no tracked issue")
+    assert _as(repo, *SESSION_ACCOUNT, "User").returncode == 0
 
 
 @pytest.mark.spec("req-cicd-issue-link-6")
@@ -161,8 +186,9 @@ def test_a_human_pr_carrying_bot_authored_commits_still_needs_a_trailer(repo: Pa
     _commit(
         repo, "chore(deps): bump x", author="tap-renovate[bot] <315114127+tap-renovate[bot]@users.noreply.github.com>"
     )
-    result = _as(repo, "octocat", "583231", "User")
-    assert result.returncode == 1 and "octocat" in result.stdout
+    # The session account's PR is not the bot's PR: carried bot commits need a trailer.
+    result = _as(repo, *SESSION_ACCOUNT, "User")
+    assert result.returncode == 1 and SESSION_ACCOUNT[0] in result.stdout
 
 
 @pytest.mark.spec("req-cicd-issue-link-6")

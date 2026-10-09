@@ -10,6 +10,8 @@
 
 <!-- Replace this with what a reviewer is actually approving. -->
 
+**Related issue (if any):** <!-- e.g. unified-systems-com/tap#123. Optional for outside contributors; a maintainer links it at merge. -->
+
 # Pull Request Checklist
 
 ## Contribution terms

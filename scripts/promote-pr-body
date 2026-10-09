@@ -50,6 +50,9 @@ CONTAINS_BUCKETS: list[tuple[str, str]] = [
 MAX_COMMIT_LOG_CHARS = 12000
 
 
+#: Must equal MARKER in scripts/check-pr-opened-by (tap/tests/test_check_pr_opened_by.py pins both).
+OPENED_BY_MARKER = "<!-- tap:opened-by=promote-to-main -->"
+
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
 
@@ -145,6 +148,10 @@ def main() -> int:
     out.append("---")
     out.append("_Gate mechanics: local fast lane promote-side; the required `gate` check decides the landing;")
     out.append("auto-merge arms only after local green. This body regenerates on every promote run._")
+    # The opened-by marker (req-dev-multisession-session-author-scope-3): scripts/check-pr-opened-by
+    # fails a session account's session-branch PR without it. Fixed text, one copy per writer.
+    out.append("")
+    out.append(OPENED_BY_MARKER)
     print("\n".join(out))
     return 0
 

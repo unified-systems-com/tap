@@ -75,6 +75,8 @@ from pr_bot_identity import (  # noqa: E402
     exempt_author,
     load_approved_bots,
 )
+from pr_session_identity import OUTSIDE, SessionAuthorsError  # noqa: E402
+from pr_session_identity import decide as session_scope  # noqa: E402
 
 #: Re-exported so a caller (and the test suite) can reach the shared decision through either
 #: gate script — the names resolve to the ONE implementation in `scripts/pr_bot_identity.py`.
@@ -196,6 +198,7 @@ def main(argv: list[str]) -> int:
         return 2
     base = _base_ref(args[0] if args else None)
     pr_author = identity["--pr-author"]
+    argv_identity = [part for flag, value in identity.items() for part in (flag, value)]
 
     exemption_note = ""
     if any(identity.values()):
@@ -211,6 +214,18 @@ def main(argv: list[str]) -> int:
                 print(f"check-issue-link: OK — {reason}")
             return 0
         exemption_note = f" ({reason})"
+        # The trailer is a convention of the maintainer's agent sessions: an outside contributor
+        # links the issue in the PR description, and a maintainer adds the trailer at merge
+        # (req-cicd-issue-link-7). DCO is NOT scoped this way; check-dco still applies to all.
+        try:
+            verdict, scope_reason = session_scope(argv_identity)
+        except SessionAuthorsError as exc:
+            print(f"check-issue-link: {exc}", file=sys.stderr)
+            return 2
+        if verdict == OUTSIDE:
+            if not emit:
+                print(f"check-issue-link: OK — {scope_reason}")
+            return 0
 
     trailers: list[tuple[str, str]] = []
     problems: list[str] = []

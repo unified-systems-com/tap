@@ -250,6 +250,10 @@ jobs:
   pr-title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # pull-requests: read lets the opened-by step read the PR's CURRENT body (see that step).
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -266,6 +270,25 @@ jobs:
         run: >-
           scripts/check-pr-title --title "$PR_TITLE" --pr-author-id "$PR_AUTHOR_ID"
           --pr-author-type "$PR_AUTHOR_TYPE" --pr-author "$PR_AUTHOR"
+      # The server-side half of the gh pr create redirect (req-dev-multisession-session-author-scope-3):
+      # a session account's PR from a session/<name> branch must carry the promote's body marker.
+      # The body is read from the API, not the event payload: re-running the promote rewrites the
+      # body without a push, and a re-run of this job must see that, not the payload it fired with.
+      # Untrusted text only ever reaches the script through the environment, never the shell.
+      - name: Check a session PR was opened by the promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: |
+          PR_BODY="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.body // ""')"
+          export PR_BODY
+          scripts/check-pr-opened-by --head-ref "$HEAD_REF" --pr-author-id "$PR_AUTHOR_ID" \
+            --pr-author-type "$PR_AUTHOR_TYPE" --pr-author "$PR_AUTHOR"
 
   pins:
     runs-on: ubuntu-latest

@@ -1,0 +1,12 @@
+{
+  "description": "Pull-request AUTHOR identities whose pull requests carry this repository's SESSION conventions: the `[via <session>]` title (scripts/check-pr-title), the issue-link trailer (scripts/check-issue-link) and the promote marker (scripts/check-pr-opened-by). These conventions exist to keep the maintainer's own agent sessions on the open-a-pr procedure; an outside contributor is never required to follow them (req-dev-multisession-session-author-scope, req-cicd-issue-link-7). DCO sign-off is NOT governed by this file: it applies to every author. Authorization is the NUMERIC GitHub account id plus the account type, both taken from GitHub's authenticated pull_request event (github.event.pull_request.user.{id,type}), never from commit text, titles or logins. Deliberately narrow: started with the one account the maintainer's sessions push and open PRs as, so the scope can be exercised before it widens. criticalsec is ABSENT on purpose: it approves and merges, and whether it may author code at all is a separate, open decision.",
+  "authors": [
+    {
+      "login": "notgeorge",
+      "id": 286052,
+      "type": "User",
+      "verified": "2026-10-09",
+      "note": "The maintainer's working account: every agent session pushes and opens pull requests as it."
+    }
+  ]
+}

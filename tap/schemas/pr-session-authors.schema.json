@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap/schemas/pr-session-authors.schema.json",
+  "title": "Pull-request session-author identities",
+  "description": "The list scripts/pr_session_identity.py reads to decide whether a pull request's AUTHOR is one of the maintainer's session accounts, and so whether the session conventions (the [via] title, the issue-link trailer and the promote marker) apply to it (req-dev-multisession-session-author-scope). An entry is an identity, not a name: the numeric GitHub account id and the type User authorize together; the login is diagnostics. The file is read by a stdlib-only host tool (shape-checked at load, fail-closed) and validated against this schema by tap/tests/test_pr_session_identity.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "authors"],
+  "properties": {
+    "description": {"type": "string", "minLength": 1, "description": "Why this file exists, what it governs, and what is deliberately absent from it."},
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The maintainer's session accounts. Order is irrelevant; ids are unique. An empty list would silently exempt the maintainer's own sessions, so at least one entry is required.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["login", "id", "type", "verified", "note"],
+        "properties": {
+          "login": {"type": "string", "pattern": "^[A-Za-z0-9-]+$", "description": "The account login as GitHub reports it, for diagnostics and audit. Never used for authorization."},
+          "id": {"type": "integer", "minimum": 1, "description": "GitHub's numeric account id (github.event.pull_request.user.id), the authorizing identity, read from GitHub's /users/<login> response, never guessed."},
+          "type": {"const": "User", "description": "GitHub account type as /users/<login> reports it. Session accounts are human accounts, so only User is valid; the authenticated author's type must equal it."},
+          "verified": {"type": "string", "format": "date", "description": "The date the id/type/login triple was read from GitHub."},
+          "note": {"type": "string", "minLength": 8, "description": "Whose account this is and why its pull requests carry the session conventions."}
+        }
+      }
+    }
+  }
+}
