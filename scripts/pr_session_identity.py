@@ -21,7 +21,8 @@ or sets their git author to the maintainer's name, is still an outsider.
 THREE ANSWERS, never two:
   SESSION  the authenticated author is a listed session account — the conventions apply.
   OUTSIDE  a well-formed authenticated identity that is not listed — the conventions do not apply.
-  UNKNOWN  identity arguments were passed but the id is missing or malformed. Callers treat this
+  UNKNOWN  identity arguments were passed but the id or type is missing or malformed, or a listed
+           session id arrived with a type other than `User`. Callers treat this
            as SESSION (enforce): a workflow wiring mistake must surface as a red, never quietly
            exempt everyone.
 Where no identity is passed at all (a local promote gate, which only the maintainer runs), the
@@ -93,8 +94,18 @@ def classify(author_id: str, author_type: str, login: str, authors: dict[int, st
         )
     if ident < 1:
         return UNKNOWN, f"pull request by {who}: author id {ident} is not a GitHub id — session conventions enforced"
-    if ident in authors and author_type == SESSION_TYPE:
-        return SESSION, f"pull request by session account {authors[ident]} (id {ident}) — session conventions apply"
+    if not author_type:
+        return UNKNOWN, f"pull request by {who} (id {ident}): no author type passed — session conventions enforced"
+    if ident in authors:
+        if author_type == SESSION_TYPE:
+            return SESSION, f"pull request by session account {authors[ident]} (id {ident}) — session conventions apply"
+        # A listed id with another type cannot come from GitHub's authenticated event for a human
+        # account, so it is a wiring or data anomaly: enforce, never exempt.
+        return (
+            UNKNOWN,
+            f"pull request by {who}: listed session id {ident} arrived as type {author_type!r}, not "
+            f"{SESSION_TYPE!r} — session conventions enforced",
+        )
     return (
         OUTSIDE,
         f"pull request by {who} (id {ident}, type {author_type or '?'}) is not a session account — "

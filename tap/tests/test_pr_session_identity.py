@@ -50,7 +50,9 @@ def test_the_list_validates_against_its_schema_and_the_stdlib_reader_agrees() ->
     ("author_id", "author_type", "verdict"),
     [
         ("286052", "User", "session"),
-        ("286052", "Bot", "outside"),
+        ("286052", "Bot", "unknown"),
+        ("286052", "", "unknown"),
+        ("583231", "", "unknown"),
         ("25269251", "User", "outside"),
         ("583231", "User", "outside"),
         ("315114127", "Bot", "outside"),
