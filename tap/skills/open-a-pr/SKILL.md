@@ -101,9 +101,19 @@ it.
 
    It performs the pre-push merge, runs `run_local_gates` → `scripts/test --fast-relevant`,
    opens the PR, and wires the server gate and auto-merge. `gh pr create` does the last of
-   those five things. If you open by hand — for a draft, or a PR that is not a promote —
-   you have accepted responsibility for steps 3 and 4 yourself, **and for the pre-push
-   merge**: `git fetch origin && git merge origin/main` immediately before
+   those five things.
+
+   **In this repository an agent does not run `gh pr create` itself.** A Claude Code
+   PreToolUse hook (`scripts/hooks/pr-open-redirect`, wired by `.claude/settings.json`)
+   refuses it before it runs and points back here (`req-dev-multisession-pr-open-redirect`).
+   If you need a PR the promote cannot open — a draft, or a branch that is not
+   `session/<name>` — stop and ask the human operator to open it. Do not route around the
+   hook with `bash -c`, `gh api` or a wrapper; it is a redirect, not a lock, and working
+   around it is the skipped procedure it exists to stop.
+
+   **A plugin repository has no promote**, so its PRs still open by hand, and the hook
+   allows them. There, you have accepted responsibility for steps 3 and 4 yourself, **and
+   for the pre-push merge**: `git fetch origin && git merge origin/main` immediately before
    `gh pr create`, conflicts resolved as `close-out-pr` *Merge conflicts* says, and steps
    3-4 run again if the merge brought anything in. A PR opened behind its base can be
    conflicting from its first minute with every check green.

@@ -148,9 +148,9 @@ Configuration that arms local execution names a script. It does not contain the 
 
 #### Implementation
 
-- `.claude/settings.json` holds a matcher and a path, and nothing else. The hook body lives at `scripts/hooks/pr-triage-nudge`, where it can be read in a diff, linted, and tested — none of which is true of an escaped one-liner inside JSON.
+- `.claude/settings.json` holds a matcher and a path, and nothing else. The hook body lives at `scripts/hooks/pr-open-redirect`, where it can be read in a diff, linted, and tested (`tap/tests/test_pr_open_redirect.py`) — none of which is true of an escaped one-liner inside JSON.
 - The consequence is intended: a file that contains no logic has nothing to change, so it moves almost never, and any movement is conspicuous.
-- A locally-executing script states its own limits in its header, and the statement is a reviewable claim rather than decoration. `pr-triage-nudge` asserts three: it only reads, it cannot fail the tool call, and its whole effect is one string injected into the agent's context.
+- A locally-executing script states its own limits in its header, and the statement is a reviewable claim rather than decoration. `pr-open-redirect` asserts five: it only reads (its payload, plus `.git` entries and this repository's git config to resolve a target); it refuses exactly one invocation, `gh pr create` aimed at this repository; it never refuses a plugin repository's PR; it fails open on anything it cannot resolve; and its whole effect is one PreToolUse deny decision with a reason the agent reads. Its predecessor, `pr-triage-nudge`, could not affect the tool call at all; this one can refuse one command, which is why the claim names that command.
 
 #### Acceptance Criteria
 

@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Claude Code PreToolUse hook — refuse a hand-rolled `gh pr create` and point at open-a-pr.
+
+Wired by .claude/settings.json, which holds ONLY a pointer to this file
+(req-dev-localexec-config-not-logic): the logic lives here, where it can be read in a
+diff, linted and tested (tap/tests/test_pr_open_redirect.py).
+
+What it is for (req-dev-multisession-pr-open-redirect). Opening a PR is a procedure, not a
+command: the open-a-pr skill does the pre-push merge, regenerates derived artifacts, runs
+the lane and arms the review watch, and scripts/promote-to-main.sh carries all of it. An
+agent that types `gh pr create` itself has skipped every one of those steps, and the PR it
+opens can be red or conflicting from its first minute (PR# 742 - tap, PR# 818 - tap). The
+hook this replaced (pr-triage-nudge, a PostToolUse reminder) fired AFTER that PR existed
+and only reminded about review triage; this one stops the call before it runs and says
+where to go instead.
+
+Its limits, stated so they can be checked:
+  1. It reads its stdin payload, plus the few repository files limit 5 names, and nothing
+     else. It never runs the command, writes a file, opens a socket or touches a
+     credential store.
+  2. It refuses exactly one shape: `gh pr create` as a command in its own right, in the
+     agent's own Bash call, aimed at THIS repository. A script that calls `gh pr create`
+     internally (the promote does, at scripts/promote-to-main.sh) is not seen, by design.
+     Nor is the string inside quotes, a comment, `bash -c "..."`, `gh api`, an MCP tool or
+     the web UI: this is a redirect for a well-behaved session, not a security boundary.
+  3. It only refuses PRs against this repository. A plugin repository has no promote, so
+     open-a-pr's hand-open path is still how its PRs open, and plugin checkouts live INSIDE
+     this worktree (`_dev-plugins/<slug>`). The target is read, never run: an explicit
+     `-R/--repo` decides it; otherwise the nearest enclosing git root of the directory the
+     command runs in (the payload's `cwd`, moved by any literal `cd` earlier in the same
+     command) is compared with CLAUDE_PROJECT_DIR. Anything it cannot resolve
+     (`cd "$VAR"`, no CLAUDE_PROJECT_DIR) is allowed.
+  4. Any error — no payload, malformed JSON, a command the tokenizer cannot split — allows
+     the call. It must never break an unrelated Bash call, so it fails open.
+  5. Its whole effect is one of two outputs: a PreToolUse `deny` with a reason Claude reads,
+     for a PR against this repository; or, for a PR against any other repository, no
+     decision at all plus the review-triage reminder the retired PostToolUse nudge carried
+     (plugin PRs open outside the promote, so nothing else prompts their triage). Besides
+     stdin it reads only `.git` entries (to find a repository root) and, when `-R` is
+     given, this repository's git config (to learn `origin`'s owner/name).
+
+Matching is shell-aware on purpose. The regex in the hook it replaced matched
+`rg -n "x|gh pr create"` as an invocation, because the `|` sat inside a quoted pattern;
+as a deny hook that regex would have refused a harmless grep. shlex splits the command
+the way a shell does, so quoted text stays one token.
+
+Input: the PreToolUse payload as JSON on stdin (tool_name, tool_input.command, ...).
+Output: a hookSpecificOutput JSON object on stdout, or nothing. Exit code is always 0.
+
+Spec: specs/spec-dev-local-execution.md, specs/spec-dev-multisession.md
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import sys
+
+REASON = (
+    "Refused by scripts/hooks/pr-open-redirect: a hand-run `gh pr create` skips the "
+    "open-a-pr procedure (pre-push merge with origin/main, derived artifacts, the lane, "
+    "review triage). Use the open-a-pr skill: from a session/<name> branch it routes "
+    "through scripts/promote-to-main.sh, which runs the lane and opens the PR. If you need "
+    "a PR the promote cannot open (a draft, a branch that is not session/<name>), stop and "
+    "ask the human operator to open it. Do not work around this check "
+    "(req-dev-multisession-pr-open-redirect)."
+)
+
+TRIAGE_REMINDER = (
+    "TRIAGE OBLIGATION (req-dev-multisession-pr-open-redirect-5): this command opens a PR "
+    "outside this repository's promote, so nothing else will prompt the review triage. The "
+    "org ruleset posts an AI review 1-3 minutes after a PR opens. Before calling this work "
+    "done, run scripts/pr-review-triage <pr> --wait from a trusted checkout and read BOTH the "
+    "inline comments AND the review summaries. Push fix-worthy findings onto the PR branch; "
+    "dismiss noise consciously."
+)
+
+# A token made only of shell control characters ends one simple command and starts the
+# next: `;`, `&&`, `||`, `|`, `&`, `(`, `)`. Redirections (`<`, `>`) do not.
+_SEPARATOR = re.compile(r"^[;&|()]+$")
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+_HEREDOC = re.compile(r"(?<!<)<<-?(?!<)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Drop here-document bodies: they are data fed to a command, never commands.
+
+    Without this, a heredoc whose lines begin `gh pr create` (test cases, a commit message)
+    reads as an invocation — observed while building this hook. A `<<` inside quotes can make
+    this skip lines it should not; that errs toward allowing, the fail-open direction.
+    """
+    kept: list[str] = []
+    pending: list[str] = []
+    for line in command.split("\n"):
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        pending.extend(m.group(2) for m in _HEREDOC.finditer(line))
+    return "\n".join(kept)
+
+
+def _tokens(command: str) -> list[str]:
+    # Newlines separate commands like `;` does. Replacing them before tokenizing is safe
+    # for quoted text: a newline inside quotes stays inside that one token either way.
+    command = _strip_heredoc_bodies(command)
+    lexer = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
+class Unresolvable(Exception):
+    """The target of a `gh pr create` cannot be determined without running anything."""
+
+
+def _git_root(path: str) -> str | None:
+    current = os.path.realpath(path)
+    while True:
+        if os.path.exists(os.path.join(current, ".git")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def _repo_id(url_or_slug: str) -> tuple[str | None, str]:
+    """`(host, owner/name)`, lowercased, from a remote URL or a `-R` value (`[HOST/]OWNER/REPO`).
+
+    The host is None when the value names none (`gh -R OWNER/REPO` means gh's default host).
+    """
+    tail = url_or_slug.strip().rstrip("/")
+    if tail.endswith(".git"):
+        tail = tail[: -len(".git")]
+    parts = tail.replace(":", "/").split("/")
+    if len(parts) < 2 or not parts[-1] or not parts[-2]:
+        raise Unresolvable(url_or_slug)
+    host = parts[-3].rsplit("@", 1)[-1].lower() if len(parts) >= 3 and parts[-3] else None
+    return host, f"{parts[-2]}/{parts[-1]}".lower()
+
+
+def _same_repo(flag: str, origin: tuple[str | None, str]) -> bool:
+    """A `-R` value names `origin` when owner/name match and any host it gives matches too."""
+    host, name = _repo_id(flag)
+    return name == origin[1] and (host is None or origin[0] is None or host == origin[0])
+
+
+def _origin_repo_id(root: str) -> tuple[str | None, str]:
+    """`(host, owner/name)` of the `origin` remote of the repository at `root`, from git config.
+
+    A worktree's `.git` is a file naming its gitdir; the shared config lives in the common
+    dir that gitdir's `commondir` file points at.
+    """
+    dot_git = os.path.join(root, ".git")
+    if os.path.isfile(dot_git):
+        with open(dot_git, encoding="utf-8") as fh:
+            gitdir = fh.read().strip().removeprefix("gitdir:").strip()
+        gitdir = os.path.join(root, gitdir)
+        commondir_file = os.path.join(gitdir, "commondir")
+        if os.path.isfile(commondir_file):
+            with open(commondir_file, encoding="utf-8") as fh:
+                gitdir = os.path.join(gitdir, fh.read().strip())
+    else:
+        gitdir = dot_git
+    in_origin = False
+    with open(os.path.join(gitdir, "config"), encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if line.startswith("["):
+                in_origin = line.replace(" ", "") == '[remote"origin"]'
+            elif in_origin and line.split("=", 1)[0].strip() == "url":
+                return _repo_id(line.split("=", 1)[1])
+    raise Unresolvable("no origin remote")
+
+
+def _gh_invocation(args: list[str]) -> tuple[list[str], str | None]:
+    """The positional words of one `gh` invocation, and its `-R/--repo` value if any.
+
+    `gh` accepts the repository flag before the subcommand (`gh -R o/r pr create`), between
+    its words, after them, and with its value attached (`-Ro/r`, `--repo=o/r`); each form
+    was confirmed against the installed gh with `--help`. Reading only the first two
+    positional words keeps a flag value such as `--title create` from mattering.
+    """
+    positionals: list[str] = []
+    repo: str | None = None
+    j = 0
+    while j < len(args) and not _SEPARATOR.match(args[j]):
+        arg = args[j]
+        if arg in ("-R", "--repo"):
+            repo = args[j + 1] if j + 1 < len(args) else ""
+            j += 2
+            continue
+        if arg.startswith("--repo="):
+            repo = arg.split("=", 1)[1]
+        elif arg.startswith("-R") and len(arg) > 2:
+            repo = arg[2:]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        j += 1
+    return positionals, repo
+
+
+def _cd(directory: str, target: str | None) -> str:
+    if target is None or target == "~":
+        return os.path.expanduser("~")
+    if "$" in target or "`" in target or target == "-":
+        raise Unresolvable(target)
+    return os.path.normpath(os.path.join(directory, os.path.expanduser(target)))
+
+
+DENY = "deny"
+REMIND = "remind"
+
+
+def pr_create_decision(command: str, cwd: str, project_dir: str) -> str | None:
+    """What to do about the `gh pr create` invocations in `command`, if any.
+
+    DENY when one is aimed at the repository at `project_dir`; REMIND when one is aimed
+    anywhere else (a plugin repository, `-R` another repository), so the review-triage
+    obligation the retired PostToolUse nudge carried still reaches those PRs; None when
+    the command opens no PR. Raises Unresolvable when the target cannot be read without
+    executing anything.
+    """
+    if "gh" not in command or "create" not in command:
+        return None
+    tokens = _tokens(command)
+    project_root = os.path.realpath(project_dir)
+    directory = cwd
+    decision: str | None = None
+    at_start = True
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if _SEPARATOR.match(token):
+            at_start = True
+            i += 1
+            continue
+        if at_start:
+            # `$(gh ...)` tokenizes as `$`, `(`, `gh`; a backtick sticks to the next word.
+            if token == "$":
+                i += 1
+                continue
+            word = token.lstrip("`")
+            if _ASSIGNMENT.match(word):
+                i += 1
+                continue
+            if word in ("cd", "pushd"):
+                nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+                target = None if nxt is None or _SEPARATOR.match(nxt) else nxt
+                directory = _cd(directory, target)
+            elif os.path.basename(word) == "gh":
+                positionals, repo = _gh_invocation(tokens[i + 1 :])
+                if positionals[:2] == ["pr", "create"]:
+                    if repo is not None:
+                        ours = _same_repo(repo, _origin_repo_id(project_root))
+                    else:
+                        ours = _git_root(directory) == project_root
+                    if ours:
+                        return DENY
+                    decision = REMIND
+        at_start = False
+        i += 1
+    return decision
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+        if payload.get("tool_name") != "Bash":
+            return 0
+        command = (payload.get("tool_input") or {}).get("command") or ""
+        cwd = payload.get("cwd") or os.getcwd()
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or ""
+        if not isinstance(command, str) or not project_dir:
+            return 0
+        decision = pr_create_decision(command, cwd, project_dir)
+    except Exception:  # noqa: BLE001 — fail open: never break an unrelated Bash call
+        return 0
+    if decision == DENY:
+        out = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": REASON}
+    elif decision == REMIND:
+        # No permissionDecision: the normal permission flow decides; Claude reads this
+        # next to the tool result, as it read the retired PostToolUse nudge.
+        out = {"hookEventName": "PreToolUse", "additionalContext": TRIAGE_REMINDER}
+    else:
+        return 0
+    json.dump({"hookSpecificOutput": out}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

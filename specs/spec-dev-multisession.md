@@ -31,6 +31,7 @@ The Playwright MCP server is stateless per call and remains shared across sessio
 | req-dev-multisession-spawn-import-strict | [Granular Grift Import Failure Mode](#granular-grift-import-failure-mode) | Backlog | Phase 3 polish on top of fail-fast |
 | req-dev-multisession-push-workflow | [Session → Main Push Workflow](#session-→-main-push-workflow) | Implemented | Always-on discipline; codifies how session worktrees advance origin/main and keep the local main worktree current |
 | req-dev-multisession-promote-script | [Promote-to-Main Script](#promote-to-main-script) | Implemented | Per-session wrapper around the push-workflow discipline |
+| req-dev-multisession-pr-open-redirect | [Hand-Run PR Open Is Redirected](#hand-run-pr-open-is-redirected) | Implemented | A Claude Code PreToolUse hook refuses an agent's own `gh pr create` against this repository and sends it to the open-a-pr skill |
 | req-dev-multisession-promote-all-script | [Promote-All-Sessions Script](#promote-all-sessions-script) | Implemented | Registry-driven orchestrator over the per-session script |
 | req-dev-multisession-promote-gate | [Promote-Path Validation Gate](#promote-path-validation-gate) | Implemented | Promote path runs the dev-validation gate (`scripts/gate`) and refuses to advance origin/main on red; reciprocal of req-dev-validation-promote-hook |
 | req-dev-multisession-ci-gate | [Full-Set CI Gate](#full-set-ci-gate) | Implemented | Promote also triggers + blocks on the server-side CI gate (option B: trigger + poll, keeps the atomic push); reciprocal of req-dev-validation-product-line-lanes-6. Bootstrap-skips until the workflow is on main |
@@ -321,10 +322,21 @@ the authoritative read.
 **Session attribution in PR titles (2026-08-24).** Every PR names its initiating session
 in the title, so multi-session traffic on origin/main stays attributable at a glance.
 Promote PRs carry it natively (`promote: <session> → main`); ad-hoc/feature-branch PRs
-append the `[via <session>]` suffix, DERIVED never hand-typed:
-`gh pr create --title "feat: thing $(scripts/pr-via)"` — the helper reads the session
-label from `.env.local`'s `COMPOSE_PROJECT_NAME` (worktree basename as the settings-free
-fallback).
+append the `[via <session>]` suffix, DERIVED never hand-typed: `scripts/pr-via` prints it,
+reading the session label from `.env.local`'s `COMPOSE_PROJECT_NAME` (worktree basename as
+the settings-free fallback). The promote applies it itself; a human opening an ad-hoc PR, or
+an agent opening one in a plugin repository, appends `$(scripts/pr-via)` to the title.
+
+**An agent does not hand-run `gh pr create` in this repository (2026-10-08).** A Claude Code
+PreToolUse hook, `scripts/hooks/pr-open-redirect`, refuses `gh pr create` aimed at this
+repository before it runs, with a reason that sends the agent to the `open-a-pr` skill and so
+to `scripts/promote-to-main.sh`. It replaced `pr-triage-nudge`, a PostToolUse reminder that fired
+only after such a PR already existed and only about review triage, leaving the skipped
+pre-push merge, derived artifacts and lane untouched. The hook parses the command the way a
+shell does (a quoted mention is not an invocation; heredoc bodies are data), and it allows
+plugin repositories, which have no promote. It is a redirect for a well-behaved session, not a
+security boundary: `bash -c`, `gh api`, an MCP tool, the web UI and every non-Claude client
+pass it, and anything it cannot resolve is allowed. Specified in [Hand-Run PR Open Is Redirected](#hand-run-pr-open-is-redirected).
 
 #### The discipline
 
@@ -412,6 +424,31 @@ If `pull --ff-only` ever fails with "not a fast-forward", it means a sibling wor
 #### Future
 
 - A pre-push git hook could refuse `session/<name>:main` if the pre-push merge step was skipped, but hook installation in fresh worktrees is its own coordination problem.
+
+### Hand-Run PR Open Is Redirected
+----
+RID: `req-dev-multisession-pr-open-redirect`
+
+Status: `Implemented`
+
+An agent working in this repository opens a PR through the `open-a-pr` skill, which routes through `scripts/promote-to-main.sh`: the pre-push merge, the derived artifacts, the lane and the review watch come with it. Typing `gh pr create` skips all four, and the PR can be red or conflicting from its first minute (`PR# 742 - tap`, `PR# 818 - tap`). The PostToolUse hook that used to guard this, `pr-triage-nudge`, fired only after such a PR existed and only reminded about review triage. This requirement replaces it with a refusal before the call runs.
+
+#### Implementation
+
+- `.claude/settings.json` arms one PreToolUse hook on `Bash`, pointing at `scripts/hooks/pr-open-redirect` (`req-dev-localexec-config-not-logic`). It returns `permissionDecision: "deny"` with a reason naming the `open-a-pr` skill; Claude reads the reason and the command never runs. Per the Claude Code hooks reference, `deny` blocks the call and shows the reason to Claude, errors and timeouts do not block, and settings hooks also fire inside subagents.
+- The target is this repository only. An explicit `-R/--repo` decides it, compared against `origin`'s owner/name read from git config; otherwise the nearest git root of the directory the command runs in (the payload `cwd`, moved by any literal `cd`) is compared with `CLAUDE_PROJECT_DIR`. Plugin checkouts sit inside the worktree under `_dev-plugins/` and have their own `.git`, so their PRs, which have no promote, still open by hand as `open-a-pr` step 5 describes. Those get no permission decision but carry the review-triage reminder the retired nudge used to give, because the promote's triage step never runs for them.
+- Matching is shell-aware: `shlex` keeps quoted text whole, comments are dropped, and here-document bodies are removed before tokenizing. The regex this replaced fired on `rg -n "x|gh pr create"` twice while this was built; as a deny hook it would have refused a harmless search.
+- It is a redirect for a well-behaved session, not a security boundary. `bash -c`, `gh api`, an MCP tool, the web UI, every non-Claude client, and any command whose target it cannot resolve all pass. A human who needs a PR the promote cannot open opens it themselves.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-multisession-pr-open-redirect-1 | Refused Before It Runs | Implemented | `gh pr create` as a command in its own right, aimed at this repository, gets a PreToolUse deny whose reason names `open-a-pr`, including after `&&`/`;`/newline, behind leading `VAR=value` assignments, inside `$()`, and by full path. | `tap/tests/test_pr_open_redirect.py` |
+| req-dev-multisession-pr-open-redirect-2 | Mentions Are Not Invocations | Implemented | The string inside quotes, a comment, a heredoc body or `bash -c "..."`, and other `gh pr` verbs, are allowed. | The false positive that motivated shell-aware matching was observed, not imagined. |
+| req-dev-multisession-pr-open-redirect-3 | Other Repositories Pass | Implemented | A plugin checkout inside the worktree, a `cd` into one, and `-R` naming another repository are not refused; `-R` naming this repository is refused from anywhere. A host-qualified `-R` must also match `origin`'s host. | Plugin repositories have no promote. |
+| req-dev-multisession-pr-open-redirect-5 | Other Repositories Keep The Triage Reminder | Implemented | A `gh pr create` aimed at any other repository gets no permission decision and the review-triage reminder as `additionalContext`, which the retired PostToolUse nudge used to give. A command that opens no PR gets nothing. | Plugin PRs open outside the promote, so nothing else prompts their triage. |
+| req-dev-multisession-pr-open-redirect-4 | Fails Open | Implemented | Malformed or non-Bash payloads, an unresolvable `cd`, and a missing `CLAUDE_PROJECT_DIR` all allow the call; the hook always exits 0. | It runs on every Bash call and must never break an unrelated one. |
 
 ### Promote-to-Main Script
 ----

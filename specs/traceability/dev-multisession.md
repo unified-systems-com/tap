@@ -4,6 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 1 |
 | excluded | 10 |
 | unbuilt | 4 |
 | unaccounted | 1 |
@@ -25,3 +26,9 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-dev-multisession-promote-script` | non-python |  | scripts/promote-to-main.sh |
 | `req-dev-multisession-push-workflow` | process |  | the branch-and-promote discipline developers follow; scripts automate steps, the rule is the requirement |
 | `req-dev-multisession-spawn-script` | non-python |  | scripts/spawn-session.sh |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4`, `req-dev-multisession-pr-open-redirect-5` |
