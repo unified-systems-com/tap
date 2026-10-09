@@ -49,7 +49,7 @@ def _run(payload: object, project_dir: Path | None) -> subprocess.CompletedProce
     if project_dir is not None:
         env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
-    return subprocess.run(
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — running the committed hook under the test's own interpreter IS the test; argv list, no shell  # nosec B603  # noqa: S603
         [sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True, env=env, timeout=30
     )
 
@@ -131,6 +131,14 @@ def test_an_explicit_repo_flag_decides_the_target(repos: dict[str, Path]) -> Non
     assert _decision(f"{VERB} -R {PROJECT_SLUG} -f", repos["plugin"], repos["project"]) == "deny"
     assert _decision(f"{VERB} --repo=Example-Org/TAP -f", repos["plugin"], repos["project"]) == "deny"
     assert _decision(f"{VERB} -R example-org/github-core-tap -f", repos["project"], repos["project"]) == "allow"
+    # gh also takes the flag before the subcommand, between its words, and attached;
+    # each form was confirmed against the installed gh with `--help`.
+    assert _decision(f"gh -R {PROJECT_SLUG} pr create -f", repos["plugin"], repos["project"]) == "deny"
+    assert _decision(f"gh pr -R {PROJECT_SLUG} create -f", repos["plugin"], repos["project"]) == "deny"
+    assert _decision(f"{VERB} -R{PROJECT_SLUG} -f", repos["plugin"], repos["project"]) == "deny"
+    assert _decision("gh -R example-org/github-core-tap pr create -f", repos["project"], repos["project"]) == "allow"
+    # A flag value that happens to read "create" is not the subcommand.
+    assert _decision("gh pr view --title create", repos["project"], repos["project"]) == "allow"
 
 
 @pytest.mark.spec("req-dev-multisession-pr-open-redirect-4")

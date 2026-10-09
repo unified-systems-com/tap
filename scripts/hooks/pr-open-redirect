@@ -156,16 +156,31 @@ def _origin_owner_repo(root: str) -> str:
     raise Unresolvable("no origin remote")
 
 
-def _repo_flag(args: list[str]) -> str | None:
-    """The `-R/--repo` value among a `gh pr create` invocation's arguments, if any."""
-    for j, arg in enumerate(args):
-        if _SEPARATOR.match(arg):
-            break
+def _gh_invocation(args: list[str]) -> tuple[list[str], str | None]:
+    """The positional words of one `gh` invocation, and its `-R/--repo` value if any.
+
+    `gh` accepts the repository flag before the subcommand (`gh -R o/r pr create`), between
+    its words, after them, and with its value attached (`-Ro/r`, `--repo=o/r`); each form
+    was confirmed against the installed gh with `--help`. Reading only the first two
+    positional words keeps a flag value such as `--title create` from mattering.
+    """
+    positionals: list[str] = []
+    repo: str | None = None
+    j = 0
+    while j < len(args) and not _SEPARATOR.match(args[j]):
+        arg = args[j]
         if arg in ("-R", "--repo"):
-            return args[j + 1] if j + 1 < len(args) else ""
+            repo = args[j + 1] if j + 1 < len(args) else ""
+            j += 2
+            continue
         if arg.startswith("--repo="):
-            return arg.split("=", 1)[1]
-    return None
+            repo = arg.split("=", 1)[1]
+        elif arg.startswith("-R") and len(arg) > 2:
+            repo = arg[2:]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        j += 1
+    return positionals, repo
 
 
 def _cd(directory: str, target: str | None) -> str:
@@ -207,13 +222,14 @@ def pr_creates_against_project(command: str, cwd: str, project_dir: str) -> bool
                 nxt = tokens[i + 1] if i + 1 < len(tokens) else None
                 target = None if nxt is None or _SEPARATOR.match(nxt) else nxt
                 directory = _cd(directory, target)
-            elif os.path.basename(word) == "gh" and tokens[i + 1 : i + 3] == ["pr", "create"]:
-                repo = _repo_flag(tokens[i + 3 :])
-                if repo is not None:
-                    if _owner_repo(repo) == _origin_owner_repo(project_root):
+            elif os.path.basename(word) == "gh":
+                positionals, repo = _gh_invocation(tokens[i + 1 :])
+                if positionals[:2] == ["pr", "create"]:
+                    if repo is not None:
+                        if _owner_repo(repo) == _origin_owner_repo(project_root):
+                            return True
+                    elif _git_root(directory) == project_root:
                         return True
-                elif _git_root(directory) == project_root:
-                    return True
         at_start = False
         i += 1
     return False
