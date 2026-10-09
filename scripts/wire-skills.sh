@@ -10,8 +10,8 @@
 # get the app-prefixed slug (`<app-slug>-<skill-name>`); neither claims the
 # un-prefixed name. Behavior is independent of filesystem scan order.
 #
-# `.claude/skills/` is gitignored (with `get-api-docs.md` whitelisted as the
-# one harness-side skill that lives standalone). The farm is per-worktree;
+# `.claude/skills/` is gitignored (with the `get-started` symlink whitelisted so a
+# fresh clone can drive its first spawn). The farm is per-worktree;
 # nothing here pollutes the user's global ~/.claude/skills/ namespace.
 #
 # Called automatically by scripts/spawn-session.sh at the end of provisioning.
@@ -51,7 +51,7 @@ TMP_DUPES="$(mktemp)"
 awk -F'\t' '{print $1}' "$TMP_INVENTORY" | sort | uniq -d > "$TMP_DUPES"
 
 # --- Make the symlink farm; nuke prior symlinks first so renames don't leave
-# orphans, but preserve any non-symlink files (e.g. get-api-docs.md).
+# orphans, but preserve any non-symlink files a developer put there by hand.
 mkdir -p "$SKILLS_DIR"
 find "$SKILLS_DIR" -maxdepth 1 -type l -delete
 
