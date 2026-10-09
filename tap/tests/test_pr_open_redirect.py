@@ -61,8 +61,11 @@ def _decision(command: str, cwd: Path, project: Path) -> str:
         return "allow"
     out = json.loads(result.stdout)["hookSpecificOutput"]
     assert out["hookEventName"] == "PreToolUse"
-    assert "open-a-pr" in out["permissionDecisionReason"]
-    return str(out["permissionDecision"])
+    if "permissionDecision" in out:
+        assert "open-a-pr" in out["permissionDecisionReason"]
+        return str(out["permissionDecision"])
+    assert "pr-review-triage" in out["additionalContext"], out
+    return "remind"
 
 
 # The verb under test is assembled at runtime so that this file never contains the literal
@@ -113,16 +116,16 @@ def test_a_subdirectory_of_this_repo_is_still_this_repo(repos: dict[str, Path]) 
 
 
 @pytest.mark.spec("req-dev-multisession-pr-open-redirect-3")
-def test_a_plugin_checkout_inside_the_worktree_is_allowed(repos: dict[str, Path]) -> None:
+def test_a_plugin_checkout_inside_the_worktree_is_not_refused(repos: dict[str, Path]) -> None:
     """Plugin repositories have no promote; their PRs still open by hand (open-a-pr step 5)."""
-    assert _decision(f"{VERB} -f", repos["plugin"], repos["project"]) == "allow"
+    assert _decision(f"{VERB} -f", repos["plugin"], repos["project"]) == "remind"
 
 
 @pytest.mark.spec("req-dev-multisession-pr-open-redirect-3")
 def test_cd_moves_the_target(repos: dict[str, Path]) -> None:
     into_plugin = f"cd {repos['plugin']} && {VERB} -f"
     into_project = f"cd {repos['subdir']} && {VERB} -f"
-    assert _decision(into_plugin, repos["project"], repos["project"]) == "allow"
+    assert _decision(into_plugin, repos["project"], repos["project"]) == "remind"
     assert _decision(into_project, repos["plugin"], repos["project"]) == "deny"
 
 
@@ -130,15 +133,32 @@ def test_cd_moves_the_target(repos: dict[str, Path]) -> None:
 def test_an_explicit_repo_flag_decides_the_target(repos: dict[str, Path]) -> None:
     assert _decision(f"{VERB} -R {PROJECT_SLUG} -f", repos["plugin"], repos["project"]) == "deny"
     assert _decision(f"{VERB} --repo=Example-Org/TAP -f", repos["plugin"], repos["project"]) == "deny"
-    assert _decision(f"{VERB} -R example-org/github-core-tap -f", repos["project"], repos["project"]) == "allow"
+    assert _decision(f"{VERB} -R example-org/github-core-tap -f", repos["project"], repos["project"]) == "remind"
     # gh also takes the flag before the subcommand, between its words, and attached;
     # each form was confirmed against the installed gh with `--help`.
     assert _decision(f"gh -R {PROJECT_SLUG} pr create -f", repos["plugin"], repos["project"]) == "deny"
     assert _decision(f"gh pr -R {PROJECT_SLUG} create -f", repos["plugin"], repos["project"]) == "deny"
     assert _decision(f"{VERB} -R{PROJECT_SLUG} -f", repos["plugin"], repos["project"]) == "deny"
-    assert _decision("gh -R example-org/github-core-tap pr create -f", repos["project"], repos["project"]) == "allow"
+    assert _decision("gh -R example-org/github-core-tap pr create -f", repos["project"], repos["project"]) == "remind"
     # A flag value that happens to read "create" is not the subcommand.
     assert _decision("gh pr view --title create", repos["project"], repos["project"]) == "allow"
+
+
+@pytest.mark.spec("req-dev-multisession-pr-open-redirect-3")
+def test_a_repo_flag_host_must_match_origin_when_given(repos: dict[str, Path]) -> None:
+    # origin is https://github.com/example-org/tap.git: a host-qualified -R must name that host.
+    assert _decision(f"{VERB} -R github.com/{PROJECT_SLUG} -f", repos["plugin"], repos["project"]) == "deny"
+    assert _decision(f"{VERB} -R ghe.example.com/{PROJECT_SLUG} -f", repos["project"], repos["project"]) == "remind"
+
+
+@pytest.mark.spec("req-dev-multisession-pr-open-redirect-5")
+def test_other_repositories_get_the_triage_reminder_and_no_decision(repos: dict[str, Path]) -> None:
+    result = _run({"tool_name": "Bash", "cwd": str(repos["plugin"]), "tool_input": {"command": f"{VERB} -f"}}, repos["project"])
+    out = json.loads(result.stdout)["hookSpecificOutput"]
+    assert "permissionDecision" not in out, "a plugin PR must never be refused or auto-approved"
+    assert "scripts/pr-review-triage" in out["additionalContext"]
+    # A command that opens no PR gets nothing at all, reminder included.
+    assert _decision("gh pr list", repos["plugin"], repos["project"]) == "allow"
 
 
 @pytest.mark.spec("req-dev-multisession-pr-open-redirect-4")

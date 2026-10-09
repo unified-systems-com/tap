@@ -31,4 +31,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4` |
+| `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4`, `req-dev-multisession-pr-open-redirect-5` |
