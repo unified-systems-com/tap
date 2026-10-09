@@ -221,8 +221,8 @@ def _outside_clone(tmp_path: Path, head: str, env_local: str | None = None) -> P
     ["ref: refs/heads/main\n", "ref: refs/heads/fix-readme-typo\n", "0123456789abcdef0123456789abcdef01234567\n"],
 )
 def test_outside_a_session_worktree_the_hook_says_nothing_at_all(tmp_path: Path, head: str) -> None:
-    """An outside contributor running Claude Code in their own clone never meets the redirect:
-    no deny, and no triage reminder either. The promote and session branches it would point at
+    """An ordinary outside clone (no tap_ .env.local, not on a session/ branch) never meets the
+    redirect: no deny, and no triage reminder either. The promote and session branches it would point at
     do not exist for them."""
     clone = _outside_clone(tmp_path, head)
     for command in (f"{VERB} -f", f"{VERB} -R {PROJECT_SLUG} -f", f"{VERB} -R someone/else -f"):
@@ -240,3 +240,12 @@ def test_a_spawned_session_is_recognised_by_its_env_local_too(tmp_path: Path) ->
     other = _outside_clone(tmp_path / "x", "ref: refs/heads/main\n", "COMPOSE_PROJECT_NAME=something-else\n")
     result = _run({"tool_name": "Bash", "cwd": str(other), "tool_input": {"command": f"{VERB} -f"}}, other)
     assert result.stdout.strip() == ""
+
+
+@pytest.mark.spec("req-dev-multisession-pr-open-redirect-6")
+def test_the_session_markers_are_checkout_state_not_proof(tmp_path: Path) -> None:
+    """Pins the stated limit: the markers describe a session, they do not prove one. An outside
+    clone that names its branch session/<x> IS redirected, which is why the spec says "ordinary
+    outside clone" rather than promising every outside contributor silence."""
+    clone = _outside_clone(tmp_path, "ref: refs/heads/session/my-feature\n")
+    assert _decision(f"{VERB} -f", clone, clone) == "deny"

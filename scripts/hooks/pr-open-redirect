@@ -32,11 +32,6 @@ Its limits, stated so they can be checked:
      (`cd "$VAR"`, no CLAUDE_PROJECT_DIR) is allowed.
   4. Any error — no payload, malformed JSON, a command the tokenizer cannot split — allows
      the call. It must never break an unrelated Bash call, so it fails open.
-  6. It acts only inside a spawned TAP session: the project checkout's `.env.local` names a
-     `tap_` compose project (scripts/spawn-session.sh writes it), or its HEAD is on a
-     `session/<name>` branch. Anywhere else, including an outside contributor running Claude
-     Code in their own clone, it outputs nothing at all (req-dev-multisession-pr-open-redirect-6).
-     The promote, the session branches and the triage watch it points at exist only there.
   5. Its whole effect is one of two outputs: a PreToolUse `deny` with a reason Claude reads,
      for a PR against this repository; or, for a PR against any other repository, no
      decision at all plus the review-triage reminder the retired PostToolUse nudge carried
@@ -44,6 +39,16 @@ Its limits, stated so they can be checked:
      stdin it reads only `.git` entries (to find a repository root and, for limit 6, the
      project's HEAD), the project's `.env.local` (limit 6), and, when `-R` is given, this
      repository's git config (to learn `origin`'s owner/name).
+  6. It acts only inside a spawned TAP session: the project checkout's `.env.local` names a
+     `tap_` compose project (scripts/spawn-session.sh writes it), or its HEAD is on a
+     `session/<name>` branch. Anywhere else, including an ordinary outside clone (no such
+     `.env.local`, not on a `session/` branch), it outputs nothing at all
+     (req-dev-multisession-pr-open-redirect-6). The promote, the session branches and the
+     triage watch it points at exist only there. Both markers live in the writable checkout,
+     so they describe a session rather than prove one: an agent that deletes `.env.local` and
+     leaves its session branch is no longer redirected, and an outside clone that names a
+     branch `session/<x>` is. Limit 2 already holds: this is a redirect, not a boundary, and
+     anything that must hold for every road to a pull request belongs in CI.
 
 Matching is shell-aware on purpose. The regex in the hook it replaced matched
 `rg -n "x|gh pr create"` as an invocation, because the `|` sat inside a quoted pattern;
