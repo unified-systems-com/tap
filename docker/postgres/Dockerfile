@@ -154,7 +154,8 @@ FROM base AS fips-1-base
 # in-image (self-tests + integrity MAC). Postgres links the SYSTEM libcrypto for TLS +
 # cryptohash, so it inherits the activated provider with no rebuild (§5.4).
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
-RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
+# -pedantic is required from the 3.5 module on (D18; see the web Dockerfile's matching line).
+RUN openssl fipsinstall -pedantic -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
 
 # ============================================================================
 # fips-1-legacy — the ORIGINAL activation mechanism (separate generated file +

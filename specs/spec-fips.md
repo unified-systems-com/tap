@@ -70,6 +70,7 @@ roles, and is the reason a plugin can never exempt itself:
 | req-fips-crypto-bom-jvm | [JVM-Arrival Tripwire](#jvm-arrival-tripwire) | Implemented | Java is out of scope, but its arrival (runtime/executable/jar/bridge dist) fails the gate loudly — jars are not ELF, so nothing else catches it. |
 | req-fips-crypto-bom-source | [Source-Level Scan](#source-level-scan) | Implemented | The Python analog of the ELF fingerprinter: AST-scan TAP + plugin source for pure-Python crypto imports, bare weak-digest usage, and WASM-runtime imports — the crypto the native scan cannot see. |
 | req-fips-pin-currency | [Pin Currency](#pin-currency) | Partial | The validated module's pins are re-asserted against upstream, and a bump is transcribed rather than typed. `scripts/verify-openssl-release` built; the schedule is open. |
+| req-fips-pedantic-install | [The Module Is Installed Pedantic](#the-module-is-installed-pedantic) | Implemented | `openssl fipsinstall -pedantic` in both images, so a 3.5-line module enforces its per-check switches; proven by SHA-1 signing being refused in FIPS mode (D18). |
 
 ### Crypto Bill-of-Materials
 ----
@@ -371,6 +372,23 @@ fail-open-on-the-unknown edge the ELF signatures have.
 | req-fips-crypto-bom-source-1 | Non-validated imports flagged | Implemented | The AST walk flags pure-Python / non-OpenSSL crypto imports; an undispositioned finding fails. OpenSSL-routed modules (`hashlib`, `hmac`, `secrets`, `ssl`, `cryptography`, `psycopg`) are not flagged. | |
 | req-fips-crypto-bom-source-2 | Weak-digest security use flagged | Implemented | A bare MD5 construction for a security use (no `usedforsecurity=False`) is flagged at build time; SHA-1 as a hash is approved and not flagged. | Automates the assessment record's F13. |
 | req-fips-crypto-bom-source-3 | WASM runtime tripwire | Implemented | An imported or installed WASM host runtime (`wasmtime`/`wasmer`/`pywasm`) fails closed. | The `libjvm.so` pattern for WASM. |
+
+### The Module Is Installed Pedantic
+----
+RID: `req-fips-pedantic-install`
+
+Status: `Implemented`
+
+From the 3.5 line on, the FIPS module honours the per-check switches that `openssl fipsinstall` writes into `fipsmodule.cnf`: security checks, EMS, DRBG digest truncation, key and digest minimums and the rest. The 3.0 module ignored them. A plain `fipsinstall` writes every switch as `0`. Measured on the 3.5.8 spike images, that made the module looser than the 3.0.22 module it replaced: ECDSA P-256 and RSA-2048 signing with SHA-1 were refused by 3.0.22 and allowed by 3.5.8. `-pedantic` sets the switches, and SHA-1 signing, 1-byte HMAC keys, RSA PKCS#1 v1.5 encryption and TDES encryption are refused. The full `core_ci` lane passed under it with identical counts (decision D18, `docs/misc/doc-fips-assessment-record.md`).
+
+The switches are not complete coverage. Observed under `-pedantic` on 3.5.8: `hmac.new` with a short key is allowed, `hashlib.pbkdf2_hmac` is not lower-bound checked, and a TLS 1.2 handshake without EMS still succeeds. Those gaps are named in D18 and tracked in epic #1003, never assumed closed.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-pedantic-install-1 | Installed Pedantic | Implemented | Both images' `openssl fipsinstall` lines carry `-pedantic`. | `tap/tests/test_fips_pedantic.py` reads both Dockerfiles. |
+| req-fips-pedantic-install-2 | SHA-1 Signing Refused | Implemented | In a FIPS-mode process, an RSA-2048 PKCS#1 signature over SHA-256 succeeds and the same signature over SHA-1 is refused. | Probed in a fresh subprocess, because a refused fetch poisons the process's library context (L18). Not ECDSA: through `cryptography` an ECDSA SHA-1 signature succeeds even on 3.0.22, most likely because the module receives a precomputed digest, so that probe would prove nothing. |
 
 ### Pin Currency
 ----

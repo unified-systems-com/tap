@@ -21,11 +21,19 @@
 #   DELETED outright, not left as inert leftovers -- we never activate
 #   `legacy`/`default` under strict FIPS (provider_sect names fips+base only),
 #   so it is dead config in a FIPS posture file, which is worse than no config.
-# - `Groups` and `SignatureAlgorithms` (post-quantum/hybrid/MLDSA) are DELETED.
-#   Tested directly: pairing the unmodified values with strict fips+base broke
-#   EVERY outbound TLS connection outright (`SSL_CTX_new_ex: error in system
-#   default config`, `SSL_CONF_cmd: bad value` naming exactly these two
-#   directives) -- not a degradation, a hard failure.
+# - `Groups` is REPLACED with the subset the FIPS module serves; the stock
+#   `SignatureAlgorithms` (incl. ML-DSA) is KEPT. With the 3.0.x module both
+#   directives had to go: their unmodified values broke EVERY outbound TLS
+#   connection outright (`SSL_CTX_new_ex: error in system default config`,
+#   `SSL_CONF_cmd: bad value`) -- a hard failure, not a degradation. The 3.5.x
+#   module implements ML-KEM and the three hybrid groups, and the stock
+#   SignatureAlgorithms loads and handshakes against it; only the stock Groups
+#   still fails, because it names x25519/x448 standalone and the brainpool
+#   curves, which the module does not implement, and one unservable name makes
+#   OpenSSL reject the whole directive. So the PQC/hybrid groups stay
+#   (X25519MLKEM768 is negotiated with major endpoints) and only those names go
+#   (decision D18, doc-fips-assessment-record.md). This is tied to the 3.5.x
+#   module: the same Groups line fails under 3.0.x.
 # - `DTLS.MaxProtocol`/`DTLS.MinProtocol` are KEPT, reversing an earlier version
 #   of this script that deleted them as "unused, TAP is an HTTPS app" -- true of
 #   TAP's own code, but not of the library underneath it: Wolfi's `openssl-4.0`
@@ -52,9 +60,12 @@
 #
 # Every edit below targets an exact, whole-line anchor (grep -qxF, not a
 # substring match an inactive comment could also satisfy) and verifies it was
-# found before editing, and verifies the result after editing -- plus a real
-# functional check (`openssl list -providers`, not just string presence) at
-# the very end. A silent no-op here is the fail-open trap
+# found before editing, and verifies the result after editing -- plus two real
+# functional checks at the very end, not just string presence: `openssl list
+# -providers` (FIPS is the active provider) and `openssl list -tls-groups`
+# (the [ssl_module] policy loads and offers a PQC hybrid group; the providers
+# check never builds an SSL context, so it would pass a policy OpenSSL
+# rejects while every TLS connection fails). A silent no-op here is the fail-open trap
 # (doc-fips-assessment-record.md L1) this whole self-check apparatus exists to
 # catch -- so this script fails CLOSED (aborts the build) the moment Wolfi's
 # stock file no longer matches what it expects, rather than silently leaving
@@ -114,11 +125,20 @@ awk '
   in_dead_section && /^\[/ { in_dead_section = 0 }
   in_dead_section { next }
 
-  # Not-FIPS-module-compatible crypto_policy directives: delete the directive
-  # line and every backslash-continued line that follows it (Groups,
-  # SignatureAlgorithms span several). Ciphersuites/CipherString/DTLS.* are
-  # KEPT -- see the module header for why.
-  /^Groups = / || /^SignatureAlgorithms = / {
+  # Groups: REPLACE the stock list with the subset the FIPS module (3.5.x) can
+  # serve. The stock list names x25519/x448 standalone and the brainpool
+  # groups, none of which the module implements, and one unservable name makes
+  # SSL_CONF_cmd reject the WHOLE directive (bad value -> every TLS context
+  # fails). The PQC/hybrid groups are kept: the module implements ML-KEM and
+  # all three hybrids. Delete the stock lines (directive + continuations) and
+  # print the replacement in their place. SignatureAlgorithms is KEPT verbatim
+  # (verified to load and handshake against the 3.5.8 module).
+  /^Groups = / {
+    print "Groups = \\"
+    print "    *X25519MLKEM768:SecP256r1MLKEM768 / \\"
+    print "    MLKEM1024:SecP384r1MLKEM1024 / \\"
+    print "    *secp256r1 / \\"
+    print "    secp384r1:secp521r1"
     in_continuation = 1
     if ($0 !~ /\\$/) in_continuation = 0
     next
@@ -131,9 +151,10 @@ awk '
   # documentation, which is worse than no documentation. Replace it with an
   # accurate note the first time its first line is seen.
   $0 == "# As per RFC 9325, equivalent to:" {
-    print "# Keeps the stock AEAD-only cipher suites and the TLS version floor; drops only"
-    print "# the post-quantum/hybrid/MLDSA directives, which the FIPS module (3.0.22) does"
-    print "# not implement and which broke outbound TLS outright when left in place."
+    print "# Keeps the stock AEAD-only cipher suites, the TLS version floor, the stock"
+    print "# SignatureAlgorithms (incl. ML-DSA) and the PQC/hybrid key-exchange groups;"
+    print "# drops only the groups the FIPS module does not implement (x25519/x448"
+    print "# standalone, brainpool), which make OpenSSL reject the whole Groups directive."
     stale_comment = 1
     next
   }
@@ -166,11 +187,15 @@ require 'DTLS.MaxProtocol = DTLSv1.2'
 require 'DTLS.MinProtocol = DTLSv1.2'
 require_absent 'legacy = legacy_sect'
 require_absent 'CHAINGUARD_LEGACY_ALLOWED = 1'
+require_absent '    *x25519:secp256r1 / \'
+require_absent '    brainpoolP256r1:brainpoolP384r1:brainpoolP512r1'
 require_absent '[legacy_sect]'
 require_absent '[default_sect]'
 require_absent '[default]'
-require_absent 'Groups = \'
-require_absent 'SignatureAlgorithms = \'
+require 'Groups = \'
+require '    *X25519MLKEM768:SecP256r1MLKEM768 / \'
+require 'SignatureAlgorithms = \'
+require '    mldsa65:mldsa87:mldsa44:\'
 require_absent '# As per RFC 9325, equivalent to:'
 
 echo "=== ${CNF} after system-wide FIPS activation ==="
@@ -193,3 +218,11 @@ if echo "$providers_output" | grep -qxF '  legacy'; then
   echo "FATAL: openssl itself reports the legacy (non-FIPS) provider active" >&2
   exit 1
 fi
+
+# Functional check of the [ssl_module] policy itself: `openssl list -providers` above never
+# builds an SSL_CTX, so a Groups/SignatureAlgorithms value OpenSSL rejects would sail past it
+# while EVERY later TLS context fails. `list -tls-groups` applies the system default config.
+echo "=== functional check: TLS 1.3 groups the edited policy offers ==="
+tls_groups="$(openssl list -tls-groups -tls1_3 2>&1 || true)"
+echo "$tls_groups"
+echo "$tls_groups" | grep -q 'SecP256r1MLKEM768' || { echo "FATAL: the edited [crypto_policy] does not yield a usable TLS group list" >&2; exit 1; }

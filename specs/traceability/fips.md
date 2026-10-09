@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 9 |
+| mapped | 10 |
 | unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -19,5 +19,6 @@
 | `req-fips-crypto-bom-source` | Implemented | Tested | — | `req-fips-crypto-bom-source-1`, `req-fips-crypto-bom-source-2`, `req-fips-crypto-bom-source-3` |
 | `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
 | `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
+| `req-fips-pedantic-install` | Implemented | Tested | — | `req-fips-pedantic-install-1`, `req-fips-pedantic-install-2` |
 | `req-fips-pin-currency` | Partial | Tested | — | `req-fips-pin-currency-2`, `req-fips-pin-currency-3`, `req-fips-pin-currency-8` |
 | `req-fips-single-openssl-core` | Implemented | Tested | — | `req-fips-single-openssl-core-1`, `req-fips-single-openssl-core-2`, `req-fips-single-openssl-core-3`, `req-fips-single-openssl-core-4` |
