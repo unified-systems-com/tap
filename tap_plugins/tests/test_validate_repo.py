@@ -108,6 +108,7 @@ def _make_repo(
     *,
     workflows: dict[str, str] | None = None,
     codeowners: dict[str, str] | None = None,
+    extra_files: dict[str, str] | None = None,
 ) -> Path:
     """A package-mode plugin repository root: pyproject + tap_plugin/<slug>/, plus the shell."""
     repo = tmp_path / "tap-plugin-shell-sample"
@@ -128,6 +129,10 @@ def _make_repo(
         for name, content in workflows.items():
             (wf_dir / name).write_text(content)
     for rel, content in (codeowners or {}).items():
+        full = repo / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content)
+    for rel, content in (extra_files or {}).items():
         full = repo / rel
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content)
@@ -165,6 +170,7 @@ class TestOptIn:
             "repo-caller-permissions",
             "repo-nightly-shape",
             "repo-release-lane",
+            "repo-release-please-pair",
             "repo-waiver-ledger",
         }
 
@@ -1821,3 +1827,51 @@ class TestCeilingProbeAndMixedWriters:
         assert check.status == "fail", _messages(check)
         assert "someone/close-stale-issues@main" in _messages(check)
         assert "cannot be established at all" in _messages(check)
+
+
+# ---------------------------------------------------------------------------
+# release-please pair consistency (optional)
+# ---------------------------------------------------------------------------
+
+
+class TestReleasePleasePair:
+    def test_both_absent_warns_and_does_not_fail(self, tmp_path: Path) -> None:
+        check = _check(validate_plugin(_make_repo(tmp_path), repo_scope=True), "repo-release-please-pair")
+        assert check.status == "warn"
+        assert check.details == {"config": False, "manifest": False}
+
+    def test_both_present_and_valid_passes(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            extra_files={
+                "release-please-config.json": '{"release-type": "python", "packages": {".": {}}}',
+                ".release-please-manifest.json": '{".": "0.1.0"}',
+            },
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-please-pair")
+        assert check.status == "pass", _messages(check)
+
+    def test_config_without_manifest_fails(self, tmp_path: Path) -> None:
+        """A half-setup looks, from a directory listing, like release-please is wired up — which
+        is exactly the shape worth failing on rather than warning about."""
+        repo = _make_repo(tmp_path, extra_files={"release-please-config.json": '{"release-type": "python"}'})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-please-pair")
+        assert check.status == "fail", _messages(check)
+        assert "needs both together" in _messages(check)
+
+    def test_manifest_without_config_fails(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path, extra_files={".release-please-manifest.json": '{".": "0.1.0"}'})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-please-pair")
+        assert check.status == "fail", _messages(check)
+
+    def test_unparseable_config_fails(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            extra_files={
+                "release-please-config.json": "{ not json",
+                ".release-please-manifest.json": '{".": "0.1.0"}',
+            },
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-release-please-pair")
+        assert check.status == "fail", _messages(check)
+        assert "does not parse as JSON" in _messages(check)
