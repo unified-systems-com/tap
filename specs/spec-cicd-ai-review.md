@@ -685,6 +685,12 @@ design absorbs a steered verdict rather than pretending to prevent steering.
   alt-text payloads, instruction-like imperatives aimed at reader-agents. A hit does not
   suppress the review — the seats still run, forewarned by the flag — it escalates
   (`req-cicd-ai-review-untrusted-content-7`).
+- **Agent-facing files are flagged by path, deterministically (2026-10-03).** A change to `SKILL.md`,
+  `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.mcp.json`, `.cursorrules`, `copilot-instructions.md`, or
+  anything under `.claude/`, `.cursor/`, `.codex/` or `.github/instructions/`, is a prompt for every
+  future agent session that reads it. The deterministic screen names each such file, so it is
+  reviewed as a prompt, whatever any seat says. This widens the reviewer-config list above from
+  "files that steer *this* review" to "files that steer *any* agent".
 - **Injection is a finding with an out-of-band response path.** A malicious input aimed at the
   reviewers is not an ordinary review finding to be argued down in the PR thread the attacker
   controls: it fails the run red and raises a signal outside the PR conversation, loudly.
@@ -724,6 +730,7 @@ deliberately not engineered around:**
 | req-cicd-ai-review-untrusted-content-4 | Base-Branch Instructions For The Security Seat | Proposed | The seat carrying the malicious-change lens reads its instructions from a location the PR under review cannot edit — the base/default-branch workflow file, not a checked-out file. | Copilot reads head-branch instructions; the harness seats do not. Put the security job on the immune seats. The harness repo (`req-cicd-ai-review-harness-repo`) strengthens this further: instructions live in a repo the PR under review cannot touch at all. |
 | req-cicd-ai-review-untrusted-content-5 | Reviewer-Config Edits Are Findings | Proposed | Every seat's instructions flag any diff touching reviewer or CI configuration as a finding in its own right. | A PR editing its own review must be visible even when the edit looks benign. |
 | req-cicd-ai-review-untrusted-content-6 | Identity Raises Scrutiny, Never Lowers It | Proposed | Reviewer prompts consume author/PR metadata as trust-labeled input; heightened-scrutiny rules key off identity signals, but no identity signal relaxes review depth or severity. | Compromised maintainer = threat #1; a trusted-author shortcut would blind the control exactly where it matters most. |
+| req-cicd-ai-review-untrusted-content-8 | Agent-Facing Files Are Named Deterministically | Proposed | Every changed file matching the agent-facing path list is named in the deterministic screens' output, independent of any model. | unified-ai-review#21 |
 | req-cicd-ai-review-untrusted-content-7 | Injection Attempts Escalate Out-Of-Band | Proposed | Detected injection indicators — from the pre-screen or reported by a seat — fail the run red AND raise a signal outside the PR conversation (a security-labeled alert to the maintainer; a verdict-ledger CONCERN record), never only a PR comment the attacker can argue with. | Malicious inputs get a response path outside the standard PR flow, loud and clear. |
 
 ---
