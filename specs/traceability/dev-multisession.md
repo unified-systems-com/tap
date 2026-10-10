@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
+| mapped | 2 |
 | excluded | 10 |
 | unbuilt | 4 |
 | unaccounted | 1 |
@@ -32,3 +32,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4`, `req-dev-multisession-pr-open-redirect-5` |
+| `req-dev-multisession-session-author-scope` | Implemented | Tested | — | `req-dev-multisession-session-author-scope-1`, `req-dev-multisession-session-author-scope-2`, `req-dev-multisession-session-author-scope-3` |

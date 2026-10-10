@@ -377,7 +377,8 @@ else
 
       gh pr create --head "$BRANCH" --base main \
         --title "$PR_TITLE" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --body "<!-- tap:opened-by=promote-to-main -->
+Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
       PR_NUM="$(promote_pr_number)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."

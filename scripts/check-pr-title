@@ -10,7 +10,10 @@ on remembering is not a boundary" shape `open-a-pr` already names for the promot
 that check for the title.
 
 The bot exemption reuses `scripts/pr_bot_identity`'s allowlist (the SAME derivation `check-dco`
-and `check-issue-link` use) — a bot's PR title is its own convention, not ours to enforce.
+and `check-issue-link` use) — a bot's PR title is its own convention, not ours to enforce. Since
+2026-10-09 the check applies only to the maintainer's session accounts
+(`scripts/pr_session_identity.py`, req-dev-multisession-session-author-scope): an outside
+contributor's title is theirs to write.
 
 Spec: specs/spec-dev-multisession.md (req-dev-multisession-push-workflow).
 
@@ -27,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pr_bot_identity import decide as bot_exempt  # noqa: E402
+from pr_session_identity import OUTSIDE, SessionAuthorsError  # noqa: E402
+from pr_session_identity import decide as session_scope  # noqa: E402
 
 _PROMOTE_PREFIX = "promote: "
 _VIA_SUFFIX = re.compile(r"\[via [^\[\]]+\]$")
@@ -40,14 +45,22 @@ def check(title: str, bot_argv: list[str]) -> tuple[int, str]:
     bot_code, bot_reason = bot_exempt(bot_argv)
     if bot_code == 0:
         return 0, bot_reason
+    # A session title is a convention of the maintainer's agent sessions, not of the project: an
+    # outside contributor has no session to name (req-dev-multisession-session-author-scope).
+    try:
+        verdict, scope_reason = session_scope(bot_argv)
+    except SessionAuthorsError as exc:
+        return 2, f"check-pr-title: {exc}"
+    if verdict == OUTSIDE:
+        return 0, f"check-pr-title: OK — {scope_reason}"
     if title.startswith(_PROMOTE_PREFIX):
         return 0, f"title {title!r} carries session attribution natively (promote PR)"
     if _VIA_SUFFIX.search(title):
         return 0, f"title {title!r} carries a [via <session>] suffix"
     return 1, (
-        f"title {title!r} names no session — append scripts/pr-via's output "
-        '(`gh pr create --title "... $(scripts/pr-via)"`), or use scripts/promote-to-main.sh, '
-        "which carries attribution natively"
+        f"title {title!r} names no session — open it with scripts/promote-to-main.sh (the "
+        "open-a-pr skill), which carries attribution natively, or append scripts/pr-via's output "
+        "to the title"
     )
 
 

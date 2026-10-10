@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""scripts/check-pr-opened-by — a session PR on a session branch was opened by the promote.
+
+`scripts/hooks/pr-open-redirect` refuses a hand-run `gh pr create` in Claude Code, but only there:
+Codex, Cursor, Copilot, `bash -c`, `gh api`, an MCP tool and the web UI all open pull requests it
+never sees. This is the server-side half (req-dev-multisession-session-author-scope-3). The
+promote writes a fixed marker into every pull request body it opens or refreshes; a pull request
+from one of the maintainer's SESSION accounts, from a `session/<name>` branch, without that
+marker, was opened outside the open-a-pr procedure and fails here with the way back.
+
+Who it applies to, deliberately narrow:
+  * the maintainer's session accounts only (`scripts/pr_session_identity.py`, authenticated
+    numeric id + type). An outside contributor never meets this check;
+  * `session/<name>` head branches only — the promote opens only those. A maintainer's spike or
+    hand-opened branch with another name passes, as #1002 did;
+  * presence of the marker, not its content. The promote regenerates the body on every run, but
+    a sign-off rebase pushed by hand fires CI before the promote can refresh the body, and this
+    workflow deliberately has no `edited` trigger, so a SHA bound into the marker would go stale
+    and stay red.
+
+What it is not: security. The marker is text anyone could paste. It catches the honest mistake of
+opening a session PR by hand, which skips the pre-push merge, the derived artifacts, the lane and
+the review watch.
+
+Usage (the pr-title job in .github/workflows/product-lines.yml passes these from the event):
+    scripts/check-pr-opened-by --head-ref <ref> --pr-author-id <n> --pr-author-type <type> \\
+        --pr-author <login>      (the body is read from the PR_BODY environment variable)
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pr_session_identity import OUTSIDE, SessionAuthorsError  # noqa: E402
+from pr_session_identity import decide as session_scope  # noqa: E402
+
+#: The fixed line scripts/promote-to-main.sh and scripts/promote-pr-body write into the body.
+MARKER = "<!-- tap:opened-by=promote-to-main -->"
+SESSION_PREFIX = "session/"
+
+
+def check(head_ref: str, body: str, identity_argv: list[str]) -> tuple[int, str]:
+    if not head_ref:
+        return 0, "check-pr-opened-by: no pull request in this event context — nothing to check"
+    try:
+        verdict, reason = session_scope(identity_argv)
+    except SessionAuthorsError as exc:
+        return 2, f"check-pr-opened-by: {exc}"
+    if verdict == OUTSIDE:
+        return 0, f"check-pr-opened-by: OK — {reason}"
+    if not head_ref.startswith(SESSION_PREFIX):
+        return 0, f"check-pr-opened-by: OK — head {head_ref!r} is not a session/<name> branch; the promote opens only those"
+    if MARKER in body:
+        return 0, f"check-pr-opened-by: OK — {head_ref} was opened through scripts/promote-to-main.sh"
+    return 1, (
+        f"check-pr-opened-by: {head_ref} is a session branch whose PR was opened outside the promote "
+        f"(no {MARKER} in the body). That skips the pre-push merge, the derived artifacts, the lane "
+        "and the review watch. Re-run scripts/promote-to-main.sh from the session worktree (the "
+        "open-a-pr skill): it rewrites this PR's body with the marker and runs the lane."
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = {"--head-ref": "", "--pr-author-id": "", "--pr-author-type": "", "--pr-author": ""}
+    rest = list(argv)
+    for flag in list(args):
+        if flag in rest:
+            i = rest.index(flag)
+            if i + 1 >= len(rest):
+                print(f"check-pr-opened-by: {flag} needs a value", file=sys.stderr)
+                return 2
+            args[flag] = rest[i + 1]
+            del rest[i : i + 2]
+    if rest:
+        print(f"check-pr-opened-by: unexpected argument(s): {' '.join(rest)}", file=sys.stderr)
+        return 2
+    identity = [part for flag in ("--pr-author-id", "--pr-author-type", "--pr-author") for part in (flag, args[flag])]
+    code, reason = check(args["--head-ref"], os.environ.get("PR_BODY", ""), identity)
+    print(reason, file=sys.stderr if code else sys.stdout)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
