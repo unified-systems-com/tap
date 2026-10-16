@@ -80,6 +80,9 @@ Before creating anything, ask the author in one batch:
   during the bootstrap wave** — that skill holds this organisation's plumbing (review shims, plugin-ci
   caller, scanner configs, DCO, release) so it never leaks into the owner-neutral steps here. Another
   organisation supplies its own equivalent.
+- **Does the plugin run a third-party binary** (zizmor, Grype, Syft, anything it does not write)? If yes, the
+  spec needs a binary requirement and Step 6b is the process; ask now, because the route decides what the
+  spec says.
 - **Does this plugin need to run in a FIPS-mode TAP deployment?** Most authors will say no, and that is
   fine: the manifest still declares a `[fips]` posture (the contract is declare-vs-decide, and absent is
   undeclared, not compatible), but you declare what the validator observes and skip the analysis. See the
@@ -278,6 +281,74 @@ The plugin's own spec gains a dcom section listing every node and edge type with
   `aws_core__aws_iam_oidc_provider`); (2) if the end is genuinely open, omit that side and explain it in the
   description (`AFFECTS_RESOURCE__fedramp_20x_ksi`); (3) only then a closed foreign list, declared here with a
   `note` naming it a vocabulary dependency. Worked example: `unified-systems-com/github-core-tap#148`.
+
+## Step 6b: A third-party binary the plugin runs (when Step 1 said yes)
+
+A binary the plugin invokes is a dependency like any other: it has to be pinned, bumped, listed in an SBOM and
+accounted for in the crypto posture. The route you can take decides how much of that is automatic. Read it in
+this order; the first row that fits wins, because **we adopt a tool's own distribution and never roll our own**.
+
+| The tool is published as | Route | The pin lives in | Renovate sees it through | An SBOM lists it through |
+| --- | --- | --- | --- | --- |
+| A PyPI wheel carrying the binary (zizmor) | **A** | `pyproject.toml`: `dependencies = ["tool==X.Y.Z"]` | the fleet preset's `pep621` manager | the wheel's declared requirements, `pkg:pypi/tool@X.Y.Z`, in the plugin's attested release SBOM |
+| A release archive only, no PyPI wheel (Grype) | **B** | `tap_plugin/<slug>/binary.json` | a regex custom manager in the repo's `renovate.json5` | **nothing today**: see the gap below |
+| A container image | **C** | the image digest | the dockerfile or compose manager | not designed; record it as a Backlog requirement and wait for sidecars |
+
+**Route A.** Pin `tool==X.Y.Z` exactly (a range is a defect). The collector finds the binary with
+`shutil.which`, runs `<tool> --version`, and refuses before doing any work when the version is not the pin;
+every run and every finding carries the version that ran. Hand it a scrubbed environment, a fixed argument
+list with no shell, a timeout and a per-run scratch directory. Declare `[fips]` honestly (a Rust or Go binary
+is `uses-nonvalidated`). The requirement and its criteria are `req-zizmor-binary` in zizmor-tap's spec. The
+wheel's own embedded SBOM (PEP 770) is not read by the pinned Syft (observed 2026-09-02, anchore/syft#737); the
+spec says the release lane merges it (tap#302), and whether that landed has not been checked here.
+
+**Route B**, step by step. Each step is a requirement or an acceptance criterion in the plugin's spec, because
+"it is in the code" is not a control:
+1. **A pin file, with a schema.** `binary.json`: the version, and per platform the archive URL, its `sha256`,
+   and the `binary_sha256` of the executable inside it. A `description` on the top level and every entry. The
+   loader checks each URL against the version, so a URL cannot drift from it, and it fails loud on anything
+   else. Never type a digest: a tool copies it from the release's own published checksums file and re-checks
+   it against the downloaded archive.
+2. **An installer, run by an operator, never during a scan.** Standard library only. It refuses a digest
+   mismatch; it refuses an archive carrying a link, a device, an absolute path or a `..` segment even when the
+   digest matches the pin; it extracts one named member with a size cap; it replaces and repoints atomically;
+   and it counts an already-installed binary as installed only when its digest equals `binary_sha256`, so a
+   replaced file does not survive a reinstall.
+3. **The home and the settings are operator files, never read from the grid.** A path or a setting on a
+   user-editable node would let anyone who can edit the node point the collector at another binary, and the
+   version gate cannot catch it because a fake prints the right version. The scanner node may record the
+   path for readers and must never use it.
+4. **Observe the real binary before writing a parser for it.** Run it in a container, read-only and with no
+   network, and put what it printed in the spec (`--version`, any status or JSON shape you will parse). A parser
+   written from the documentation alone is a guess.
+5. **A version gate in the collector**, as in route A, reading `<home>/bin/<tool> --version`.
+6. **`[fips]` is declared honestly, and the spec says nothing verifies it.** An out-of-band binary is neither
+   a shipped file nor a declared dependency, so the crypto-BOM check cannot see it.
+7. **Renovate.** Put a regex custom manager in the repository's `renovate.json5` over the pin file
+   (`github-releases`, the tool's repository as `depNameTemplate`, semver), and give the repository the
+   `tap-plugin` topic so the fleet's bot discovers it. Add a test that the manager's regex matches the shipped
+   pin file. Renovate can move only the version: it cannot compute digests, and the fleet allows one
+   post-upgrade command, so the bump PR is red until the pin tool rewrites the digests. That red PR is the
+   intended state, not a defect. Renovate's own option table marks `customManagers` as mergeable, so the file
+   adds to the fleet preset's managers; that is read from source, not shown by a run.
+8. **Tests that run anywhere.** Plain `unittest` over stdlib-only modules, archives built in memory, every
+   download a fake. Seed a defect into each safety check and watch a test fail; a green suite that cannot fail
+   proves nothing.
+9. **A sandbox, when it exists.** A Landlock plus seccomp wrapper is settled in tap#858 and not built. Record
+   `req-<slug>-sandbox` as a Backlog requirement that fails closed when adopted, and say which interim controls
+   (scrubbed environment, argument list, timeout, output cap) apply meanwhile.
+
+**The SBOM gap for route B, stated plainly (tap#1057).** The plugin's release SBOM is derived from the wheel
+and its declared requirements; a binary an operator step installs is in neither, and images have a supplemental
+mechanism that plugins do not. Until #1057 is decided, **do not claim the binary appears in any SBOM**: record
+it, its version and its digests in the spec's Philosophy provenance and in the pin file, and add the
+declaration the day #1057 defines one. A route-A tool does not have this gap, which is a reason to prefer it.
+
+**Reference implementations.** Route A: zizmor-tap, `specs/spec-zizmor-v0.md` § The Pinned Binary. Route B:
+grype-tap, `specs/spec-grype-v0.md` `req-grype-binary` and `req-grype-database`, and
+`tap_plugin/grype/{binary_pin,installer,pin_tool,settings}.py`, as of grype-tap commit `62dfaa12` (it has no
+release yet). If a second plugin takes route B, extract those modules into `tap_plugins` instead of copying
+them again, and say so in the PR.
 
 ## Step 7: GRIFT seed data
 
