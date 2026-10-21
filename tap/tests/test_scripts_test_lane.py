@@ -117,6 +117,10 @@ def test_jobs_cap_and_reuse_db_are_read_host_side(lane) -> None:
     assert "-n 0" in run("--fast-relevant", extra_env={"TAP_TEST_JOBS": "0"}).stdout  # serial: no per-worker DB build
     assert "--reuse-db" in run("--fast-relevant", extra_env={"TAP_TEST_REUSE_DB": "1"}).stdout
     assert "--reuse-db" not in run("--fast-relevant").stdout
+    # a gate lane never reuses a DB, even when asked
+    gate = run("--gryphon", extra_env={"TAP_TEST_REUSE_DB": "1"})
+    assert "--reuse-db" not in gate.stdout and "ignored" in gate.stderr
+    assert "--reuse-db" in run("tap/tests/test_x.py", extra_env={"TAP_TEST_REUSE_DB": "1"}).stdout
 
 
 @pytest.mark.spec("req-dev-validation-suite-tiers-7")

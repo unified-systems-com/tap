@@ -171,7 +171,15 @@ pytest_args=(-n "${TAP_TEST_JOBS:-auto}")
 # TAP_TEST_REUSE_DB=1 reuses each worker's test DB instead of rebuilding it (pytest-django --reuse-db):
 # under load the per-worker DB build can dominate a small lane. Opt-in — drop it (or pass --create-db)
 # after a migration or model change, or the lane runs against a stale schema.
-[[ "${TAP_TEST_REUSE_DB:-0}" == "1" ]] && pytest_args+=(--reuse-db)
+if [[ "${TAP_TEST_REUSE_DB:-0}" == "1" ]]; then
+  # Only the scoped promote lane and focused runs may reuse DBs: the full, --gryphon, --fast and bare
+  # lanes are gates (or the promote's fallback authority) and always build a fresh schema.
+  if [[ "$gryphon_mode" == "relevance" || $# -gt 0 ]]; then
+    pytest_args+=(--reuse-db)
+  else
+    echo "scripts/test: TAP_TEST_REUSE_DB ignored — this lane is a gate and builds a fresh test DB." >&2
+  fi
+fi
 
 # Allocate a TTY when run interactively (colours, live output); use -T when piped
 # or run under automation (the promote gate) so it does not require one.
