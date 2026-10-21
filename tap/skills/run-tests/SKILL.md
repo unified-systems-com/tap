@@ -77,7 +77,8 @@ profile without `gryphon_playground` it goes RED with nothing actually failing; 
 
 **Stopping the lane means merging by hand or re-arming:** the promote arms auto-merge only after its
 local lane is green (`req-dev-multisession-promote-script-4a`), so a stopped lane leaves the PR open
-and unarmed until the human merges it, or you re-run the promote, or the human arms it. A green but
+and unarmed until the human merges it, or you re-run the promote, or the human arms it. Tell the human
+plainly: "the lane was stopped, so auto-merge is not armed; the server gate decided — merge by hand". A green but
 unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that way).
 
 **A core change can break a plugin's own tests** that only that plugin's suite sees (the playground
@@ -94,13 +95,17 @@ that merge there), push, and read the plugin's CI (if it has any).
 
 ## 4. How: rules for a shared machine
 
+0. **Name the branch for the change.** The promote needs a `session/<name>` branch; a leftover name from
+   the last task misleads every reader of the PR. Rename it before the first commit:
+   `git branch -m session/<new-name>`.
 1. **One heavy run per stack.** Never start a second pytest while one is running in the same stack.
    A polling "is pytest running?" check is NOT reliable: it fires in the gap between two plugin
    suites, which is how a subagent's run overlapped a lane on 2026-10-21. `scripts/test` and
    `scripts/pytest-serial <pytest args>` take one lock per stack, so a second run WAITS and names the
    holder (`python -m tap.pytest_lock status` shows it). Hand-typed `scripts/dc exec ... pytest` does
    not take it: for anything bigger than a file or two, and from parallel subagents, use
-   `scripts/pytest-serial`.
+   `scripts/pytest-serial`. If you spawn subagents that run tests, say so in each brief: they use
+   `scripts/pytest-serial` and never poll `ps` for a running pytest.
 2. **Cap parallelism.** Export `TAP_TEST_JOBS=3` for any `scripts/test` (the promote already does); a single file needs `-n0`
    (bare `-n auto` adds a per-worker DB build that costs more than the test). Under load each xdist
    worker builds and migrates its own test DB, which can dominate a small lane — when the load
@@ -119,6 +124,25 @@ that merge there), push, and read the plugin's CI (if it has any).
 8. **Plugin CI is slow and review rounds multiply it.** A plugin's server-side boot-and-test took 4–5
    minutes per push, and AI-review rounds meant 4–5 pushes per PR. One local plugin lane before each
    push (rule 3, the short-lane form) is what saves the CPU there.
+
+## 4b. A plugin PR (no promote)
+
+Most PRs in plugin repos are opened by hand with `gh`, so this is its own short path:
+
+1. Branch from the plugin repo's latest `main`. Run tests **from the core root**, never `uv run` inside
+   the plugin clone: it creates a stray `.venv` and `uv.lock` that make the manifest tests fail.
+2. `scripts/test --fast-relevant --no-core --plugins <slug>` (serial, under the lock), or
+   `scripts/pytest-serial _dev-plugins/<slug> -q -p no:xdist`. If you edited grift batches, re-import
+   them with `import_plugin_grift --force-batches` first (an edited batch is skipped on a plain boot).
+3. Check `git log -1 --format=%B`: the `Signed-off-by` trailer comes from the repo's commit hook, which a
+   plugin clone may not have installed. A commit without it fails the `dco` job.
+4. Open the PR by hand (`gh pr create` is allowed in plugin repos), merge `origin/main` first, then read
+   the checks. Some plugin repos report **no checks and no AI review at all** (`rampart-20x-playground-tap`
+   today): there the local plugin suite is the only gate.
+5. **`scripts/pr-review-triage` reads only the core repo for now** (it has no `--repo` flag), so on a
+   plugin PR it reports a different PR's reviews, or none. Read a plugin PR directly:
+   `gh pr view <n> --repo <owner/plugin-repo> --json reviews,comments` and
+   `gh api repos/<owner/plugin-repo>/pulls/<n>/comments`.
 
 ## 5. Stopping a lane
 
