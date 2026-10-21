@@ -192,23 +192,45 @@ watcher was exactly that. The repo's standard watcher is the one to arm (`open-a
 1. **Arm it as a Monitor, on open and after every push** (a push is a new head), from a trusted
    checkout of the upstream repo, never the PR's own branch worktree:
 
-       scripts/pr-review-triage <pr> --watch 300
+       scripts/pr-review-triage <pr> --watch 60     # first ten minutes; then --watch 300 (step 2)
 
    It emits one line per event: `CHECKFAIL` the moment an individual check fails (a Sonar, Codacy or
    lane red is workable before the whole run ends), `CONFLICT` when the base moves, reviews and bot
    comments, and every merge-state change. At most two watchers at once; stop one when its PR merges.
-2. **On a `CHECKFAIL`, work it in this order:**
+2. **Poll fast right after a push, then slow down.** A check that fails in six seconds should not wait
+   five minutes to be noticed: arm `--watch 60` for the first ten minutes after each push or open, then
+   re-arm at `--watch 300`. Keep to two watchers at once (three hit GitHub's secondary burst limit).
+3. **On a `CHECKFAIL`, act at once — do not wait for the other jobs.** A failed required check already
+   blocks the merge, so the rest of the run only spends runner minutes. In this order:
    - Read the failure itself (`gh run view <run> --log-failed`, or the check's annotations for Codacy;
      SonarCloud's PR issues are public at `sonarcloud.io/api/issues/search?...&pullRequest=<n>`).
      Do not guess from the check's name.
    - Match it against section 6. An infrastructure red (CI boot, DNS, OOM, stale cache) is
      `gh run rerun <id> --failed`, nothing else.
-   - A code red: fix it on the PR branch, run the targeted tests and the guard trio (section 1), push,
-     and re-arm the watcher.
-3. **Stop after two failed rounds** on the same red and say what you tried: a third guess is the
+   - A code or metadata red: fix it, run the targeted tests and the guard trio (section 1), then start the
+     new run (below), and re-arm the watcher.
+   - **You do not need to cancel the old run.** The workflow has a `concurrency` group per ref with
+     `cancel-in-progress: true` (`product-lines.yml`), so the new run cancels the one still going. The
+     fix that starts a new run IS the kill-and-restart.
+4. **How to start the new run depends on what failed.**
+   - A code, spec or lint fix: commit and push (a new head, a new `pull_request` run).
+   - **The PR title** (`pr-title` fails in seconds): `gh pr edit <n> --title "..."` alone does NOT re-run
+     it. `pull_request` is deliberately not triggered on `edited` (a title edit would skip every job and
+     turn a healthy PR permanently red), and a re-run of the failed job reuses the original event's
+     frozen title. So after editing the title, close and reopen the PR (`gh pr close <n> && gh pr reopen
+     <n>`) to get a fresh run. This is read from the workflow's comments, not yet exercised; confirm on the
+     first real title failure.
+   - A failed `dco` or `check-issue-link` needs a rewritten commit, which is a force-push: that is
+     NOT in the list below. Tell the human.
+5. **Actions you may take on your own PR without asking:** edit its title or body, close/reopen it, re-run
+   failed jobs, push a new commit to its own branch. **Not without the human:** force-push or amend, merge
+   or approve, arm or disarm auto-merge on someone else's PR, change a ruleset or a required check, push to a
+   PR you did not open. A local promote lane that is still running must finish first: an edit mid-lane
+   voids its verdict.
+6. **Stop after two failed rounds** on the same red and say what you tried: a third guess is the
    expensive one. A red the author cannot fix (a required review, a ruleset, a permission) goes to the
    human, not around them.
-4. **What this does and does not do.** The Monitor wakes the session that armed it; a session that has
+7. **What this does and does not do.** The Monitor wakes the session that armed it; a session that has
    ended will not act on a later red. Nothing here starts work unattended. An always-on watcher that
    opens or resumes a session on red is a larger design (a scheduled or remote trigger), not built.
 
