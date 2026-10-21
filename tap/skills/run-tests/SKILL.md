@@ -82,7 +82,7 @@ unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that wa
 
 **A core change can break a plugin's own tests** that only that plugin's suite sees (the playground
 suites pin `tap_web` / `tap_viz` behaviour), because the server's `core_ci` is fixtures-only. The scoped
-lane does not run them unless you ask: `scripts/test --fast-relevant --plugins <slug>[,<slug>]` adds the named installed suites (an uninstalled slug is refused, not skipped); add `--no-core` for just those suites, under the lock, without paying for the core walk. For a plugin repo with no CI of its own this one command is the gate. See the `tap_viz` / `tap_web` row in section 1.
+lane does not run them unless you ask: `scripts/test --fast-relevant --plugins <slug>[,<slug>]` adds the named installed suites (an uninstalled slug is refused, not skipped); `--plugins auto` adds the suites the diff can reach — plugins that import the changed core code, plus those whose tests declare `PINS_CORE_SURFACES = ("tap_viz/static", ...)` for coupling that has no import edge (it is a conservative guess, not a proof: over-selecting by app, blind to anything neither imported nor declared); add `--no-core` for just those suites, under the lock, without paying for the core walk. For a plugin repo with no CI of its own this one command is the gate. See the `tap_viz` / `tap_web` row in section 1.
 
 **A plugin PR is a different path.** A plugin repo has no promote; its PRs are opened by hand with
 `gh`. Run the targeted tests from the core root, run your own plugin's suite with

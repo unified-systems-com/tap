@@ -24,6 +24,7 @@
 #   scripts/test --fast-relevant  The PROMOTE lane: core walk + the corpus when the diff touches
 #                           the executor footprint, and NO other plugin suite (tap#1092).
 #   scripts/test --fast-relevant --plugins a,b [--no-core]   ALSO run those installed plugin suites
+#                           (`auto` = the suites this diff can reach: imports + declared pins).
 #                           (--no-core: skip the core walk, just those suites).
 #   scripts/test --stop     Stop the run holding this stack's pytest lock (whole process group).
 #   scripts/test <args...>  Extra args pass through to pytest, e.g.
@@ -94,10 +95,32 @@ while [[ "${1:-}" == "--plugins" || "${1:-}" == --plugins=* || "${1:-}" == "--no
   fi
 done
 
+# `--plugins auto`: add the installed plugin suites this diff can reach, derived from each plugin's
+# imports of the changed core code plus the surfaces its tests declare they pin (tap/impacted_plugins.py,
+# req-dev-validation-suite-tiers-8). The reasons print; explicit slugs are kept alongside.
+named_plugins=()
+want_auto=0
+for slug in ${extra_plugins[@]+"${extra_plugins[@]}"}; do
+  if [[ "$slug" == "auto" ]]; then want_auto=1; else named_plugins+=("$slug"); fi
+done
+if [[ "$want_auto" -eq 1 ]]; then
+  auto_base="$(git merge-base HEAD origin/main 2>/dev/null || true)"
+  if [[ -z "$auto_base" ]]; then
+    echo "scripts/test: --plugins auto needs a merge-base with origin/main to know what changed." >&2
+    exit 2
+  fi
+  auto_changed="$( { git diff --name-only "$auto_base"; git ls-files --others --exclude-standard; } | sort -u )"
+  auto_found="$(printf '%s\n' "$auto_changed" | scripts/dc exec -T web uv run python -m tap.impacted_plugins)"
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] && named_plugins+=("$slug")
+  done <<< "$auto_found"
+fi
+extra_plugins=(${named_plugins[@]+"${named_plugins[@]}"})
+
 if [[ "$no_core" -eq 1 && ${#extra_plugins[@]} -eq 0 ]]; then
   # --no-core means "just these plugin suites". With none named the corpus may still be added by the
   # relevance gate below, but an empty lane must never be a green one.
-  echo "scripts/test: --no-core needs --plugins <slug> (otherwise the lane could run no tests and still exit 0)." >&2
+  echo "scripts/test: --no-core needs at least one plugin suite: --plugins <slug>, or --plugins auto when the diff reaches one (otherwise the lane could run no tests and still exit 0)." >&2
   exit 2
 fi
 
