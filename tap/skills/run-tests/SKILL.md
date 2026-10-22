@@ -42,9 +42,15 @@ Times are what this repo's suites took on a loaded machine in the session that w
 | Gryphon (`tap_grid/`, `tap_api/routers/gryphon.py`) | `-k gryphon` under `tap_grid/tests` (~80 s), plus the effect/temporal files | the corpus, unless you touched the executor |
 | A plugin | that plugin's tests via `--pyargs <package>.tests`, scoped with `-k` or one file (Gridkin corpus + internals ~4 min), run from the core root | the plugin repo's CI, which boots core `main` — **if it has CI** (see below) |
 | `tap_viz/static`, `tap_web` templates or validation, panel schemas | the guard trio, then the demo project plugin's suite: `scripts/test --fast-relevant --plugins <slug>` (or `scripts/pytest-serial _dev-plugins/<slug> -q -p no:xdist`) (2.5 min unloaded, 12–16 min at load ~15) — playground suites pin this behaviour and core PRs #1089/#1091 each needed playground test edits | the lane |
+| A UI change you need to see rendered | the ORM is write-guarded from a shell (`UnguardedOperation`), so you cannot create a throwaway page there. Reported to work (rampart-pg, #1100): a Playwright `page.route` rewrite of the served HTML, or importing a throwaway GRIFT batch and removing it with a `deletes` batch | — |
 | Runtime JavaScript (`tap_viz`) | the JS harness on the HOST with a Node that has cytoscape — the container has neither, so the JS behaviour tests SKIP there. A green container run is not JS tested | — |
 | A model or migration | the app's tests with `--create-db` (the test DB may be stale), and check `makemigrations --check` | the lane |
 | Scripts / hooks | `bash -n`, then the script's own test file | the lane |
+
+**The demo plugin's clone is on someone else's branch.** The playground clone may be on another agent's
+feature branch with uncommitted work, so do not run its suite there and do not disturb it. Run it from a
+clean checkout of the plugin's `main` (a second worktree), or skip it and SAY SO in the PR body ("demo
+suite not run: clone busy; run on main after merge") so the gap is visible instead of silent.
 
 **Plugins without CI.** Some plugin repos report no checks on any PR (`rampart-20x-playground-tap` today). For them "leave it to the plugin's CI" means nothing runs, so the local plugin suite is the only gate: run it. Check `gh pr checks` on a recent PR before relying on a plugin's CI.
 
