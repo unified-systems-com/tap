@@ -90,8 +90,9 @@ slugs from the boot record, and plain-word queries. The script refuses anything 
    it, and do not run a query to see what a field holds. If the reporter pastes a value, leave it out.
 
 5. **Gather the environment.** `scripts/bug-report facts` prints the allowlisted facts and nothing
-   else: TAP version, boot profile kind, plugins (ours with slug, rev and commit; anyone else only as
-   third-party with a rev), host OS and architecture, Docker and Compose versions. Do not read `.env`,
+   else: TAP version, boot profile kind, plugins (ours with slug, rev and commit; plugins from anyone
+   else are never listed, only a single yes-or-no flag that some are in use, so the report cannot
+   show how many there are or what they are called), host OS and architecture, Docker and Compose versions. Do not read `.env`,
    `.env.local` or anything under the secrets store; they hold the instance's hostnames and
    credentials, which is why they are excluded rather than filtered. Health output is optional:
    the reporter runs the health check themselves and pastes its text, which is added only after it

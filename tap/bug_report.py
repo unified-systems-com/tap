@@ -362,24 +362,35 @@ def _owner_name(url: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def _enabled_plugins(record: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in (record.get("install") or {}).get("plugins", []) if p.get("enabled", True) is not False]
+
+
+def _is_ours(plugin: dict[str, Any]) -> bool:
+    parsed = _owner_name((plugin.get("source") or {}).get("url", ""))
+    return parsed is not None and parsed[0] == OUR_ORG
+
+
 def plugin_facts(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """The plugin list for the report: ours with slug, rev and commit; anyone else only as third-party with rev."""
-    out: list[dict[str, Any]] = []
-    for plugin in (record.get("install") or {}).get("plugins", []):
-        if plugin.get("enabled", True) is False:
-            continue
-        source = plugin.get("source") or {}
-        parsed = _owner_name(source.get("url", ""))
-        ours = parsed is not None and parsed[0] == OUR_ORG
-        out.append(
-            {
-                "third_party": not ours,
-                "slug": plugin.get("slug") if ours else None,
-                "rev": source.get("rev") or "unknown",
-                "commit": source.get("commit") if ours else None,
-            }
-        )
-    return out
+    """The plugin list for the report: only plugins sourced from unified-systems-com, with slug, rev and commit.
+
+    A plugin from anywhere else is not listed at all, not even as a blank entry, so the list's
+    length never reveals how many third-party plugins the reporter runs.
+    """
+    return [
+        {
+            "slug": plugin.get("slug"),
+            "rev": (plugin.get("source") or {}).get("rev") or "unknown",
+            "commit": (plugin.get("source") or {}).get("commit"),
+        }
+        for plugin in _enabled_plugins(record)
+        if _is_ours(plugin)
+    ]
+
+
+def third_party_plugins_in_use(record: dict[str, Any]) -> bool:
+    """One flag, no count: is any enabled plugin sourced from outside unified-systems-com?"""
+    return any(not _is_ours(plugin) for plugin in _enabled_plugins(record))
 
 
 def route_target(record: dict[str, Any], plugin_slug: str | None) -> tuple[str, str]:
@@ -678,6 +689,7 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
                     "tap_version": core_tap_version(),
                     "profile_kind": record.get("profile_kind", "unknown"),
                     "plugins": plugin_facts(record),
+                    "third_party_plugins_in_use": third_party_plugins_in_use(record),
                     "os": args.os,
                     "arch": args.arch,
                     "docker_version": args.docker,

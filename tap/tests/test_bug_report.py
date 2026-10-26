@@ -55,9 +55,9 @@ def sample_answers() -> dict[str, Any]:
             "tap_commit": "0123456789abcdef0123456789abcdef01234567",
             "profile_kind": "dev_local",
             "plugins": [
-                {"third_party": False, "slug": "grid_fixtures", "rev": "v0.3.1", "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"},
-                {"third_party": True, "slug": None, "rev": "v1.2.0", "commit": None},
+                {"slug": "grid_fixtures", "rev": "v0.3.1", "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"},
             ],
+            "third_party_plugins_in_use": True,
         },
         "failing_operation": "Gryphon execute with two WHERE clauses",
         "failing_shape": {
@@ -276,20 +276,55 @@ def test_a_third_party_plugins_slug_and_repository_names_are_caught() -> None:
     assert not br.tripwire("plugin grid_fixtures at v1\n", deny)
 
 
+def _record(*third_party_repos: str) -> dict[str, Any]:
+    plugins: list[dict[str, Any]] = [
+        {"slug": "grid_fixtures", "source": {"url": "https://github.com/unified-systems-com/grid-fixtures-tap", "rev": "v1", "commit": "b" * 40}}
+    ]
+    for i, repo in enumerate(third_party_repos):
+        plugins.append({"slug": f"private_plugin_{i}", "source": {"url": f"https://github.com/{repo}", "rev": f"v9.{i}", "commit": "c" * 40}})
+    return {"install": {"plugins": plugins}}
+
+
 @pytest.mark.spec("req-dev-bugreport-environment-1")
-def test_a_third_party_plugin_appears_only_as_third_party_with_its_rev() -> None:
-    record = {
-        "install": {
-            "plugins": [
-                {"slug": "billing_sync", "source": {"url": f"https://github.com/{THIRD_PARTY_REPO}", "rev": "v2", "commit": "a" * 40}},
-                {"slug": "grid_fixtures", "source": {"url": "https://github.com/unified-systems-com/grid-fixtures-tap", "rev": "v1", "commit": "b" * 40}},
-            ]
-        }
-    }
-    facts = br.plugin_facts(record)
-    assert facts[0] == {"third_party": True, "slug": None, "rev": "v2", "commit": None}
-    assert facts[1] == {"third_party": False, "slug": "grid_fixtures", "rev": "v1", "commit": "b" * 40}
-    assert "billing" not in json.dumps(facts) and "acme" not in json.dumps(facts)
+def test_third_party_plugins_are_never_listed_only_a_flag_says_some_are_in_use() -> None:
+    record = _record(THIRD_PARTY_REPO, "other-org/other-plugin-tap")
+    assert br.plugin_facts(record) == [{"slug": "grid_fixtures", "rev": "v1", "commit": "b" * 40}]
+    assert br.third_party_plugins_in_use(record) is True
+    assert br.third_party_plugins_in_use(_record()) is False
+    disabled = _record(THIRD_PARTY_REPO)
+    disabled["install"]["plugins"][1]["enabled"] = False
+    assert br.third_party_plugins_in_use(disabled) is False
+    shown = json.dumps(br.plugin_facts(record))
+    assert "billing" not in shown and "acme" not in shown and "v9." not in shown and "private_plugin" not in shown
+
+
+def _report_for(record: dict[str, Any]) -> str:
+    answers = sample_answers()
+    answers["versions"]["plugins"] = br.plugin_facts(record)
+    answers["versions"]["third_party_plugins_in_use"] = br.third_party_plugins_in_use(record)
+    return build_report(answers)
+
+
+@pytest.mark.spec("req-dev-bugreport-environment-1")
+def test_two_and_five_third_party_plugins_render_byte_identical_reports() -> None:
+    two = _report_for(_record("org-a/plugin-a-tap", "org-b/plugin-b-tap"))
+    five = _report_for(_record(*(f"org-{i}/plugin-{i}-tap" for i in range(5))))
+    one = _report_for(_record("org-z/plugin-z-tap"))
+    assert two == five == one, "a report must not reveal how many third-party plugins are installed"
+    assert '"third_party_plugins_in_use": true' in two
+    assert "private_plugin" not in two and "v9." not in two
+
+
+@pytest.mark.spec("req-dev-bugreport-environment-1")
+def test_count_control_a_placeholder_entry_per_third_party_plugin_is_detected() -> None:
+    """Positive control: the old shape (one blank entry per third-party plugin) makes the two reports differ."""
+
+    def leaky(record: dict[str, Any]) -> str:
+        answers = sample_answers()
+        answers["versions"]["plugins"] = br.plugin_facts(record) + [{"slug": "x", "rev": "unknown", "commit": None} for _ in record["install"]["plugins"][1:]]
+        return build_report(answers)
+
+    assert leaky(_record("a-org/a-tap", "b-org/b-tap")) != leaky(_record(*(f"o{i}/p{i}-tap" for i in range(5))))
 
 
 @pytest.mark.spec("req-dev-bugreport-tripwire-1")
