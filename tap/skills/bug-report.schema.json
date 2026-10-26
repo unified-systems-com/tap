@@ -44,25 +44,74 @@
     "versions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "tap_version", "profile_kind", "plugins"],
+      "required": [
+        "description",
+        "tap_version",
+        "profile_kind",
+        "plugins"
+      ],
       "description": "The versions and commits the failure was seen at; `submit-a-fix` reproduces at these commits and again at main (req-dev-bugfix-reproduce-2).",
       "properties": {
-        "description": {"type": "string", "minLength": 1, "description": "What this object holds: the TAP and plugin versions of the reporter's install."},
-        "tap_version": {"type": "string", "minLength": 1, "description": "The TAP core version or image tag the reporter runs, from the running install and never from an env file."},
-        "tap_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$", "description": "The core commit, when the reporter runs from a git checkout; null when only a release or image tag is known."},
-        "profile_kind": {"type": "string", "minLength": 1, "description": "The boot profile's `profile_kind`, one of the environment allowlist's fixed sources (req-dev-bugreport-environment)."},
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the TAP and plugin versions of the reporter's install."
+        },
+        "tap_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The TAP core version or image tag the reporter runs, from the running install and never from an env file."
+        },
+        "tap_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "The core commit, when the reporter runs from a git checkout; null when only a release or image tag is known."
+        },
+        "profile_kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The boot profile's `profile_kind`, one of the environment allowlist's fixed sources (req-dev-bugreport-environment)."
+        },
         "plugins": {
           "type": "array",
           "description": "Every installed plugin from the boot record. A plugin sourced outside unified-systems-com appears only as third-party with its rev; its slug and repository are never written (req-dev-bugreport-environment).",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["third_party", "slug", "rev", "commit"],
+            "required": [
+              "third_party",
+              "slug",
+              "rev",
+              "commit"
+            ],
             "properties": {
-              "third_party": {"type": "boolean", "description": "True when the plugin's source URL is outside unified-systems-com; its slug is then null because the slug and repository may be private."},
-              "slug": {"type": ["string", "null"], "description": "The plugin slug for a unified-systems-com plugin; null for a third-party plugin."},
-              "rev": {"type": "string", "minLength": 1, "description": "The `rev` the boot record installed the plugin at (a tag or ref)."},
-              "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$", "description": "The `commit` the boot record names for a unified-systems-com plugin; null for a third-party plugin."}
+              "third_party": {
+                "type": "boolean",
+                "description": "True when the plugin's source URL is outside unified-systems-com; its slug is then null because the slug and repository may be private."
+              },
+              "slug": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The plugin slug for a unified-systems-com plugin; null for a third-party plugin."
+              },
+              "rev": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The `rev` the boot record installed the plugin at (a tag or ref)."
+              },
+              "commit": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{7,40}$",
+                "description": "The `commit` the boot record names for a unified-systems-com plugin; null for a third-party plugin."
+              }
             }
           }
         }
@@ -76,26 +125,70 @@
     "failing_shape": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "node_types", "edge_types", "fields"],
+      "required": [
+        "description",
+        "node_types",
+        "edge_types",
+        "fields"
+      ],
       "description": "The shape that fails: which node and edge types, which fields, which relationships, as types, field names, cardinalities and value forms. Never values (req-dev-bugreport-synthetic-1, -7).",
       "properties": {
-        "description": {"type": "string", "minLength": 1, "description": "What this object holds: the failing shape, without values."},
-        "node_types": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Slugs of the node types involved."},
-        "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Slugs of the edge types involved."},
-        "cardinalities": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Relationship counts that matter, as words, for example `one repository, many packages`."},
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the failing shape, without values."
+        },
+        "node_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Slugs of the node types involved."
+        },
+        "edge_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Slugs of the edge types involved."
+        },
+        "cardinalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Relationship counts that matter, as words, for example `one repository, many packages`."
+        },
         "fields": {
           "type": "array",
-          "description": "Each field in the shape with its classification, the table the reporter reviewed (req-dev-bugreport-synthetic-2, -3).",
+          "description": "Each field in the failing shape by name and value form, never by value (req-dev-bugreport-synthetic-7).",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["type", "field", "form", "sensitive", "judgement"],
+            "required": [
+              "type",
+              "field",
+              "form"
+            ],
             "properties": {
-              "type": {"type": "string", "minLength": 1, "description": "The node or edge type slug the field belongs to."},
-              "field": {"type": "string", "minLength": 1, "description": "The field name as the published schema spells it."},
-              "form": {"type": "string", "minLength": 1, "description": "The value's form, never the value: for example `uuid`, `ipv4 address`, `email`, `free text`, `non-negative integer`."},
-              "sensitive": {"type": "boolean", "description": "True when a real value would identify the reporter, their organisation, infrastructure or a person, or would grant access. A field with no published description is always true (req-dev-bugreport-synthetic-3)."},
-              "judgement": {"type": "string", "minLength": 1, "description": "Why the field was judged as it was, quoting the schema's own description, or stating that none is published (a schema gap)."}
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The node or edge type slug the field belongs to."
+              },
+              "field": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The field name as the published schema spells it."
+              },
+              "form": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The value's form, never the value: for example `uuid`, `ipv4 address`, `email`, `free text`, `non-negative integer`."
+              }
             }
           }
         }
@@ -104,56 +197,138 @@
     "steps": {
       "type": "array",
       "minItems": 1,
-      "items": {"type": "string", "minLength": 1},
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "The ordered steps that reproduce the failure, each in the reporter's words or TAP vocabulary, with no instance values."
     },
     "expected": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["summary"],
+      "required": [
+        "summary"
+      ],
       "description": "What should have happened.",
       "properties": {
-        "summary": {"type": "string", "minLength": 1, "description": "The expected result in words, typed by the reporter or passed through the tripwire."},
-        "count": {"type": ["integer", "null"], "minimum": 0, "description": "The expected row, node or message count where the result is a count; null otherwise."}
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The expected result in words, typed by the reporter or passed through the tripwire."
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "The expected row, node or message count where the result is a count; null otherwise."
+        }
       }
     },
     "actual": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["summary"],
+      "required": [
+        "summary"
+      ],
       "description": "What happened instead.",
       "properties": {
-        "summary": {"type": "string", "minLength": 1, "description": "The actual result in words: an error class and message template with its values removed, or what was seen."},
-        "count": {"type": ["integer", "null"], "minimum": 0, "description": "The actual row, node or message count where the result is a count; null otherwise."}
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The actual result in words: an error class and message template with its values removed, or what was seen."
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "The actual row, node or message count where the result is a count; null otherwise."
+        }
       }
     },
     "synthetic_data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["included", "reproduced"],
+      "required": [
+        "included",
+        "reproduced"
+      ],
       "description": "Whether the report carries a synthetic dataset and whether it reproduced. Version 0 carries none (req-dev-bugreport-synthetic-7).",
       "properties": {
-        "included": {"const": false, "description": "Always false in version 0: no GRIFT document and no dataset travel with the report."},
-        "reproduced": {"const": false, "description": "Always false in version 0: with no dataset there is nothing that reproduced on synthetic data, and the disclosure line says so."}
+        "included": {
+          "const": false,
+          "description": "Always false in version 0: no GRIFT document and no dataset travel with the report."
+        },
+        "reproduced": {
+          "const": false,
+          "description": "Always false in version 0: with no dataset there is nothing that reproduced on synthetic data, and the disclosure line says so."
+        }
       }
     },
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "run_mode", "os", "arch", "docker_version", "compose_version"],
+      "required": [
+        "description",
+        "run_mode",
+        "os",
+        "arch",
+        "docker_version",
+        "compose_version"
+      ],
       "description": "Environment facts drawn only from the fixed allowlist of sources (req-dev-bugreport-environment).",
       "properties": {
-        "description": {"type": "string", "minLength": 1, "description": "What this object holds: the environment allowlist's facts."},
-        "run_mode": {"enum": ["Published images via docker compose", "Development session (scripts/spawn-session.sh)", "Locally built images", "Other / not sure"], "description": "How TAP is being run: the bug issue form's own dropdown."},
-        "os": {"type": "string", "minLength": 1, "description": "The host operating system."},
-        "arch": {"type": "string", "minLength": 1, "description": "The host architecture."},
-        "docker_version": {"type": "string", "minLength": 1, "description": "The Docker engine version."},
-        "compose_version": {"type": "string", "minLength": 1, "description": "The Docker Compose version."},
-        "health_output": {"type": ["string", "null"], "description": "The text `manage.py health` printed, after it passed the tripwire; null when not attached."}
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the environment allowlist's facts."
+        },
+        "run_mode": {
+          "enum": [
+            "Published images via docker compose",
+            "Development session (scripts/spawn-session.sh)",
+            "Locally built images",
+            "Other / not sure"
+          ],
+          "description": "How TAP is being run: the bug issue form's own dropdown."
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The host operating system."
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The host architecture."
+        },
+        "docker_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Docker engine version."
+        },
+        "compose_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Docker Compose version."
+        },
+        "health_output": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The text `manage.py health` printed, after it passed the tripwire; null when not attached."
+        }
       }
     },
     "anything_else": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Free text the reporter chose to add. It passes the tripwire like everything else (req-dev-bugreport-environment)."
     }
   }

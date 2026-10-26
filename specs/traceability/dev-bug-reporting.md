@@ -20,5 +20,5 @@
 | `req-dev-bugreport-environment` | Proposed | Tested | — | `req-dev-bugreport-environment-1`, `req-dev-bugreport-environment-2` |
 | `req-dev-bugreport-route` | Proposed | Tested | — | `req-dev-bugreport-route-1`, `req-dev-bugreport-route-2`, `req-dev-bugreport-route-3`, `req-dev-bugreport-route-4`, `req-dev-bugreport-route-5` |
 | `req-dev-bugreport-shape` | Proposed | Tested | — | `req-dev-bugreport-shape-1`, `req-dev-bugreport-shape-2`, `req-dev-bugreport-shape-3`, `req-dev-bugreport-shape-4` |
-| `req-dev-bugreport-synthetic` | Proposed | Tested | — | `req-dev-bugreport-synthetic-1`, `req-dev-bugreport-synthetic-2`, `req-dev-bugreport-synthetic-3`, `req-dev-bugreport-synthetic-7` |
+| `req-dev-bugreport-synthetic` | Proposed | Tested | — | `req-dev-bugreport-synthetic-1`, `req-dev-bugreport-synthetic-7`, `req-dev-bugreport-synthetic-8` |
 | `req-dev-bugreport-tripwire` | Proposed | Verified | `tripwire` | `req-dev-bugreport-tripwire-1`, `req-dev-bugreport-tripwire-2`, `req-dev-bugreport-tripwire-3`, `req-dev-bugreport-tripwire-4` |

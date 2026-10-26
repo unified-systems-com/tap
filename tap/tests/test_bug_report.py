@@ -65,7 +65,7 @@ def sample_answers() -> dict[str, Any]:
             "edge_types": ["pg_edge"],
             "cardinalities": ["one node, many edges"],
             "fields": [
-                {"type": "pg_node", "field": "name", "form": "free text", "sensitive": True, "judgement": "no published description: sensitive, a schema gap"}
+                {"type": "pg_node", "field": "name", "form": "free text"}
             ],
         },
         "steps": ["Open the Gryphon console", "Run a query with two WHERE clauses", "Observe the result"],
@@ -219,7 +219,7 @@ def test_an_instance_value_planted_in_any_free_text_blocks_the_send(where: str) 
     else:
         answers[where] = f"{answers[where]} {INSTANCE_VALUE}"
     text = build_report(answers)
-    deny = br.build_deny_list({}, [INSTANCE_VALUE])
+    deny = br.build_deny_list({}, hostnames=[INSTANCE_VALUE])
     hits = br.tripwire(text, deny)
     assert hits and all(h.match == INSTANCE_VALUE for h in hits)
 
@@ -230,8 +230,8 @@ def test_an_instance_value_planted_in_any_free_text_blocks_the_send(where: str) 
 @pytest.mark.spec("req-dev-bugreport-tripwire-1")
 def test_a_planted_instance_value_is_caught_and_named_with_its_line() -> None:
     text = "line one\nsee " + INSTANCE_VALUE.upper() + " here\nline three\n"
-    hits = br.tripwire(text, br.build_deny_list({}, [INSTANCE_VALUE]))
-    assert [(h.line, h.kind, h.match) for h in hits] == [(2, "sensitive field value", INSTANCE_VALUE)]
+    hits = br.tripwire(text, br.build_deny_list({}, hostnames=[INSTANCE_VALUE]))
+    assert [(h.line, h.kind, h.match) for h in hits] == [(2, "instance hostname", INSTANCE_VALUE)]
     assert "line 2" in br.format_hits(hits)
 
 
@@ -251,7 +251,7 @@ def test_the_allow_marker_cannot_switch_the_credential_scan_off() -> None:
 
 @pytest.mark.spec("req-dev-bugreport-tripwire-3")
 def test_a_clean_pass_says_no_match_and_never_safe() -> None:
-    message = br.format_hits(br.tripwire("a plain sentence about a plain bug\n", br.build_deny_list({}, [INSTANCE_VALUE])))
+    message = br.format_hits(br.tripwire("a plain sentence about a plain bug\n", br.build_deny_list({}, hostnames=[INSTANCE_VALUE])))
     assert br.TRIPWIRE_PASS in message
     assert "not a guarantee" in message
     assert not re.search(r"\bis safe\b|\bsafe to send\b", message.replace("not a guarantee that the report is safe", ""))
@@ -267,7 +267,7 @@ def test_a_third_party_plugins_slug_and_repository_names_are_caught() -> None:
             ]
         }
     }
-    deny = br.build_deny_list(record, [])
+    deny = br.build_deny_list(record)
     kinds = {k for k, _ in deny}
     assert {"third-party plugin slug", "third-party plugin repository", "third-party plugin owner"} <= kinds
     for planted in ("billing_sync", "billing-sync-tap", "acme-secret-plugins"):
@@ -294,7 +294,7 @@ def test_a_third_party_plugin_appears_only_as_third_party_with_its_rev() -> None
 
 @pytest.mark.spec("req-dev-bugreport-tripwire-1")
 def test_the_deny_list_has_the_local_user_home_and_hostnames_and_drops_short_values() -> None:
-    deny = br.build_deny_list({}, ["ab", "x"], hostnames=["db.internal.example-corp"], local_user="gwendolyn", home_path="/Users/gwendolyn")
+    deny = br.build_deny_list({}, hostnames=["ab", "x", "db.internal.example-corp"], local_user="gwendolyn", home_path="/Users/gwendolyn")
     kinds = {k for k, _ in deny}
     assert kinds == {"instance hostname", "local username", "local home path"}
     assert br.tripwire("saved under /Users/gwendolyn/work\n", deny)
@@ -302,7 +302,7 @@ def test_the_deny_list_has_the_local_user_home_and_hostnames_and_drops_short_val
 
 @pytest.mark.spec("req-dev-bugreport-route-5")
 def test_the_duplicate_search_query_is_checked_before_it_leaves() -> None:
-    deny = br.build_deny_list({}, [INSTANCE_VALUE])
+    deny = br.build_deny_list({}, hostnames=[INSTANCE_VALUE])
     assert br.check_search_query("grid_fixtures gryphon where clause", deny) == []
     assert br.check_search_query(f"error for {INSTANCE_VALUE}", deny), "a planted instance value must block the query"
     assert br.check_search_query('"quoted" -operators OR (this)', deny), "a query that is not plain words is refused"
@@ -375,7 +375,7 @@ def test_a_send_needs_a_valid_report_a_clean_tripwire_consent_and_our_repository
     br.record_consent(report, br.consent_phrase(br.digest(report.read_bytes())))
     assert br.prepare_send(report, []) == {"repository": "unified-systems-com/tap", "title": "Gryphon drops the second WHERE on a two-hop match"}
     with pytest.raises(br.BugReportError, match="Tripwire BLOCKED"):
-        br.prepare_send(report, br.build_deny_list({}, ["two-hop match"]))
+        br.prepare_send(report, br.build_deny_list({}, hostnames=["two-hop match"]))
     # A third-party target is refused even with consent on exactly these bytes.
     other = br.fill_descriptions({**sample_answers(), "target_repository": THIRD_PARTY_REPO})
     third = work / "third.md"
@@ -694,34 +694,6 @@ def test_no_send_without_consent_for_these_bytes(send_env: dict[str, Any]) -> No
     assert not Path(send_env["env"]["FAKE_GH_LOG"]).exists(), "gh must not be called at all"
 
 
-# ---- field classification (req-dev-bugreport-synthetic-2, -3) ----------------------------------
-
-
-@pytest.mark.spec("req-dev-bugreport-synthetic-3")
-def test_an_undescribed_field_is_sensitive_and_a_schema_gap() -> None:
-    props = {"name": {"type": "string"}, "owner_email": {"type": "string", "format": "email", "description": "The email of the person who owns this."}}
-    undescribed = br.field_entry(props, "name")
-    assert undescribed["sensitive"] is True and undescribed["gap"] is True and "schema gap" in undescribed["reason"]
-    assert br.field_entry(props, "no_such_field")["sensitive"] is True
-    described = br.field_entry(props, "owner_email")
-    assert described["gap"] is False and described["description"].startswith("The email") and described["sensitive"] is None
-
-
-@pytest.mark.spec("req-dev-bugreport-synthetic-3")
-def test_a_description_inside_x_tap_absence_counts_as_described() -> None:
-    props = {"mac": {"type": ["string", "null"], "x-tap-absence": {"description": "Null = no source captured a hardware address."}}}
-    entry = br.field_entry(props, "mac")
-    assert entry["gap"] is False and entry["absence_description"].startswith("Null =")
-
-
-@pytest.mark.spec("req-dev-bugreport-synthetic-2")
-def test_the_reporter_may_overrule_toward_more_sensitive_never_less() -> None:
-    assert br.overrule(True, False) is True
-    assert br.overrule(None, True) is True
-    assert br.overrule(None, False) is False
-    assert br.overrule(False, True) is True
-
-
 # ---- the skills' own files ---------------------------------------------------------------------
 
 def frontmatter(path: Path) -> dict[str, str]:
@@ -845,3 +817,119 @@ def test_the_fix_skill_waits_for_the_humans_go_before_editing_source() -> None:
 @pytest.mark.spec("req-dev-bugfix-handback-2")
 def test_the_fix_skill_hands_back_failing_and_passing_output() -> None:
     assert "failing output without the fix and passing output with it" in FIX_SKILL.read_text(encoding="utf-8")
+
+
+# ---- every source of the deny list is caught when planted (req-dev-bugreport-tripwire-1) --------
+
+
+@pytest.mark.spec("req-dev-bugreport-tripwire-1")
+@pytest.mark.parametrize(
+    ("planted", "kind"),
+    [
+        ("db.payments.corp-internal.example", "instance hostname"),
+        ("acme-secret-plugins", "third-party plugin owner"),
+        ("billing_sync", "third-party plugin slug"),
+        ("gwendolyn", "local username"),
+        ("/Users/gwendolyn", "local home path"),
+    ],
+)
+def test_each_deny_list_source_planted_into_a_draft_blocks_the_send_and_names_its_line(planted: str, kind: str) -> None:
+    record = {"install": {"plugins": [{"slug": "billing_sync", "source": {"url": f"https://github.com/{THIRD_PARTY_REPO}"}}]}}
+    deny = br.build_deny_list(record, hostnames=["db.payments.corp-internal.example"], local_user="gwendolyn", home_path="/Users/gwendolyn")
+    text = build_report()
+    assert not br.tripwire(text, deny), "the unmodified sample must pass"
+    lines = text.splitlines()
+    lines.insert(4, f"it happened on {planted}")
+    hits = br.tripwire("\n".join(lines) + "\n", deny)
+    assert any(h.kind == kind and h.line == 5 for h in hits), (kind, hits)
+
+
+# ---- no read path to instance data (req-dev-bugreport-synthetic-8) -----------------------------
+
+#: The verbs of scripts/bug-report, each with why it reads no instance data. A new verb must be
+#: added here by a reviewer who has checked it, so this test fails first.
+SAFE_VERBS = {
+    "facts": "the environment allowlist: version, boot-record plugin list, host OS and tool versions",
+    "route": "the boot record's plugin source URLs",
+    "render": "writes a report from the answers file",
+    "check": "scans the report file",
+    "search-query": "scans a query string",
+    "search": "titles, URLs and states from GitHub",
+    "preview": "reads the report file",
+    "consent": "hashes the report file",
+    "send": "re-verifies the report file, then one issue create",
+}
+#: The only outbound commands a skill's prose may name (in the table of what the wrapper reaches).
+ALLOWED_OUTBOUND_SPANS = ("gh issue list --json title,url,state", "gh issue create --body-file")
+COMMAND_STARTS = ("scripts/", "manage.py", "docker", "gh ", "git ", "psql", "pg_dump", "uv ", "python", "curl", "cat ", "tail ", "grep ")
+#: Code that reads the graph, the database or the logs.
+INSTANCE_READ_CODE = re.compile(r"\.objects\b|django\.db|\bconnection\b|export_grift|execute_gryphon|get_models|dumpdata|pg_dump|\bpsql\b|docker\s+(compose\s+)?logs", re.I)
+
+
+def instance_read_findings(grant: str, body: str, wrapper: str, module_source: str) -> list[str]:
+    """Everything in a skill's declared tools and commands that could read instance data."""
+    found: list[str] = []
+    for token in re.findall(r"Bash\([^)]*\)|\S+", grant):
+        if token.startswith("Bash(") and token != "Bash(scripts/bug-report *)":
+            found.append(f"granted command: {token}")
+        if token in {"Bash", "WebFetch", "WebSearch", "Edit"}:
+            found.append(f"granted tool: {token}")
+    for span in re.findall(r"`([^`\n]+)`", body):
+        if not span.startswith(COMMAND_STARTS) or span.startswith(ALLOWED_OUTBOUND_SPANS):
+            continue
+        if not span.startswith("scripts/bug-report"):
+            found.append(f"command in the skill: {span}")
+            continue
+        parts = span.split()
+        if len(parts) >= 2 and parts[1] not in SAFE_VERBS:
+            found.append(f"unreviewed verb in the skill: {span}")
+    for label in re.findall(r"^  ([a-z|*-]+)\)\s*$", wrapper, flags=re.M):
+        for verb in label.split("|"):
+            if verb != "*" and verb not in SAFE_VERBS:
+                found.append(f"unreviewed verb in scripts/bug-report: {verb}")
+    wrapper_code = "\n".join(ln for ln in wrapper.splitlines() if not ln.lstrip().startswith("#"))
+    for match in INSTANCE_READ_CODE.finditer(wrapper_code + "\n" + module_source):
+        found.append(f"code that reads instance data: {match.group()}")
+    return found
+
+
+def _bug_inputs() -> tuple[str, str, str, str]:
+    text = BUG_SKILL.read_text(encoding="utf-8")
+    return (
+        frontmatter(BUG_SKILL)["allowed-tools"],
+        text.split("---", 2)[2],
+        (REPO_ROOT / "scripts" / "bug-report").read_text(encoding="utf-8"),
+        (REPO_ROOT / "tap" / "bug_report.py").read_text(encoding="utf-8"),
+    )
+
+
+@pytest.mark.spec("req-dev-bugreport-synthetic-8")
+def test_submit_a_bug_declares_no_tool_or_command_that_reads_instance_data() -> None:
+    assert instance_read_findings(*_bug_inputs()) == []
+
+
+@pytest.mark.spec("req-dev-bugreport-synthetic-8")
+def test_synthetic_8_control_each_planted_read_path_is_found() -> None:
+    """Positive controls: plant each kind of read path in a copy of the real inputs; every one must be flagged."""
+    grant, body, wrapper, module = _bug_inputs()
+    planted = {
+        "a granted shell": (grant + " Bash(scripts/dc *)", body, wrapper, module),
+        "a granted WebFetch": (grant + " WebFetch", body, wrapper, module),
+        "an export step in the skill": (grant, body + "\n11. Run `scripts/dc exec web uv run python manage.py export_grift --output -`\n", wrapper, module),
+        "a dump step in the skill": (grant, body + "\n11. Run `pg_dump tap`\n", wrapper, module),
+        "a log step in the skill": (grant, body + "\n11. Run `docker compose logs web`\n", wrapper, module),
+        "an unreviewed verb in the skill": (grant, body + "\n11. Run `scripts/bug-report rows keystone`\n", wrapper, module),
+        "a new wrapper verb": (grant, body, wrapper.replace("  facts)\n", "  dump)\n    :\n    ;;\n  facts)\n", 1), module),
+        "an ORM read in the module": (grant, body, wrapper, module + "\nrows = Entity.objects.all()\n"),
+        "a database import in the module": (grant, body, wrapper, module + "\nfrom django.db import connection\n"),
+    }
+    for name, inputs in planted.items():
+        assert instance_read_findings(*inputs), f"not flagged: {name}"
+
+
+@pytest.mark.spec("req-dev-bugreport-synthetic-8")
+def test_the_report_schema_has_no_place_to_put_a_value() -> None:
+    """The failing shape names fields by name and form only; there is no sensitivity or value slot (classification is Backlog)."""
+    fields = br.load_schema()["properties"]["failing_shape"]["properties"]["fields"]["items"]
+    assert set(fields["properties"]) == {"type", "field", "form"}
+    assert fields["additionalProperties"] is False

@@ -337,45 +337,6 @@ def filter_comments(comments: list[dict[str, Any]], issue_author_id: int, mainta
 
 
 # --------------------------------------------------------------------------------------------
-# Field classification from the published schema (req-dev-bugreport-synthetic-2, -3)
-# --------------------------------------------------------------------------------------------
-
-
-def field_entry(props: dict[str, Any], name: str) -> dict[str, Any]:
-    """Classify one field from its own schema entry: described and judged, or undescribed and sensitive.
-
-    This code enforces the floor only: a field with no published description is sensitive and a
-    schema gap. A described field is returned unjudged (`sensitive` None) for the agent and the
-    reporter to judge with the author's words as evidence.
-    """
-    entry = props.get(name)
-    if entry is None:
-        return {"field": name, "present": False, "description": None, "sensitive": True, "gap": True, "reason": "no such field in the published schema"}
-    description = (entry.get("description") or "").strip()
-    absence = entry.get("x-tap-absence") or {}
-    absence_text = (absence.get("description") or "").strip() if isinstance(absence, dict) else ""
-    described = bool(description or absence_text)
-    return {
-        "field": name,
-        "present": True,
-        "type": entry.get("type"),
-        "format": entry.get("format"),
-        "description": description or None,
-        "absence_description": absence_text or None,
-        "sensitive": None if described else True,
-        "gap": not described,
-        "reason": "judge from the description" if described else "no published description: sensitive, and a schema gap worth its own report",
-    }
-
-
-def overrule(current: bool | None, requested: bool) -> bool:
-    """The reporter may overrule toward MORE sensitive, never less; an unjudged field takes their word."""
-    if current is True:
-        return True
-    return bool(requested)
-
-
-# --------------------------------------------------------------------------------------------
 # Routing and environment (req-dev-bugreport-route, -environment)
 # --------------------------------------------------------------------------------------------
 
@@ -476,7 +437,6 @@ class Hit:
 
 def build_deny_list(
     record: dict[str, Any],
-    sensitive_values: list[str],
     *,
     hostnames: list[str] | None = None,
     local_user: str | None = None,
@@ -484,11 +444,11 @@ def build_deny_list(
 ) -> list[tuple[str, str]]:
     """The reporter's own identifiers, as ``(kind, value)``. Held in memory; never written anywhere.
 
-    From the spec: values of fields classified sensitive; the instance's hostnames; every owner,
+    From the spec: the instance's hostnames; every owner,
     repository name and slug of a plugin sourced outside unified-systems-com; the local username
     and home path. Values shorter than ``MIN_DENY_LENGTH`` are dropped: they match ordinary words.
     """
-    entries: list[tuple[str, str]] = [("sensitive field value", v) for v in sensitive_values]
+    entries: list[tuple[str, str]] = []
     entries += [("instance hostname", h) for h in (hostnames or [])]
     for plugin in (record.get("install") or {}).get("plugins", []):
         source = plugin.get("source") or {}
@@ -518,7 +478,7 @@ def build_deny_list(
 def tripwire(text: str, deny: list[tuple[str, str]]) -> list[Hit]:
     """Check outgoing text against the deny list and `CREDENTIAL_PATTERNS`; every hit blocks the send.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-tripwire@849179fff8fa/14d3c66dc3c6 (enforcement) — the one scan every outgoing report and search query passes.
+    TAP-IMPLEMENTS: req-dev-bugreport-tripwire@229b2097b67e/14d3c66dc3c6 (enforcement) — the one scan every outgoing report and search query passes.
 
     The credential scan uses the patterns directly. `credential_patterns.scan_text` skips a line
     carrying its `TAP-CREDENTIAL-OK` marker, and a draft must not be able to switch the tripwire
@@ -627,7 +587,7 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-def _local_deny(args: argparse.Namespace, values: list[str]) -> list[tuple[str, str]]:
+def _local_deny(args: argparse.Namespace) -> list[tuple[str, str]]:
     import os
 
     record = read_boot_record(os.environ.get("TAP_BOOT_PROFILE", "").strip() or None)
@@ -640,15 +600,10 @@ def _local_deny(args: argparse.Namespace, values: list[str]) -> list[tuple[str, 
     except Exception:  # noqa: BLE001 - settings are optional here; the deny list just has fewer entries
         pass
     user = args.host_user or getpass.getuser()
-    return build_deny_list(record, values, hostnames=hostnames, local_user=user, home_path=args.host_home)
-
-
-def _read_values() -> list[str]:
-    return [ln.rstrip("\n") for ln in sys.stdin.read().splitlines() if ln.strip()]
+    return build_deny_list(record, hostnames=hostnames, local_user=user, home_path=args.host_home)
 
 
 def _add_deny_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--values-stdin", action="store_true", help="read sensitive-field values from stdin, one per line (held in memory only)")
     p.add_argument("--host-user")
     p.add_argument("--host-home")
     p.add_argument("--host-name", action="append")
@@ -661,8 +616,6 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("render")
     p.add_argument("answers")
     p.add_argument("out")
-    p = sub.add_parser("classify")
-    p.add_argument("fields", nargs="+", help="TYPE.FIELD")
     p = sub.add_parser("route")
     p.add_argument("--plugin")
     p = sub.add_parser("facts")
@@ -709,24 +662,6 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
         out = resolve_in_work_dir(args.out)
         out.write_text(render_report(fill_descriptions(answers)), encoding="utf-8")
         print(f"wrote {out.name}")
-        return 0
-    if cmd == "classify":
-        import django
-
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tap.settings")
-        django.setup()
-        from django.apps import apps
-
-        rows = []
-        for item in args.fields:
-            type_name, _, fname = item.partition(".")
-            model = next((m for m in apps.get_models() if getattr(m, "ENTITY_TYPE", None) == type_name or m.__name__.lower() == type_name.lower()), None)
-            props = ((getattr(model, "SERVICE_CRUD_SCHEMA", {}) or {}).get("replace", {}) or {}).get("properties", {}) if model else {}
-            row = field_entry(props, fname)
-            row["type_name"] = type_name
-            row["model_found"] = model is not None
-            rows.append(row)
-        print(json.dumps(rows, indent=2, sort_keys=True))
         return 0
     if cmd == "route":
         record = read_boot_record(os.environ.get("TAP_BOOT_PROFILE", "").strip() or None)
@@ -796,8 +731,7 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
         print(f"consent recorded for sha256 {record_consent(resolve_in_work_dir(args.file), args.typed)}")
         return 0
     # The remaining subcommands build the deny list.
-    values = _read_values() if getattr(args, "values_stdin", False) else []
-    deny = _local_deny(args, values)
+    deny = _local_deny(args)
     if cmd == "search-query":
         hits = check_search_query(args.query, deny)
         print(format_hits(hits))

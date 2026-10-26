@@ -9,7 +9,7 @@
 #   search REPO QUERY   titles, URLs and states of matching issues; never a body (route-4, route-5)
 #   send FILE           gh issue create --body-file FILE, once, and never retried (consent-1..4)
 #
-# Usage: scripts/bug-report <facts|route|classify|render|check|search-query|search|preview|consent|send> ...
+# Usage: scripts/bug-report <facts|route|render|check|search-query|search|preview|consent|send> ...
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p .bug-reports
@@ -29,7 +29,7 @@ case "$cmd" in
       --docker "$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)" \
       --compose "$(docker compose version --short 2>/dev/null || echo unknown)"
     ;;
-  route|classify|render|consent)
+  route|render|consent)
     dc_py "$cmd" "$@"
     ;;
   check|preview|search-query)
