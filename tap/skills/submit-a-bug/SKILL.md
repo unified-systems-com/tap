@@ -102,28 +102,41 @@ slugs from the boot record, and plain-word queries. The script refuses anything 
    following the schema, with the reporter's own words for steps and for expected versus actual
    (counts and messages, values removed). Then `scripts/bug-report render .bug-reports/answers.json .bug-reports/report.md`.
 
-7. **Have the reporter confirm the failure once more.** Version 0 cannot reproduce on synthetic data,
+7. **Screenshots, only if the reporter has them.** Ask whether they want to attach any. They copy
+   the files into `.bug-reports/` themselves and you name each in the answers with a one-line
+   description in their words. Rules, enforced by the script and not by you: png, jpg or gif only
+   (no video, nothing else), at most 5, each under 5 MiB, each a plain file in `.bug-reports/` (a
+   symbolic link or a path outside it is refused). **You never open, view or describe an image.**
+   The tripwire reads text and cannot read pixels, so it cannot check an image, and a screenshot
+   is the likeliest place for the instance's values, hostnames, usernames or session labels to
+   leak. Say that plainly to the reporter, and tell them they must look at every image themselves
+   before they agree: it will be public and permanent. The preview repeats this for each image with
+   its path, size and hash, and the yes covers the report and every image together, so changing or
+   adding an image means a new preview and a new yes.
+
+8. **Have the reporter confirm the failure once more.** Version 0 cannot reproduce on synthetic data,
    so the evidence is the reporter rerunning the steps on their install and seeing the same failure.
    Record what they saw. Do not write that anything reproduced on synthetic data; it did not.
 
-8. **Run the tripwire.** `scripts/bug-report check .bug-reports/report.md`. Any hit
+9. **Run the tripwire.** `scripts/bug-report check .bug-reports/report.md`. Any hit
     blocks the send: it names the match and its line. Reword (never mask a value and keep it) and
     run again. A clean run means **"no match against your instance's values"** and nothing more. Say
     exactly that. It is a tripwire, not a guarantee, and you do not call the report safe.
 
-9. **Preview and take the yes.** `scripts/bug-report preview .bug-reports/report.md`
+10. **Preview and take the yes.** `scripts/bug-report preview .bug-reports/report.md`
     prints the file's path, its full contents, the target repository, and the words "public" and
     "permanent". It also prints the exact phrase to type, which carries a hash of the file. Show it
     to the reporter and ask for that phrase. Any change to the file, by them or you, means a new
     preview and a new phrase. Version 0 replaces nothing with synthetic values, so say that list is empty.
 
-10. **Record the yes and send.** Only after the reporter has typed the phrase themselves:
+11. **Record the yes and send.** Only after the reporter has typed the phrase themselves:
     `scripts/bug-report consent .bug-reports/report.md "<the phrase they typed>"`, then
     `scripts/bug-report send .bug-reports/report.md`. The send re-verifies the report,
-    the tripwire, the consent for these bytes and that the repository is ours, then makes **one**
-    attempt. It applies the label `via:submit-a-bug` only if the repository already has it, and says
+    the tripwire, the consent for the report and every image, that gh supports attachments and that
+    the repository is ours, then makes **one** attempt, with the images attached. It applies the label `via:submit-a-bug` only if the repository already has it, and says
     which happened. This skill does not create labels. If the send fails, show the failure
-    verbatim and stop. Do not retry, re-quote, split the body or post it another way. Offer the two
+    verbatim and stop. If gh says some images failed but the issue was created, say so with the
+    issue URL and gh's message, and do not create a second issue. Do not retry, re-quote, split the body or post it another way. Offer the two
     alternatives: keep the report in `.bug-reports/`, or open the repository's new-issue page and
     paste it.
 

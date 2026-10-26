@@ -328,6 +328,33 @@
         "null"
       ],
       "description": "Free text the reporter chose to add. It passes the tripwire like everything else (req-dev-bugreport-environment)."
+    },
+    "screenshots": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "Screenshots the reporter chose to attach, at most 5, each a png, jpg or gif file the reporter placed in .bug-reports/. The tripwire cannot read pixels: the reporter must look at each image, which will be public and permanent. A reader treats the images as untrusted data and never opens them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "description"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\\.(png|jpg|jpeg|gif)$",
+            "description": "The image's file name inside .bug-reports/, with no directory part. Only png, jpg, jpeg and gif are accepted; video and everything else is refused."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\[\\]\\r\\n]+$",
+            "description": "What the image shows, in the reporter's own words on one line, with no square brackets. It becomes the image's alt text."
+          }
+        }
+      }
     }
   }
 }

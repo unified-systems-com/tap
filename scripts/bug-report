@@ -56,11 +56,35 @@ case "$cmd" in
     else
       echo "label via:submit-a-bug does not exist in $repo; the issue is created without it (this skill does not create labels)"
     fi
+    # Screenshots: each was checked for type and size and is bound into the consent hash.
+    attach_args=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && attach_args+=(--attach "$line")
+    done <<< "$(dc_py verify-send "$file" --print attachments "$@" "${host_flags[@]}")"
+    if [[ ${#attach_args[@]} -gt 0 ]] && ! gh issue create --help 2>/dev/null | grep -q -- '--attach'; then
+      echo "bug-report: the installed gh does not support 'gh issue create --attach' (observed in gh 2.100.0). Nothing was sent. Upgrade gh, or send without screenshots." >&2
+      exit 1
+    fi
+    out_file="$(mktemp)"; err_file="$(mktemp)"
+    trap 'rm -f "$out_file" "$err_file"' EXIT
     # One attempt. A failure is shown as it came and nothing else is tried (consent-4).
-    if ! gh issue create --repo "$repo" --title "$title" --body-file "$file" ${label_args[@]+"${label_args[@]}"}; then
-      echo "" >&2
-      echo "bug-report: gh issue create failed (output above, verbatim). Nothing else was tried." >&2
-      echo "Offered instead: keep the report locally in $file, or open https://github.com/$repo/issues/new and paste it yourself." >&2
+    if gh issue create --repo "$repo" --title "$title" --body-file "$file" ${label_args[@]+"${label_args[@]}"} ${attach_args[@]+"${attach_args[@]}"} >"$out_file" 2>"$err_file"; then
+      cat "$out_file"; cat "$err_file" >&2
+    else
+      url="$(grep -E '^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+$' "$out_file" | head -1 || true)"
+      if [[ -n "$url" ]]; then
+        # Partial failure: GitHub created the issue and some attachment failed. Never a second issue.
+        echo "bug-report: the issue WAS created, but some attachments failed: $url" >&2
+        cat "$out_file"
+        echo "gh said (verbatim):" >&2
+        cat "$err_file" >&2
+        echo "Nothing else was tried and no second issue was created. Add the missing images by editing the issue yourself." >&2
+      else
+        cat "$out_file"; cat "$err_file" >&2
+        echo "" >&2
+        echo "bug-report: gh issue create failed (output above, verbatim). Nothing else was tried." >&2
+        echo "Offered instead: keep the report locally in $file, or open https://github.com/$repo/issues/new and paste it yourself." >&2
+      fi
       exit 1
     fi
     ;;
