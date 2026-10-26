@@ -193,3 +193,73 @@ test("wrap: true marks the column's cells, and only that column; the text stays 
     assert.equal(a.formatter(cellOf("x <b>y</b>"), {}), TEXT("x &lt;b&gt;y&lt;/b&gt;"));
     assert.equal(a.headerSort, true);
 });
+
+// The entityType formatter (req-web-stdpanel-table-config-32). params.types is the server's catalog.
+const ET = "aws_core__aws_s3_bucket";
+const types = {
+    aws_core__aws_ecs_container: {name: "ECS Container", icon: "/static/aws_core/icons/aws-ecs.svg"},
+    aws_core__aws_s3_bucket: {name: "S3 Bucket", icon: ""},
+    computing_core__file: {name: "", icon: "/static/computing_core/icons/file.svg"},
+};
+const et = (value, params) => buildCustomColumns([{field: "t", title: "T", formatter: "entityType", formatter_params: params}])[0]
+    .formatter(cellOf(value), params, () => {});
+
+test("entityType shows the icon and the name pill for a type that has both, muted by default", () => {
+    const out = et("aws_core__aws_ecs_container", {types});
+    assert.match(out, /<img src="\/static\/aws_core\/icons\/aws-ecs\.svg" alt="ECS Container"/);
+    assert.match(out, /ECS Container<\/span>$/);
+    assert.match(out, /--tap-gray-100/, "the default tone is muted");
+});
+
+test("entityType show icon is the glyph alone, show name is the pill alone", () => {
+    const icon = et("aws_core__aws_ecs_container", {types, show: "icon"});
+    assert.match(icon, /^<img /);
+    assert.doesNotMatch(icon, /<span/);
+    const name = et("aws_core__aws_ecs_container", {types, show: "name"});
+    assert.doesNotMatch(name, /<img/);
+    assert.match(name, /ECS Container/);
+});
+
+test("entityType tone colours the pill", () => {
+    assert.match(et(ET, {types, show: "name", tone: "good"}), /--tap-green-100/);
+    assert.match(et(ET, {types, show: "name", tone: "nonsense"}), /--tap-gray-100/, "an unknown tone is muted");
+});
+
+test("a type with a name but no icon draws no image, and show icon falls back to the name", () => {
+    assert.doesNotMatch(et(ET, {types}), /<img/);
+    assert.match(et(ET, {types}), /S3 Bucket/);
+    assert.equal(et(ET, {types, show: "icon"}), "S3 Bucket");
+});
+
+test("a type with an icon but no published name shows the humanised slug", () => {
+    const out = et("computing_core__file", {types});
+    assert.match(out, /<img src="\/static\/computing_core\/icons\/file\.svg" alt="File"/);
+    assert.match(out, />File<\/span>$/);
+});
+
+test("an unknown type shows a humanised slug and no broken image", () => {
+    const out = et("some_plugin__big_thing", {types});
+    assert.doesNotMatch(out, /<img/);
+    assert.match(out, />Big Thing<\/span>$/);
+    assert.match(et("plain", {}), />Plain<\/span>$/, "no types at all is still safe");
+});
+
+test("a row value is only a lookup key: never an image address, never markup, never a prototype member", () => {
+    for (const hostile of ["/static/evil.svg", "javascript:alert(1)", "__proto__", "constructor", "<img src=x onerror=1>"]) {
+        const out = et(hostile, {types});
+        assert.doesNotMatch(out, /<img/, hostile);
+        assert.doesNotMatch(out, /<img src=x|onerror=1>/, hostile);
+    }
+});
+
+test("a registry icon that is not a same-origin path is not drawn", () => {
+    for (const bad of ["https://evil.example/x.svg", "//evil.example/x.svg", "javascript:alert(1)"]) {
+        assert.doesNotMatch(et("t__x", {types: {t__x: {name: "X", icon: bad}}}), /<img/, bad);
+    }
+});
+
+test("entityType escapes the published name, and an empty value is a dash or the empty_text", () => {
+    assert.match(et("t__x", {types: {t__x: {name: "<b>&", icon: ""}}}), /&lt;b&gt;&amp;/);
+    assert.match(et("", {types}), /–/);
+    assert.equal(render({field: "t", title: "T", formatter: "entityType", empty_text: "none"}, null), "none");
+});

@@ -618,6 +618,29 @@
       var img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(label) + '" title="' + _escapeHtml(label) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
       return params.show_text ? img + ' <span>' + _escapeHtml(v) + '</span>' : img;
     },
+    entityType: function (cell, params) {
+      // An entity-type slug as the type's own icon and/or display name (req-web-stdpanel-table-config-32).
+      // params.types is filled by the SERVER from the entity-type catalog ({slug: {name, icon}}), so the page
+      // carries no map and the image address never comes from row data; it is still only drawn when it is a
+      // same-origin path. params.show is icon | name | both (default); params.tone colours the name pill
+      // (default muted). A type with no icon draws no image; a type with no published name, or one the
+      // catalog does not know, shows its slug humanised ("aws_core__aws_s3_bucket" -> "Aws S3 Bucket").
+      params = params || {};
+      var v = _safeStr(cell.getValue());
+      if (!v) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
+      var types = params.types || {};
+      var meta = Object.prototype.hasOwnProperty.call(types, v) ? (types[v] || {}) : {};
+      var name = _safeStr(meta.name) || v.split("__").pop().split("_").filter(Boolean).map(_capitalize).join(" ") || v;
+      var src = _safeStr(meta.icon);
+      var show = params.show === "icon" || params.show === "name" ? params.show : "both";
+      var img = "";
+      if (show !== "name" && src && src.charAt(0) === "/" && src.charAt(1) !== "/") {
+        img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(name) + '" title="' + _escapeHtml(name) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
+      }
+      if (show === "icon") return img || _escapeHtml(name);
+      var pill = _tonePill(_TONE_PALETTE[params.tone] || _TONE_PALETTE.muted, _escapeHtml(name));
+      return img ? img + " " + pill : pill;
+    },
     tailSegment: function (cell, params) {
       // The last path segment of a slash-joined value ("owner/repo" → "repo"),
       // full value in the title. For a single-account instance the owner is

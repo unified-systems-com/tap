@@ -110,6 +110,7 @@ cheap-edge doctrine; the rest are the larger deploy-half build, rightly deferred
 | req-cicd-security-scanning | [Shift-Left Security Scanning](#shift-left-security-scanning) | Partial | SAST + dependency audit + declared-component scan + secret scan + container scan as a standing CI layer. All four live: gitleaks, Dependabot alerts, CodeQL, and Trivy (publish-time + nightly, report-only — the gate flip is the open tail). |
 | req-cicd-dep-automation | [Automate Dependency Updates](#automate-dependency-updates) | Proposed | Dependabot/Renovate on `uv.lock` — pinned deps rot without it. |
 | req-cicd-build-once-artifact | [Build Once, Promote The Artifact](#build-once-promote-the-artifact) | Partial | Immutable multi-arch images published to GHCR on main push (publish-images.yml); dev + CI pull instead of rebuilding. Deploy-side promote-the-same-bytes open (no environments yet). |
+| req-cicd-image-context | [Keep Scanner Bait Out Of The Image](#keep-scanner-bait-out-of-the-image) | Proposed | The repository's `.dockerignore` keeps test inputs that name vulnerable software on purpose (the probe SBOM) out of the published images, so a scan of the image reports only what it really installs. Every line of the file is there for a numbered reason of the register, and cites it. |
 | req-cicd-supply-chain-provenance | [Sign Artifacts, Emit SBOM](#sign-artifacts-emit-sbom) | Partial | SLSA provenance attestations live on the published images; cosign signing, plugin-wheel attestations + CycloneDX/SPDX SBOM open. |
 | req-cicd-product-releases | [Product Releases](#product-releases) | Implemented | Semver product releases carrying release notes; cutting the first release must update `SECURITY.md`'s supported-versions statement. Consumers pin a version via `.env` (`-3`, Implemented 2026-08-13) rather than tracking `:latest`. |
 | req-cicd-release-artifacts | [Release Artifact Conventions](#release-artifact-conventions) | Implemented | One org-wide release model: tag grammar `[<dist-name>-]vX.Y.Z` (ecosystem-mandated grammars win), five artifact classes each naming their lane, standards homed in `.github` (policy) + tap core (executable lanes) — no third standards repo. |
@@ -484,6 +485,41 @@ Still open under this RID: promoting the *same bytes* through deploy environment
 (build-once-deploy-many is moot until there are environments), the parked template-bake
 idea (bake the migrated DB into the image), and product release versioning (semver for the
 app, not just plugins).
+
+### Keep Scanner Bait Out Of The Image
+
+RID: `req-cicd-image-context`
+
+Status: `Proposed`
+
+Ruled by George, 2026-10-25. The published images are scanned by us (`req-cicd-security-scanning-4`) and by everyone who pulls them. A scanner reads an image as an inventory of what is installed in it, and it cannot tell a file that names vulnerable software on purpose from a file that installs it. On 2026-10-25 the `tap-web` scan held 31 open alerts, about 22 of them `log4j-core 2.14.1` and `PyJWT 2.13.0`: the two components of the probe SBOM `tap/tests/fixtures/sbom/merge/sbom.cdx.json`, which `COPY . .` (Dockerfile, `app` stage) carried into the image because the repository has no `.dockerignore`. The repository's own lock pins PyJWT 2.15.0 and nothing installs log4j, so those alerts were never real, yet no rebuild can clear them and anyone who scans a pulled image sees them as ours.
+
+The web image is dependency substrate: compose bind-mounts the checkout over `/app`, and CI pulls the published image only when its inputs are unchanged (`.github/actions/ci-web-image/action.yml`, which already lists `.dockerignore` among the five inputs). So the tests run from the checkout, not from the image, and leaving a test fixture out of the build context costs the lanes nothing.
+
+This section owns the repository's `.dockerignore`. It holds a **reason register** (below): every line of the file is there for a numbered reason, the first being that the image must not carry tests that would trigger vulnerability scanners. The register is where the image's exclusions are standardized, so the file never again becomes a list nobody can explain.
+
+**The format.** Docker reads a line of `.dockerignore` as a comment only when it starts with `#`; a `#` after a pattern is part of the pattern, so no trailing comments. A block is one or more comment lines, then the patterns they explain, then a blank line. The last comment line of every block is `# spec: <RID>` naming a reason of the register; the comment lines above it say, in a sentence, why these paths are left out:
+
+```
+# Fixture SBOMs name deliberately vulnerable software; a scan of the image would report them.
+# spec: req-cicd-image-context-reason-1
+tap/tests/fixtures/sbom/
+```
+
+| RID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-image-context-1 | The Build Context Is Declared | Proposed | The repository root has a `.dockerignore`, and every image build (`publish-images.yml`, the CI lanes, spawn) uses the repository root as its context, so the file applies to all of them. | Today there is none, so `COPY . .` carries the whole tree. `ci-web-image` already treats the file as an image input, so adding it rebuilds rather than pulls for that one change. |
+| req-cicd-image-context-2 | The Reason Register | Proposed | This section holds the register of reasons to leave something out of the image: a table whose rows are `req-cicd-image-context-reason-<n>`, numbered from 1 in the order they are added, each with a title, the rule it states and the paths it covers. A number is never reused or renumbered, and a retired reason keeps its row with status `Retired`. A new reason is a new row here before any line of `.dockerignore` cites it. | The register is the one place that says what the image may hold. Candidates that are not reasons yet: secrets and local state, version-control metadata, build output. |
+| req-cicd-image-context-3 | Every Block Carries Its Reason And Its Spec | Proposed | Each block of `.dockerignore` has at least one `#` comment line saying why, and its last comment line is `# spec: <RID>` naming a row of the register. A pattern outside a block, a block without a reason or a spec line, and a trailing `#` on a pattern line are defects. | The format above. |
+| req-cicd-image-context-4 | A Guard Checks The File | Proposed | A test parses `.dockerignore` and fails on a pattern with no reason or spec line, a spec line that names no row of the register, a trailing `#` on a pattern line, or a pattern that matches no tracked path. | A pattern that matches nothing is a stale line. The guard follows the existing traceability guards (`tap/tests/test_guards.py`). |
+| req-cicd-image-context-5 | The Lanes Stay Green | Proposed | With the exclusion in place, the sbom tests that read the excluded fixtures (`test_sbom_merge_enrich.py`, `test_sbom_completeness.py`) pass in the CI lane and the local `scripts/test --fast-relevant` lane, because both run from the bind-mounted checkout. | Checked, not assumed: a test that reads a fixture through the image's `/app` copy would fail here and name the gap. |
+| req-cicd-image-context-6 | The Published Image Carries No Scanner Bait | Proposed | After the exclusion, the image holds no path under `tap/tests/fixtures/sbom/`, and the next scan of the published `tap-web` reports no alert for `log4j-core` 2.14.1 or for the PyJWT 2.13.0 of the fixture. | The test of reason 1. |
+
+#### Reason Register
+
+| RID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-image-context-reason-1 | Not Including Tests That Would Trigger Vulnerability Scanners | Proposed | No test input that names vulnerable software on purpose, such as a probe or trimmed SBOM, an advisory or scanner-output record, or a lock-shaped file, is in a published image. A new fixture of this kind lands under an excluded path or adds its own block citing this reason. Paths: `tap/tests/fixtures/sbom/`. | A scanner cannot tell a file that names vulnerable software on purpose from one that installs it, and whoever pulls the image scans it. Ruled by George, 2026-10-25. |
 
 ### Build The Dependency Closure Into The Artifact
 

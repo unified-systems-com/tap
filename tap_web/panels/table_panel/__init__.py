@@ -254,6 +254,7 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                         "link",
                         "elapsed",
                         "iconMap",
+                        "entityType",
                         "baselineRatio",
                         "baselineN",
                         "sparkline",
@@ -268,6 +269,7 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                 # formatter documents its own keys in the spec (link:
                 # href_field | href_template | value_href_template, external;
                 # elapsed: start, end; iconMap: icons, labels, show_text;
+                # entityType: show, tone (types is server-owned);
                 # toneThreshold: steps, zero_tone, decimals; percent: decimals).
                 "formatter_params": {
                     "description": (
@@ -284,7 +286,20 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                             ),
                             "type": "string",
                             "enum": ["default", "plain"],
-                        }
+                        },
+                        # entityType (req-web-stdpanel-table-config-32): what to show and in which tone. `types`
+                        # is filled by the server from the entity-type catalog, so an author cannot supply it.
+                        "show": {
+                            "description": "entityType only: the type's glyph, its name as a pill, or both.",
+                            "type": "string",
+                            "enum": ["icon", "name", "both"],
+                        },
+                        "tone": {
+                            "description": "entityType only: the name pill's colour. Default muted.",
+                            "type": "string",
+                            "enum": ["good", "bad", "warn", "muted"],
+                        },
+                        "types": False,
                     },
                 },
                 # A named sorter for the column. `severityRank` orders severity words
@@ -356,6 +371,74 @@ def _validate_table_config(config: dict[str, Any]) -> None:
         jsonschema.validate(instance=config, schema=TABLE_CONFIG_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"config": [exc.message]}) from exc
+
+
+def _column_value(row: Any, spec: dict[str, Any]) -> Any:
+    """Read a column's value from a row: ``field`` (dotted) or ``field_path`` (one key per segment)."""
+    segments = spec.get("field_path") or str(spec.get("field") or "").split(".")
+    cur = row
+    for segment in segments:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(segment)
+    return cur
+
+
+def _entity_type_catalog(slugs: set[str]) -> dict[str, dict[str, str]]:
+    """Display metadata for entity-type slugs, from the catalog the plugin loader writes.
+
+    Returns ``{slug: {"name": str, "icon": str}}`` for every slug the catalog knows. ``name`` is empty when the
+    model published no ``ENTITY_NAME`` (the loader then stores the slug itself), ``icon`` is empty when the type
+    published no ``ENTITY_ICON`` or its file is missing. A slug the catalog does not know is simply absent.
+    The icon address is the registry's own static URL (``resolve_icon_url``), never a row value.
+    """
+    from tap_grid.icon import resolve_icon_url
+    from tap_grid.models import EntityType
+
+    if not slugs:
+        return {}
+    return {
+        et.slug: {
+            "name": "" if et.name == et.slug else et.name,
+            "icon": resolve_icon_url(et) or "",
+        }
+        for et in EntityType.objects.filter(slug__in=slugs)
+    }
+
+
+def _with_entity_types(columns: list[dict[str, Any]] | None, rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Fill ``formatter_params.types`` on every ``entityType`` column from the entity-type catalog.
+
+    The columns are copied, never mutated: ``columns`` is the panel's stored config. One catalog query covers
+    every such column of the page of rows.
+    """
+    if not columns:
+        return columns
+
+    def leaves(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for spec in specs:
+            out.extend(leaves(spec["columns"]) if "columns" in spec else [spec])
+        return out
+
+    wanted = [spec for spec in leaves(columns) if spec.get("formatter") == "entityType"]
+    if not wanted:
+        return columns
+    slugs_by_column: dict[int, set[str]] = {}
+    for spec in wanted:
+        values = (_column_value(row, spec) for row in rows)
+        slugs_by_column[id(spec)] = {value for value in values if isinstance(value, str) and value}
+    catalog = _entity_type_catalog(set().union(*slugs_by_column.values()))
+
+    def fill(spec: dict[str, Any]) -> dict[str, Any]:
+        if "columns" in spec:
+            return {**spec, "columns": [fill(child) for child in spec["columns"]]}
+        if spec.get("formatter") != "entityType":
+            return spec
+        types = {slug: catalog[slug] for slug in slugs_by_column[id(spec)] if slug in catalog}
+        return {**spec, "formatter_params": {**(spec.get("formatter_params") or {}), "types": types}}
+
+    return [fill(spec) for spec in columns]
 
 
 class TablePanelEditForm(forms.Form):
@@ -527,7 +610,7 @@ class TablePanelType:
             "table_mode": table_mode,
             "table_meta": meta,
             "table_search": search,
-            "table_columns": custom_columns,
+            "table_columns": _with_entity_types(custom_columns, nodes),
             "table_height": config.get("height"),
             "table_striped": bool(config.get("striped")),
             "table_empty_text": config.get("empty_text"),
@@ -709,7 +792,9 @@ def _with_row_urls(rows: list[dict[str, Any]], template: str | None) -> list[dic
     return out
 
 
-def _build_page_size_options(total_count: int, current_page_size: int, *, show_all: bool = True) -> list[dict[str, Any]]:
+def _build_page_size_options(
+    total_count: int, current_page_size: int, *, show_all: bool = True
+) -> list[dict[str, Any]]:
     """Build dynamic page-size selector options based on total row count.
 
     Only includes step values that are less than total_count.
