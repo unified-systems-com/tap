@@ -22,6 +22,7 @@ Nodes are the typed participants of the grid. Each node type is a concrete `Base
 | req-grid-node-service | [Node Service Layer](#node-service-layer) | Deprecated | Retired (Issue# 957 - tap): `create_entity()`, `update_entity()` and `delete_entity()` wrote the spine outside the write pipeline and were removed; node writes go through `create_node`, `patch_node`, `replace_node` and `delete_node` |
 | req-grid-node-constraints | [Node Constraint Declaration](#node-constraint-declaration) | Implemented | `OUTBOUND_EDGES` / `INBOUND_EDGES` declared on node types; registered at class-definition time |
 | req-grid-node-observation | [Field Observation Semantics](#field-observation-semantics) | Approved for Development | `null` = unobserved, concrete-empty = observed-empty, declared per-field via `x-tap-absence`; FLIP distinguishes known vs unknown unknown. Phase 2 (Codd's not-applicable, via extended FLIP) reserved |
+| req-grid-node-field-description | [Fields Say What They Mean](#fields-say-what-they-mean) | Proposed | Every field of a node type, and every property of an edge type, carries a `description` in its published schema; new types require it from now on, existing ones are backfilled (Issue# 1117 - tap) |
 
 
 ## Explanation
@@ -407,6 +408,35 @@ Downstream dependencies are named here as deliberate considerations and left unb
 - **Query three-valued logic (traversal).** Once `null`-as-unobserved exists, the universal footgun is that *unknown silently behaves like false* in filters (SQL's `WHERE`/`NOT IN`/aggregate traps), so valid data vanishes from results. TAP's traversal (`spec-grid-traversal.md` / `spec-grid-traversal-language.md`) must specify how a predicate over an unobserved field resolves and ship first-class predicates — `IS UNOBSERVED` / `IS OBSERVED-EMPTY` / `IS KNOWN-UNKNOWN` (Phase 1, reading the column + FLIP) and `IS NOT-APPLICABLE` (Phase 2, reading the extended FLIP entry) — so nobody reconstructs them with fragile double-negatives. Gryphon reads `x-tap-absence` from the registry to surface these. Adopt Cypher's operators as the base.
 - **Reconciliation no-clobber (import/write path).** `absent-in-batch ≠ observed-null`: a partial batch that did not observe a field must not overwrite a prior observed value with `null`. Collectors run live GRIFT batches today, so this is the dependency with present-day data-integrity teeth — flagged loudly for the owner of `spec-grid-import-grift.md` / the write path, deferred and tracked, not yet specified here.
 - **Class-definition invariant (annotation + DJ001 enforcement).** Replace the noqa-scanner idea with a `BaseModel.__init_subclass__` invariant, mirroring the existing `_enforce_field_crud_schema` / `_enforce_field_validation_schema` class-definition checks: a nullable **service-writeable** field (one in `FIELD_CRUD_SCHEMA`) must carry an `x-tap-absence` entry and vice versa, and a `null=True` string field in that surface must carry the `# noqa: DJ001  (<RID>)` silencer. The invariant is deliberately scoped to the observation surface — lifecycle/system/control nulls (`closed_at`, `actor`, pagination) are not service-writeable observation fields and are excluded; a service-writeable field that is a genuine non-observation null opts out via an explicit `x-tap-absence` marker (e.g. `{"kind": "non-observation"}`) rather than declaring a flavor. This makes the declared annotation the machine-enforced source of truth and lets a bare/undocumented suppression fail at import. Requires auditing existing nullable fields across plugins, so deferred. Named, not built.
+
+### Fields Say What They Mean
+
+RID: `req-grid-node-field-description`
+
+Status: `Proposed`
+
+Ruled by George, 2026-10-26. The published schema of a node type is the place a reader learns what a field means: it travels with the type, it reaches an external reader, a schema-driven tool or an AI helper without the plugin's spec, and it is the one place a consumer cannot fail to find. So **every entry of a node type's `FIELD_CRUD_SCHEMA`, and every property of an edge type's `property_schema`, carries a non-empty `description`** saying what the field means in the domain: not its type, which the schema already states, and not how it is stored.
+
+**One home, not two.** A field's meaning is written once, in the schema. The plugin's spec says what the type is for and how it relates to other types, and it does not restate what each field means; where it must refer to a field it names the field and links the type. A copy of a field's meaning in a spec table is a second place to keep true, and is removed when found.
+
+**Why now.** On 2026-10-26 a static scan found no top-level `description` on any of the 76 fields in the `FIELD_CRUD_SCHEMA` dicts of `tap_grid`, `tap_cares`, `tap_viz` and `tap_web`, and almost none in the plugins. The only description the platform required was inside `x-tap-absence` (`req-grid-node-observation-6`), which covers a nullable field's absence and not the field's meaning. Django `help_text` carries some meanings and does not reach the published schema. `submit-a-bug` (`specs/spec-dev-bug-reporting.md`) wanted to judge each field's sensitivity from its description and found nothing to read.
+
+**Going forward, then backfill.** The `add-model` and `add-edge` skills make the description part of writing a field, so no new type is born without one. Existing types are filled in by the housekeeping backfill (Issue# 1117 - tap). Runtime enforcement follows the burn-down in the way `req-grid-edge-schema-required` does: a warn mode first, and the flip to a class-definition error when the fleet is covered.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-node-field-description-1 | Every Field Has A Description | Proposed | Each entry of a node type's `FIELD_CRUD_SCHEMA` and each property of an edge type's `property_schema` has a non-empty `description` that says what the field means in the domain. | Auto-published through `SERVICE_CRUD_SCHEMA` like `x-tap-absence` (`req-grid-node-observation-6`). |
+| req-grid-node-field-description-2 | One Home For A Field's Meaning | Proposed | A field's meaning is written in its schema only; a plugin spec describes the type and its relationships and does not restate field meanings. | Keeps the schema and the spec from drifting. |
+| req-grid-node-field-description-3 | The Skills Require It | Proposed | The `add-model` and `add-edge` skills list the description as part of declaring a field and name a missing one as a mistake not to commit. | Author-time enforcement, as `req-grid-edge-schema-required-4` does for edge schemas. |
+| req-grid-node-field-description-4 | The Existing Fleet Is Backfilled | Backlog | Every existing field of the fleet's node and edge schemas gains a description (Issue# 1117 - tap), with coverage counted per plugin. | The burn-down before `-5`. |
+| req-grid-node-field-description-5 | Enforcement Flips After The Burn-Down | Backlog | A warn mode first, then a class-definition error for a field with no description, in the same pattern as `ENFORCE_EDGE_SCHEMA_REQUIRED`; plugin releases precede the core flip through the pin flow. | Nothing is enforced before the fleet is covered. |
+
+#### Future
+
+- **Publish `help_text` as the description** where a field has one, so the Django help text that already exists does not have to be written twice.
+- **A sensitivity annotation** (for example `x-tap-sensitivity`) authored once per field, so tools that must not leak values, such as the bug reporter, read a declared judgement and do not infer one from prose.
 
 ## Status Vocabulary
 

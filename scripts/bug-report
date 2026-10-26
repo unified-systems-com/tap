@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# scripts/bug-report -- the commands behind the submit-a-bug skill (specs/spec-dev-bug-reporting.md).
+#
+# Every subcommand is a fixed verb of tap/bug_report.py run in the web container; nothing here
+# evals, interpolates a report's text into a command, or takes a flag the skill did not name.
+# Report files live only in .bug-reports/ (gitignored). The two verbs that touch GitHub run on the
+# host, with the operator's own gh login, and only after the container has verified the file:
+#
+#   search REPO QUERY   titles, URLs and states of matching issues; never a body (route-4, route-5)
+#   send FILE           gh issue create --body-file FILE, once, and never retried (consent-1..4)
+#
+# Usage: scripts/bug-report <facts|route|render|check|search-query|search|preview|consent|send> ...
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+mkdir -p .bug-reports
+
+dc_py() { scripts/dc exec -T web uv run python -m tap.bug_report "$@"; }
+host_flags=(--host-user "${USER:-}" --host-home "${HOME:-}" --host-name "$(hostname)")
+repo_re='^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$'
+file_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && -f "$1" ]]; }
+
+cmd="${1:-}"
+[[ -n "$cmd" ]] || { sed -n '2,12p' "$0" >&2; exit 2; }
+shift
+
+case "$cmd" in
+  facts)
+    dc_py facts --os "$(uname -s)" --arch "$(uname -m)" \
+      --docker "$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)" \
+      --compose "$(docker compose version --short 2>/dev/null || echo unknown)"
+    ;;
+  route|render|consent)
+    dc_py "$cmd" "$@"
+    ;;
+  check|preview|search-query)
+    dc_py "$cmd" "$@" "${host_flags[@]}"
+    ;;
+  search)
+    repo="${1:-}"; query="${2:-}"; shift 2 || true
+    [[ "$repo" =~ $repo_re ]] || { echo "bug-report: repository must be a plain owner/name" >&2; exit 2; }
+    # The query is outbound before any consent: it must pass the tripwire first (route-5).
+    dc_py search-query "$query" "$@" "${host_flags[@]}"
+    exec gh issue list --repo "$repo" --state all --limit 10 --json title,url,state --search "$query"
+    ;;
+  send)
+    file="${1:-}"; shift || true
+    file_ok "$file" || { echo "bug-report: send takes an existing file under .bug-reports/" >&2; exit 2; }
+    # Tripwire, valid report and a consent recorded for exactly these bytes, or no send.
+    repo="$(dc_py verify-send "$file" --print repository "$@" "${host_flags[@]}")"
+    title="$(dc_py verify-send "$file" --print title "$@" "${host_flags[@]}")"
+    [[ "$repo" =~ $repo_re ]] || { echo "bug-report: refusing a repository that is not a plain owner/name" >&2; exit 1; }
+    label_args=()
+    if gh label list --repo "$repo" --limit 200 --json name --jq '.[].name' 2>/dev/null | grep -Fxq 'via:submit-a-bug'; then
+      label_args=(--label 'via:submit-a-bug')
+      echo "label via:submit-a-bug exists in $repo and will be applied"
+    else
+      echo "label via:submit-a-bug does not exist in $repo; the issue is created without it (this skill does not create labels)"
+    fi
+    # One attempt. A failure is shown as it came and nothing else is tried (consent-4).
+    if ! gh issue create --repo "$repo" --title "$title" --body-file "$file" ${label_args[@]+"${label_args[@]}"}; then
+      echo "" >&2
+      echo "bug-report: gh issue create failed (output above, verbatim). Nothing else was tried." >&2
+      echo "Offered instead: keep the report locally in $file, or open https://github.com/$repo/issues/new and paste it yourself." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "bug-report: unknown subcommand '$cmd'" >&2
+    exit 2
+    ;;
+esac

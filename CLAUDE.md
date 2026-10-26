@@ -7,7 +7,7 @@ read AGENTS.md and none of them can use what is below.
 
 ## Skills
 
-TAP ships 30 repo skills. Each is a packaged procedure for work this repo does often, and invoking
+TAP ships 33 repo skills. Each is a packaged procedure for work this repo does often, and invoking
 one is cheaper and more correct than re-deriving the steps. Canonical location is `<app>/skills/`;
 `wire-skills` symlinks them into `.claude/skills/` at spawn (only `get-started` is committed there,
 so the rest are per-clone).
@@ -24,6 +24,8 @@ so the rest are per-clone).
 | Touching architecture.md | `update-architecture` |
 | Standing up, diagnosing, or opening a session | `get-started`, `diagnose-failed-session-spawn`, `launch-ui` |
 | Handling secrets or credentials | `manage-secret`, `provision-secrets` |
+| Reporting a bug found in a running install | `submit-a-bug` — routes it, describes the failing shape without values, and sends only the exact bytes the reporter agreed to; a possible vulnerability goes to private reporting instead |
+| Fixing one of our own bug reports | `submit-a-fix` — reads the issue only if a maintainer session account wrote it, reproduces before fixing, and never pushes, opens a PR or signs off |
 | Opening a PR | `open-a-pr` — never a hand-run `gh pr create` here (a PreToolUse hook refuses it); the lane it names is the one CI runs |
 | Finishing a PR | `close-out-pr` |
 | Starting work on a view, table, bundle, spec or plugin — the guard rails per module, and the review step that proposes additions | `tap-best-practices` |
