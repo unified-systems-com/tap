@@ -45,7 +45,7 @@ OUR_ORG = "unified-systems-com"
 CORE_REPOSITORY = f"{OUR_ORG}/tap"
 
 #: The headings of every report, in order. The same words as tap's bug issue form.
-HEADINGS = ("What happened", "Steps to reproduce", "TAP version", "How it is run", "Health output", "Anything else")
+HEADINGS = ("What happened", "Steps to reproduce", "TAP version", "How it is run", "Health output", "Screenshots", "Anything else")
 DATA_HEADING = "Report data"
 DISCLOSURE_PREFIX = "Disclosure:"
 _JSON_FENCE = "```json"
@@ -140,6 +140,7 @@ def render_report(data: dict[str, Any]) -> str:
         "TAP version": versions["tap_version"] + (f" (commit {versions['tap_commit']})" if versions.get("tap_commit") else ""),
         "How it is run": env["run_mode"],
         "Health output": health_block,
+        "Screenshots": "\n".join(f"![{shot['description']}](./{shot['file']})" for shot in data.get("screenshots") or []) or "None attached.",
         "Anything else": data.get("anything_else") or "Nothing further.",
     }
     parts = [f"## {name}\n\n{sections[name]}" for name in HEADINGS]
@@ -362,24 +363,35 @@ def _owner_name(url: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def _enabled_plugins(record: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in (record.get("install") or {}).get("plugins", []) if p.get("enabled", True) is not False]
+
+
+def _is_ours(plugin: dict[str, Any]) -> bool:
+    parsed = _owner_name((plugin.get("source") or {}).get("url", ""))
+    return parsed is not None and parsed[0] == OUR_ORG
+
+
 def plugin_facts(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """The plugin list for the report: ours with slug, rev and commit; anyone else only as third-party with rev."""
-    out: list[dict[str, Any]] = []
-    for plugin in (record.get("install") or {}).get("plugins", []):
-        if plugin.get("enabled", True) is False:
-            continue
-        source = plugin.get("source") or {}
-        parsed = _owner_name(source.get("url", ""))
-        ours = parsed is not None and parsed[0] == OUR_ORG
-        out.append(
-            {
-                "third_party": not ours,
-                "slug": plugin.get("slug") if ours else None,
-                "rev": source.get("rev") or "unknown",
-                "commit": source.get("commit") if ours else None,
-            }
-        )
-    return out
+    """The plugin list for the report: only plugins sourced from unified-systems-com, with slug, rev and commit.
+
+    A plugin from anywhere else is not listed at all, not even as a blank entry, so the list's
+    length never reveals how many third-party plugins the reporter runs.
+    """
+    return [
+        {
+            "slug": plugin.get("slug"),
+            "rev": (plugin.get("source") or {}).get("rev") or "unknown",
+            "commit": (plugin.get("source") or {}).get("commit"),
+        }
+        for plugin in _enabled_plugins(record)
+        if _is_ours(plugin)
+    ]
+
+
+def third_party_plugins_in_use(record: dict[str, Any]) -> bool:
+    """One flag, no count: is any enabled plugin sourced from outside unified-systems-com?"""
+    return any(not _is_ours(plugin) for plugin in _enabled_plugins(record))
 
 
 def route_target(record: dict[str, Any], plugin_slug: str | None) -> tuple[str, str]:
@@ -545,9 +557,90 @@ def consent_path(report: Path) -> Path:
     return report.with_name(report.name + ".consent")
 
 
+IMAGE_MAGIC: dict[str, tuple[bytes, ...]] = {
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+MAX_ATTACHMENTS = 5
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+ATTACHMENT_WARNING = (
+    "the tripwire cannot check this image; you must look at it yourself, it will be public and permanent "
+    "and may show your instance's values, hostnames, usernames or session labels"
+)
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """One screenshot, checked for type and size only: its pixels are never read by this code."""
+
+    name: str
+    alt: str
+    path: Path
+    size: int
+    sha256: str
+
+    @property
+    def host_path(self) -> str:
+        return f"{WORK_DIR_NAME}/{self.name}"
+
+
+def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
+    """Check the report's screenshots: images only, at most five, each a plain file inside the work directory.
+
+    The checks are type (name suffix and the file's first bytes) and size. The image is hashed so
+    the reporter's yes can bind to its bytes; it is never decoded, displayed or described.
+    """
+    items = data.get("screenshots") or []
+    if len(items) > MAX_ATTACHMENTS:
+        raise BugReportError(f"at most {MAX_ATTACHMENTS} screenshots may be attached")
+    found: list[Attachment] = []
+    seen: set[str] = set()
+    for item in items:
+        name = item["file"]
+        if name in seen:
+            raise BugReportError(f"screenshot {name} is listed twice")
+        seen.add(name)
+        raw = report.parent / name
+        if raw.is_symlink():
+            raise BugReportError(f"screenshot {name} is a symbolic link; only plain files are accepted")
+        path = resolve_in_work_dir(str(raw))
+        if not path.is_file():
+            raise BugReportError(f"screenshot {name} is not a file in {WORK_DIR_NAME}/")
+        suffix = path.suffix.lower()
+        if suffix not in IMAGE_MAGIC:
+            raise BugReportError(f"screenshot {name}: only png, jpg and gif images are accepted (no video, nothing else)")
+        size = path.stat().st_size
+        if not 0 < size <= MAX_ATTACHMENT_BYTES:
+            raise BugReportError(f"screenshot {name} is {size} bytes; the limit is {MAX_ATTACHMENT_BYTES}")
+        with path.open("rb") as handle:
+            head = handle.read(16)
+        if not any(head.startswith(magic) for magic in IMAGE_MAGIC[suffix]):
+            raise BugReportError(f"screenshot {name} is not a real {suffix[1:]} image")
+        found.append(Attachment(name=name, alt=item["description"], path=path, size=size, sha256=digest(path.read_bytes())))
+    return found
+
+
+def bundle_digest(report: Path) -> str:
+    """The hash a yes binds to: the report's bytes and every attachment's bytes, in the report's order.
+
+    With no attachments it is the report file's own sha256. Changing or adding an image changes it.
+    """
+    raw = report.read_bytes()
+    attachments = load_attachments(report, extract_report(raw.decode("utf-8")).data)
+    if not attachments:
+        return digest(raw)
+    outer = hashlib.sha256()
+    for label, blob in (("report", raw), *((a.name, a.path.read_bytes()) for a in attachments)):
+        outer.update(f"{label}\0{len(blob)}\0".encode())
+        outer.update(blob)
+    return outer.hexdigest()
+
+
 def record_consent(report: Path, typed: str) -> str:
-    """Write a consent record iff ``typed`` is exactly the phrase for the file as it is now."""
-    current = digest(report.read_bytes())
+    """Write a consent record iff ``typed`` is exactly the phrase for the report and its attachments as they are now."""
+    current = bundle_digest(report)
     if typed.strip() != consent_phrase(current):
         raise BugReportError(f"consent not recorded: the yes must be exactly {consent_phrase(current)!r} for these bytes")
     consent_path(report).write_text(current + "\n", encoding="utf-8")
@@ -557,14 +650,14 @@ def record_consent(report: Path, typed: str) -> str:
 def verify_consent(report: Path) -> str:
     """Return the file's digest iff a consent record exists for exactly these bytes; otherwise refuse.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-consent@4ea4a641c38f/025cc772f077 (enforcement) — the one check that a yes still covers the file about to be sent.
+    TAP-IMPLEMENTS: req-dev-bugreport-consent@4ea4a641c38f/cdbaeef74db7 (enforcement) — the one check that a yes still covers the file about to be sent.
     """
     record = consent_path(report)
     if not record.is_file():
         raise BugReportError("no consent recorded for this file: preview it and take a yes first")
-    current = digest(report.read_bytes())
+    current = bundle_digest(report)
     if record.read_text(encoding="utf-8").strip() != current:
-        raise BugReportError("the file changed after consent; preview it again and take a new yes")
+        raise BugReportError("the report or an attachment changed after consent; preview it again and take a new yes")
     return current
 
 
@@ -579,7 +672,8 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
         raise BugReportError(format_hits(hits))
     verify_consent(report)
     repo = require_ours(extracted.data["target_repository"])
-    return {"repository": repo, "title": extracted.data["title"]}
+    attachments = "\n".join(f"{a.host_path}#{a.alt}" for a in load_attachments(report, extracted.data))
+    return {"repository": repo, "title": extracted.data["title"], "attachments": attachments}
 
 
 # --------------------------------------------------------------------------------------------
@@ -635,7 +729,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("typed")
     p = sub.add_parser("verify-send")
     p.add_argument("file")
-    p.add_argument("--print", dest="field", choices=("repository", "title"), help="print one field of the verified send, for the wrapper")
+    p.add_argument("--print", dest="field", choices=("repository", "title", "attachments"), help="print one field of the verified send, for the wrapper")
     _add_deny_args(p)
     sub.add_parser("gate-author")
     p = sub.add_parser("intake")
@@ -678,6 +772,7 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
                     "tap_version": core_tap_version(),
                     "profile_kind": record.get("profile_kind", "unknown"),
                     "plugins": plugin_facts(record),
+                    "third_party_plugins_in_use": third_party_plugins_in_use(record),
                     "os": args.os,
                     "arch": args.arch,
                     "docker_version": args.docker,
@@ -751,9 +846,12 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
         print(format_hits(hits))
         if hits:
             return 1
-        file_digest = digest(report.read_bytes())
+        attachments = load_attachments(report, extracted.data)
+        file_digest = bundle_digest(report)
         target = extracted.data["target_repository"]
-        print(f"File: {report}\nsha256: {file_digest}\nTarget repository: {target}")
+        print(f"File: {report}\nsha256 (the report plus every attachment, in order): {file_digest}\nTarget repository: {target}")
+        for number, att in enumerate(attachments, start=1):
+            print(f"Attachment {number}: {att.path}  {att.size} bytes  sha256 {att.sha256}\n  {ATTACHMENT_WARNING}")
         print("This issue will be PUBLIC and PERMANENT: GitHub keeps a public edit history, so editing it later does not remove earlier text.")
         print("Version 0 replaced nothing with synthetic values: the report carries no dataset and no instance value.")
         print(f"To send exactly these bytes, type: {consent_phrase(file_digest)}")

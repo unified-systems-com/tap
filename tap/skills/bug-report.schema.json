@@ -48,7 +48,8 @@
         "description",
         "tap_version",
         "profile_kind",
-        "plugins"
+        "plugins",
+        "third_party_plugins_in_use"
       ],
       "description": "The versions and commits the failure was seen at; `submit-a-fix` reproduces at these commits and again at main (req-dev-bugfix-reproduce-2).",
       "properties": {
@@ -77,27 +78,20 @@
         },
         "plugins": {
           "type": "array",
-          "description": "Every installed plugin from the boot record. A plugin sourced outside unified-systems-com appears only as third-party with its rev; its slug and repository are never written (req-dev-bugreport-environment).",
+          "description": "The installed plugins sourced from unified-systems-com, from the boot record, each with its slug, rev and commit. A plugin from anywhere else is never listed here, not even as a blank entry: neither its slug, its repository, its rev nor how many there are may appear (req-dev-bugreport-environment).",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "third_party",
               "slug",
               "rev",
               "commit"
             ],
             "properties": {
-              "third_party": {
-                "type": "boolean",
-                "description": "True when the plugin's source URL is outside unified-systems-com; its slug is then null because the slug and repository may be private."
-              },
               "slug": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "The plugin slug for a unified-systems-com plugin; null for a third-party plugin."
+                "type": "string",
+                "minLength": 1,
+                "description": "The slug of a plugin sourced from unified-systems-com."
               },
               "rev": {
                 "type": "string",
@@ -110,10 +104,14 @@
                   "null"
                 ],
                 "pattern": "^[0-9a-f]{7,40}$",
-                "description": "The `commit` the boot record names for a unified-systems-com plugin; null for a third-party plugin."
+                "description": "The `commit` the boot record names for this plugin; null when the record names none."
               }
             }
           }
+        },
+        "third_party_plugins_in_use": {
+          "type": "boolean",
+          "description": "True when the boot record has at least one enabled plugin whose source URL is outside unified-systems-com, and false otherwise. This flag is the only trace of third-party plugins in a report: no count, slug, repository or rev (req-dev-bugreport-environment)."
         }
       }
     },
@@ -330,6 +328,33 @@
         "null"
       ],
       "description": "Free text the reporter chose to add. It passes the tripwire like everything else (req-dev-bugreport-environment)."
+    },
+    "screenshots": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "Screenshots the reporter chose to attach, at most 5, each a png, jpg or gif file the reporter placed in .bug-reports/. The tripwire cannot read pixels: the reporter must look at each image, which will be public and permanent. A reader treats the images as untrusted data and never opens them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "description"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\\.(png|jpg|jpeg|gif)$",
+            "description": "The image's file name inside .bug-reports/, with no directory part. Only png, jpg, jpeg and gif are accepted; video and everything else is refused."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\[\\]\\r\\n]+$",
+            "description": "What the image shows, in the reporter's own words on one line, with no square brackets. It becomes the image's alt text."
+          }
+        }
+      }
     }
   }
 }
