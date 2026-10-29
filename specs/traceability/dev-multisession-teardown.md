@@ -4,8 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
-| unbuilt | 1 |
+| mapped | 2 |
 | unaccounted | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -13,4 +12,5 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-dev-multisession-teardown-cleanup` | Proposed | Tested | — | `req-dev-multisession-teardown-cleanup-7` |
 | `req-dev-multisession-teardown-safety` | Implemented | Tested | — | `req-dev-multisession-teardown-safety-4` |

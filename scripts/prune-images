@@ -50,6 +50,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+# shellcheck source=lib/container-engine.sh
+source "$SCRIPT_DIR/lib/container-engine.sh"
 BUILD_CACHE_UNTIL="${BUILD_CACHE_UNTIL:-72h}"
 DRY_RUN=0
 
@@ -73,6 +75,9 @@ done
 # daemon call so a starved daemon degrades to "prune skipped", never a wedged
 # spawn/despawn.
 dk() { timeout 60 docker "$@"; }
+
+# Inherit the engine spawn/despawn already chose; only choose here when run on its own.
+[[ -n "${TAP_ENGINE:-}" ]] || tap_engine_select
 
 if ! dk info >/dev/null 2>&1; then
   warn "Docker daemon unreachable — image prune skipped."
@@ -149,5 +154,10 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 out="$(dk image prune -f 2>&1)" && info "dangling images: ${out##*$'\n'}" || warn "docker image prune failed: $out"
-out="$(dk builder prune -f --filter "until=$BUILD_CACHE_UNTIL" 2>&1)" && info "build cache (>$BUILD_CACHE_UNTIL unused): ${out##*$'\n'}" || warn "docker builder prune failed: $out"
+# Podman has no buildx builder container; asking it to prune one is an error, not a prune.
+case "${TAP_ENGINE:-}" in
+  podman|sticky) info "build cache: skipped (Podman engine has no buildx builder)." ;;
+  *) out="$(dk builder prune -f --filter "until=$BUILD_CACHE_UNTIL" 2>&1)" && info "build cache (>$BUILD_CACHE_UNTIL unused): ${out##*$'\n'}" || warn "docker builder prune failed: $out"
+     ;;
+esac
 ok "Image prune complete. (macOS: Docker.raw returns space via TRIM; restart Docker Desktop if df does not move.)"

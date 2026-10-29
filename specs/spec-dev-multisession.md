@@ -27,6 +27,7 @@ The Playwright MCP server is stateless per call and remains shared across sessio
 | req-dev-multisession-browser-disambiguation | [Browser Disambiguation](#browser-disambiguation) | Implemented | Phase 1 |
 | req-dev-multisession-spawn-script | [Spawn Script](#spawn-script) | Implemented | Phase 2; interactive. The SINGLE entry point: first boot on a fresh machine and the Nth session are the same command (stand-up.sh retired 2026-08-09) |
 | req-dev-multisession-host-readiness | [Host Readiness Battery](#host-readiness-battery) | Implemented | Spawn Step 0.1: toolchain checks + the `~/tap-sessions/main` layout seatbelt, absorbed from the retired stand-up.sh; runs on every spawn |
+| req-dev-multisession-container-engine | [Container Engine Selection](#container-engine-selection) | Implemented | Docker first; Podman's Docker-compatible socket when Docker is not answering. One shared helper, so spawn, dc, despawn and the image scripts always reach the same daemon (tap#1133) |
 | req-dev-multisession-admin-bootstrap | [Admin User Bootstrap](#admin-user-bootstrap) | Implemented | Phase 2, sub-feature of spawn |
 | req-dev-multisession-spawn-import-strict | [Granular Grift Import Failure Mode](#granular-grift-import-failure-mode) | Backlog | Phase 3 polish on top of fail-fast |
 | req-dev-multisession-push-workflow | [Session → Main Push Workflow](#session-→-main-push-workflow) | Implemented | Always-on discipline; codifies how session worktrees advance origin/main and keep the local main worktree current |
@@ -250,7 +251,7 @@ Spawn's Step 0.1 verifies, on **every** run, that the host can actually carry a 
 
 #### Implementation
 
-- **Toolchain (fail with the fix):** `git`, `python3`, `docker` on PATH; Compose v2 present (the retired v1 binary is named as unsupported); `lsof` (the port-band probe reads nothing without it and would silently allocate a busy band — fail-loud belongs up front); daemon responsiveness within a bounded probe, with **distinct** messages for not-installed, not-running, and the Linux permission/docker-group case.
+- **Toolchain (fail with the fix):** `git`, `python3`, `docker` on PATH (the Docker CLI is the client even when the engine is Podman — see [Container Engine Selection](#container-engine-selection)); Compose v2 present (the retired v1 binary is named as unsupported); `lsof` (the port-band probe reads nothing without it and would silently allocate a busy band — fail-loud belongs up front); daemon responsiveness within a bounded probe, with **distinct** messages for not-installed, not-running, the Linux permission/docker-group case, and a Podman socket that was chosen but is not answering.
 - **Layout seatbelt:** the primary clone must live at `~/tap-sessions/main`. Derived from git itself (`git worktree list --porcelain`, first entry — correct no matter which session worktree invoked spawn), compared physically (`pwd -P`) so symlinked homes don't false-positive. The failure message carries both repair paths: fresh re-clone into place, or `mv` an existing clone (git is location-independent). **Skipped when `WORKTREE_BASE` is overridden** — throwaway consumers (`scripts/gate-lean`) are not part of the durable layout.
 - **First-spawn detection:** no `~/tap-sessions/.registry` yet ⇒ first run on this host; used only for honest messaging (the one-time published-image download, and the 10–20-minute from-source FIPS build that only the offline/unpublished fallback takes — `spec-cicd-hardening.md` build-once artifact).
 - **Soft checks (warn, never block):** unset git identity (commits would carry an auto-derived name/email).
@@ -264,6 +265,42 @@ Spawn's Step 0.1 verifies, on **every** run, that the host can actually carry a 
 | req-dev-multisession-host-readiness-2 | Layout Seatbelt | Implemented | A primary clone not at `~/tap-sessions/main` fails with both repair paths (re-clone vs `mv`); derived via git, compared physically; correct when invoked from a session worktree. | |
 | req-dev-multisession-host-readiness-3 | Throwaway Exemption | Implemented | The layout check is skipped when `WORKTREE_BASE` is overridden; toolchain checks still run. | gate-lean |
 | req-dev-multisession-host-readiness-4 | Read-Only Battery | Implemented | The battery mutates nothing; soft checks warn without blocking. | |
+
+### Container Engine Selection
+----
+RID: `req-dev-multisession-container-engine`
+
+Status: `Implemented`
+
+Trace: `non-python` — scripts/lib/container-engine.sh
+
+The dev scripts talk to a container engine through the Docker CLI and the Compose v2 plugin. That client stays the same whichever engine runs the containers: Podman exposes a Docker-compatible socket, and pointing `DOCKER_HOST` at it is enough for `lite-spawn`, `spawn-session --promote`, `dc`, `despawn-session` and the image scripts to work unchanged (spike, tap#1133: a full spawn on rootless Podman reached a healthy `core_dev` instance with no script change; the bind-mounted checkout, the `nonroot` user and `depends_on: service_healthy` all behaved as on Docker).
+
+What makes the fallback safe is that the choice is made **once, in one file, and remembered per session**. Without that, a despawn run in a shell that reaches the wrong daemon finds nothing there, says so, removes the worktree and reports success — while the stack keeps running on the other engine. That is the failure this requirement exists to close.
+
+#### Implementation
+
+- **One helper.** `scripts/lib/container-engine.sh` is sourced by `spawn-session.sh`, `scripts/dc`, `despawn-session.sh`, `scripts/prune-images` and `scripts/gate-lean`. `promote-lite-session.sh` reaches it through `spawn-session.sh --promote`. No script decides the engine for itself.
+- **Order of choice** (`tap_engine_select`, recording the verdict in `TAP_ENGINE`): an explicit `DOCKER_HOST` or `DOCKER_CONTEXT` already in the environment (`explicit`, never overridden); a `DOCKER_HOST` recorded in the session's `.env.local` (`sticky`); a Docker daemon that answers `docker info` (`docker`); a Podman socket that exists and answers `docker info` (`podman`); otherwise `none`, and the caller's own "not responding" error stands.
+- **Finding Podman's socket.** `podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}'` on macOS (the socket on the **host**; `podman info` reports a path inside the VM there, which does not exist on the host), then `podman info --format '{{.Host.RemoteSocket.Path}}'` on Linux. A reported path counts only if it is a socket that exists, so a stopped machine is not used.
+- **Remembered per session.** A spawn that fell back to Podman appends `DOCKER_HOST=unix://…` to the session's `.env.local`. A recorded value is data from an editable file: it is accepted only as `unix:///` followed by a plain path, is exported and never interpolated into a command, and anything else is ignored with a warning.
+- **Cross-engine check at despawn.** After choosing, despawn looks for the session's compose project on the engine it is *not* using and, if it finds containers, warns with the exact command that removes them.
+- **Podman-specific hygiene.** The spawn failure names the Podman remedy (`podman machine start`); `prune-images` does not ask a Podman engine to prune a buildx builder it does not have.
+
+Out of scope: a host with only `podman compose` / `podman-compose` and no Docker CLI (the provider may label compose projects differently, and the stale-stack check relies on `com.docker.compose.project`); Linux rootless uid remapping against the `.:/app` bind mount and SELinux `:z`/`:Z` labels, neither of which has been exercised; Podman's own socket discovery beyond the two lookups above.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-multisession-container-engine-1 | Explicit Choice Wins | Implemented | A `DOCKER_HOST` or `DOCKER_CONTEXT` already set is never overridden, whether or not Docker or Podman answers. | |
+| req-dev-multisession-container-engine-2 | Docker First | Implemented | When Docker answers, it is used and `DOCKER_HOST` is left unset, even if a Podman socket is also up. | |
+| req-dev-multisession-container-engine-3 | Podman Fallback | Implemented | When Docker does not answer and a Podman socket exists and answers, `DOCKER_HOST` is set to it for the run. A reported path that is not a socket, a socket that does not answer, and a missing `podman` binary each leave the engine unchosen without failing the script. | |
+| req-dev-multisession-container-engine-4 | Session Stickiness | Implemented | A `DOCKER_HOST` recorded in a session's `.env.local` is used for that session even when Docker is up; a recorded value that is not a plain `unix:///` socket path is ignored with a warning and never reaches a command line. | |
+| req-dev-multisession-container-engine-5 | Recorded At Spawn | Implemented | A spawn that fell back to Podman writes `DOCKER_HOST` into the session's `.env.local` exactly once; a Docker spawn leaves the file untouched. | |
+| req-dev-multisession-container-engine-6 | Cross-Engine Warning | Implemented | Despawn warns, with the removal command, when the session's compose project holds containers on the engine this run is not using, and says nothing when it does not. | |
+| req-dev-multisession-container-engine-7 | One Helper, Every Daemon Script | Implemented | `spawn-session.sh` (fresh and `--promote`), `dc`, `despawn-session.sh`, `prune-images` and `gate-lean` all source the one helper and select the engine; despawn selects from the session's own worktree before it touches the stack. | |
+| req-dev-multisession-container-engine-8 | Podman-Aware Messages And Prune | Implemented | The spawn failure names Podman's remedy, and `prune-images` skips the buildx-builder prune on Podman. | |
 
 ### Granular Grift Import Failure Mode
 ----
