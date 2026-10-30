@@ -272,8 +272,6 @@ RID: `req-dev-multisession-container-engine`
 
 Status: `Implemented`
 
-Trace: `non-python` — scripts/lib/container-engine.sh
-
 The dev scripts talk to a container engine through the Docker CLI and the Compose v2 plugin. That client stays the same whichever engine runs the containers: Podman exposes a Docker-compatible socket, and pointing `DOCKER_HOST` at it is enough for `lite-spawn`, `spawn-session --promote`, `dc`, `despawn-session` and the image scripts to work unchanged (spike, tap#1133: a full spawn on rootless Podman reached a healthy `core_dev` instance with no script change; the bind-mounted checkout, the `nonroot` user and `depends_on: service_healthy` all behaved as on Docker).
 
 What makes the fallback safe is that the choice is made **once, in one file, and remembered per session**. Without that, a despawn run in a shell that reaches the wrong daemon finds nothing there, says so, removes the worktree and reports success — while the stack keeps running on the other engine. That is the failure this requirement exists to close.
