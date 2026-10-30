@@ -74,9 +74,11 @@ def test_a_run_under_a_holder_does_not_retake_it(tmp_path: Path) -> None:
     assert "PROBE locked=False held=1" in result.stdout, result.stdout + result.stderr
 
 
-def test_a_bare_pytest_waits_behind_a_holder(tmp_path: Path) -> None:
-    lock = tmp_path / "lock"
-    with hold_pytest_lock("a lane", path=lock):
+def test_a_bare_pytest_waits_behind_a_holder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Under a lane (or CI) this process inherits TAP_PYTEST_LOCK_HELD=1, which makes hold_pytest_lock a
+    # no-op: clear it first so the holder below really takes the lock.
+    monkeypatch.delenv("TAP_PYTEST_LOCK_HELD", raising=False)
+    with hold_pytest_lock("a lane", path=tmp_path / "lock"):
         os.environ.pop("TAP_PYTEST_LOCK_HELD", None)  # the holder context set it for this process
         with pytest.raises(subprocess.TimeoutExpired):
             _run(tmp_path, timeout=5)
