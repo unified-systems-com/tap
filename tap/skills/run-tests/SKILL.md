@@ -42,9 +42,15 @@ Times are what this repo's suites took on a loaded machine in the session that w
 | Gryphon (`tap_grid/`, `tap_api/routers/gryphon.py`) | `-k gryphon` under `tap_grid/tests` (~80 s), plus the effect/temporal files | the corpus, unless you touched the executor |
 | A plugin | that plugin's tests via `--pyargs <package>.tests`, scoped with `-k` or one file (Gridkin corpus + internals ~4 min), run from the core root | the plugin repo's CI, which boots core `main` — **if it has CI** (see below) |
 | `tap_viz/static`, `tap_web` templates or validation, panel schemas | the guard trio, then the demo project plugin's suite: `scripts/test --fast-relevant --plugins <slug>` (or `scripts/pytest-serial _dev-plugins/<slug> -q -p no:xdist`) (2.5 min unloaded, 12–16 min at load ~15) — playground suites pin this behaviour and core PRs #1089/#1091 each needed playground test edits | the lane |
+| A UI change you need to see rendered | the ORM is write-guarded from a shell (`UnguardedOperation`), so you cannot create a throwaway page there. Reported to work (rampart-pg, #1100): a Playwright `page.route` rewrite of the served HTML, or importing a throwaway GRIFT batch and removing it with a `deletes` batch | — |
 | Runtime JavaScript (`tap_viz`) | the JS harness on the HOST with a Node that has cytoscape — the container has neither, so the JS behaviour tests SKIP there. A green container run is not JS tested | — |
 | A model or migration | the app's tests with `--create-db` (the test DB may be stale), and check `makemigrations --check` | the lane |
 | Scripts / hooks | `bash -n`, then the script's own test file | the lane |
+
+**The demo plugin's clone is on someone else's branch.** The playground clone may be on another agent's
+feature branch with uncommitted work, so do not run its suite there and do not disturb it. Run it from a
+clean checkout of the plugin's `main` (a second worktree), or skip it and SAY SO in the PR body ("demo
+suite not run: clone busy; run on main after merge") so the gap is visible instead of silent.
 
 **Plugins without CI.** Some plugin repos report no checks on any PR (`rampart-20x-playground-tap` today). For them "leave it to the plugin's CI" means nothing runs, so the local plugin suite is the only gate: run it. Check `gh pr checks` on a recent PR before relying on a plugin's CI.
 
@@ -75,14 +81,20 @@ instead; the promote can be stopped after the PR opens, and the server `gate` st
 **Never bare `scripts/test` as a gate.** Run non-interactively it forces the Gryphon corpus in, and in a
 profile without `gryphon_playground` it goes RED with nothing actually failing; use `--fast-relevant`.
 
-**Stopping the lane means merging by hand or re-arming:** the promote arms auto-merge only after its
-local lane is green (`req-dev-multisession-promote-script-4a`), so a stopped lane leaves the PR open
-and unarmed until the human merges it, or you re-run the promote, or the human arms it. A green but
-unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that way).
+**Stopping the lane disarms the merge:** the promote arms auto-merge once the cheap checks pass and runs
+the local lane as an advisory check (`req-dev-multisession-promote-script-4a`; `TAP_PROMOTE_ARM_AFTER_LOCAL=1`
+arms only after local green). A stopped or red lane DISARMS it: `scripts/test --stop` fails the lane and
+the promote disarms; Ctrl-C or TERM of the promote itself disarms through a signal trap; a `kill -9` of the
+promote does NOT, so check `gh pr view <n> --json autoMergeRequest` after any hard kill. A stopped lane
+leaves the PR open and unarmed until you re-run the promote or the human merges or arms it. Tell the human
+plainly: "the lane was stopped, so auto-merge is disarmed; the server gate decides - merge or re-arm by hand".
+A green but unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that way). The server
+`gate` can finish before a slow local lane reports red, so a red advisory lane after a landed PR is a
+follow-up fix, not an undo.
 
 **A core change can break a plugin's own tests** that only that plugin's suite sees (the playground
 suites pin `tap_web` / `tap_viz` behaviour), because the server's `core_ci` is fixtures-only. The scoped
-lane does not run them unless you ask: `scripts/test --fast-relevant --plugins <slug>[,<slug>]` adds the named installed suites (an uninstalled slug is refused, not skipped); add `--no-core` for just those suites, under the lock, without paying for the core walk. For a plugin repo with no CI of its own this one command is the gate. See the `tap_viz` / `tap_web` row in section 1.
+lane does not run them unless you ask: `scripts/test --fast-relevant --plugins <slug>[,<slug>]` adds the named installed suites (an uninstalled slug is refused, not skipped); `--plugins auto` adds the suites the diff can reach — plugins that import the changed core code, plus those whose tests declare `PINS_CORE_SURFACES = ("tap_viz/static", ...)` for coupling that has no import edge (it is a conservative guess, not a proof: over-selecting by app, blind to anything neither imported nor declared); add `--no-core` for just those suites, under the lock, without paying for the core walk. For a plugin repo with no CI of its own this one command is the gate. See the `tap_viz` / `tap_web` row in section 1.
 
 **A plugin PR is a different path.** A plugin repo has no promote; its PRs are opened by hand with
 `gh`. Run the targeted tests from the core root, run your own plugin's suite with
@@ -94,13 +106,19 @@ that merge there), push, and read the plugin's CI (if it has any).
 
 ## 4. How: rules for a shared machine
 
+0. **Name the branch for the change.** The promote needs a `session/<name>` branch; a leftover name from
+   the last task misleads every reader of the PR. Rename it before the first commit:
+   `git branch -m session/<new-name>`.
 1. **One heavy run per stack.** Never start a second pytest while one is running in the same stack.
    A polling "is pytest running?" check is NOT reliable: it fires in the gap between two plugin
    suites, which is how a subagent's run overlapped a lane on 2026-10-21. `scripts/test` and
    `scripts/pytest-serial <pytest args>` take one lock per stack, so a second run WAITS and names the
-   holder (`python -m tap.pytest_lock status` shows it). Hand-typed `scripts/dc exec ... pytest` does
-   not take it: for anything bigger than a file or two, and from parallel subagents, use
-   `scripts/pytest-serial`.
+   holder (`python -m tap.pytest_lock status` shows it). A hand-typed `scripts/dc exec ... pytest` takes
+   it too, because the test harness (`tap.pytest_harness`) holds it from `pytest_configure` and
+   releases it at exit (collect-only, `--fixtures` and `--help` runs skip it); for anything bigger than
+   a file or two, and from parallel subagents, still prefer `scripts/pytest-serial`, which also puts
+   pytest in its own process group so `--stop` can kill every worker. If you spawn subagents that run tests, say so in each brief: they use
+   `scripts/pytest-serial` and never poll `ps` for a running pytest.
 2. **Cap parallelism.** Export `TAP_TEST_JOBS=3` for any `scripts/test` (the promote already does); a single file needs `-n0`
    (bare `-n auto` adds a per-worker DB build that costs more than the test). Under load each xdist
    worker builds and migrates its own test DB, which can dominate a small lane — when the load
@@ -120,14 +138,33 @@ that merge there), push, and read the plugin's CI (if it has any).
    minutes per push, and AI-review rounds meant 4–5 pushes per PR. One local plugin lane before each
    push (rule 3, the short-lane form) is what saves the CPU there.
 
+## 4b. A plugin PR (no promote)
+
+Most PRs in plugin repos are opened by hand with `gh`, so this is its own short path:
+
+1. Branch from the plugin repo's latest `main`. Run tests **from the core root**, never `uv run` inside
+   the plugin clone: it creates a stray `.venv` and `uv.lock` that make the manifest tests fail.
+2. `scripts/test --fast-relevant --no-core --plugins <slug>` (serial, under the lock), or
+   `scripts/pytest-serial _dev-plugins/<slug> -q -p no:xdist`. If you edited grift batches, re-import
+   them with `import_plugin_grift --force-batches` first (an edited batch is skipped on a plain boot).
+3. Check `git log -1 --format=%B`: the `Signed-off-by` trailer comes from the repo's commit hook, which a
+   plugin clone may not have installed. A commit without it fails the `dco` job.
+4. Open the PR by hand (`gh pr create` is allowed in plugin repos), merge `origin/main` first, then read
+   the checks. Some plugin repos report **no checks and no AI review at all** (`rampart-20x-playground-tap`
+   today): there the local plugin suite is the only gate.
+5. **`scripts/pr-review-triage` reads only the core repo for now** (it has no `--repo` flag), so on a
+   plugin PR it reports a different PR's reviews, or none. Read a plugin PR directly:
+   `gh pr view <n> --repo <owner/plugin-repo> --json reviews,comments` and
+   `gh api repos/<owner/plugin-repo>/pulls/<n>/comments`.
+
 ## 5. Stopping a lane
 
 Stopping the host-side `promote-to-main.sh` (or a `scripts/dc exec` client) does **not** stop the run:
 `docker exec` does not forward the signal, so `tap.lane_run` keeps launching suites in the container.
 Use `scripts/test --stop` BEFORE killing by pid: it TERMs the process holding the stack's pytest lock, which kills its pytest
 and every xdist worker as one process group. Stale `test_tap*` DBs may remain, so use `--create-db` on
-the next run. Only a run started through `scripts/test`, `tap.lane_run` or `scripts/pytest-serial` holds
-the lock; a hand-typed `pytest` has to be killed by pid inside the container.
+the next run. A hand-typed `pytest` holds the lock through the harness, so `--stop` TERMs it, but it has no
+process group of its own: check `ps` for xdist workers it left behind.
 
 If the holder itself dies (`kill -9`, an OOM), its pytest child inherits the lock and keeps it held, so a
 second run still waits instead of starting on top of the orphan; `scripts/test --stop` then notices the
@@ -168,23 +205,45 @@ watcher was exactly that. The repo's standard watcher is the one to arm (`open-a
 1. **Arm it as a Monitor, on open and after every push** (a push is a new head), from a trusted
    checkout of the upstream repo, never the PR's own branch worktree:
 
-       scripts/pr-review-triage <pr> --watch 300
+       scripts/pr-review-triage <pr> --watch 60     # first ten minutes; then --watch 300 (step 2)
 
    It emits one line per event: `CHECKFAIL` the moment an individual check fails (a Sonar, Codacy or
    lane red is workable before the whole run ends), `CONFLICT` when the base moves, reviews and bot
    comments, and every merge-state change. At most two watchers at once; stop one when its PR merges.
-2. **On a `CHECKFAIL`, work it in this order:**
+2. **Poll fast right after a push, then slow down.** A check that fails in six seconds should not wait
+   five minutes to be noticed: arm `--watch 60` for the first ten minutes after each push or open, then
+   re-arm at `--watch 300`. Keep to two watchers at once (three hit GitHub's secondary burst limit).
+3. **On a `CHECKFAIL`, act at once — do not wait for the other jobs.** A failed required check already
+   blocks the merge, so the rest of the run only spends runner minutes. In this order:
    - Read the failure itself (`gh run view <run> --log-failed`, or the check's annotations for Codacy;
      SonarCloud's PR issues are public at `sonarcloud.io/api/issues/search?...&pullRequest=<n>`).
      Do not guess from the check's name.
    - Match it against section 6. An infrastructure red (CI boot, DNS, OOM, stale cache) is
      `gh run rerun <id> --failed`, nothing else.
-   - A code red: fix it on the PR branch, run the targeted tests and the guard trio (section 1), push,
-     and re-arm the watcher.
-3. **Stop after two failed rounds** on the same red and say what you tried: a third guess is the
+   - A code or metadata red: fix it, run the targeted tests and the guard trio (section 1), then start the
+     new run (below), and re-arm the watcher.
+   - **You do not need to cancel the old run.** The workflow has a `concurrency` group per ref with
+     `cancel-in-progress: true` (`product-lines.yml`), so the new run cancels the one still going. The
+     fix that starts a new run IS the kill-and-restart.
+4. **How to start the new run depends on what failed.**
+   - A code, spec or lint fix: commit and push (a new head, a new `pull_request` run).
+   - **The PR title** (`pr-title` fails in seconds): `gh pr edit <n> --title "..."` alone does NOT re-run
+     it. `pull_request` is deliberately not triggered on `edited` (a title edit would skip every job and
+     turn a healthy PR permanently red), and a re-run of the failed job reuses the original event's
+     frozen title. So after editing the title, close and reopen the PR (`gh pr close <n> && gh pr reopen
+     <n>`) to get a fresh run. This is read from the workflow's comments, not yet exercised; confirm on the
+     first real title failure.
+   - A failed `dco` or `check-issue-link` needs a rewritten commit, which is a force-push: that is
+     NOT in the list below. Tell the human.
+5. **Actions you may take on your own PR without asking:** edit its title or body, close/reopen it, re-run
+   failed jobs, push a new commit to its own branch. **Not without the human:** force-push or amend, merge
+   or approve, arm or disarm auto-merge on someone else's PR, change a ruleset or a required check, push to a
+   PR you did not open. A local promote lane that is still running must finish first: an edit mid-lane
+   voids its verdict.
+6. **Stop after two failed rounds** on the same red and say what you tried: a third guess is the
    expensive one. A red the author cannot fix (a required review, a ruleset, a permission) goes to the
    human, not around them.
-4. **What this does and does not do.** The Monitor wakes the session that armed it; a session that has
+7. **What this does and does not do.** The Monitor wakes the session that armed it; a session that has
    ended will not act on a later red. Nothing here starts work unattended. An always-on watcher that
    opens or resumes a session on red is a larger design (a scheduled or remote trigger), not built.
 

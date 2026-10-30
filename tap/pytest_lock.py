@@ -122,6 +122,8 @@ def hold_pytest_lock(who: str, *, wait: bool = True, path: Path | None = None) -
             waited_from = time.monotonic()
             fcntl.flock(fd, fcntl.LOCK_EX)
             last_wait_seconds = time.monotonic() - waited_from
+            sys.stderr.write(f"acquired the pytest lock after waiting {last_wait_seconds:.0f} s\n")
+            sys.stderr.flush()
         os.ftruncate(fd, 0)
         os.write(
             fd,
@@ -280,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     extra = [a for a in args.pytest_args if a != "--"]
     with hold_pytest_lock("tap.pytest_lock run"):
+        sys.stderr.write("holding the pytest lock for this run; `scripts/test --stop` stops it\n")
+        sys.stderr.flush()
         rc, _ = run_group([sys.executable, "-m", "pytest", *extra], dict(os.environ))
     return rc
 
