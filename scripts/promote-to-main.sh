@@ -10,7 +10,8 @@
 #      conflicts in the session worktree, the right place to resolve them).
 #   3. PR promote (req-cicd-branch-protection PR flow): push the session branch,
 #      open/update the promote PR, run the local fast lane in the shadow of the
-#      server-side checks, then ARM auto-merge only after local green — the
+#      server-side checks, ARM auto-merge after the cheap checks (the local lane
+#      is advisory and DISARMS on red; TAP_PROMOTE_ARM_AFTER_LOCAL=1 arms after it) — the
 #      server (required `gate` check incl. the CI cold-boot/lean-boot jobs)
 #      decides the landing. Direct atomic push survives ONLY as the
 #      bootstrap/skip-hatch path (cloud gate inactive), where it rides the
@@ -382,7 +383,7 @@ else
       gh pr create --head "$BRANCH" --base main \
         --title "$PR_TITLE" \
         --body "<!-- tap:opened-by=promote-to-main -->
-Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed after the cheap checks; the local lane is advisory and disarms it on red." \
         >/dev/null 2>&1 || true
       PR_NUM="$(promote_pr_number)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
@@ -427,9 +428,9 @@ Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast 
     else
       run_cheap_gates || fail "Cheap gates RED (DCO / issue link) — auto-merge stays DISARMED; PR #$PR_NUM remains open. Fix and re-run (same PR updates)."
       info "Cheap gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM now; the local lane below is advisory and DISARMS on red."
-      arm_auto_merge
-      # An interrupted promote must not leave the merge armed behind an unfinished lane (kill -9 cannot be trapped).
+      # Installed BEFORE the arm so no interval leaves it armed unprotected. An interrupted promote must not leave the merge armed behind an unfinished lane (kill -9 cannot be trapped).
       trap 'gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true; warn "Promote interrupted — auto-merge DISARMED on PR #$PR_NUM."; exit 130' INT TERM HUP
+      arm_auto_merge
       if ! run_local_gates fast skip-cheap; then
         trap - INT TERM HUP
         gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true
