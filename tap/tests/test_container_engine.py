@@ -92,7 +92,7 @@ def _close_sockets() -> Iterator[None]:
 def _run(sandbox: Path, body: str, **env: str) -> subprocess.CompletedProcess[str]:
     """Source the helper in a clean environment and run `body`, then print the verdict."""
     script = f'source "{HELPER}"\n{body}\necho "ENGINE=$TAP_ENGINE"\necho "HOST=${{DOCKER_HOST:-}}"\n'
-    return subprocess.run(
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — argv is a literal bash -c; the script string is built from this test's own constants, never from input  # nosec B603  # noqa: S603
         ["bash", "-c", script],
         env={"PATH": f"{sandbox / 'bin'}:{BASE_PATH}", "HOME": str(sandbox), **env},
         capture_output=True,
