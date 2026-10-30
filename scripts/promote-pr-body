@@ -147,7 +147,7 @@ def main() -> int:
     out.append("")
     out.append("---")
     out.append("_Gate mechanics: local fast lane promote-side; the required `gate` check decides the landing;")
-    out.append("auto-merge arms only after local green. This body regenerates on every promote run._")
+    out.append("auto-merge arms after the cheap checks (DCO, issue link) and disarms if the advisory local lane goes red. This body regenerates on every promote run._")
     # The opened-by marker (req-dev-multisession-session-author-scope-3): scripts/check-pr-opened-by
     # fails a session account's session-branch PR without it. Fixed text, one copy per writer.
     out.append("")
