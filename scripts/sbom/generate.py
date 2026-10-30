@@ -64,7 +64,7 @@ CANARIES = {
     # (req-cicd-sbom-13); a lockfile that stopped being cataloged is a silent
     # closure loss, exactly the regression class canaries exist for.
     "tap-web": {"required": ["tap", "django", "openssl", "htmx.org", "echarts", "tabulator-tables", "cytoscape"]},
-    "tap-db": {"required": ["postgresql-16"]},
+    "tap-db": {"required": ["postgresql-18"]},
 }
 FORBIDDEN_NAMES = ["my-test-package"]
 FORBIDDEN_LOCATION_PREFIXES = ["/opt/uv-cache-seed"]

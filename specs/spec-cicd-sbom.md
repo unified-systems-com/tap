@@ -359,7 +359,7 @@ canary list, refusing to publish on any miss:
 * web MUST contain: `tap` at the built version, `django`, a known apk canary (e.g.
   `openssl`), and **every declared out-of-band component** (req-cicd-sbom-3: `fips.so`,
   `uv`, `uvx`);
-* db MUST contain: `postgresql-16` and its declared out-of-band component (`fips.so`);
+* db MUST contain: `postgresql-18` and its declared out-of-band component (`fips.so`);
 * both MUST NOT contain known-phantom markers (e.g. `my-test-package`, any
   `/opt/uv-cache-seed` location).
 

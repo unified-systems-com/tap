@@ -1,15 +1,23 @@
-# TAP Postgres image — minimal Wolfi + PostgreSQL 16 + the self-built OpenSSL FIPS provider
+# TAP Postgres image — minimal Wolfi + PostgreSQL 18 + the self-built OpenSSL FIPS provider
 # (version pinned, and its CMVP status derived, in docker/build-openssl-fips.sh — D17), replacing the outgoing public.ecr.aws/.../postgres:16-alpine.
 # Per req-cicd-base-image-lifecycle-3/-5/-6: the DB base becomes a curated-minimal Wolfi base,
 # and (like the web image) runs crypto through the pinned FIPS provider, selected by
 # ARG TAP_FIPS (default 1). Full decision record: docs/misc/doc-fips-assessment-record.md §5.4.
 #
 # Two things make this a DROP-IN for the official image rather than a reimplementation:
-#   * postgresql-16-oci-entrypoint ships the canonical docker-library/postgres
+#   * postgresql-18-oci-entrypoint ships the canonical docker-library/postgres
 #     `docker-entrypoint.sh` (same POSTGRES_DB/USER/PASSWORD/HOST_AUTH_METHOD/INITDB_ARGS
 #     contract + /docker-entrypoint-initdb.d), so we set up the postgres user + PGDATA + gosu
 #     exactly as that image does and the entrypoint behaves identically.
-#   * postgresql-16 is 16.14 — the exact version the outgoing alpine image ran.
+#   * postgresql-18 is 18.6-r4. It was 16.14 (the version the outgoing alpine image ran) until
+#     2026-10-29: upstream released 16.15 on 2026-08-13 with 28 security fixes, Wolfi's
+#     postgresql-16 stayed at 16.14-r1, and the release CVE gate refused to promote tap-db at
+#     v0.3.1 (16 fixable High CVEs, all "fixed in 16.15-r0"). Wolfi's current stream is 18, and
+#     18.6 is the same upstream release as 16.15. `-r4` is pinned, not the newest (`-r6`): from
+#     `-r5` the 18 packages link `libcrypto.so.4` (OpenSSL 4), `-r4` is the last build on
+#     `libcrypto.so.3` (OpenSSL 3.6), the same line `libpq-18=18.6-r4` below is held to. Read
+#     from the Wolfi APKINDEX (x86_64), 2026-10-29. Pinning also changes the `apk add` line, so a
+#     later bump busts the registry build cache instead of being served a stale layer.
 #
 # ⚠️ COLLATION, not crypto, is the load-bearing hazard (§5.4). The outgoing alpine image is
 # musl, which implements NO locale collation: it is *labelled* en_US.utf8 but *sorts like C*.
@@ -57,7 +65,7 @@ COPY docker/openssl-release-keys.asc docker/build-openssl-fips.sh /opt/ossl/
 RUN /opt/ossl/build-openssl-fips.sh
 
 # ============================================================================
-# base — Postgres 16 runtime (identical for both FIPS modes)
+# base — Postgres 18 runtime (identical for both FIPS modes)
 # ============================================================================
 FROM ${WOLFI_BASE} AS base
 ARG WOLFI_BASE
@@ -69,7 +77,7 @@ ARG WOLFI_BASE
 LABEL org.opencontainers.image.base.name="${WOLFI_BASE%%@*}" \
       org.opencontainers.image.base.digest="${WOLFI_BASE##*@}"
 
-# postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
+# postgresql-18 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
 # image), openssl-3.6 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
@@ -77,7 +85,7 @@ LABEL org.opencontainers.image.base.name="${WOLFI_BASE%%@*}" \
 # `openssl-3.6`, not `openssl-4.0` or the bare `openssl` alias — tap#932/#933, L18.
 #
 # `libpq-18` is EXPLICITLY PINNED here too, corrected from an earlier, wrong claim in this
-# comment that it "had not cut over" — checked directly, right now, it has: `postgresql-16-client`
+# comment that it "had not cut over" — checked directly, right now, it has: `postgresql-18-client`
 # pulls `libpq-18` transitively, unpinned, which currently resolves to `18.6-r5` and links
 # `libcrypto.so.4`/`libssl.so.4` (confirmed via `strings` on the installed `libpq.so.5`). This
 # image is runtime-only (no `-dev` packages, no `cryptography`/psycopg build here), so this
@@ -97,9 +105,9 @@ LABEL org.opencontainers.image.base.name="${WOLFI_BASE%%@*}" \
 # in this specific image (no Python process here to poison), one revision before its own cutover.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
-    postgresql-16 \
-    postgresql-16-client \
-    postgresql-16-oci-entrypoint \
+    postgresql-18=18.6-r4 \
+    postgresql-18-client=18.6-r4 \
+    postgresql-18-oci-entrypoint=18.6-r4 \
     libpq-18=18.6-r4 \
     krb5-libs=1.22.2-r4 \
     gosu \
