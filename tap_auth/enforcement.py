@@ -196,14 +196,15 @@ def assert_write_authorized(
     Stateless re-check (`policy.can`): if the actor reaching commit does not hold
     the capability its ops require (or there is no actor), the mutation fails
     closed. The DELETE check requires `grid.delete` specifically — broad covers
-    (`grid.import_grift`, `grid.admin`) do not satisfy it, so a bootloader or
-    collector cannot tombstone through an import cover. The one exception is
+    (`grid.import_grift`, `grid.admin`) do not satisfy it, so a bootloader cannot
+    tombstone through an import cover (the collector role holds `grid.delete` itself,
+    interim and global). The one exception is
     narrow and scoped, not broad: inside the reconcile verb's apply pass
     (`tap_grid.write_guard.reconcile_write_scope`), `grid.reconcile` licenses a delete
     of exactly the rows the verb named when it opened the scope — ``delete_targets``,
     the delete ops' targets, must all be licensed (req-grid-reconcile-verb). The
-    collector actor holds `grid.reconcile` and not `grid.delete`; outside that scope,
-    or for any other row, it still cannot delete anything.
+    collector actor holds `grid.reconcile`; it also holds `grid.delete`, so for a GRIFT
+    `deletes` section the scope is not needed.
     """
     if needs_write and not policy.can(caller_context, caps.WRITE_CAPABILITY):
         _raise_unguarded("write", caller_context, "write_batch commit")

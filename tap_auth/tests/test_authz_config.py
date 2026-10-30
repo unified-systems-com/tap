@@ -115,6 +115,7 @@ def test_cares_bundles_are_least_privilege():
         "grid.write",
         "grid.import_grift",
         "grid.reconcile",
+        "grid.delete",
         "cares.run_collectors",
         "cares.self_test_collectors",
     }
