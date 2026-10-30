@@ -24,7 +24,7 @@
     },
     {
       "name": "grid.reconcile",
-      "description": "Reconcile a collection run: judge its retirement candidates and apply the verdicts (tombstone, rename, end an ownership edge) through the service layer. Held by the tap_cares.collector program actor so the run's final phase can act; the per-collector reconcile_authority switch, off by default, is the operator's control. Distinct from grid.delete: a collector never deletes, the reconcile verb does, on evidence (req-grid-reconcile-verb).",
+      "description": "Reconcile a collection run: judge its retirement candidates and apply the verdicts (tombstone, rename, end an ownership edge) through the service layer. Held by the tap_cares.collector program actor so the run's final phase can act; the per-collector reconcile_authority switch, off by default, is the operator's control. Distinct from grid.delete: collector code never calls a delete verb, the reconcile verb does, on evidence (req-grid-reconcile-verb). The collector role also holds grid.delete, interim and global, for a GRIFT `deletes` section.",
       "risk": "high"
     },
     {

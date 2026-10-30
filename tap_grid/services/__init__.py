@@ -683,7 +683,7 @@ def reconcile(
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@c039b2233134/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@108027797f8f/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
