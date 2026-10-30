@@ -428,11 +428,15 @@ Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast 
       run_cheap_gates || fail "Cheap gates RED (DCO / issue link) — auto-merge stays DISARMED; PR #$PR_NUM remains open. Fix and re-run (same PR updates)."
       info "Cheap gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM now; the local lane below is advisory and DISARMS on red."
       arm_auto_merge
+      # An interrupted promote must not leave the merge armed behind an unfinished lane (kill -9 cannot be trapped).
+      trap 'gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true; warn "Promote interrupted — auto-merge DISARMED on PR #$PR_NUM."; exit 130' INT TERM HUP
       if ! run_local_gates fast skip-cheap; then
+        trap - INT TERM HUP
         gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true
         warn "Local gates RED — auto-merge DISARMED (it may already have landed if the server gate finished first: check gh pr view $PR_NUM)."
         fail "Local gates RED — aborting promote. Fix and re-run (same PR updates)."
       fi
+      trap - INT TERM HUP
       info "Local gates GREEN (advisory lane agrees with the armed merge)."
     fi
 

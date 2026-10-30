@@ -81,11 +81,16 @@ instead; the promote can be stopped after the PR opens, and the server `gate` st
 **Never bare `scripts/test` as a gate.** Run non-interactively it forces the Gryphon corpus in, and in a
 profile without `gryphon_playground` it goes RED with nothing actually failing; use `--fast-relevant`.
 
-**Stopping the lane means merging by hand or re-arming:** the promote arms auto-merge only after its
-local lane is green (`req-dev-multisession-promote-script-4a`), so a stopped lane leaves the PR open
-and unarmed until the human merges it, or you re-run the promote, or the human arms it. Tell the human
-plainly: "the lane was stopped, so auto-merge is not armed; the server gate decided — merge by hand". A green but
-unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that way).
+**Stopping the lane disarms the merge:** the promote arms auto-merge once the cheap checks pass and runs
+the local lane as an advisory check (`req-dev-multisession-promote-script-4a`; `TAP_PROMOTE_ARM_AFTER_LOCAL=1`
+arms only after local green). A stopped or red lane DISARMS it: `scripts/test --stop` fails the lane and
+the promote disarms; Ctrl-C or TERM of the promote itself disarms through a signal trap; a `kill -9` of the
+promote does NOT, so check `gh pr view <n> --json autoMergeRequest` after any hard kill. A stopped lane
+leaves the PR open and unarmed until you re-run the promote or the human merges or arms it. Tell the human
+plainly: "the lane was stopped, so auto-merge is disarmed; the server gate decides - merge or re-arm by hand".
+A green but unarmed PR gets no merge and then falls behind a moved base (tap#893 sat that way). The server
+`gate` can finish before a slow local lane reports red, so a red advisory lane after a landed PR is a
+follow-up fix, not an undo.
 
 **A core change can break a plugin's own tests** that only that plugin's suite sees (the playground
 suites pin `tap_web` / `tap_viz` behaviour), because the server's `core_ci` is fixtures-only. The scoped
