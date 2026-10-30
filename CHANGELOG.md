@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2](https://github.com/unified-systems-com/tap/compare/v0.3.1...v0.3.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **db:** move the database image from PostgreSQL 16 to 18 (18.6-r4) ([e1450d1](https://github.com/unified-systems-com/tap/commit/e1450d1954a8bcf39eee359a671641d201e1a848))
+* **db:** move the database image from PostgreSQL 16 to 18 (18.6-r4) [via pr-bots-id] ([9b7f891](https://github.com/unified-systems-com/tap/commit/9b7f8915945f0ba101f48b8f13b24db04da5c681))
+
 ## [0.3.1](https://github.com/unified-systems-com/tap/compare/v0.3.0...v0.3.1) (2026-10-29)
 
 

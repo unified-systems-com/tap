@@ -28,7 +28,11 @@ def lane(tmp_path: Path):
     (tmp_path / "scripts").mkdir()
     shutil.copy(REPO / "scripts" / "test", tmp_path / "scripts" / "test")
     dc = tmp_path / "scripts" / "dc"
-    dc.write_text('#!/usr/bin/env bash\nprintf "DC:"; printf " %s" "$@"; printf "\\n"\n')
+    dc.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ " $* " == *" tap.impacted_plugins "* ]]; then cat >/dev/null; printf "%s\\n" ${IMPACTED:-}; exit 0; fi\n'
+        'printf "DC:"; printf " %s" "$@"; printf "\\n"\n'
+    )
     for f in (tmp_path / "scripts" / "test", dc):
         f.chmod(0o755)
     env = {
@@ -151,5 +155,20 @@ def test_no_core_without_plugins_is_refused_not_an_empty_green_lane(lane) -> Non
     run, touch = lane
     touch("tap_web/x.py")
     out = run("--fast-relevant", "--no-core")
-    assert out.returncode == 2 and "--no-core needs --plugins" in out.stderr
+    assert out.returncode == 2 and "--no-core needs at least one plugin suite" in out.stderr
     assert "DC:" not in out.stdout  # it never reached the container
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-8")
+def test_plugins_auto_runs_the_impacted_suites_alongside_named_ones(lane) -> None:
+    run, touch = lane
+    touch("tap_grid/x.py")
+    out = run("--fast-relevant", "--plugins", "auto,named_core", extra_env={"IMPACTED": "a_core b_core"})
+    assert out.returncode == 0, out.stderr
+    for slug in ("named_core", "a_core", "b_core"):
+        assert f"--only {slug}" in out.stdout
+    # nothing reached and nothing named: the empty lane is refused with --no-core, a plain scoped lane without
+    none = run("--fast-relevant", "--no-core", "--plugins", "auto")
+    assert none.returncode == 2
+    plain = run("--fast-relevant", "--plugins", "auto")
+    assert plain.returncode == 0 and "--only" not in plain.stdout.replace("--only gryphon_playground", "")
