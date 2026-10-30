@@ -33,6 +33,9 @@
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+# shellcheck source=lib/container-engine.sh
+source "scripts/lib/container-engine.sh"
+tap_engine_select
 
 NAME="${LEANBOOT_NAME:-leanboot}"
 PROFILE="${LEANBOOT_PROFILE:-core}"          # core = zero plugins = the strictest independence signal
