@@ -207,21 +207,10 @@ fi
 # workflow's default `line`, so no dispatch inputs are authored here.
 CI_WORKFLOW="product-lines.yml"
 
-# Run the local validation surfaces in order. $1 = "fast" | "full". Called in a
-# condition (`if ! run_local_gates ...`), so `set -e` is relaxed inside the body —
-# every step handles its own failure with an explicit `|| return 1`.
-run_local_gates() {
-  local mode="$1"
-  # DCO sign-off trailers (req-cicd-dco-signoff) — host-side and cheap, so it runs
-  # first, before the stack even matters. ENFORCING since 2026-08-12 (CONTRIBUTING.md
-  # + DCO landed as approved policy): a missing trailer aborts the promote. The
-  # enforcing default lives in check-dco itself, not in an env var here, so an
-  # ad-hoc run gives the same verdict. Merge commits are exempt (the promote's
-  # pre-push merge stays clean); the BOT exemption is not available here and that is
-  # deliberate — it keys off GitHub's authenticated pull-request author, and there is
-  # no pull request yet (tap#335). The local lane is therefore strictly stricter than
-  # the server's `dco` job, never quieter: carrying an unsigned bot commit into a
-  # human branch reds here, and reds on the PR too.
+# The host-side, cheap checks that run before anything needs the stack: DCO sign-off trailers
+# (req-cicd-dco-signoff, enforcing since 2026-08-12; merge commits exempt; strictly stricter than the
+# server `dco` job, never quieter) and issue-link trailers (req-cicd-issue-link, tap#327).
+run_cheap_gates() {
   info "DCO sign-off trailer check (scripts/check-dco; enforcing — CONTRIBUTING.md is policy) ..."
   scripts/check-dco || return 1
   # Issue-link trailers (req-cicd-issue-link): the range names the issue it serves
@@ -230,6 +219,18 @@ run_local_gates() {
   # shape as DCO: host-side, cheap, the enforcing default lives in the script.
   info "Issue-link trailer check (scripts/check-issue-link; enforcing — an unlinked change leaves its issue open) ..."
   scripts/check-issue-link || return 1
+  return 0
+}
+
+# Run the local validation surfaces in order. $1 = "fast" | "full". Called in a
+# condition (`if ! run_local_gates ...`), so `set -e` is relaxed inside the body —
+# every step handles its own failure with an explicit `|| return 1`.
+run_local_gates() {
+  local mode="$1"
+  # $2 = "skip-cheap" when the caller already ran run_cheap_gates (the promote arms between the two).
+  if [[ "${2:-}" != "skip-cheap" ]]; then
+    run_cheap_gates || return 1
+  fi
   # Change-tier shortcut (req-dev-validation-product-line-lanes-7): a docs-tier
   # diff (scripts/change-tier — inert documentation only) cannot red pytest or
   # boot, and the server gate applies the same tier logic to its own jobs. The
@@ -404,15 +405,35 @@ Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast 
     gh pr edit "$PR_NUM" --body-file "$PROMOTE_BODY_TMP" >/dev/null \
       || fail "PR body publication failed — not proceeding against a stale declaration. Re-run to retry."
 
-    if ! run_local_gates fast; then
-      warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
-      fail "Local gates RED — aborting promote. origin/main is NOT advanced. Fix and re-run (same PR updates)."
-    fi
-
-    # FINALIZE: local green → arm. Both authorities must now be green to land.
-    info "Local gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM ..."
-    if ! gh pr merge "$PR_NUM" --auto --merge --match-head-commit "$PUSHED_SHA" >/dev/null 2>&1; then
-      warn "Could not arm auto-merge (setting/API hiccup) — falling back to poll-and-merge."
+    # Arming order (tap#1092). The local lane (about 14 minutes at 3 workers) outlasts the server `gate`,
+    # so arming only after it turned a green PR into a late one for no gain: the server's `gate` runs
+    # the same core walk and is the authority (req-dev-validation-suite-tiers-4), and a human approval
+    # still stands between a green PR and main. So the default arms right after the cheap host-side
+    # checks and runs the lane as an ADVISORY check that DISARMS on red. TAP_PROMOTE_ARM_AFTER_LOCAL=1
+    # restores the old order (arm only after local green).
+    arm_auto_merge() {
+      if ! gh pr merge "$PR_NUM" --auto --merge --match-head-commit "$PUSHED_SHA" >/dev/null 2>&1; then
+        warn "Could not arm auto-merge (setting/API hiccup) — falling back to poll-and-merge."
+      fi
+    }
+    if [[ "${TAP_PROMOTE_ARM_AFTER_LOCAL:-0}" == "1" ]]; then
+      if ! run_local_gates fast; then
+        warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
+        fail "Local gates RED — aborting promote. origin/main is NOT advanced. Fix and re-run (same PR updates)."
+      fi
+      # FINALIZE: local green → arm. Both authorities must now be green to land.
+      info "Local gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM ..."
+      arm_auto_merge
+    else
+      run_cheap_gates || fail "Cheap gates RED (DCO / issue link) — auto-merge stays DISARMED; PR #$PR_NUM remains open. Fix and re-run (same PR updates)."
+      info "Cheap gates GREEN — arming auto-merge (merge commit) on PR #$PR_NUM now; the local lane below is advisory and DISARMS on red."
+      arm_auto_merge
+      if ! run_local_gates fast skip-cheap; then
+        gh pr merge --disable-auto "$PR_NUM" >/dev/null 2>&1 || true
+        warn "Local gates RED — auto-merge DISARMED (it may already have landed if the server gate finished first: check gh pr view $PR_NUM)."
+        fail "Local gates RED — aborting promote. Fix and re-run (same PR updates)."
+      fi
+      info "Local gates GREEN (advisory lane agrees with the armed merge)."
     fi
 
     # ---- AI-review triage, wired into the workflow that creates its window ----

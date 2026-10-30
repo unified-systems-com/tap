@@ -108,9 +108,11 @@ that merge there), push, and read the plugin's CI (if it has any).
    A polling "is pytest running?" check is NOT reliable: it fires in the gap between two plugin
    suites, which is how a subagent's run overlapped a lane on 2026-10-21. `scripts/test` and
    `scripts/pytest-serial <pytest args>` take one lock per stack, so a second run WAITS and names the
-   holder (`python -m tap.pytest_lock status` shows it). Hand-typed `scripts/dc exec ... pytest` does
-   not take it: for anything bigger than a file or two, and from parallel subagents, use
-   `scripts/pytest-serial`. If you spawn subagents that run tests, say so in each brief: they use
+   holder (`python -m tap.pytest_lock status` shows it). A hand-typed `scripts/dc exec ... pytest` takes
+   it too, because the test harness (`tap.pytest_harness`) holds it from `pytest_configure` and
+   releases it at exit (collect-only, `--fixtures` and `--help` runs skip it); for anything bigger than
+   a file or two, and from parallel subagents, still prefer `scripts/pytest-serial`, which also puts
+   pytest in its own process group so `--stop` can kill every worker. If you spawn subagents that run tests, say so in each brief: they use
    `scripts/pytest-serial` and never poll `ps` for a running pytest.
 2. **Cap parallelism.** Export `TAP_TEST_JOBS=3` for any `scripts/test` (the promote already does); a single file needs `-n0`
    (bare `-n auto` adds a per-worker DB build that costs more than the test). Under load each xdist
@@ -156,8 +158,8 @@ Stopping the host-side `promote-to-main.sh` (or a `scripts/dc exec` client) does
 `docker exec` does not forward the signal, so `tap.lane_run` keeps launching suites in the container.
 Use `scripts/test --stop` BEFORE killing by pid: it TERMs the process holding the stack's pytest lock, which kills its pytest
 and every xdist worker as one process group. Stale `test_tap*` DBs may remain, so use `--create-db` on
-the next run. Only a run started through `scripts/test`, `tap.lane_run` or `scripts/pytest-serial` holds
-the lock; a hand-typed `pytest` has to be killed by pid inside the container.
+the next run. A hand-typed `pytest` holds the lock through the harness, so `--stop` TERMs it, but it has no
+process group of its own: check `ps` for xdist workers it left behind.
 
 If the holder itself dies (`kill -9`, an OOM), its pytest child inherits the lock and keeps it held, so a
 second run still waits instead of starting on top of the orphan; `scripts/test --stop` then notices the
