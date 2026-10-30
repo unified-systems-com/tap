@@ -10,7 +10,9 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
   ref of another batch refuses the file (``req-grid-import-grift-identity-3``);
 - a batch id is the import identity: a seen batch is skipped, and its declared removals
   warn (``req-grid-import-grift-identity-1``, ``req-grid-import-grift-removals-2``);
-- an id that exists — live or tombstoned — routes to replace, else to create; a replace of a
+- an id that exists — live or tombstoned — routes to replace, else to create; a replace keeps the
+  typed fields the document omits and replaces the ones it carries whole (keep-absent,
+  ``req-grid-import-grift-ordering-8``, ``-9``; tap#1128); a replace of a
   tombstone fails its batch (the tombstone is terminal), a replace bumps the version once and
   syncs the envelope's spine name without a second bump (``req-grid-import-grift-batch``);
 - a ref node resolves inside its batch's transaction through the type's declared search: zero
@@ -122,7 +124,8 @@ class Row:
     #: node or an edge): the typed row's `batch_id`. A delete records its batch on its event and
     #: never moves this stamp (observed on the running pipeline, PR# 637 - tap review).
     last_batch: str | None = None
-    #: the last full payload written (create or replace), for `expected.fields` spot checks
+    #: the typed fields as last written (a create's payload, then each replace's fields laid over it), for
+    #: `expected.fields` spot checks
     props: dict[str, Any] | None = None
     #: an edge's `properties.hotlink.value`, for the page hotlink rule
     hotlink: str | None = None
@@ -587,7 +590,8 @@ def _execute(
         _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]", bref)
         row.key = constituting(n["type"], n["props"])
         row.last_batch = bref
-        row.props = dict(n["props"])
+        # keep-absent: a field the document omits keeps its stored value; a carried one replaces whole.
+        row.props = {**(row.props or {}), **n["props"]}
         if declared_dims is not None:
             row.dims = declared_dims
         if n.get("name") or n["props"].get("name"):

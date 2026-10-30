@@ -54,6 +54,9 @@
    content is vertically centred and, with no `align` on the column, left-aligned. Plain text sits in a span that
    shrinks to the cell and cuts a long value with an ellipsis, as the cell itself did before it was a flex box. */
 .tabulator .tabulator-cell .tap-cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wrapping text column (columns[].wrap, req-web-stdpanel-table-config-31): the span stops cutting and flows onto as
+   many lines as it needs, so the row grows; an unbroken word breaks rather than overflowing the cell. */
+.tabulator .tabulator-cell.tap-col-wrap .tap-cell-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
 /* Plain links (formatter_params.style "plain", req-web-stdpanel-table-config-26): the link reads as the cell's own
    text, with no underline and no hover highlight, but it is still an anchor: it stays clickable (the pointer cursor
    is the browser's) and keeps the focus ring for a keyboard user. Placed after the link rules so equal specificity

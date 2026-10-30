@@ -212,6 +212,16 @@ def mark_clickable(option: dict[str, Any]) -> None:
             series.setdefault("cursor", "pointer")
 
 
+def deep_merge(base: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:
+    """``partial`` over ``base``: objects merge key by key, anything else replaces (``base`` is changed)."""
+    for key, value in partial.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            deep_merge(base[key], value)
+        else:
+            base[key] = copy.deepcopy(value)
+    return base
+
+
 def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, Any]) -> Built:
     """``series_by``: one series per distinct ``series`` value over a shared ``category`` axis."""
     spec = config["series_by"]
@@ -267,9 +277,10 @@ def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, 
     cat_axis, val_axis = ("y", "x") if category_on_y else ("x", "y")
     template = _series_list(option)[0]
     out = copy.deepcopy(option)
+    overrides = spec.get("overrides") or {}
     out["series"] = [
         {
-            **copy.deepcopy(template),
+            **deep_merge(copy.deepcopy(template), overrides.get(name, {})),
             "name": name,
             "encode": {**template.get("encode", {}), cat_axis: cat_f, val_axis: dim},
         }

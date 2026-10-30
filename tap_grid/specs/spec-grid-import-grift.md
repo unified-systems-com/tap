@@ -560,7 +560,7 @@ These three levels nest: plugin A's bundle Z executes after plugin A's bundle Y,
 
 Within the deterministic order above, the importer is **upsert-by-default at the per-entity level**:
 
-- When a `nodes[]` or `edges[]` element declares an `entity_id` that already exists in the local grid, the importer routes the operation through the service-layer `replace_node` (or `replace_edge`) verb. The latest declaration wins.
+- When a `nodes[]` or `edges[]` element declares an `entity_id` that already exists in the local grid, the importer routes the operation through the service-layer `replace_node` (or `replace_edge`) verb in keep-absent mode (`absent="keep"`, `req-grid-service-write-keepabsent`). The latest declaration wins for every field it carries; a field it omits keeps its stored value.
 - When a batch declares an `entity_id` that does not yet exist, the importer routes through `create_node` (or `create_edge`).
 
 This is distinct from the *batch-level* skip-if-exists guard documented in [Identity And Matching](#identity-and-matching). The batch guard is the file-level idempotency contract: if a `batch_entity.entity_id` has been seen before, the entire batch is skipped (an explicit `--force-batches` opt-in is the bypass). Only batches that *do* execute apply per-entity last-write-wins.
@@ -573,6 +573,16 @@ The combined semantics:
 | Different `batch_entity_id`s declaring the same `entity_id` | **Last-batch-wins** — the second batch's `replace_node` overrides the first batch's `create_node` |
 | Same plugin, two bundles, same `entity_id` | **Last-bundle-wins by manifest order** |
 | Two plugins, same `entity_id` | **Last-plugin-wins by `INSTALLED_APPS` order** |
+
+### Absent Fields On Upsert
+
+A node's `node` payload names the fields the sender is asserting (an edge document must carry `properties`, which replaces whole). A field the sender omits is the sender saying nothing about it, and the importer leaves the stored value alone (ruled 2026-10-28, maintainer; `unified-systems-com/tap#1128`). This is how a collector that could not read a field, such as a denied or failed call, avoids erasing the value an earlier run stored: it omits the field.
+
+- A present field replaces its stored value whole; an object is not merged, so a key the sender dropped is dropped.
+- An explicit `null` clears a field that permits null and resets one that does not to its model default (`req-grid-service-write-keepabsent-4`).
+- The omission means "no comment", not "empty". A sender that looked and found nothing sends the empty value (`""`, `[]`, `{}`) or `null`, never the omission, which follows `req-grid-node-observation`.
+- Required fields stay required. Spine fields keep their own rule, [Spine Sync For Replaced Entities](#spine-sync-for-replaced-entities): the envelope's `name` and `dimensions` are authoritative on every import.
+- A create is unaffected: an omitted field takes the model default and earns no FLIP entry.
 
 ### Visibility Requirements
 
@@ -593,6 +603,9 @@ Last-write-wins is a useful tool, but a silent one is a footgun. The importer mu
 | req-grid-import-grift-ordering-5 | Per-entity upsert visibility | Implemented | Each entity replacement emits an `[upsert]` log line and is recorded on `GriftImportedBatch.upserted_entities`. | |
 | req-grid-import-grift-ordering-6 | Skipped-batch visibility | Implemented | Each skipped batch emits a `[skip]` log line that includes the explicit `--force-batches` recipe to re-run it. | |
 | req-grid-import-grift-ordering-7 | Lint mode | Implemented | `--lint` scans all selected bundles, reports cross-bundle `entity_id` duplicates, exits non-zero on any duplicate. | |
+| req-grid-import-grift-ordering-8 | Absent fields kept on upsert | Proposed | A node or edge routed to an existing entity is applied in keep-absent mode: a field the document omits keeps its stored value and earns no FLIP entry. | `unified-systems-com/tap#1128`; `req-grid-service-write-keepabsent-2`. |
+| req-grid-import-grift-ordering-9 | Present fields replace whole | Proposed | A field the document carries replaces its stored value whole, so an object key the sender dropped is dropped; a null on a non-null field resets the field to its model default. | `req-grid-service-write-keepabsent-3`, `-4`. |
+| req-grid-import-grift-ordering-10 | Edge properties replace whole | Proposed | A GRIFT edge document always carries `properties` (the document schema requires it), so an edge routed to an existing entity replaces its stored properties whole; no key of the old properties survives unless re-sent. | Keep-absent changes nothing observable for edges today; the importer still sets it so a future optional edge field inherits the rule. |
 
 ## Strict-No-Overwrite Mode
 ----

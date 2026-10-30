@@ -1,0 +1,3 @@
+# Fixture SBOMs name deliberately vulnerable software (log4j-core 2.14.1, PyJWT 2.13.0); a scan of the image would report them.
+# spec: req-cicd-image-context-reason-1
+tap/tests/fixtures/sbom/

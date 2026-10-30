@@ -32,6 +32,7 @@ Future:
 | req-web-page-sanitize.sec | [Page Object Sanitization](#page-object-sanitization) | Implemented | Schema-first input hardening plus safe HTML output escaping |
 | req-web-page-plink | [Page to Panel Links](#page-to-panel-links) | Implemented | `USES_PANEL` links bind `panel-id` slots to panel nodes |
 | req-web-page-row-heights | [Row Heights](#page-layout-sanitization) | Implemented | A row's `height` drives its flex basis: `auto` intrinsic, `vh` definite everywhere, `Nfr` a share of the remaining height — which exists only on a `full_bleed` page, so elsewhere an `fr` row falls back to intrinsic height and does not clip. A row never both lacks a height and clips to it. `fill` takes the viewport height left under the page chrome and the other bands, on any page, without scrolling the document (see Fill Rows). | tap#416; `tap_web/tests/test_page_row_heights.py`. |
+| req-web-page-compact-width | [Compact Column Width](#page-compact-column-width) | Implemented | A column `width` of `compact` is a track capped at 16rem that packs at the start of its band and shrinks on a narrow viewport, so stat cards (or any panel) sit small side by side with room for more; every existing width renders as before. | tap#1099; `tap_web/tests/test_page_compact_width.py` |
 | req-web-page-bands | [Layout Bands](#page-layout-bands) | Implemented | An optional integer `band` (>= 1, default 1) on a column groups columns into horizontal bands: each band is its own grid, bands stack top to bottom, so full-width content can sit under side-by-side columns. A page with no `band` renders exactly as before. | `tap_web/tests/test_page_bands.py` |
 | req-web-page-landing | [Landing Pages](#landing-pages) | Implemented | The root is the operator's decision: `web.landing_entity_id` (identity) + `web.landing_slug` (verified assertion) in the boot profile, carried by settings, verified fail-closed at boot; one resolver feeds the 302 redirect, the placeholder and a structured `web.landing` probe; the `LandingPage` node + `USES_LANDING_PAGE` edge are DROPPED with row cleanup (tap#340) |
 | req-web-page-synthetic | [Synthetic Pages](#synthetic-pages) | Implemented | GRIFT-subgraph-driven page rendering without persisting Page or Panel objects |
@@ -232,7 +233,7 @@ Layout validation and output-safety requirements extracted from `req-web-page-ob
     - `panel-id` (required, defined by `req-web-page-panel-id`)
     - `row_span` (optional integer >= 1, default 1)
     - `col_span` (optional integer >= 1, default 1)
-    - `height` (optional) — the column `width` allowlist (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`), plus `fill` (the viewport height remaining after the page chrome and the page's other bands; see Fill Rows). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). A `vh` row always clips and scrolls its own content; an `fr` row does so only on a `full_bleed` page, because only there does it have a height to clip to (see below). When omitted, rows take their intrinsic (content-driven) height — the legacy default.
+    - `height` (optional) — the column `width` allowlist without `compact` (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`), plus `fill` (the viewport height remaining after the page chrome and the page's other bands; see Fill Rows). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). A `vh` row always clips and scrolls its own content; an `fr` row does so only on a `full_bleed` page, because only there does it have a height to clip to (see below). When omitted, rows take their intrinsic (content-driven) height — the legacy default.
     - `tags` (optional object map with kebab-case keys/values)
 - Ordering and identity semantics:
   - Ordering is implied by numeric key prefix in `col-<n>` and `row-<n>`.
@@ -294,7 +295,7 @@ When a page has a `fill` row, `_process_layout` derives `fills_viewport` once an
         "properties": {
           "width": {
             "type": "string",
-            "enum": ["auto", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
+            "enum": ["auto", "compact", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
           },
           "band": {
             "type": "integer",
@@ -394,6 +395,30 @@ Implemented for both the persisted and the synthetic page road.
 | req-web-page-bands-3 | Band Then Column Order | Implemented | Columns order by band ascending, then by the numeric `col-<n>` prefix within a band. | `test_page_bands.py::TestProcessLayout::test_columns_order_by_band_then_number` |
 | req-web-page-bands-4 | No Band Renders As Before | Implemented | A layout with no `band` (a single band) renders one grid, markup unchanged (`h-full` included). | `test_page_bands.py::TestRender::test_a_page_without_band_renders_one_grid_as_before` |
 | req-web-page-bands-5 | Several Bands Scroll Normally | Implemented | With more than one band the grids do not take `h-full` and an `Nfr` row falls back to its intrinsic height (the page has no definite height to divide), so the page scrolls with the document, `full_bleed` or not; `auto` and `vh` row heights are unchanged. | `test_page_bands.py::TestProcessLayout`, `::TestRender::test_a_multi_band_page_does_not_force_full_height` |
+
+
+### Page Compact Column Width
+----
+RID: `req-web-page-compact-width`
+
+Status: `Implemented`
+
+A column `width` is `auto`, `1fr`..`12fr`, or `compact`. Every panel stretches to its column, so two stat cards in two `3fr` columns each take half the row and a row cannot hold more small cards. `compact` is a column that stays small: its grid track is `minmax(0, 16rem)`, at most 16rem wide and free to shrink below that, so the column packs at the start of the band and the space after it is left for further columns. It composes with the other widths in the same band (`compact compact 1fr` is two small cards and a flexible column).
+
+Why a column width and not a stat-card option, and not `auto`: an `auto` track is stretched to share the free space whenever the band has no `fr` track, so `auto auto` still splits the row in half and the cards stay apart; a card-only `max_width` would shrink the card inside a column that still takes its half of the row. Sizing the track is the one place the row's space is decided, it serves any panel rather than one type, and it changes no existing page. On a narrow viewport the capped tracks shrink to share the row (the page grid has no breakpoint of its own, so nothing wraps); the stat card's own grid already adapts to the width it is given.
+
+`compact` is a width only: a row `height` is not a width and does not accept it.
+
+#### Status Details
+Implemented on the persisted page road (`page.html`). The synthetic page road takes its own generated widths and does not use `compact`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-page-compact-width-1 | Compact Is A Column Width | Implemented | `compact` is accepted as a column `width` by the layout schema; an unlisted width (`narrow`, `16rem`) is still rejected, and `compact` is not accepted as a row `height`. | `test_page_compact_width.py::TestValidation` |
+| req-web-page-compact-width-2 | Capped Track | Implemented | A `compact` column renders as the track `minmax(0, 16rem)` in its band's `grid-template-columns`, beside any other widths of the band. | `test_page_compact_width.py::TestRender` |
+| req-web-page-compact-width-3 | Existing Widths Unchanged | Implemented | A layout using only `auto` and `Nfr` widths renders the same `grid-template-columns` as before. | `test_page_compact_width.py::TestRender`, `test_page_bands.py` |
 
 
 ### Page Object Sanitization

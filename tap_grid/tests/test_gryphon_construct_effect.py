@@ -27,6 +27,7 @@ file depends on no plugin — the data-lane allowlist tests established that veh
 from typing import Any
 
 import pytest
+from psycopg.types.json import Json, Jsonb
 
 from tap_grid.exceptions import SearchExecutionError
 from tap_grid.gryphon import explain_gryphon_raw
@@ -37,7 +38,13 @@ pytestmark = pytest.mark.django_db(databases=["default", "search_readonly"])
 def _issued(query: str, inputs: dict[str, Any] | None = None) -> list[tuple[str, tuple[Any, ...]]]:
     """The ordered (sql, params) pairs a query's execution issued."""
     capture = explain_gryphon_raw(query, inputs or {})["sql"]
-    return [(stmt.sql, tuple(stmt.params or ())) for stmt in capture.statements]
+    # psycopg JSON wrappers have identity equality, so compare their stable
+    # representations too: equal edge-map predicates must not look different
+    # merely because the two executions allocated different Jsonb objects.
+    return [
+        (stmt.sql, tuple(repr(param) if isinstance(param, (Json, Jsonb)) else param for param in (stmt.params or ())))
+        for stmt in capture.statements
+    ]
 
 
 def _assert_construct_has_effect(with_construct: str, without_construct: str) -> None:
@@ -67,6 +74,35 @@ def _assert_construct_has_effect(with_construct: str, without_construct: str) ->
 
 
 CASES = [
+    # Duplicate authored constraints must never collapse to the later value.
+    # The shared parser must refuse before any dispatch/parameter extraction.
+    pytest.param(
+        'MATCH (b:batch {name: "required", name: "later"}) RETURN b',
+        'MATCH (b:batch {name: "later"}) RETURN b',
+        id="duplicate-inline-node-key",
+    ),
+    pytest.param(
+        'MATCH (a:batch {name: "required", name: "later"})-[e]->(b:batch) RETURN a, b',
+        'MATCH (a:batch {name: "later"})-[e]->(b:batch) RETURN a, b',
+        id="duplicate-inline-chain-node-key",
+    ),
+    pytest.param(
+        'MATCH (a:batch)-[e {kind: "required", kind: "later"}]->(b:batch) RETURN a, b',
+        'MATCH (a:batch)-[e {kind: "later"}]->(b:batch) RETURN a, b',
+        id="duplicate-inline-edge-key",
+    ),
+    pytest.param(
+        'MATCH (t:batch {name: "required", name: "later"}) OPTIONAL MATCH (t)-[:X]->(w:batch) '
+        "RETURN t.entity_id AS a, COUNT(w) AS c",
+        'MATCH (t:batch {name: "later"}) OPTIONAL MATCH (t)-[:X]->(w:batch) ' "RETURN t.entity_id AS a, COUNT(w) AS c",
+        id="duplicate-inline-optional-mandatory-key",
+    ),
+    pytest.param(
+        'MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w:batch {name: "required", name: "later"}) '
+        "RETURN t.entity_id AS a, COUNT(w) AS c",
+        'MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w:batch {name: "later"}) ' "RETURN t.entity_id AS a, COUNT(w) AS c",
+        id="duplicate-inline-optional-node-key",
+    ),
     # The #196 defect: node inline property map, string value. The WHERE-spelled
     # control below proves the same filter IS expressible, so a drop here is a
     # defect in the construct, not in the field path.
@@ -115,6 +151,12 @@ CASES = [
         'MATCH (t:batch {name: "x"}) OPTIONAL MATCH (t)-[:X]->(g:batch) ' "RETURN t.entity_id AS a, COUNT(g) AS c",
         "MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(g:batch) RETURN t.entity_id AS a, COUNT(g) AS c",
         id="node-inline-prop-on-optional-anchor",
+    ),
+    pytest.param(
+        'MATCH (t:batch) OPTIONAL MATCH (t {name: "required"})-[:X]->(w:batch) '
+        "RETURN t.entity_id AS a, COUNT(w) AS c",
+        "MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w:batch) RETURN t.entity_id AS a, COUNT(w) AS c",
+        id="node-inline-prop-on-optional-repeated-anchor",
     ),
     # Labelless bare scan with a map — consumed by REJECTION (there is no model
     # to resolve `data.k` against); lands in the rejection branch above.
@@ -279,6 +321,30 @@ class TestInPatternVariableReuseIsAJoin:
             _issued("MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(t) RETURN t.entity_id AS a, COUNT(t) AS c")
 
 
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (t:batch) OPTIONAL MATCH (t)-[w:X]->(w:batch) RETURN t.entity_id AS id, COUNT(w) AS c",
+            "MATCH (t:batch) OPTIONAL MATCH (t)-[t:X]->(w:batch) RETURN t.entity_id AS id, COUNT(w) AS c",
+        ],
+    )
+    def test_optional_match_node_and_edge_sharing_a_name_is_rejected(self, query):
+        # The OPTIONAL builder shares the chain path's refusal (one helper), so the
+        # rule holds at both sites; before, the edge binding overwrote the node's.
+        with pytest.raises(SearchExecutionError, match="names both a node and an edge"):
+            _issued(query)
+
+    def test_optional_match_distinct_edge_name_is_still_accepted(self):
+        assert _issued("MATCH (t:batch) OPTIONAL MATCH (t)-[e:X]->(w:batch) RETURN t.entity_id AS id, COUNT(w) AS c")
+
+    def test_optional_match_anchor_label_must_match_the_mandatory_label(self):
+        with pytest.raises(SearchExecutionError, match="repeats the MATCH variable with a different label"):
+            _issued(
+                'MATCH (t:batch) OPTIONAL MATCH (t:other {name: "x"})-[:X]->(w:batch) '
+                "RETURN t.entity_id AS id, COUNT(w) AS c"
+            )
+
+
 class TestWhereOnAnUnboundVariable:
     """A WHERE leaf on a variable the ONE mandatory MATCH does not bind is refused — tap#1072.
 
@@ -421,3 +487,17 @@ class TestInputNullPredicateEffect:
     def test_constant_false_where_is_refused(self):
         with pytest.raises(SearchExecutionError, match="constant FALSE"):
             _issued("MATCH (b:batch) WHERE $p IS NOT NULL RETURN b", {"p": None})
+
+
+@pytest.mark.spec("req-grid-dimension-query-form-2")
+@pytest.mark.parametrize(
+    "query",
+    [
+        "MATCH (n) WHERE n.dimensions.tap.cloud IS NOT NULL RETURN n",
+        'MATCH (n) WHERE n.dimensions["tap"]["cloud"] IS NOT NULL RETURN n',
+        'MATCH (n) WHERE n.dimensions["tap"].cloud = "aws" RETURN n',
+    ],
+)
+def test_bare_dimension_paths_are_refused_before_sql(query: str) -> None:
+    with pytest.raises(SearchExecutionError, match=r'\["tap\.cloud"\]'):
+        _issued(query)

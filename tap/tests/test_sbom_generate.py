@@ -610,3 +610,51 @@ def test_the_reconciliation_gate_defines_no_parser_of_its_own() -> None:
     assert "parse_copy_sites = _gen.parse_copy_sites" in source
     assert "def parse_copy_sites(" not in source
     assert "def _logical_lines(" not in source
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_the_wheel_seed_is_copied_out_of_the_image_never_run(monkeypatch, tmp_path):
+    """An arm64 image cannot execute on the amd64 runner (`docker run` exits 255, which failed every publish from 10-20).
+    The seed is read with create + cp + rm, so it works for either architecture."""
+    from types import SimpleNamespace
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:2] == ["docker", "create"]:
+            return SimpleNamespace(stdout=b"ctr1\n", stderr=b"")
+        if cmd[:2] == ["docker", "cp"]:
+            dist = Path(cmd[3]) / "h" / "idna-3.10.dist-info"
+            dist.mkdir(parents=True)
+            (dist / "WHEEL").write_text("Tag: py3-none-any\n")
+            (dist / "METADATA").write_text("License-Expression: BSD-3-Clause\n")
+        return SimpleNamespace(stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(gen.subprocess, "run", fake_run)
+    text = gen.read_wheel_seed("ghcr.io/example/tap-web@sha256:" + "0" * 64)
+    assert "@@ idna-3.10.dist-info" in text and "License-Expression: BSD-3-Clause" in text
+    assert [c[:2] for c in calls] == [["docker", "create"], ["docker", "cp"], ["docker", "rm"]]
+    assert all(c[1] != "run" for c in calls)
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_an_image_with_no_seed_reads_as_empty_but_other_copy_failures_stop_the_run(monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    def make(stderr: bytes):
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["docker", "create"]:
+                return SimpleNamespace(stdout=b"ctr1\n", stderr=b"")
+            if cmd[:2] == ["docker", "cp"]:
+                raise subprocess.CalledProcessError(1, cmd, stderr=stderr)
+            return SimpleNamespace(stdout=b"", stderr=b"")
+
+        return fake_run
+
+    monkeypatch.setattr(gen.subprocess, "run", make(b"Error: Could not find the file /opt/uv-cache-seed/archive-v0"))
+    assert gen.read_wheel_seed("img") == ""
+    monkeypatch.setattr(gen.subprocess, "run", make(b"Error response from daemon: no space left on device"))
+    with pytest.raises(subprocess.CalledProcessError):
+        gen.read_wheel_seed("img")

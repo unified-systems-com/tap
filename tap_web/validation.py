@@ -92,6 +92,7 @@ _LAYOUT_SCHEMA: dict = {
                         "type": "string",
                         "enum": [
                             "auto",
+                            "compact",
                             "1fr",
                             "2fr",
                             "3fr",

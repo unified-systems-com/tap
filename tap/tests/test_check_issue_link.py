@@ -128,8 +128,8 @@ def test_the_approved_bot_identity_exempts_the_range(repo: Path) -> None:
 def test_the_approved_fork_bot_exempts_the_range_as_its_recorded_user_type(repo: Path) -> None:
     """The org-bots fork bot is a machine user, so GitHub reports `User` and its entry records `User`."""
     _commit(repo, "chore(deps): bump x")
-    result = _as(repo, "tap-renovate-remote", "334543231", "User")
-    assert result.returncode == 0 and "approved bot tap-renovate-remote (id 334543231)" in result.stdout
+    result = _as(repo, "tap-renovate-runner", "347434375", "User")
+    assert result.returncode == 0 and "approved bot tap-renovate-runner (id 347434375)" in result.stdout
 
 
 @pytest.mark.spec("req-cicd-issue-link-6")
@@ -138,7 +138,7 @@ def test_the_approved_fork_bot_exempts_the_range_as_its_recorded_user_type(repo:
     ("login", "ident", "kind", "why"),
     [
         (TAP_RENOVATE[0], "424242", "Bot", "matching login, wrong id"),
-        ("tap-renovate-remote", "334543231", "Bot", "approved User id arriving as Bot"),
+        ("tap-renovate-runner", "347434375", "Bot", "approved User id arriving as Bot"),
         (TAP_RENOVATE[0], TAP_RENOVATE[1], "User", "matching id, wrong type"),
         (STOCK_RENOVATE[0], STOCK_RENOVATE[1], "Bot", "stock renovate[bot] is not ours"),
         ("github-actions[bot]", "41898282", "Bot", "never authored a PR here; removed from the list"),
@@ -203,7 +203,7 @@ def test_legacy_login_only_invocation_is_not_an_exemption(repo: Path) -> None:
 def test_allowlist_validates_against_its_schema_and_the_stdlib_reader_agrees() -> None:
     data = load_json_file(APPROVED, schema=APPROVED_SCHEMA)  # jsonschema — the full contract
     ids = {e["id"] for e in data["approved"]}
-    assert {315114127, 334543231} <= ids and 29139614 not in ids and 41898282 not in ids
+    assert {315114127, 347434375} <= ids and 29139614 not in ids and 41898282 not in ids
     # The script's stdlib reader (what CI actually runs) sees the same identities.
     out = subprocess.run(
         [

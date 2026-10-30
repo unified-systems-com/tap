@@ -69,6 +69,20 @@ class TestCellAlignment:
         assert _GRAPH.count("vertical-align: middle;") >= 2
 
 
+class TestWrappingColumn:
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    def test_a_wrap_column_cell_lets_its_text_flow_and_the_row_grow(self) -> None:
+        body = _rule(".tabulator .tabulator-cell.tap-col-wrap .tap-cell-text")
+        for needle in ("overflow: visible", "text-overflow: clip", "white-space: normal", "overflow-wrap: anywhere"):
+            assert needle in body, needle
+        assert "nowrap" not in body
+        assert not re.search(r"#[0-9a-fA-F]{3,6}\b", body), "no literal colour"
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    def test_only_a_wrap_true_column_gets_the_class(self) -> None:
+        assert 'if (spec.wrap === true) col.cssClass = "tap-col-wrap";' in _JS
+
+
 class TestPlainLinks:
     @pytest.mark.spec("req-web-stdpanel-table-config-26")
     def test_the_plain_modifier_drops_colour_underline_and_hover_but_keeps_the_focus_ring(self) -> None:

@@ -58,13 +58,13 @@ jobs:
           # The Trivy binary, named rather than inherited from the action pin (ed142fd0's
           # own default is v0.70.0, which cannot decode CycloneDX 1.7 documents; v0.75.0 does).
           # tap/tests/test_trivy_sarif_severity.py keeps every copy equal.
-          version: v0.75.0
+          version: v0.76.1
           image-ref: ghcr.io/unified-systems-com/${{ matrix.image }}:latest
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}

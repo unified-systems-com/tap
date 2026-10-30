@@ -59,7 +59,7 @@ ARG TAP_FIPS_ACTIVATION=system
 # The Wolfi base, pinned tag@digest, written ONCE here (req-cicd-base-image-labels): every
 # FROM below uses it, and the two OCI base-image labels in `base` are derived from it, so the
 # pin and the labels cannot disagree. Renovate's dockerfile manager reads this ARG's default.
-ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base:latest@sha256:bef0f4d47edc72a93d1537eae54eb53db2b2cc352c028128ff0f16c5b5a3c1e4
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
 # Base images are pinned tag@digest (req-cicd-base-image-lifecycle-1): wolfi-base:latest
 # rotates its digest DAILY, which invalidated every downstream layer (apk toolchain, the
@@ -229,7 +229,7 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.20@sha256:100047e74f30778ab704942321a09750d6158739573ff58bf3924085cc6cd2d8 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + the uv cache are

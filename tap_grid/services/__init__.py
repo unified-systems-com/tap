@@ -550,6 +550,7 @@ def replace_node(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    absent: Literal["reset", "keep"] = "reset",
 ) -> WriteResult:
     """Fully replace the user-writable fields of a domain object (PUT semantics).
 
@@ -567,6 +568,8 @@ def replace_node(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        absent: ``"reset"`` (default) resets payload-absent optional fields to their model default; ``"keep"``
+            leaves them alone and replaces present fields whole (req-grid-service-write-keepabsent).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -576,6 +579,7 @@ def replace_node(
         target=target,
         payload=payload,
         entity_expected_version=entity_expected_version,
+        absent=absent,
     )
     batch_result = write_batch(
         [op],
@@ -836,6 +840,7 @@ def replace_edge(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    absent: Literal["reset", "keep"] = "reset",
 ) -> WriteResult:
     """Fully replace an Edge's properties (PUT semantics).
 
@@ -852,6 +857,8 @@ def replace_edge(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        absent: ``"reset"`` (default) resets payload-absent optional fields to their model default; ``"keep"``
+            leaves them alone and replaces present fields whole (req-grid-service-write-keepabsent).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -861,6 +868,7 @@ def replace_edge(
         target=target,
         payload=payload,
         entity_expected_version=entity_expected_version,
+        absent=absent,
     )
     batch_result = write_batch(
         [op],

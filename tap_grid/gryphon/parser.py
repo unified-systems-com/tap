@@ -281,7 +281,17 @@ class _ASTTransformer(Transformer):
         return int(lo), int(hi)
 
     def inline_props(self, *pairs: Any) -> dict[str, Any]:
-        return dict(pairs)
+        # Preserve apply-or-reject before map reduction and AST param discovery:
+        # dict(pairs) alone would erase the first predicate (and its $param).
+        props: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in props:
+                raise GryphonParseError(
+                    f"Duplicate inline property key {key!r}. Each key must appear once; "
+                    "use explicit WHERE predicates joined with AND for repeated constraints."
+                )
+            props[key] = value
+        return props
 
     def prop_pair(self, name: Token, value: Any) -> tuple[str, Any]:
         return str(name), value

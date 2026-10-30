@@ -68,7 +68,6 @@ tap_grid/gryphon/executor.py:no-redef:1
 tap_grid/gryphon/executor.py:no-untyped-call:1
 tap_grid/gryphon/executor.py:no-untyped-def:15
 tap_grid/gryphon/executor.py:type-arg:1
-tap_grid/gryphon/executor.py:union-attr:2
 tap_grid/gryphon/parser.py:arg-type:1
 tap_grid/gryphon/parser.py:no-any-return:2
 tap_grid/gryphon/parser.py:type-arg:1
@@ -105,7 +104,7 @@ tap_grid/tests/test_grift_subgraph.py:arg-type:4
 tap_grid/tests/test_grift_subgraph.py:no-untyped-call:32
 tap_grid/tests/test_grift_subgraph.py:union-attr:2
 tap_grid/tests/test_gryphon.py:no-any-return:1
-tap_grid/tests/test_gryphon.py:no-untyped-call:90
+tap_grid/tests/test_gryphon.py:no-untyped-call:82
 tap_grid/tests/test_gryphon.py:type-arg:1
 tap_grid/tests/test_gryphon.py:union-attr:66
 tap_grid/tests/test_gryphon_sql_capture.py:no-untyped-call:10
@@ -134,7 +133,7 @@ tap_grid/tests/test_service_schemas.py:unused-ignore:3
 tap_grid/tests/test_services.py:arg-type:25
 tap_grid/tests/test_services.py:misc:12
 tap_grid/tests/test_validation.py:func-returns-value:1
-tap_grid/tests/test_validation.py:type-arg:9
+tap_grid/tests/test_validation.py:type-arg:10
 tap_plugins/management/commands/import_plugin_grift.py:no-untyped-def:3
 tap_plugins/management/commands/import_plugin_grift.py:type-arg:3
 tap_plugins/management/commands/import_plugin_grift.py:union-attr:1

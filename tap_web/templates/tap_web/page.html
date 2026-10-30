@@ -31,7 +31,7 @@
 {% endcomment %}
 {% with grid_cols=processed_columns %}{% if multi_band %}<div class="tap-page-bands" style="display: flex; flex-direction: column; gap: 1rem;{% if fill_viewport %} flex: 1 1 0; min-height: 0;{% endif %}">{% endif %}{% for band in bands %}
 <div class="tap-page-grid{% if not multi_band %} h-full{% endif %}"{% if multi_band %} data-band="{{ band.band }}"{% endif %}
-     style="display: grid; grid-template-columns: {% for col in band.columns %}{{ col.width }}{% if not forloop.last %} {% endif %}{% endfor %}; gap: 1rem; min-height: {% if band.has_fill %}var(--tap-fill-min, 24rem){% else %}0{% endif %};{% if fill_viewport and multi_band %}{% if band.has_fill %} flex: 1 1 0;{% else %} flex: 0 0 auto;{% endif %}{% endif %}">
+     style="display: grid; grid-template-columns: {% for col in band.columns %}{{ col.track }}{% if not forloop.last %} {% endif %}{% endfor %}; gap: 1rem; min-height: {% if band.has_fill %}var(--tap-fill-min, 24rem){% else %}0{% endif %};{% if fill_viewport and multi_band %}{% if band.has_fill %} flex: 1 1 0;{% else %} flex: 0 0 auto;{% endif %}{% endif %}">
   {% for col in band.columns %}
   {# min-width: 0 lets the grid/flex column shrink below its content's intrinsic #}
   {# width (overriding the default min-width:auto), so a wide panel stays inside #}

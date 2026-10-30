@@ -197,7 +197,7 @@ jobs:
       # uv's version comes from core's `[tool.uv] required-version`. The workspace root is the
       # plugin's checkout, where setup-uv finds no pyproject and falls back to `latest`, which
       # took uv 0.13.0's new Python 3.15 default overnight (tap#1008).
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version-file: _tooling/pyproject.toml
 
@@ -359,7 +359,7 @@ jobs:
           path: _tooling
 
       # uv's version from core's `required-version`, as in the tooling job above (tap#1008).
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version-file: _tooling/pyproject.toml
 
@@ -462,7 +462,7 @@ jobs:
       # parenthesized" before anything boots. Same constraint, same fix as the
       # core `rids` job: resolve the interpreter from the requires-python that
       # governs the container build, so the runner can never drift from it.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: "pyproject.toml"
       - name: Stage the boot profile and derive the editable workspace
@@ -714,7 +714,7 @@ jobs:
           jq -e '"\(.metadata.component.name): \(.components | length) package(s) in scope"' dependency-closure.cdx.json
 
       - name: Hand the closure to the scan job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dependency-closure-${{ inputs.plugin_slug }}
           path: dependency-closure.cdx.json
@@ -838,7 +838,7 @@ jobs:
           find after-tests-stage -type f | sed 's/^/staged: /'
       - name: Upload after-tests artifact
         if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: after-tests
           path: after-tests-stage
@@ -954,7 +954,7 @@ jobs:
       contents: read
     steps:
       - name: Receive the closure document
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dependency-closure-${{ inputs.plugin_slug }}
 
@@ -979,7 +979,7 @@ jobs:
 
       # The classifier and the locator are repo Python; run them on the interpreter the repo
       # declares, not on whatever the runner image ships (req-dev-localexec-runner-interpreter).
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: "_tooling/pyproject.toml"
 
@@ -1008,7 +1008,7 @@ jobs:
           # The Trivy binary, named rather than inherited from the action pin (ed142fd0's
           # own default is v0.70.0, which cannot decode CycloneDX 1.7 documents; v0.75.0 does).
           # tap/tests/test_trivy_sarif_severity.py keeps every copy equal.
-          version: v0.75.0
+          version: v0.76.1
           scan-type: sbom
           scan-ref: dependency-closure.cdx.json
           format: sarif
@@ -1024,7 +1024,7 @@ jobs:
           # The Trivy binary, named rather than inherited from the action pin (ed142fd0's
           # own default is v0.70.0, which cannot decode CycloneDX 1.7 documents; v0.75.0 does).
           # tap/tests/test_trivy_sarif_severity.py keeps every copy equal.
-          version: v0.75.0
+          version: v0.76.1
           scan-type: sbom
           scan-ref: dependency-closure.cdx.json
           format: sarif
@@ -1095,7 +1095,7 @@ jobs:
 
       - name: Hand the report to the upload job
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: trivy-plugin-closure-${{ inputs.plugin_slug }}
           path: trivy-plugin-closure.sarif
@@ -1136,13 +1136,13 @@ jobs:
       - name: Receive the located report
         id: report
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: trivy-plugin-closure-${{ inputs.plugin_slug }}
 
       - name: Upload SARIF to code scanning
         if: steps.report.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: trivy-plugin-closure.sarif
           category: tap-plugin-closure

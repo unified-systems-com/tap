@@ -147,6 +147,8 @@ class TestConfigSchema:
         for key in ("series_by", "hierarchy", "color_map", "sort"):
             for name, prop in CHART_CONFIG_SCHEMA["properties"][key]["properties"].items():
                 assert prop.get("description"), f"{key}.{name}"
+        overrides = CHART_CONFIG_SCHEMA["properties"]["series_by"]["properties"]["overrides"]
+        assert overrides["additionalProperties"]["description"]
 
     @pytest.mark.spec("req-web-panels-chart-config-4")
     def test_the_schema_names_no_domain_value(self):
@@ -458,6 +460,71 @@ class TestSeriesBy:
         rows: list[dict[str, Any]] = [{"sev": "a", "tool": "x", "c": None}, {"sev": "a", "tool": "y", "c": 2}]
         built = build_option(rows, _cfg(series_by=self.SB))
         assert built.notices == ["1 row had no numeric `c` and is not drawn."]
+
+    LINE: dict[str, Any] = {
+        "xAxis": {"type": "time"},
+        "yAxis": {"type": "value"},
+        "series": [{"type": "line", "lineStyle": {"width": 1.5, "opacity": 0.5}, "endLabel": {"show": True}}],
+    }
+    ROWS: list[dict[str, Any]] = [
+        {"day": "2026-10-01T00:00:00Z", "tool": "a", "c": 1},
+        {"day": "2026-10-01T00:00:00Z", "tool": "Overall", "c": 2},
+    ]
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-6")
+    def test_an_override_is_deep_merged_onto_that_series_only(self):
+        sb: dict[str, Any] = {
+            "category": "day",
+            "series": "tool",
+            "value": "c",
+            "overrides": {"Overall": {"lineStyle": {"width": 6, "opacity": 1}, "z": 10}},
+        }
+        cfg = _cfg(series_by=sb, option=self.LINE)
+        by_name = {s["name"]: s for s in build_option(self.ROWS, cfg).option["series"]}
+        assert by_name["Overall"]["lineStyle"] == {"width": 6, "opacity": 1}
+        assert by_name["Overall"]["z"] == 10
+        assert by_name["Overall"]["endLabel"] == {"show": True}  # untouched template keys survive
+        assert by_name["a"]["lineStyle"] == {"width": 1.5, "opacity": 0.5} and "z" not in by_name["a"]
+        assert by_name["Overall"]["encode"] == {"x": "day", "y": "series_1"}
+        assert self.LINE["series"][0]["lineStyle"] == {"width": 1.5, "opacity": 0.5}  # template not mutated
+        assert sb["overrides"]["Overall"]["z"] == 10
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-6")
+    def test_an_override_for_an_absent_series_is_ignored(self):
+        sb = {"category": "day", "series": "tool", "value": "c", "overrides": {"Ghost": {"z": 3}}}
+        built = build_option(self.ROWS, _cfg(series_by=sb, option=self.LINE))
+        assert all("z" not in s for s in built.option["series"])
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-7")
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "thick",
+            {"name": "x"},
+            {"type": "bar"},
+            {"encode": {"y": "z"}},
+            {"data": [1]},
+            {"dataset": {}},
+            {"label": {"formatter": "{c}"}},
+            {"label": {"formatter": "<b>{b}</b>"}},
+            {"lineStyle": {"color": "url(http://x)"}},
+            {"x": "function () {}"},
+        ],
+    )
+    def test_unsafe_overrides_are_rejected(self, bad):
+        sb = {"category": "a", "series": "b", "value": "c", "overrides": {"Overall": bad}}
+        with pytest.raises(ValidationError):
+            validate_config({"option": {"series": [{"type": "line"}]}, "series_by": sb})
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-7")
+    def test_a_safe_override_is_accepted(self):
+        sb = {
+            "category": "a",
+            "series": "b",
+            "value": "c",
+            "overrides": {"Overall": {"lineStyle": {"width": 6}, "z": 10, "endLabel": {"formatter": "{a}"}}},
+        }
+        validate_config({"option": {"series": [{"type": "line"}]}, "series_by": sb})
 
 
 class TestHierarchy:

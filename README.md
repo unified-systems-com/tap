@@ -5,6 +5,8 @@
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue)](pyproject.toml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14019/badge)](https://www.bestpractices.dev/projects/14019)
 
+**[Join the TAP community on Discord](https://discord.gg/adhvj2mFS)** — questions, ideas, and show-and-tell. Bugs and proposals still go through an [issue](../../issues).
+
 TAP is a general-purpose platform for mastering the systems you are responsible
 for — accounts, pipelines, fleets, data flows, the organization
 itself — by modeling each as a live, queryable, visual representation called **the grid**:
@@ -128,7 +130,7 @@ passkey from your session if you want one. Your next concurrent session is just
 TAP runs in FIPS mode on a provider built from OpenSSL's validated FIPS code line, kept
 current over certified: a patched provider outranks a frozen certificate, and whether the
 version actually shipped carries a CMVP certificate is derived from the build pin, never
-asserted by hand (currently: OpenSSL 3.5.8 FIPS provider, not CMVP-validated as shipped (security-driven build of the FIPS code line, decision D17; validated versions: 3.0.8/#4282, 3.0.9/#4282, 3.1.2/#4985)).
+asserted by hand (currently: OpenSSL 3.5.9 FIPS provider, not CMVP-validated as shipped (security-driven build of the FIPS code line, decision D17; validated versions: 3.0.8/#4282, 3.0.9/#4282, 3.1.2/#4985)).
 Decision D17 in [the FIPS assessment record](docs/misc/doc-fips-assessment-record.md) holds the
 reasoning; [spec-fips.md](specs/spec-fips.md) the posture.
 

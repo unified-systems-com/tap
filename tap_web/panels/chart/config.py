@@ -48,6 +48,7 @@ SERIES_TYPES: tuple[str, ...] = (
 HIERARCHICAL_TYPES: tuple[str, ...] = ("treemap", "sunburst")
 CLICKABLE: tuple[str, ...] = ("bar", "scatter")
 PIVOTABLE_TYPES: tuple[str, ...] = ("bar", "line")
+PIVOT_OWNED: frozenset[str] = frozenset({"name", "type", "encode", "data", "dataset"})
 
 FIELD_TYPES: tuple[str, ...] = ("number", "time", "category")
 DEFAULT_HEIGHT = 320
@@ -96,6 +97,19 @@ CHART_CONFIG_SCHEMA: dict[str, Any] = {
                 "fill": {
                     "type": ["number", "null"],
                     "description": "Value for a category with no row for a series. Default 0; null leaves a gap.",
+                },
+                "overrides": {
+                    "type": "object",
+                    "maxProperties": 50,
+                    "description": (
+                        "Per-series changes: series value (the line's name) -> a partial ECharts series object "
+                        "deep-merged onto the template for that series only. `name`, `type`, `encode`, `data` and "
+                        "`dataset` cannot be set."
+                    ),
+                    "additionalProperties": {
+                        "type": "object",
+                        "description": "Partial series options for one series value, e.g. lineStyle, z, endLabel.",
+                    },
                 },
             },
         },
@@ -341,11 +355,16 @@ def validate_config(config: dict[str, Any]) -> None:
     kinds = [s.get("type") for s in series]
     if config.get("series_by") and config.get("hierarchy"):
         errors.append("series_by and hierarchy cannot be combined")
+    overrides = (config.get("series_by") or {}).get("overrides") or {}
+    for value, partial in overrides.items():
+        for key in sorted(PIVOT_OWNED & partial.keys()):
+            errors.append(f"series_by.overrides.{value}.{key}: `{key}` is set by the pivot and cannot be overridden")
+        _walk(partial, f"series_by.overrides.{value}", 0, errors)
     if config.get("series_by"):
         if len(series) != 1 or kinds[0] not in PIVOTABLE_TYPES:
             errors.append("series_by needs exactly one template series, of type bar or line, in option.series")
     if any(isinstance(s.get("encode"), dict) for s in series) or config.get("series_by"):
-        for where, text in _formatters(option):
+        for where, text in [*_formatters(option), *_formatters(overrides, "series_by.overrides")]:
             if _BARE_VALUE.search(text):
                 errors.append(
                     f"{where}: `{{c}}` is the whole row when a series reads the dataset through `encode` "

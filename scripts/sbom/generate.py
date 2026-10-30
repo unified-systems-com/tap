@@ -64,7 +64,7 @@ CANARIES = {
     # (req-cicd-sbom-13); a lockfile that stopped being cataloged is a silent
     # closure loss, exactly the regression class canaries exist for.
     "tap-web": {"required": ["tap", "django", "openssl", "htmx.org", "echarts", "tabulator-tables", "cytoscape"]},
-    "tap-db": {"required": ["postgresql-16"]},
+    "tap-db": {"required": ["postgresql-18"]},
 }
 FORBIDDEN_NAMES = ["my-test-package"]
 FORBIDDEN_LOCATION_PREFIXES = ["/opt/uv-cache-seed"]
@@ -368,13 +368,25 @@ def _sibling(name: str) -> Any:
 
 
 def read_wheel_seed(subject: str) -> str:
-    """The WHEEL and METADATA headers of every wheel in the image's cache seed (req-cicd-sbom-33), printed by the fixed
-    script `wheel_attributes.SEED_SCRIPT` run inside the image under test."""
-    completed = _run(
-        ["docker", "run", "--rm", "--entrypoint", "sh", subject, "-c", _sibling("wheel_attributes").SEED_SCRIPT],
-        capture=True,
-    )
-    return completed.stdout.decode("utf-8", errors="replace")
+    """The WHEEL and METADATA headers of every wheel in the image's cache seed (req-cicd-sbom-33), read from a copy of
+    the seed directory. The image is created and copied from, never run: the arm64 image cannot execute on the amd64
+    runner (`docker run` exits 255), while `docker cp` reads either architecture's filesystem."""
+    wheels = _sibling("wheel_attributes")
+    container = _run(["docker", "create", subject], capture=True).stdout.decode().strip()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "seed"
+            try:
+                _run(["docker", "cp", f"{container}:{wheels.SEED_DIR}", str(dest)], capture=True)
+            except subprocess.CalledProcessError as err:
+                # An image with no seed prints nothing, as the old in-image script did when its `cd` failed; any other
+                # failure is real and stops the run.
+                if b"Could not find the file" in (err.stderr or b""):
+                    return ""
+                raise
+            return str(wheels.seed_text_from_tree(dest))
+    finally:
+        _run(["docker", "rm", container], capture=True)
 
 
 #: A release version as these fields spell it: 3.0.22, 3.1.2a.

@@ -11,16 +11,23 @@ seed is available bytes, not running software). A component with no matching whe
 reason, never left silent (req-cicd-sbom-33-5). The purl is never changed: it is the identity and the join key for
 Grype and the grid (req-cicd-sbom-33-4).
 
-Everything here is a pure function over text and dicts except SEED_SCRIPT, the fixed script `generate.py` runs inside
-the image under test to print the headers. No value from a document reaches a command.
+Everything here is a pure function over text and dicts, and over a directory `generate.py` has copied out of the image
+(`seed_text_from_tree`). The image is never RUN: an arm64 image cannot execute on the amd64 runner that generates both
+architectures' SBOMs, and `docker run` of it exits 255. `SEED_SCRIPT` stays as the reference definition of the text the
+parser reads, and a test holds `seed_text_from_tree` to its exact output. No value from a document reaches a command.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
-#: Run by `sh -c` inside the image being scanned. It prints, for each unpacked wheel in the seed, the headers this module
+#: Where the image keeps the unpacked wheels, and the path `generate.py` copies out of it.
+SEED_DIR = "/opt/uv-cache-seed/archive-v0"
+
+#: The reference definition of the seed text, no longer run in an image (see the module docstring). It prints, for each unpacked wheel in the seed, the headers this module
 #: reads: `@@ <dist-info dir>`, then WHEEL's Tag and Root-Is-Purelib lines and METADATA's license headers. Header lines
 #: only (METADATA's body ends at the first blank line) and each cut to 200 columns.
 SEED_SCRIPT = r"""cd /opt/uv-cache-seed/archive-v0 2>/dev/null || exit 0
@@ -30,6 +37,70 @@ find . -maxdepth 3 -name '*.dist-info' | sort | while read -r d; do
   sed '/^$/q' "$d/METADATA" 2>/dev/null | grep -E '^(License-Expression:|License:|Classifier: License ::)' | cut -c1-200
 done
 """
+
+_SEED_WHEEL_LINE = re.compile(r"(Tag|Root-Is-Purelib):")
+_SEED_METADATA_LINE = re.compile(r"(License-Expression:|License:|Classifier: License ::)")
+_SEED_LINE_WIDTH = 200
+#: The image under scan is not trusted, so no file is read whole: at most this many lines per file, each read in chunks
+#: of this size (the rest of a longer line is dropped unread into memory). Real WHEEL and METADATA headers are a few dozen
+#: short lines.
+_SEED_MAX_LINES = 2000
+_SEED_READ_CHUNK = 4096
+
+
+def _header_lines(path: Path) -> Iterator[str]:
+    """Lines of `path` split on newline only (as `sh` does), bounded in count and in memory per line."""
+    with path.open("r", errors="replace") as handle:
+        for _ in range(_SEED_MAX_LINES):
+            line = handle.readline(_SEED_READ_CHUNK)
+            if not line:
+                return
+            if not line.endswith("\n"):
+                while True:
+                    rest = handle.readline(_SEED_READ_CHUNK)
+                    if not rest or rest.endswith("\n"):
+                        break
+            yield line.rstrip("\n")
+
+
+def _inside(root_real: Path, path: Path) -> bool:
+    """True when `path` is not a link and really lives under `root_real`. `docker cp` copies links as links, and an image
+    under scan is not trusted: a `WHEEL` or `METADATA` linked to a runner path must never be read as seed content."""
+    return not path.is_symlink() and path.resolve().is_relative_to(root_real)
+
+
+def seed_text_from_tree(root: Path) -> str:
+    """The text `SEED_SCRIPT` prints, read from a copy of the seed directory instead of from inside the image.
+
+    Same selection as the script: every `*.dist-info` at most three levels below `root`, in the order `sort` gives the
+    `./`-prefixed paths; per directory `@@ <name>`, WHEEL's Tag and Root-Is-Purelib lines, then METADATA's license
+    headers up to its first blank line, each line cut to 200 columns. A missing directory prints nothing, as the script
+    does when its `cd` fails. A link anywhere in the copy is skipped, never followed (see `_inside`)."""
+    if not root.is_dir():
+        return ""
+    root_real = root.resolve()
+    found = sorted(
+        (f"./{path.relative_to(root).as_posix()}", path)
+        for path in root.rglob("*.dist-info")
+        if len(path.relative_to(root).parts) <= 3 and path.is_dir() and _inside(root_real, path)
+    )
+    out: list[str] = []
+    for _, dist in found:
+        out.append(f"@@ {dist.name}")
+        wheel = dist / "WHEEL"
+        if wheel.is_file() and _inside(root_real, wheel):
+            for line in _header_lines(wheel):
+                if _SEED_WHEEL_LINE.match(line):
+                    out.append(line[:_SEED_LINE_WIDTH])
+        metadata = dist / "METADATA"
+        if metadata.is_file() and _inside(root_real, metadata):
+            for line in _header_lines(metadata):
+                if not line:
+                    break
+                if _SEED_METADATA_LINE.match(line):
+                    out.append(line[:_SEED_LINE_WIDTH])
+    return "\n".join(out) + "\n" if out else ""
+
 
 _MACHINE = re.compile(r"(aarch64|arm64|x86_64|amd64|i686|i386|ppc64le|s390x|armv7l)$")
 _MACHINE_NAME = {"arm64": "aarch64", "amd64": "x86_64", "i386": "i686"}

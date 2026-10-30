@@ -13,4 +13,4 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-grid-dimension-query-form` | Implemented | Tested | — | `req-grid-dimension-query-form-1`, `req-grid-dimension-query-form-2`, `req-grid-dimension-query-form-3` |
+| `req-grid-dimension-query-form` | Implemented | Tested | — | `req-grid-dimension-query-form-1`, `req-grid-dimension-query-form-2`, `req-grid-dimension-query-form-3`, `req-grid-dimension-query-form-4` |

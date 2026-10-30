@@ -188,3 +188,95 @@ def test_only_pypi_components_are_touched(cdx, attributes):
     wa.apply_to_cyclonedx(cdx, attributes)
     after = [c for c in cdx["components"] if not c.get("purl", "").startswith("pkg:pypi/")]
     assert after == before
+
+
+def _write_dist(root: Path, rel: str, *, wheel: str | None, metadata: str | None) -> None:
+    dist = root / rel
+    dist.mkdir(parents=True)
+    if wheel is not None:
+        (dist / "WHEEL").write_text(wheel)
+    if metadata is not None:
+        (dist / "METADATA").write_text(metadata)
+
+
+def _sample_seed(root: Path) -> None:
+    _write_dist(
+        root,
+        "abc123/pydantic_core-2.46.4.dist-info",
+        wheel="Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp314-cp314-manylinux_2_17_aarch64\nTag: cp314-cp314-manylinux2014_aarch64\n",
+        metadata="Metadata-Version: 2.4\nName: pydantic_core\nLicense-Expression: MIT\nClassifier: Programming Language :: Python\n\nLicense: not-a-header (body)\n",
+    )
+    _write_dist(
+        root,
+        "def456/Idna-3.10.dist-info",
+        wheel="Root-Is-Purelib: true\nTag: py3-none-any\n",
+        metadata="Name: idna\nLicense: " + "x" * 300 + "\nClassifier: License :: OSI Approved :: BSD License\n",
+    )
+    _write_dist(root, "def456/nowheel-1.0.dist-info", wheel=None, metadata="License: Apache-2.0\n")
+    _write_dist(root, "top-0.1.dist-info", wheel="Tag: py3-none-any\n", metadata=None)
+    _write_dist(root, "a/b/c/too_deep-9.9.dist-info", wheel="Tag: py3-none-any\n", metadata="License: MIT\n")
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_the_tree_reader_prints_exactly_what_the_in_image_script_printed(tmp_path):
+    """The script is the reference; the reader replaces running it, so it must print the same bytes."""
+    import subprocess
+
+    _sample_seed(tmp_path)
+    script = wa.SEED_SCRIPT.replace(wa.SEED_DIR, str(tmp_path))
+    shell = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — the reference script IS the oracle; argv list, no shell metacharacters from input  # nosec B603 B607  # noqa: S603, S607
+        ["sh", "-c", script], check=True, capture_output=True, text=True
+    ).stdout
+    assert wa.seed_text_from_tree(tmp_path) == shell
+    assert "@@ pydantic_core-2.46.4.dist-info" in shell and "too_deep" not in shell
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_a_missing_seed_directory_prints_nothing(tmp_path):
+    assert wa.seed_text_from_tree(tmp_path / "absent") == ""
+    assert wa.parse_seed_records(wa.seed_text_from_tree(tmp_path / "absent")) == []
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_a_link_in_the_copied_seed_is_never_followed(tmp_path):
+    """`docker cp` copies links as links and the image is untrusted: a WHEEL, METADATA or dist-info linked to a runner
+    path must not be read, or runner bytes could reach the SBOM."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("Tag: host-secret\nLicense: host-secret\n")
+    _write_dist(outside, "real-9.9.dist-info", wheel="Tag: host-dist\n", metadata="License: host-dist\n")
+    seed = tmp_path / "seed"
+    _write_dist(seed, "h/ok-1.0.dist-info", wheel="Tag: py3-none-any\n", metadata="License: MIT\n")
+    _write_dist(seed, "h/linked_files-2.0.dist-info", wheel=None, metadata=None)
+    (seed / "h" / "linked_files-2.0.dist-info" / "WHEEL").symlink_to(outside / "secret")
+    (seed / "h" / "linked_files-2.0.dist-info" / "METADATA").symlink_to(outside / "secret")
+    (seed / "h" / "linked_dir-3.0.dist-info").symlink_to(outside / "real-9.9.dist-info", target_is_directory=True)
+    text = wa.seed_text_from_tree(seed)
+    assert "host-" not in text
+    assert "@@ ok-1.0.dist-info" in text and "License: MIT" in text
+    assert "linked_dir" not in text
+
+
+@pytest.mark.spec("req-cicd-sbom-33-1")
+def test_no_seed_file_is_read_whole(tmp_path):
+    """An untrusted image can ship a huge METADATA. Reading is bounded: a very long line costs one chunk of memory and
+    the lines after it still parse; a file of endless header lines stops at the line cap."""
+    seed = tmp_path / "seed"
+    long_line = "X-Padding: " + "p" * 3_000_000
+    _write_dist(
+        seed,
+        "h/big-1.0.dist-info",
+        wheel="Tag: py3-none-any\n",
+        metadata=long_line + "\nLicense: MIT\n",
+    )
+    _write_dist(
+        seed,
+        "h/endless-2.0.dist-info",
+        wheel="Tag: py3-none-any\n",
+        metadata="License: A\n" * (wa._SEED_MAX_LINES + 500),
+    )
+    text = wa.seed_text_from_tree(seed)
+    big = text.split("@@ endless-2.0.dist-info")[0]
+    assert "License: MIT" in big and "ppp" not in text
+    endless = text.split("@@ endless-2.0.dist-info")[1]
+    assert endless.count("License: A") == wa._SEED_MAX_LINES

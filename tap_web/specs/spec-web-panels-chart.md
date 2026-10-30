@@ -210,11 +210,12 @@ RID: `req-web-panels-chart-series-by`
 
 Status: `Implemented`
 
-A plain dataset cannot make one series per value of a field, which is what stacked and grouped bars and multi-line charts need. `series_by: {category, series, value, order?, fill?}` pivots the rows.
+A plain dataset cannot make one series per value of a field, which is what stacked and grouped bars and multi-line charts need. `series_by: {category, series, value, order?, fill?, overrides?}` pivots the rows.
 
 #### Implementation
 - `option.series` holds exactly one template series (bar or line). One series is made per distinct value of the `series` field, named by the value, copying the template (`stack`, `areaStyle`, ...), with `encode` set from the axes: the category field goes on the axis that is `category` or `time` and the value on the other (a horizontal bar has the category on `y`).
 - The dataset becomes wide: one entry per category with one dimension per series; `value` fields are summed when a pair repeats; a pair with no row is `fill` (default 0; `null` leaves a gap). `order` sets the drawing and stack order; unlisted values follow in first-seen order.
+- `overrides` is a mapping from a series value (the line's name) to a partial ECharts series object, deep-merged onto the template for that one series (objects merge key by key, anything else replaces), so one line can differ from the rest: the template carries the muted default and the override restores the emphasised line, e.g. `{"Overall": {"lineStyle": {"width": 6, "opacity": 1}, "z": 10}}`. An override may not set `name`, `type`, `encode`, `data` or `dataset` (the pivot owns them); it passes the same safety rules as `option`. A key matching no series is ignored.
 - Null and empty categories or series names are labelled with `null_text` / `blank_text`, not dropped. On a time axis the categories stay instants and are sorted. Rows with no numeric `value` are counted in a notice.
 
 #### Acceptance Criteria
@@ -226,6 +227,8 @@ A plain dataset cannot make one series per value of a field, which is what stack
 | req-web-panels-chart-series-by-3 | Orientation | Implemented | The category field goes on whichever axis is the category axis, so horizontal bars work. | |
 | req-web-panels-chart-series-by-4 | Time Axis | Implemented | On a time axis categories are kept as instants and sorted. | |
 | req-web-panels-chart-series-by-5 | Needs A Template | Implemented | `series_by` without exactly one bar or line series is rejected at validation. | |
+| req-web-panels-chart-series-by-6 | Per-Series Overrides | Implemented | `series_by.overrides[value]` is deep-merged onto the template for that series only; other series are unchanged and the template is not mutated. | |
+| req-web-panels-chart-series-by-7 | Overrides Are Safe Data | Implemented | An override that is not an object, sets `name`, `type`, `encode`, `data` or `dataset`, or breaks an option safety rule (code-like string, `{c}` formatter, external reference) is rejected; the schema entry carries a description. | |
 
 ### Hierarchy
 ----

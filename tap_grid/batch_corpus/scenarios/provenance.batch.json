@@ -1,6 +1,6 @@
 {
   "family": "provenance",
-  "description": "What a replace writes and what it must not: both spine projections move together, an explicit empty dimensions map is a value (Issue# 608 - tap), false/zero/empty survive on the typed row, a replace resets what it omits, and every row and event is attributed to the batch that wrote it.",
+  "description": "What a replace writes and what it must not: both spine projections move together, an explicit empty dimensions map is a value (Issue# 608 - tap), false/zero/empty survive on the typed row, a replace keeps what it omits and replaces what it carries, and every row and event is attributed to the batch that wrote it.",
   "scenarios": [
     {
       "name": "a replace with declared dimensions moves them with the name in one bump",
@@ -231,10 +231,12 @@
       }
     },
     {
-      "name": "a replace resets what it omits: the full payload is the object",
+      "name": "a replace keeps what it omits and replaces what it carries: the document asserts only its own fields",
       "tags": [],
       "covers": [
         "req-grid-import-grift-batch",
+        "req-grid-import-grift-ordering-8",
+        "req-grid-import-grift-ordering-9",
         "req-grid-import-grift-provenance-1",
         "req-grift-node"
       ],
@@ -295,10 +297,12 @@
         "fields": {
           "A": {
             "description": "",
-            "config": {}
+            "config": {
+              "k": "v"
+            }
           }
         },
-        "note": "GRIFT carries full-object payloads and the importer replaces: description and config go back to their defaults because the bundle did not say them. A patch would keep them; the importer never patches."
+        "note": "Keep-absent upsert (tap#1128): description is carried, so the empty string replaces the stored words; config is omitted, so the stored object survives. Before tap#1128 the importer reset the omitted config to its default."
       }
     },
     {

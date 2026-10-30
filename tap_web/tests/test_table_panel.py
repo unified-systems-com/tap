@@ -272,6 +272,20 @@ class TestTableConfigSchema:
         with pytest.raises(ValidationError):
             _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "align": "middle"}]})
 
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    def test_wrap_is_a_described_boolean_column_option(self):
+        prop = TABLE_CONFIG_SCHEMA["$defs"]["column"]["properties"]["wrap"]
+        assert prop["type"] == "boolean"
+        assert prop["description"]
+        for value in (True, False):
+            _validate_table_config({"columns": [{"field": "data.members", "title": "Members", "wrap": value}]})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    @pytest.mark.parametrize("bad", ["yes", 1, None])
+    def test_wrap_rejects_a_non_boolean(self, bad):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"columns": [{"field": "data.members", "title": "Members", "wrap": bad}]})
+
     @pytest.mark.spec("req-web-stdpanel-table-config-10")
     def test_initial_sort_accepts_ordered_keys_with_a_direction(self):
         _validate_table_config(

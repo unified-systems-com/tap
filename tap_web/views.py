@@ -700,6 +700,11 @@ def _render_page(
     return render(request, "tap_web/page.html", context)
 
 
+# Column widths that are not already a CSS track: `compact` is a capped, shrinkable track that packs at the start
+# of the band (req-web-page-compact-width).
+COLUMN_TRACKS: dict[str, str] = {"compact": "minmax(0, 16rem)"}
+
+
 def _process_layout(
     layout: dict[str, Any],
     panels_by_id: dict[str, str],
@@ -758,6 +763,8 @@ def _process_layout(
                 "key": col_key,
                 "band": column_band(col_data),
                 "width": col_data.get("width", "1fr"),
+                # The CSS grid track for the width (req-web-page-compact-width-2).
+                "track": COLUMN_TRACKS.get(col_data.get("width", "1fr"), col_data.get("width", "1fr")),
                 "rows": processed_rows,
             }
         )

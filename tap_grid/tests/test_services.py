@@ -1,5 +1,6 @@
 """Tests for tap_grid.services — the canonical mutation API."""
 
+import importlib
 import uuid
 from typing import Any
 
@@ -257,6 +258,42 @@ class TestPatchNode:
         assert patch_result.success
         search = Search.objects.get(entity_id=result.entity_id)
         assert search.definition == {"filters": {"name": "Frodo"}, "order_by": ["name"]}  # deep merged
+
+    @pytest.mark.spec("req-grid-service-write-patch-5")
+    @pytest.mark.parametrize(
+        ("existing", "value", "expected"),
+        [
+            (None, ["CWE-506"], ["CWE-506"]),  # a list into an unobserved field
+            (["CWE-79"], ["CWE-506"], ["CWE-506"]),  # a list over a list replaces, it does not append
+            ([], ["CWE-506"], ["CWE-506"]),
+            (["CWE-79"], [], []),  # an empty list is a value too
+            ({"a": 1}, ["x"], ["x"]),  # a list over an object replaces
+            (["x"], {"a": 1}, {"a": 1}),  # an object over a list replaces
+            ("text", {"a": 1}, {"a": 1}),
+            ({"a": 1}, "text", "text"),  # a string, number or boolean replaces
+            ({"a": 1}, 7, 7),
+            ({"a": 1}, True, True),
+            (None, {"a": 1}, {"a": 1}),  # an object into an unobserved field
+            ({"a": {"b": 1}, "l": [1]}, {"a": {"c": 2}, "l": [2]}, {"a": {"b": 1, "c": 2}, "l": [2]}),  # objects merge, a nested list replaces
+        ],
+    )
+    def test_json_patch_merges_objects_and_replaces_everything_else(self, existing, value, expected):
+        """req-grid-service-write-patch-5: only an object patched over an object deep-merges."""
+        from tap_grid.models import Search
+        _apply_patch = importlib.import_module("tap_grid.services._impl")._apply_patch
+
+        instance = Search(definition=existing)
+        _apply_patch(instance, {"definition": value})
+        assert instance.definition == expected
+
+    @pytest.mark.spec("req-grid-service-write-patch-5")
+    def test_json_patch_null_still_clears(self):
+        from tap_grid.models import Search
+        _apply_patch = importlib.import_module("tap_grid.services._impl")._apply_patch
+
+        instance = Search(definition=["x"])
+        _apply_patch(instance, {"definition": None})
+        assert instance.definition is None
 
     def test_scalar_field_replaces(self):
         result = create_node("grid_fixtures__constrained_source", {"name": "Test", "description": "original"})

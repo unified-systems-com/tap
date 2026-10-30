@@ -73,7 +73,7 @@ jobs:
       # them on it rather than on whatever `python3` the runner image carries this month —
       # resolved from the same requires-python that governs the container build (derived,
       # never authored twice), as product-lines.yml does.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: "pyproject.toml"
       - name: Build the declared-components document
@@ -97,7 +97,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
         run: python3 scripts/sbom/sarif_locate.py --image "$IMAGE"
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           # The file the step above rewrote — named explicitly, not via the scanner's output
           # variable, so what reaches Code Scanning is the located document by construction.

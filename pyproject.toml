@@ -5,7 +5,7 @@
 
 [project]
 name = "tap"
-version = "0.3.0"
+version = "0.3.1"
 description = "The Analogy Platform - a graph-based systems mastery platform"
 readme = "README.md"
 # SPDX identifier (PEP 639). The authoritative text is the LICENSE file at the repo
@@ -189,7 +189,7 @@ dev = [
 # change CI overnight: unpinned, it fell back to `latest` and took uv 0.13.0's new
 # Python default with it (tap#1008). The Dockerfile's `ghcr.io/astral-sh/uv:<tag>` must
 # satisfy it (tap/tests/test_python_uv_pins.py); a bump to a new minor edits both.
-required-version = ">=0.12.20,<0.13"
+required-version = ">=0.12.20,<0.14"
 # Build `cryptography` from source (its sdist) against the SYSTEM OpenSSL rather than
 # installing the PyPI wheel. The wheel statically bundles its OWN OpenSSL, which ignores
 # the image's system FIPS provider config entirely — so webauthn/PyJWT would silently do
