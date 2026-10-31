@@ -12,5 +12,5 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-dev-multisession-teardown-cleanup` | Proposed | Tested | — | `req-dev-multisession-teardown-cleanup-7` |
+| `req-dev-multisession-teardown-cleanup` | Proposed | Tested | — | `req-dev-multisession-teardown-cleanup-7`, `req-dev-multisession-teardown-cleanup-8` |
 | `req-dev-multisession-teardown-safety` | Implemented | Tested | — | `req-dev-multisession-teardown-safety-4` |

@@ -311,3 +311,125 @@ def test_spawn_names_the_podman_remedy_when_no_engine_answers() -> None:
     text = (ROOT / "scripts" / "spawn-session.sh").read_text(encoding="utf-8")
     assert "Neither Docker nor Podman is responding" in text
     assert "podman machine start" in text
+
+
+# --- tap#1139: bounded probes without GNU timeout; despawn stops on an unreachable engine -------------
+
+_NO_TIMEOUT_TOOLS = ("bash", "sh", "sleep", "mktemp", "cat", "rm", "head", "sed", "grep", "env", "dirname")
+
+
+def _path_without_timeout(sandbox: Path) -> str:
+    """A PATH holding the sandbox fakes plus only the tools the helper needs: no `timeout`, no `gtimeout`."""
+    tools = sandbox / "tools"
+    tools.mkdir(exist_ok=True)
+    for name in _NO_TIMEOUT_TOOLS:
+        found = shutil.which(name)
+        assert found, name
+        if not (tools / name).exists():
+            (tools / name).symlink_to(found)
+    return f"{sandbox / 'bin'}:{tools}"
+
+
+def _run_bare(sandbox: Path, body: str, timeout: int, **env: str) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    assert bash
+    script = f'source "{HELPER}"\n{body}\necho "ENGINE=$TAP_ENGINE"\necho "HOST=${{DOCKER_HOST:-}}"\n'
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — literal bash -c over a script built from this test's own constants  # nosec B603  # noqa: S603
+        [bash, "-c", script],
+        env={"PATH": _path_without_timeout(sandbox), "HOME": str(sandbox), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=sandbox,
+        timeout=timeout,
+    )
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-9")
+def test_a_wedged_docker_is_bounded_on_a_host_with_no_gnu_timeout(sandbox: Path) -> None:
+    """The fake `docker` never returns. Without `timeout`/`gtimeout` the old helper waited forever."""
+    _install(sandbox, "docker", "#!/bin/sh\nsleep 60\n")
+    run = _run_bare(sandbox, "tap_engine_select", timeout=40)
+    assert _verdict(run) == ("none", "")
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-9")
+def test_the_bash_fallback_still_returns_the_commands_output_and_status(sandbox: Path) -> None:
+    _install(sandbox, "docker", FAKE_DOCKER)
+    up = _run_bare(sandbox, "tap_engine_select", timeout=40, FAKE_DOCKER_UP="1")
+    assert _verdict(up) == ("docker", "")
+    out = _run_bare(
+        sandbox,
+        "got=\"$(_tap_engine_t 5 sh -c 'echo hi; exit 3')\"; echo \"x=$got rc=$?\"; "
+        "_tap_engine_t 1 sleep 30; echo \"slow rc=$?\"",
+        timeout=40,
+    )
+    assert "x=hi rc=3" in out.stdout
+    assert "slow rc=124" in out.stdout
+
+
+@pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
+def test_reachable_follows_the_selected_engine_not_the_default_one(sandbox: Path) -> None:
+    _install(sandbox, "docker", FAKE_DOCKER)
+    wt = sandbox / "wt"
+    wt.mkdir()
+    (wt / ".env.local").write_text("DOCKER_HOST=unix:///tmp/tapeng-dead.sock\n", encoding="utf-8")
+    # Docker itself is up, but the session lives on a Podman socket that does not answer.
+    run = _run(sandbox, f'tap_engine_select "{wt}"; tap_engine_reachable && echo REACHABLE=yes || echo REACHABLE=no',
+               FAKE_DOCKER_UP="1")
+    assert "REACHABLE=no" in run.stdout
+    assert _verdict(run)[0] == "sticky"
+
+
+def _despawn(sandbox: Path, *flags: str, **env: str) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    assert bash
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — argv is the committed script plus fixed flags; no shell  # nosec B603  # noqa: S603
+        [bash, str(ROOT / "scripts" / "despawn-session.sh"), "ghost", *flags],
+        env={"PATH": f"{sandbox / 'bin'}:{BASE_PATH}", "HOME": str(sandbox), "WORKTREE_BASE": str(sandbox / "base"), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=sandbox,
+        timeout=60,
+        input="",
+    )
+
+
+@pytest.fixture
+def dead_podman_session(sandbox: Path) -> Path:
+    _install(sandbox, "docker", FAKE_DOCKER)
+    wt = sandbox / "base" / "ghost"
+    wt.mkdir(parents=True)
+    (wt / ".env.local").write_text("DOCKER_HOST=unix:///tmp/tapeng-dead.sock\n", encoding="utf-8")
+    return wt
+
+
+@pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
+def test_despawn_refuses_before_removing_anything_when_the_session_engine_is_down(
+    sandbox: Path, dead_podman_session: Path
+) -> None:
+    run = _despawn(sandbox, "--yes", FAKE_DOCKER_UP="1")
+    assert run.returncode == 1
+    assert "not answering" in run.stderr
+    assert "--skip-stack" in run.stderr
+    assert dead_podman_session.is_dir(), "the worktree must still be there"
+    assert "Stopping docker stack" not in run.stdout
+
+
+@pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
+def test_skip_stack_goes_past_the_check_and_prints_the_cleanup_command(sandbox: Path, dead_podman_session: Path) -> None:
+    # No --yes and an empty stdin: the run stops at the confirm prompt, so nothing is torn down.
+    run = _despawn(sandbox, "--skip-stack", FAKE_DOCKER_UP="1")
+    assert run.returncode == 0
+    assert "Aborted." in run.stdout
+    assert "--skip-stack given" in run.stdout
+    assert "docker compose -p tap_ghost down -v --remove-orphans" in run.stdout
+    assert "not answering" not in run.stderr
+
+
+@pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
+def test_despawn_checks_the_engine_before_the_stack_is_touched() -> None:
+    text = (ROOT / "scripts" / "despawn-session.sh").read_text(encoding="utf-8")
+    assert "tap_engine_reachable" in text
+    assert text.index("tap_engine_reachable") < text.index("tap_engine_warn_other") < text.index('bold "Stopping docker stack"')

@@ -299,6 +299,7 @@ Out of scope: a host with only `podman compose` / `podman-compose` and no Docker
 | req-dev-multisession-container-engine-6 | Cross-Engine Warning | Implemented | Despawn warns, with the removal command, when the session's compose project holds containers on the engine this run is not using, and says nothing when it does not. | |
 | req-dev-multisession-container-engine-7 | One Helper, Every Daemon Script | Implemented | `spawn-session.sh` (fresh and `--promote`), `dc`, `despawn-session.sh`, `prune-images` and `gate-lean` all source the one helper and select the engine; despawn selects from the session's own worktree before it touches the stack. | |
 | req-dev-multisession-container-engine-8 | Podman-Aware Messages And Prune | Implemented | The spawn failure names Podman's remedy, and `prune-images` skips the buildx-builder prune on Podman. | |
+| req-dev-multisession-container-engine-9 | Bounded Probes Without GNU Timeout | Implemented | Every daemon probe the helper makes returns within its bound on a host that has neither `timeout` nor `gtimeout` (stock macOS); a probe that does not return is treated as the engine not answering (tap#1139). | |
 
 ### Granular Grift Import Failure Mode
 ----

@@ -12,6 +12,7 @@
 # Public functions (all safe under `set -euo pipefail`; none of them exits the caller):
 #   tap_engine_select [<worktree>]  sets TAP_ENGINE and, for Podman, exports DOCKER_HOST
 #   tap_engine_persist <env-file>   records a Podman choice in the session's .env.local
+#   tap_engine_reachable            succeeds when the selected daemon answers `docker info`
 #   tap_engine_podman_socket        prints the host-side Podman socket path, or fails
 #   tap_engine_warn_other <project> warns when the compose project lives on the OTHER engine
 #
@@ -24,13 +25,32 @@
 #
 # bash 3.2 compatible (macOS /bin/bash): no associative arrays, no ${var,,}.
 
-# Bound a daemon call so a wedged engine degrades to "not available", not a hung spawn.
+# Bound a daemon call so a wedged engine degrades to "not available", not a hung spawn. Stock
+# macOS ships neither `timeout` nor `gtimeout`, so the last branch is a pure-bash deadline (the same
+# idea as `with_timeout` in spawn-session.sh): run in the background, poll, kill at the bound.
+# Returns the command's status, or 124 on a timeout (as GNU timeout does).
 _tap_engine_t() {  # <seconds> <cmd...>
   local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"
-  else "$@"
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"; return
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return
   fi
+  local out pid rc=0 ticks=0 limit=$(( secs * 4 ))
+  out="$(mktemp)" || return 1
+  "$@" >"$out" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( ticks >= limit )); then
+      kill -TERM "$pid" 2>/dev/null; sleep 0.2; kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null || true
+      cat "$out"; rm -f "$out"
+      return 124
+    fi
+    sleep 0.25
+    ticks=$(( ticks + 1 ))
+  done
+  wait "$pid" || rc=$?
+  cat "$out"; rm -f "$out"
+  return "$rc"
 }
 
 # Progress lines; scripts/dc runs on every compose call and sets TAP_ENGINE_QUIET to stay silent.
@@ -96,6 +116,13 @@ tap_engine_select() {
 
   export TAP_ENGINE
   return 0
+}
+
+# Does the daemon this run selected answer? A session recorded on Podman whose machine is stopped
+# or recreated selects as `sticky` without being probed (selection must not depend on a daemon being
+# up), so a caller that is about to TEAR DOWN must ask here, not assume.
+tap_engine_reachable() {
+  command -v docker >/dev/null 2>&1 && _tap_engine_t 8 docker info >/dev/null 2>&1
 }
 
 # Record a Podman choice in the session's .env.local so every later script, from any shell,

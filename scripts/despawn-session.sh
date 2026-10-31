@@ -17,6 +17,12 @@
 #                                               # only on session/<name> (not in origin/main).
 #                                               # Without this flag, despawn HARD-STOPS when
 #                                               # the branch has unpushed commits.
+#   scripts/despawn-session.sh <name> --skip-stack
+#                                               # remove the worktree even though the engine this
+#                                               # session lives on (its recorded Podman socket, or
+#                                               # an explicit DOCKER_HOST) is not answering. The
+#                                               # containers and volumes are LEFT RUNNING; the
+#                                               # cleanup command is printed.
 #   scripts/despawn-session.sh <name> --purge-image
 #                                               # also remove the tap-web/tap-db images
 #                                               # THIS session resolves to (its compose
@@ -62,6 +68,7 @@ ASSUME_YES=0
 PURGE_IMAGE=0
 KEEP_IMAGES=0
 ABANDON_UNMERGED=0
+SKIP_STACK=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -69,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --purge-image)        PURGE_IMAGE=1; shift ;;
     --keep-images)        KEEP_IMAGES=1; shift ;;
     --abandon-unmerged)   ABANDON_UNMERGED=1; shift ;;
+    --skip-stack)         SKIP_STACK=1; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# *$/p' "$0" | sed 's/^# //; s/^#//'
       exit 0
@@ -108,6 +116,22 @@ PROJECT="tap_${SESSION_NAME}"
 # .env.local while the worktree still exists, so a despawn from a fresh shell reaches the same
 # daemon the spawn used instead of finding nothing there and reporting success.
 tap_engine_select "$WORKTREE"
+
+# A recorded (sticky) or explicit engine that is not answering means the stack cannot be removed,
+# not that there is none. Carrying on would delete the worktree and report success while the
+# containers and volumes stay behind on that engine. Stop here unless the caller says so.
+if [[ "${TAP_ENGINE:-}" == "sticky" || "${TAP_ENGINE:-}" == "explicit" ]] && ! tap_engine_reachable; then
+  if [[ "$SKIP_STACK" -eq 1 ]]; then
+    warn "The engine for '$SESSION_NAME' (${DOCKER_HOST:-DOCKER_CONTEXT=${DOCKER_CONTEXT:-}}) is not answering; --skip-stack given, leaving its containers and volumes running."
+    warn "Remove them later with: DOCKER_HOST=${DOCKER_HOST:-<its socket>} docker compose -p $PROJECT down -v --remove-orphans"
+  else
+    err "The engine this session lives on is not answering: ${DOCKER_HOST:-DOCKER_CONTEXT=${DOCKER_CONTEXT:-}}"
+    err "Despawning now would remove the worktree and leave its containers and volumes running."
+    err "Start it (Podman on macOS: podman machine start) and re-run, or re-run with --skip-stack to"
+    err "remove the worktree anyway and clean the stack up yourself."
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Show the plan, get confirmation
