@@ -54,7 +54,11 @@ jobs:
     # Free GitHub-hosted runner (4 vCPU) — measured at ~9 min for the identical job
     # vs ~7 min on the retired 8-vCPU CodeBuild runner (see product-lines.yml header RUNNER HISTORY).
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The Test lane step has grown to 35-38 minutes on this runner (2129 s of pytest on tap#1138,
+    # 2026-10-31; 37.5 min before the cancel on tap#1142, 2026-11-01), so 40 minutes cancelled it
+    # at the limit with nothing failing. The Test lane step prints nothing while it runs, so the
+    # cancel read as a hang. 60 leaves headroom; the lane's length is a separate problem.
+    timeout-minutes: 60
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
       # Name of the per-worker clone-source template built below (in-container).
@@ -136,6 +140,9 @@ jobs:
         # -n auto: workers == cores. Measured on the 4-vCPU free runner (tmpfs pg,
         # so the lane is CPU-bound): -n 4 = 233s, -n 6 = 243s, -n 8 = 256s — and
         # auto keeps tracking the runner size if GitHub resizes it again.
+        # --durations=40: this step prints nothing until it ends, so a slow run (22-37 min
+        # against 4-10 min before 2026-10-30) could not say which tests were slow. A run that
+        # finishes now lists its 40 slowest; one that is cancelled at the limit lists nothing.
         run: |
           docker compose --env-file .env exec -T web sh -c '
             set -euo pipefail
@@ -144,7 +151,7 @@ jobs:
             require="gryphon_playground"
             TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
               --root /app --record boot/core_ci.boot.json ${require:+--require "$require"} \
-              --summary /app/lane-summary.md -- -n auto
+              --summary /app/lane-summary.md -- -n auto --durations=40
           '
           docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
 
