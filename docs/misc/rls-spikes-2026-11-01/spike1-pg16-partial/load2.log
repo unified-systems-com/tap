@@ -1,0 +1,5 @@
+Timing is on.
+SELECT 1000000
+Time: 3107.149 ms (00:03.107)
+CREATE INDEX
+Time: 646.612 ms

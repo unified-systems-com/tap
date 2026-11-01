@@ -1,0 +1,232 @@
+== a (V3c/spike_search) load=10.18
+                                                                                  QUERY PLAN                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=76233.19..76233.20 rows=1 width=8) (actual time=681.771..685.947 rows=1.00 loops=1)
+   Buffers: shared hit=87954 read=60952 written=22
+   ->  Gather  (cost=76232.98..76233.19 rows=2 width=8) (actual time=680.109..685.927 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=87954 read=60952 written=22
+         ->  Partial Aggregate  (cost=75232.98..75232.99 rows=1 width=8) (actual time=676.171..676.173 rows=1.00 loops=3)
+               Buffers: shared hit=87954 read=60952 written=22
+               ->  Parallel Seq Scan on spike_finding  (cost=52022.26..75024.26 rows=83486 width=0) (actual time=499.066..669.542 rows=129307.67 loops=3)
+                     Filter: ((NOT (ANY (entity_id = (hashed SubPlan 1).col1))) AND (status = 'open'::text))
+                     Rows Removed by Filter: 204026
+                     Buffers: shared hit=87954 read=60952 written=22
+                     SubPlan 1
+                       ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=42.395..416.035 rows=149720.00 loops=3)
+                             Recheck Cond: (deleted_at IS NOT NULL)
+                             Heap Blocks: exact=43772
+                             Buffers: shared hit=87954 read=44200 written=22
+                             ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=32.022..32.023 rows=169720.00 loops=3)
+                                   Index Cond: (deleted_at IS NOT NULL)
+                                   Index Searches: 3
+                                   Buffers: shared hit=858 read=428
+ Planning:
+   Buffers: shared hit=192 read=6
+ Planning Time: 4.692 ms
+ Execution Time: 687.008 ms
+(25 rows)
+== b (V3c/spike_search) load=10.00
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=141167.38..141167.39 rows=1 width=8) (actual time=1789.874..1818.419 rows=1.00 loops=1)
+   Buffers: shared hit=103760 read=93481
+   ->  Gather  (cost=141167.17..141167.38 rows=2 width=8) (actual time=1785.607..1818.347 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=103760 read=93481
+         ->  Partial Aggregate  (cost=140167.17..140167.18 rows=1 width=8) (actual time=1756.229..1756.266 rows=1.00 loops=3)
+               Buffers: shared hit=103760 read=93481
+               ->  Parallel Hash Join  (cost=76067.84..139979.05 rows=75246 width=0) (actual time=791.986..1745.468 rows=129307.67 loops=3)
+                     Hash Cond: (e.id = f.entity_id)
+                     Buffers: shared hit=103760 read=93481
+                     ->  Parallel Seq Scan on tap_entity e  (cost=0.00..60933.78 rows=1134262 width=16) (actual time=0.128..498.186 rows=950093.33 loops=3)
+                           Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+                           Rows Removed by Filter: 49907
+                           Buffers: shared hit=15820 read=32529
+                     ->  Parallel Hash  (cost=75024.26..75024.26 rows=83486 width=16) (actual time=789.865..789.893 rows=129307.67 loops=3)
+                           Buckets: 524288 (originally 262144)  Batches: 1 (originally 1)  Memory Usage: 24384kB
+                           Buffers: shared hit=87940 read=60952
+                           ->  Parallel Seq Scan on spike_finding f  (cost=52022.26..75024.26 rows=83486 width=16) (actual time=544.022..713.610 rows=129307.67 loops=3)
+                                 Filter: ((NOT (ANY (entity_id = (hashed SubPlan 1).col1))) AND (status = 'open'::text))
+                                 Rows Removed by Filter: 204026
+                                 Buffers: shared hit=87940 read=60952
+                                 SubPlan 1
+                                   ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=22.710..389.534 rows=149720.00 loops=3)
+                                         Recheck Cond: (deleted_at IS NOT NULL)
+                                         Heap Blocks: exact=43772
+                                         Buffers: shared hit=87940 read=44200
+                                         ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=16.669..16.670 rows=169720.00 loops=3)
+                                               Index Cond: (deleted_at IS NOT NULL)
+                                               Index Searches: 3
+                                               Buffers: shared hit=858 read=428
+ Planning:
+   Buffers: shared hit=299 read=64
+ Planning Time: 4.120 ms
+ JIT:
+   Functions: 101
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 8.870 ms (Deform 3.600 ms), Inlining 0.000 ms, Optimization 2.868 ms, Emission 74.978 ms, Total 86.716 ms
+ Execution Time: 1850.240 ms
+(39 rows)
+== c (V3c/spike_search) load=10.00
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using spike_finding_entity_id_key on spike_finding  (cost=111267.68..111275.70 rows=1 width=106) (actual time=3041.006..3041.034 rows=1.00 loops=1)
+   Index Cond: (entity_id = (InitPlan 2).col1)
+   Filter: (NOT (ANY (entity_id = (hashed SubPlan 3).col1)))
+   Index Searches: 1
+   Buffers: shared hit=1 read=90562
+   InitPlan 2
+     ->  Limit  (cost=59244.93..59244.99 rows=1 width=16) (actual time=633.354..633.356 rows=1.00 loops=1)
+           Buffers: shared read=46359
+           ->  Seq Scan on spike_finding spike_finding_1  (cost=52022.26..81274.26 rows=500000 width=16) (actual time=572.758..629.274 rows=123457.00 loops=1)
+                 Filter: (NOT (ANY (entity_id = (hashed SubPlan 1).col1)))
+                 Rows Removed by Filter: 65
+                 Buffers: shared read=46359
+                 SubPlan 1
+                   ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=28.798..474.511 rows=149720.00 loops=1)
+                         Recheck Cond: (deleted_at IS NOT NULL)
+                         Heap Blocks: exact=43772
+                         Buffers: shared read=44200
+                         ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=23.856..23.856 rows=169720.00 loops=1)
+                               Index Cond: (deleted_at IS NOT NULL)
+                               Index Searches: 1
+                               Buffers: shared read=428
+   SubPlan 3
+     ->  Bitmap Heap Scan on tap_entity tap_entity_1  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=28.812..2260.912 rows=149720.00 loops=1)
+           Recheck Cond: (deleted_at IS NOT NULL)
+           Heap Blocks: exact=43772
+           Buffers: shared read=44200
+           ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=23.659..23.659 rows=169720.00 loops=1)
+                 Index Cond: (deleted_at IS NOT NULL)
+                 Index Searches: 1
+                 Buffers: shared read=428
+ Planning:
+   Buffers: shared hit=170 read=34
+ Planning Time: 1.161 ms
+ JIT:
+   Functions: 47
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 1.316 ms (Deform 0.389 ms), Inlining 0.000 ms, Optimization 1.662 ms, Emission 25.773 ms, Total 28.750 ms
+ Execution Time: 3063.867 ms
+(38 rows)
+== d (V3c/spike_search) load=9.52
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on tap_edge  (cost=56485.30..88651.30 rows=198467 width=16) (actual time=557.403..945.946 rows=376109.00 loops=1)
+   Recheck Cond: ((edge_type)::text = 'X'::text)
+   Filter: (NOT (ANY (entity_id = (hashed SubPlan 1).col1)))
+   Rows Removed by Filter: 23891
+   Heap Blocks: exact=26212
+   Buffers: shared read=70773 written=1
+   ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4413.42 rows=396933 width=0) (actual time=22.496..22.496 rows=400000.00 loops=1)
+         Index Cond: ((edge_type)::text = 'X'::text)
+         Index Searches: 1
+         Buffers: shared read=361
+   SubPlan 1
+     ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=33.351..448.240 rows=149720.00 loops=1)
+           Recheck Cond: (deleted_at IS NOT NULL)
+           Heap Blocks: exact=43772
+           Buffers: shared read=44200 written=1
+           ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=27.710..27.710 rows=169720.00 loops=1)
+                 Index Cond: (deleted_at IS NOT NULL)
+                 Index Searches: 1
+                 Buffers: shared read=428
+ Planning:
+   Buffers: shared hit=226 read=44
+ Planning Time: 4.244 ms
+ Execution Time: 967.574 ms
+(23 rows)
+== e (V3c/spike_search) load=9.52
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=153235.09..153235.10 rows=1 width=8) (actual time=2903.934..2914.858 rows=1.00 loops=1)
+   Buffers: shared hit=87471 read=119588
+   ->  Gather  (cost=153234.88..153235.09 rows=2 width=8) (actual time=2901.747..2914.757 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=87471 read=119588
+         ->  Partial Aggregate  (cost=152234.88..152234.89 rows=1 width=8) (actual time=2883.057..2883.076 rows=1.00 loops=3)
+               Buffers: shared hit=87471 read=119588
+               ->  Parallel Hash Join  (cost=86291.93..152036.57 rows=79325 width=0) (actual time=1587.071..2833.195 rows=125371.00 loops=3)
+                     Hash Cond: (t.id = x.to_entity_id)
+                     Buffers: shared hit=87471 read=119588
+                     ->  Parallel Seq Scan on tap_entity t  (cost=0.00..60933.78 rows=1194757 width=16) (actual time=1.264..693.643 rows=950093.33 loops=3)
+                           Filter: (deleted_at IS NULL)
+                           Rows Removed by Filter: 49907
+                           Buffers: shared read=48349
+                     ->  Parallel Hash  (cost=85247.49..85247.49 rows=83555 width=16) (actual time=1585.184..1585.198 rows=125371.00 loops=3)
+                           Buckets: 524288 (originally 262144)  Batches: 1 (originally 1)  Memory Usage: 23840kB
+                           Buffers: shared hit=87471 read=71239
+                           ->  Parallel Bitmap Heap Scan on tap_edge x  (cost=56528.83..85247.49 rows=83555 width=16) (actual time=826.132..1313.714 rows=125371.00 loops=3)
+                                 Recheck Cond: ((edge_type)::text = 'AFFECTS'::text)
+                                 Filter: (NOT (ANY (entity_id = (hashed SubPlan 1).col1)))
+                                 Rows Removed by Filter: 7962
+                                 Heap Blocks: exact=9012
+                                 Buffers: shared hit=87471 read=71239
+                                 Worker 0:  Heap Blocks: exact=8645
+                                 Worker 1:  Heap Blocks: exact=8555
+                                 ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4456.43 rows=401067 width=0) (actual time=30.415..30.416 rows=400000.00 loops=1)
+                                       Index Cond: ((edge_type)::text = 'AFFECTS'::text)
+                                       Index Searches: 1
+                                       Buffers: shared read=357
+                                 SubPlan 1
+                                   ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=69.530..572.736 rows=149720.00 loops=3)
+                                         Recheck Cond: (deleted_at IS NOT NULL)
+                                         Heap Blocks: exact=43772
+                                         Buffers: shared hit=87471 read=44670
+                                         ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=60.344..60.348 rows=169720.00 loops=3)
+                                               Index Cond: (deleted_at IS NOT NULL)
+                                               Index Searches: 3
+                                               Buffers: shared hit=858 read=428
+ Planning:
+   Buffers: shared hit=364 read=67
+ Planning Time: 1.921 ms
+ JIT:
+   Functions: 107
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 12.002 ms (Deform 5.955 ms), Inlining 0.000 ms, Optimization 8.758 ms, Emission 266.811 ms, Total 287.571 ms
+ Execution Time: 2954.785 ms
+(47 rows)
+== f (V3c/spike_search) load=9.48
+                                                                                     QUERY PLAN                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate  (cost=78108.25..78114.69 rows=20 width=31) (actual time=1018.900..1025.183 rows=5.00 loops=1)
+   Group Key: spike_finding.status, spike_finding.severity
+   Buffers: shared hit=88259 read=60952
+   ->  Gather Merge  (cost=78108.25..78113.84 rows=48 width=55) (actual time=1018.889..1025.166 rows=15.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=88259 read=60952
+         ->  Sort  (cost=77108.22..77108.27 rows=20 width=55) (actual time=996.504..996.507 rows=5.00 loops=3)
+               Sort Key: spike_finding.status, spike_finding.severity
+               Sort Method: quicksort  Memory: 25kB
+               Buffers: shared hit=88259 read=60952
+               Worker 0:  Sort Method: quicksort  Memory: 25kB
+               Worker 1:  Sort Method: quicksort  Memory: 25kB
+               ->  Partial HashAggregate  (cost=77107.59..77107.79 rows=20 width=55) (actual time=996.456..996.459 rows=5.00 loops=3)
+                     Group Key: spike_finding.status, spike_finding.severity
+                     Batches: 1  Memory Usage: 32kB
+                     Buffers: shared hit=88229 read=60952
+                     Worker 0:  Batches: 1  Memory Usage: 32kB
+                     Worker 1:  Batches: 1  Memory Usage: 32kB
+                     ->  Parallel Seq Scan on spike_finding  (cost=52022.26..73982.60 rows=208333 width=74) (actual time=503.853..776.142 rows=323216.00 loops=3)
+                           Filter: (NOT (ANY (entity_id = (hashed SubPlan 1).col1)))
+                           Rows Removed by Filter: 10117
+                           Buffers: shared hit=88229 read=60952
+                           SubPlan 1
+                             ->  Bitmap Heap Scan on tap_entity  (cost=1761.64..51639.94 rows=152930 width=16) (actual time=25.036..404.605 rows=149720.00 loops=3)
+                                   Recheck Cond: (deleted_at IS NOT NULL)
+                                   Heap Blocks: exact=43772
+                                   Buffers: shared hit=88229 read=44200
+                                   ->  Bitmap Index Scan on tap_entity_deleted_at_idx  (cost=0.00..1723.40 rows=152930 width=0) (actual time=19.259..19.259 rows=169720.00 loops=3)
+                                         Index Cond: (deleted_at IS NOT NULL)
+                                         Index Searches: 3
+                                         Buffers: shared hit=858 read=428
+ Planning:
+   Buffers: shared hit=215 read=48
+ Planning Time: 2.365 ms
+ Execution Time: 1027.022 ms
+(36 rows)

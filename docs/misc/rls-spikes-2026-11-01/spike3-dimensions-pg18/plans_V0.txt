@@ -1,0 +1,30 @@
+== V0 S1 a
+SET
+SET
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=49012.81..49012.82 rows=1 width=8) (actual time=78.499..79.728 rows=1.00 loops=1)
+   ->  Gather  (cost=49012.60..49012.81 rows=2 width=8) (actual time=77.770..79.720 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate  (cost=48012.60..48012.61 rows=1 width=8) (actual time=75.308..75.309 rows=1.00 loops=3)
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..47584.81 rows=171113 width=0) (actual time=0.221..68.663 rows=133333.33 loops=3)
+                     Filter: (status = 'open'::text)
+                     Rows Removed by Filter: 200000
+ Execution Time: 79.852 ms
+(16 rows)
+== V0 S4 a
+SET
+SET
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=49012.81..49012.82 rows=1 width=8) (actual time=122.713..125.047 rows=1.00 loops=1)
+   ->  Gather  (cost=49012.60..49012.81 rows=2 width=8) (actual time=77.406..125.041 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate  (cost=48012.60..48012.61 rows=1 width=8) (actual time=90.787..90.788 rows=1.00 loops=3)
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..47584.81 rows=171113 width=0) (actual time=0.087..83.456 rows=133333.33 loops=3)
+                     Filter: (status = 'open'::text)
+                     Rows Removed by Filter: 200000
+ Execution Time: 125.119 ms
+(16 rows)

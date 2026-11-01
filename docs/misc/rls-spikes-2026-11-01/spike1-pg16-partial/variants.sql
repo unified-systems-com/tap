@@ -1,0 +1,8 @@
+-- ENABLE/DISABLE per variant (run as spike_owner). Names: v1_*, v2_*
+-- V1 enable
+-- ALTER TABLE tap_entity ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY v1_live ON tap_entity FOR SELECT TO spike_search USING (deleted_at IS NULL);
+-- ALTER TABLE spike_finding ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY v1_live ON spike_finding FOR SELECT TO spike_search USING (EXISTS (SELECT 1 FROM tap_entity e WHERE e.id = spike_finding.entity_id AND e.deleted_at IS NULL));
+-- (same on tap_edge)
+-- V1 disable: DROP POLICY v1_live ON <t>; ALTER TABLE <t> DISABLE ROW LEVEL SECURITY;

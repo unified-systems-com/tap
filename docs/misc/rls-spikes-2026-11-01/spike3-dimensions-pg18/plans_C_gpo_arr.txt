@@ -1,0 +1,30 @@
+== C_gpo_arr S1 a
+SET
+SET
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1353221.01..1353221.02 rows=1 width=8) (actual time=264.076..264.077 rows=1.00 loops=1)
+   ->  Seq Scan on spike_finding  (cost=0.00..1352707.67 rows=205335 width=0) (actual time=76.663..263.805 rows=2072.00 loops=1)
+         Filter: ((status = 'open'::text) AND EXISTS(SubPlan 1))
+         Rows Removed by Filter: 997928
+         SubPlan 1
+           ->  Function Scan on jsonb_array_elements s  (cost=0.01..1.26 rows=1 width=0) (actual time=0.000..0.000 rows=0.01 loops=400000)
+                 Filter: (spike_finding.dims_gpo @> v)
+                 Rows Removed by Filter: 1
+ Execution Time: 277.601 ms
+(18 rows)
+== C_gpo_arr S4 a
+SET
+SET
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1353221.01..1353221.02 rows=1 width=8) (actual time=339.612..339.613 rows=1.00 loops=1)
+   ->  Seq Scan on spike_finding  (cost=0.00..1352707.67 rows=205335 width=0) (actual time=65.593..339.260 rows=3097.00 loops=1)
+         Filter: ((status = 'open'::text) AND EXISTS(SubPlan 1))
+         Rows Removed by Filter: 996903
+         SubPlan 1
+           ->  Function Scan on jsonb_array_elements s  (cost=0.01..1.26 rows=1 width=0) (actual time=0.000..0.000 rows=0.01 loops=400000)
+                 Filter: (spike_finding.dims_gpo @> v)
+                 Rows Removed by Filter: 3
+ Execution Time: 348.955 ms
+(18 rows)

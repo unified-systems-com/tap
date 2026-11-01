@@ -1,0 +1,45 @@
+== L_arr S1 a
+SET
+SET
+                                                                        QUERY PLAN                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=12375212.04..12375212.05 rows=1 width=8) (actual time=528.812..528.814 rows=1.00 loops=1)
+   ->  Seq Scan on spike_finding  (cost=0.00..12374698.70 rows=205335 width=0) (actual time=429.318..528.577 rows=2072.00 loops=1)
+         Filter: ((status = 'open'::text) AND (ANY (entity_id = (hashed SubPlan 4).col1)))
+         Rows Removed by Filter: 997928
+         SubPlan 4
+           ->  Nested Loop Semi Join  (cost=0.01..2500165.79 rows=5195 width=16) (actual time=6.287..289.085 rows=4990.00 loops=1)
+                 Join Filter: (e.dimensions @> s_1.v)
+                 ->  Seq Scan on tap_entity e  (cost=0.00..1342673.82 rows=519533 width=80) (actual time=6.251..286.928 rows=4990.00 loops=1)
+                       Filter: EXISTS(SubPlan 3)
+                       Rows Removed by Filter: 995010
+                       SubPlan 3
+                         ->  Function Scan on jsonb_array_elements s  (cost=0.01..1.26 rows=1 width=0) (actual time=0.000..0.000 rows=0.00 loops=1000000)
+                               Filter: (e.dimensions @> v)
+                               Rows Removed by Filter: 1
+                 ->  Function Scan on jsonb_array_elements s_1  (cost=0.01..1.01 rows=100 width=32) (actual time=0.000..0.000 rows=1.00 loops=4990)
+ Execution Time: 545.141 ms
+(27 rows)
+== L_arr S4 a
+SET
+SET
+                                                                        QUERY PLAN                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=12375212.04..12375212.05 rows=1 width=8) (actual time=674.131..674.132 rows=1.00 loops=1)
+   ->  Seq Scan on spike_finding  (cost=0.00..12374698.70 rows=205335 width=0) (actual time=550.994..673.851 rows=3097.00 loops=1)
+         Filter: ((status = 'open'::text) AND (ANY (entity_id = (hashed SubPlan 4).col1)))
+         Rows Removed by Filter: 996903
+         SubPlan 4
+           ->  Nested Loop Semi Join  (cost=0.01..2500165.79 rows=5195 width=16) (actual time=4.390..421.774 rows=7605.00 loops=1)
+                 Join Filter: (e.dimensions @> s_1.v)
+                 Rows Removed by Join Filter: 4005
+                 ->  Seq Scan on tap_entity e  (cost=0.00..1342673.82 rows=519533 width=80) (actual time=4.372..418.056 rows=7605.00 loops=1)
+                       Filter: EXISTS(SubPlan 3)
+                       Rows Removed by Filter: 992395
+                       SubPlan 3
+                         ->  Function Scan on jsonb_array_elements s  (cost=0.01..1.26 rows=1 width=0) (actual time=0.000..0.000 rows=0.01 loops=1000000)
+                               Filter: (e.dimensions @> v)
+                               Rows Removed by Filter: 3
+                 ->  Function Scan on jsonb_array_elements s_1  (cost=0.01..1.01 rows=100 width=32) (actual time=0.000..0.000 rows=1.53 loops=7605)
+ Execution Time: 698.454 ms
+(28 rows)

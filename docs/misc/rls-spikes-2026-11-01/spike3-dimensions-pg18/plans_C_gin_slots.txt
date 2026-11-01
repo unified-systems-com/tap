@@ -1,0 +1,52 @@
+== C_gin_slots S1 a
+SET
+SET
+                                                                                                                                                          QUERY PLAN                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=24796.02..24796.03 rows=1 width=8) (actual time=27.915..27.917 rows=1.00 loops=1)
+   ->  Bitmap Heap Scan on spike_finding  (cost=263.72..24785.76 rows=4107 width=0) (actual time=10.336..27.782 rows=2072.00 loops=1)
+         Recheck Cond: ((dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 0)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 1)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 2)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 3)))
+         Filter: (status = 'open'::text)
+         Rows Removed by Filter: 2918
+         Heap Blocks: exact=4871
+         ->  BitmapOr  (cost=263.72..263.72 rows=10299 width=0) (actual time=9.149..9.150 rows=0.00 loops=1)
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..259.62 rows=10299 width=0) (actual time=9.122..9.122 rows=5137.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 0))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..0.00 rows=1 width=0) (actual time=0.006..0.006 rows=0.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 1))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..0.00 rows=1 width=0) (actual time=0.003..0.003 rows=0.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 2))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..0.00 rows=1 width=0) (actual time=0.001..0.001 rows=0.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 3))
+                     Index Searches: 1
+ Execution Time: 28.053 ms
+(27 rows)
+== C_gin_slots S4 a
+SET
+SET
+                                                                                                                                                          QUERY PLAN                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=43605.32..43605.33 rows=1 width=8) (actual time=61.755..61.757 rows=1.00 loops=1)
+   ->  Bitmap Heap Scan on spike_finding  (cost=834.03..43574.83 rows=12197 width=0) (actual time=37.202..61.579 rows=3097.00 loops=1)
+         Recheck Cond: ((dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 0)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 1)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 2)) OR (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 3)))
+         Filter: (status = 'open'::text)
+         Rows Removed by Filter: 4508
+         Heap Blocks: exact=7205
+         ->  BitmapOr  (cost=834.03..834.03 rows=30896 width=0) (actual time=36.580..36.581 rows=0.00 loops=1)
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..259.62 rows=10299 width=0) (actual time=9.834..9.834 rows=5137.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 0))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..281.11 rows=10299 width=0) (actual time=15.110..15.111 rows=1249.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 1))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..281.11 rows=10299 width=0) (actual time=11.560..11.560 rows=1475.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 2))
+                     Index Searches: 1
+               ->  Bitmap Index Scan on spike_finding_dims_gin  (cost=0.00..0.00 rows=1 width=0) (actual time=0.009..0.009 rows=0.00 loops=1)
+                     Index Cond: (dims_gin @> ((current_setting('tap.scope'::text, true))::jsonb -> 3))
+                     Index Searches: 1
+ Execution Time: 61.969 ms
+(29 rows)

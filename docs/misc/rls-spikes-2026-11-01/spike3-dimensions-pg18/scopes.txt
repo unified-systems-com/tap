@@ -1,0 +1,5 @@
+S1|[{"team":"t17"}]
+S2|[{"env":"prod","tap.graph":"g7"}]
+S3|[{"env":"prod"}]
+S4|[{"team":"t17"},{"team":"t18","env":"prod"},{"tap.graph":"g3","fedramp.rule":"vdr"}]
+S5|[{}]

@@ -1,0 +1,119 @@
+== a (V1/spike_search)
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8476737.46..8476737.47 rows=1 width=8) (actual time=5441.359..5441.371 rows=1 loops=1)
+   Buffers: shared hit=1530524 read=85713
+   ->  Seq Scan on spike_finding  (cost=0.00..8476237.00 rows=200183 width=0) (actual time=370.065..5365.872 rows=387964 loops=1)
+         Filter: ((status = 'open'::text) AND (SubPlan 1))
+         Rows Removed by Filter: 612036
+         Buffers: shared hit=1530524 read=85713
+         SubPlan 1
+           ->  Index Scan using tap_entity_pkey on tap_entity e  (cost=0.43..8.45 rows=1 width=0) (actual time=0.010..0.010 rows=1 loops=400000)
+                 Index Cond: (id = spike_finding.entity_id)
+                 Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+                 Rows Removed by Filter: 0
+                 Buffers: shared hit=1530524 read=69476
+ Planning:
+   Buffers: shared hit=140 read=44
+ Planning Time: 4.065 ms
+ JIT:
+   Functions: 12
+   Options: Inlining true, Optimization true, Expressions true, Deforming true
+   Timing: Generation 0.906 ms, Inlining 113.639 ms, Optimization 146.806 ms, Emission 109.951 ms, Total 371.302 ms
+ Execution Time: 5487.213 ms
+(20 rows)
+== b (V1/spike_search)
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8617491.52..8617491.53 rows=1 width=8) (actual time=8449.452..8449.478 rows=1 loops=1)
+   Buffers: shared hit=1533382 read=130864, temp read=13825 written=13825
+   ->  Hash Join  (cost=125095.25..8617039.73 rows=180716 width=0) (actual time=3226.412..8412.308 rows=387964 loops=1)
+         Hash Cond: (f.entity_id = e.id)
+         Buffers: shared hit=1533382 read=130864, temp read=13825 written=13825
+         ->  Seq Scan on spike_finding f  (cost=0.00..8476237.00 rows=200183 width=16) (actual time=500.898..4363.280 rows=387964 loops=1)
+               Filter: ((status = 'open'::text) AND (SubPlan 1))
+               Rows Removed by Filter: 612036
+               Buffers: shared hit=1530276 read=85961
+               SubPlan 1
+                 ->  Index Scan using tap_entity_pkey on tap_entity e_1  (cost=0.43..8.45 rows=1 width=0) (actual time=0.008..0.008 rows=1 loops=400000)
+                       Index Cond: (id = f.entity_id)
+                       Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+                       Rows Removed by Filter: 0
+                       Buffers: shared hit=1530276 read=69724
+         ->  Hash  (cost=78012.29..78012.29 rows=2708557 width=16) (actual time=2719.535..2719.537 rows=2852810 loops=1)
+               Buckets: 262144  Batches: 32  Memory Usage: 6227kB
+               Buffers: shared hit=3106 read=44903, temp written=12128
+               ->  Seq Scan on tap_entity e  (cost=0.00..78012.29 rows=2708557 width=16) (actual time=0.102..1596.175 rows=2852810 loops=1)
+                     Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+                     Rows Removed by Filter: 147190
+                     Buffers: shared hit=3106 read=44903
+ Planning:
+   Buffers: shared hit=290 read=61
+ Planning Time: 18.045 ms
+ JIT:
+   Functions: 23
+   Options: Inlining true, Optimization true, Expressions true, Deforming true
+   Timing: Generation 1.874 ms, Inlining 370.897 ms, Optimization 69.841 ms, Emission 59.497 ms, Total 502.110 ms
+ Execution Time: 8605.603 ms
+(30 rows)
+== c (V1/spike_search)
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using spike_finding_entity_id_key on spike_finding  (cost=2092284.72..2092301.19 rows=1 width=98) (actual time=2945.526..2945.548 rows=1 loops=1)
+   Index Cond: (entity_id = $2)
+   Filter: (SubPlan 3)
+   Buffers: shared hit=500880 read=9968
+   InitPlan 2 (returns $2)
+     ->  Limit  (cost=2092267.35..2092284.30 rows=1 width=16) (actual time=2432.324..2432.332 rows=1 loops=1)
+           Buffers: shared hit=500875 read=9965
+           ->  Seq Scan on spike_finding spike_finding_1  (cost=0.00..8473737.00 rows=500000 width=16) (actual time=0.626..2418.652 rows=123457 loops=1)
+                 Filter: (SubPlan 1)
+                 Rows Removed by Filter: 3737
+                 Buffers: shared hit=500875 read=9965
+                 SubPlan 1
+                   ->  Index Scan using tap_entity_pkey on tap_entity e  (cost=0.43..8.45 rows=1 width=0) (actual time=0.017..0.017 rows=1 loops=127194)
+                         Index Cond: (id = spike_finding_1.entity_id)
+                         Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+                         Rows Removed by Filter: 0
+                         Buffers: shared hit=500863 read=7913
+   SubPlan 3
+     ->  Index Scan using tap_entity_pkey on tap_entity e_1  (cost=0.43..8.45 rows=1 width=0) (actual time=0.128..0.129 rows=1 loops=1)
+           Index Cond: (id = spike_finding.entity_id)
+           Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+           Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=146 read=36
+ Planning Time: 3.050 ms
+ JIT:
+   Functions: 27
+   Options: Inlining true, Optimization true, Expressions true, Deforming true
+   Timing: Generation 4.903 ms, Inlining 313.829 ms, Optimization 78.175 ms, Emission 114.805 ms, Total 511.712 ms
+ Execution Time: 3030.527 ms
+(30 rows)
+== d (V1/spike_search)
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on tap_edge  (cost=4383.04..3387062.22 rows=198467 width=16) (actual time=491.524..7113.381 rows=376282 loops=1)
+   Recheck Cond: ((edge_type)::text = 'X'::text)
+   Filter: (SubPlan 1)
+   Rows Removed by Filter: 23718
+   Heap Blocks: exact=24626
+   Buffers: shared hit=1465379 read=159586
+   ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4333.42 rows=396933 width=0) (actual time=32.946..32.947 rows=400000 loops=1)
+         Index Cond: ((edge_type)::text = 'X'::text)
+         Buffers: shared read=339
+   SubPlan 1
+     ->  Index Scan using tap_entity_pkey on tap_entity e  (cost=0.43..8.45 rows=1 width=0) (actual time=0.013..0.013 rows=1 loops=400000)
+           Index Cond: (id = tap_edge.entity_id)
+           Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+           Rows Removed by Filter: 0
+           Buffers: shared hit=1465379 read=134621
+ Planning:
+   Buffers: shared hit=209 read=48
+ Planning Time: 7.628 ms
+ JIT:
+   Functions: 14
+   Options: Inlining true, Optimization true, Expressions true, Deforming true
+   Timing: Generation 0.706 ms, Inlining 303.032 ms, Optimization 77.345 ms, Emission 71.532 ms, Total 452.615 ms
+ Execution Time: 7236.842 ms
+(23 rows)

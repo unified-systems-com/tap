@@ -1,0 +1,11 @@
+SELECT current_user;
+SELECT count(*) AS finding_rows FROM spike_finding;
+SELECT count(*) AS entity_rows, count(*) FILTER (WHERE deleted_at IS NOT NULL) AS tombstones_seen FROM tap_entity;
+SELECT count(*) AS edge_rows FROM tap_edge;
+SELECT count(*) AS entity_join_finding FROM tap_entity e JOIN spike_finding f ON f.entity_id=e.id;
+SELECT count(*) AS lookup_dead_finding FROM spike_finding WHERE entity_id='968025ac-42d2-417a-a196-cac615c38bab';
+SELECT count(*) AS lookup_dead_entity FROM tap_entity WHERE id='968025ac-42d2-417a-a196-cac615c38bab';
+SELECT count(*) AS dead_edge_by_id FROM tap_edge WHERE id=7;
+SELECT count(*) AS edges_to_dead_endpoint_via_reverse FROM tap_entity d JOIN tap_edge x ON x.to_entity_id=d.id OR x.from_entity_id=d.id WHERE d.id='968025ac-42d2-417a-a196-cac615c38bab';
+SELECT count(*) AS edges_raw_endpoint_dead FROM tap_edge x WHERE x.to_entity_id='968025ac-42d2-417a-a196-cac615c38bab' OR x.from_entity_id='968025ac-42d2-417a-a196-cac615c38bab';
+SELECT count(*) AS exists_dead FROM spike_finding WHERE EXISTS (SELECT 1 FROM tap_entity e WHERE e.id=spike_finding.entity_id AND e.deleted_at IS NOT NULL);

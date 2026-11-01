@@ -1,0 +1,30 @@
+== C_none_slots S1 a
+SET
+SET
+                                                                                                                                                                              QUERY PLAN                                                                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=70044.55..70044.56 rows=1 width=8) (actual time=411.980..415.389 rows=1.00 loops=1)
+   ->  Gather  (cost=70044.34..70044.55 rows=2 width=8) (actual time=411.832..415.367 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate  (cost=69044.34..69044.35 rows=1 width=8) (actual time=408.443..408.444 rows=1.00 loops=3)
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..69040.06 rows=1711 width=0) (actual time=1.887..408.309 rows=690.67 loops=3)
+                     Filter: ((status = 'open'::text) AND ((dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 0)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 1)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 2)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 3))))
+                     Rows Removed by Filter: 332643
+ Execution Time: 415.447 ms
+(16 rows)
+== C_none_slots S4 a
+SET
+SET
+                                                                                                                                                                              QUERY PLAN                                                                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=70052.98..70052.99 rows=1 width=8) (actual time=959.669..964.159 rows=1.00 loops=1)
+   ->  Gather  (cost=70052.77..70052.98 rows=2 width=8) (actual time=959.202..964.148 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate  (cost=69052.77..69052.78 rows=1 width=8) (actual time=956.787..956.787 rows=1.00 loops=3)
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..69040.06 rows=5082 width=0) (actual time=0.545..956.595 rows=1032.33 loops=3)
+                     Filter: ((status = 'open'::text) AND ((dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 0)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 1)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 2)) OR (dims_none @> ((current_setting('tap.scope'::text, true))::jsonb -> 3))))
+                     Rows Removed by Filter: 332301
+ Execution Time: 964.206 ms
+(16 rows)

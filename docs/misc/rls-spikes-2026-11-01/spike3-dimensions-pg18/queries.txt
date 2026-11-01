@@ -1,0 +1,4 @@
+a|SELECT count(*) FROM spike_finding WHERE status='open'
+b|SELECT count(*) FROM spike_finding f JOIN tap_entity e ON e.id=f.entity_id WHERE f.status='open'
+c|SELECT * FROM spike_finding WHERE entity_id=(SELECT entity_id FROM spike_finding OFFSET 12345 LIMIT 1)
+f|SELECT status, severity, count(*), avg(score) FROM spike_finding GROUP BY 1,2

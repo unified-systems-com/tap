@@ -1,0 +1,145 @@
+== a (V0/spike_search)
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=22862.60..22862.61 rows=1 width=8) (actual time=99.858..103.861 rows=1 loops=1)
+   Buffers: shared hit=1248 read=14989
+   ->  Gather  (cost=22862.38..22862.59 rows=2 width=8) (actual time=99.717..103.854 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=1248 read=14989
+         ->  Partial Aggregate  (cost=21862.38..21862.39 rows=1 width=8) (actual time=96.936..96.937 rows=1 loops=3)
+               Buffers: shared hit=1248 read=14989
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..21445.33 rows=166820 width=0) (actual time=0.049..85.288 rows=133333 loops=3)
+                     Filter: (status = 'open'::text)
+                     Rows Removed by Filter: 200000
+                     Buffers: shared hit=1248 read=14989
+ Planning:
+   Buffers: shared hit=83
+ Planning Time: 0.350 ms
+ Execution Time: 103.968 ms
+(16 rows)
+== b (V0/spike_search)
+                                                                           QUERY PLAN                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=88555.39..88555.40 rows=1 width=8) (actual time=1399.267..1408.070 rows=1 loops=1)
+   Buffers: shared hit=2708 read=61654
+   ->  Gather  (cost=88555.17..88555.38 rows=2 width=8) (actual time=1397.551..1408.058 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=2708 read=61654
+         ->  Partial Aggregate  (cost=87555.17..87555.18 rows=1 width=8) (actual time=1393.936..1393.944 rows=1 loops=3)
+               Buffers: shared hit=2708 read=61654
+               ->  Parallel Hash Join  (cost=23530.58..87158.92 rows=158501 width=0) (actual time=230.488..1378.157 rows=129321 loops=3)
+                     Hash Cond: (e.id = f.entity_id)
+                     Buffers: shared hit=2708 read=61654
+                     ->  Parallel Seq Scan on tap_entity e  (cost=0.00..60510.37 rows=1187797 width=16) (actual time=0.088..532.061 rows=950937 loops=3)
+                           Filter: (deleted_at IS NULL)
+                           Rows Removed by Filter: 49063
+                           Buffers: shared hit=672 read=47337
+                     ->  Parallel Hash  (cost=21445.33..21445.33 rows=166820 width=16) (actual time=229.020..229.021 rows=133333 loops=3)
+                           Buckets: 524288  Batches: 1  Memory Usage: 22912kB
+                           Buffers: shared hit=1920 read=14317
+                           ->  Parallel Seq Scan on spike_finding f  (cost=0.00..21445.33 rows=166820 width=16) (actual time=0.085..161.873 rows=133333 loops=3)
+                                 Filter: (status = 'open'::text)
+                                 Rows Removed by Filter: 200000
+                                 Buffers: shared hit=1920 read=14317
+ Planning:
+   Buffers: shared hit=353
+ Planning Time: 2.131 ms
+ Execution Time: 1408.221 ms
+(26 rows)
+== c (V0/spike_search)
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using spike_finding_entity_id_key on spike_finding  (cost=3239.57..3247.58 rows=1 width=98) (actual time=58.723..58.728 rows=1 loops=1)
+   Index Cond: (entity_id = $0)
+   Buffers: shared hit=9 read=2002
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=3239.12..3239.14 rows=1 width=16) (actual time=57.335..57.336 rows=1 loops=1)
+           Buffers: shared hit=7 read=2000
+           ->  Seq Scan on spike_finding spike_finding_1  (cost=0.00..26237.00 rows=1000000 width=16) (actual time=0.018..47.727 rows=123457 loops=1)
+                 Buffers: shared hit=7 read=2000
+ Planning:
+   Buffers: shared hit=93
+ Planning Time: 1.389 ms
+ Execution Time: 58.901 ms
+(12 rows)
+== d (V0/spike_search)
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on tap_edge  (cost=4432.66..34020.32 rows=396933 width=16) (actual time=33.354..669.224 rows=400000 loops=1)
+   Recheck Cond: ((edge_type)::text = 'X'::text)
+   Heap Blocks: exact=24626
+   Buffers: shared read=24965
+   ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4333.42 rows=396933 width=0) (actual time=26.989..26.989 rows=400000 loops=1)
+         Index Cond: ((edge_type)::text = 'X'::text)
+         Buffers: shared read=339
+ Planning:
+   Buffers: shared hit=140 read=22
+ Planning Time: 1.101 ms
+ Execution Time: 703.776 ms
+(11 rows)
+== e (V0/spike_search)
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=100337.75..100337.76 rows=1 width=8) (actual time=2072.259..2093.606 rows=1 loops=1)
+   Buffers: shared hit=58 read=72974
+   ->  Gather  (cost=100337.53..100337.74 rows=2 width=8) (actual time=2068.972..2093.516 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=58 read=72974
+         ->  Partial Aggregate  (cost=99337.53..99337.54 rows=1 width=8) (actual time=2053.218..2053.232 rows=1 loops=3)
+               Buffers: shared hit=58 read=72974
+               ->  Parallel Hash Join  (cost=33054.70..98930.86 rows=162667 width=0) (actual time=572.079..2033.969 rows=133333 loops=3)
+                     Hash Cond: (t.id = x.to_entity_id)
+                     Buffers: shared hit=58 read=72974
+                     ->  Parallel Seq Scan on tap_entity t  (cost=0.00..60510.37 rows=1250137 width=16) (actual time=0.094..580.332 rows=1000000 loops=3)
+                           Buffers: shared read=48009
+                     ->  Parallel Hash  (cost=31021.36..31021.36 rows=162667 width=16) (actual time=570.046..570.056 rows=133333 loops=3)
+                           Buckets: 524288  Batches: 1  Memory Usage: 22944kB
+                           Buffers: shared read=24965
+                           ->  Parallel Bitmap Heap Scan on tap_edge x  (cost=4362.03..31021.36 rows=162667 width=16) (actual time=60.210..454.505 rows=133333 loops=3)
+                                 Recheck Cond: ((edge_type)::text = 'AFFECTS'::text)
+                                 Heap Blocks: exact=7531
+                                 Buffers: shared read=24965
+                                 ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4264.43 rows=390400 width=0) (actual time=22.915..22.919 rows=400000 loops=1)
+                                       Index Cond: ((edge_type)::text = 'AFFECTS'::text)
+                                       Buffers: shared read=339
+ Planning:
+   Buffers: shared hit=374 read=42
+ Planning Time: 3.450 ms
+ JIT:
+   Functions: 41
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 2.989 ms, Inlining 0.000 ms, Optimization 4.345 ms, Emission 126.820 ms, Total 134.154 ms
+ Execution Time: 2127.040 ms
+(31 rows)
+== f (V0/spike_search)
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate  (cost=27654.33..27659.74 rows=20 width=31) (actual time=368.934..372.717 rows=5 loops=1)
+   Group Key: status, severity
+   Buffers: shared hit=606 read=15661
+   ->  Gather Merge  (cost=27654.33..27658.99 rows=40 width=55) (actual time=368.918..372.697 rows=15 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=606 read=15661
+         ->  Sort  (cost=26654.30..26654.35 rows=20 width=55) (actual time=363.943..363.946 rows=5 loops=3)
+               Sort Key: status, severity
+               Sort Method: quicksort  Memory: 25kB
+               Buffers: shared hit=606 read=15661
+               Worker 0:  Sort Method: quicksort  Memory: 25kB
+               Worker 1:  Sort Method: quicksort  Memory: 25kB
+               ->  Partial HashAggregate  (cost=26653.67..26653.87 rows=20 width=55) (actual time=363.884..363.888 rows=5 loops=3)
+                     Group Key: status, severity
+                     Batches: 1  Memory Usage: 24kB
+                     Buffers: shared hit=576 read=15661
+                     Worker 0:  Batches: 1  Memory Usage: 24kB
+                     Worker 1:  Batches: 1  Memory Usage: 24kB
+                     ->  Parallel Seq Scan on spike_finding  (cost=0.00..20403.67 rows=416667 width=74) (actual time=0.095..67.738 rows=333333 loops=3)
+                           Buffers: shared hit=576 read=15661
+ Planning:
+   Buffers: shared hit=163
+ Planning Time: 1.343 ms
+ Execution Time: 373.424 ms
+(25 rows)

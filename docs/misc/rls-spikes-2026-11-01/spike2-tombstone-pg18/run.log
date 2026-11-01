@@ -1,0 +1,144 @@
+== start Sun Nov  1 11:19:38 PST 2026 load: load averages: 9.04 13.37 19.37
+== server_version
+18.6
+PostgreSQL 18.6 on aarch64-unknown-linux-gnu, compiled by aarch64-unknown-linux-gnu-gcc (Wolfi 16.2.0-r1) 16.2.0, 64-bit
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+ALTER DATABASE
+GRANT
+== schema
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+== load Sun Nov  1 11:19:48 PST 2026 load: load averages: 8.64 13.14 19.22
+Timing is on.
+SELECT 1000000
+Time: 3336.737 ms (00:03.337)
+CREATE INDEX
+Time: 1160.463 ms (00:01.160)
+INSERT 0 1000000
+Time: 19861.766 ms (00:19.862)
+INSERT 0 1000000
+Time: 54416.741 ms (00:54.417)
+SELECT 2000000
+Time: 8653.927 ms (00:08.654)
+SELECT 2000000
+Time: 16045.917 ms (00:16.046)
+INSERT 0 2000000
+Time: 31763.219 ms (00:31.763)
+INSERT 0 2000000
+Time: 213357.677 ms (03:33.358)
+CREATE INDEX
+Time: 3215.482 ms (00:03.215)
+CREATE INDEX
+Time: 1734.502 ms (00:01.735)
+CREATE INDEX
+Time: 804.912 ms
+CREATE INDEX
+Time: 963.903 ms
+CREATE INDEX
+Time: 1519.504 ms (00:01.520)
+CREATE INDEX
+Time: 1002.708 ms (00:01.003)
+CREATE INDEX
+Time: 840.671 ms
+CREATE INDEX
+Time: 699.726 ms
+CREATE INDEX
+Time: 796.765 ms
+GRANT
+Time: 6.061 ms
+SET
+Time: 0.170 ms
+VACUUM
+Time: 921.461 ms
+VACUUM
+Time: 205.091 ms
+VACUUM
+Time: 761.544 ms
+  total  |  dead  
+---------+--------
+ 3000000 | 149720
+(1 row)
+
+Time: 225.158 ms
+  edges  | live_touching_dead 
+---------+--------------------
+ 2000000 |                  0
+(1 row)
+
+Time: 4038.381 ms (00:04.038)
+  ent   |   f    |   ed   
+--------+--------+--------
+ 566 MB | 187 MB | 555 MB
+(1 row)
+
+Time: 2.990 ms
+== v2 prep
+ALTER TABLE
+ALTER TABLE
+UPDATE 30352
+UPDATE 119368
+CREATE INDEX
+CREATE INDEX
+SET
+VACUUM
+VACUUM
+== write cost (owner)
+Timing is on.
+BEGIN
+Time: 0.181 ms
+UPDATE 10000
+Time: 1729.250 ms (00:01.729)
+ROLLBACK
+Time: 0.669 ms
+BEGIN
+Time: 0.087 ms
+UPDATE 10000
+Time: 2681.022 ms (00:02.681)
+ROLLBACK
+Time: 0.301 ms
+== interleave Sun Nov  1 11:26:39 PST 2026 load: load averages: 11.44 13.02 16.83
+== summary
+query | V0 med (min-max, spread) | V1 med (min-max, spread) | V2 med (min-max, spread) | V3c med (min-max, spread) | ratios vs V0 | load range
+a | 52 ms (32-98, 3.1x UNRELIABLE) | 1643 ms (1317-2482, 1.9x UNRELIABLE) | 50 ms (27-106, 3.9x UNRELIABLE) | 370 ms (366-1017, 2.8x UNRELIABLE) | V1/V0=31.66, V2/V0=0.96, V3c/V0=7.13 | 6.0-11.5
+b | 717 ms (567-1247, 2.2x UNRELIABLE) | 4135 ms (2113-4467, 2.1x UNRELIABLE) | 1197 ms (564-1649, 2.9x UNRELIABLE) | 1551 ms (847-1850, 2.2x UNRELIABLE) | V1/V0=5.76, V2/V0=1.67, V3c/V0=2.16 | 6.0-11.4
+c | 14 ms (12-72, 5.8x UNRELIABLE) | 553 ms (377-701, 1.9x UNRELIABLE) | 28 ms (17-94, 5.6x UNRELIABLE) | 2013 ms (889-3064, 3.4x UNRELIABLE) | V1/V0=38.67, V2/V0=1.95, V3c/V0=140.69 | 5.8-12.0
+d | 155 ms (77-694, 9.0x UNRELIABLE) | 1825 ms (1311-3134, 2.4x UNRELIABLE) | 199 ms (86-324, 3.7x UNRELIABLE) | 360 ms (257-968, 3.8x UNRELIABLE) | V1/V0=11.76, V2/V0=1.28, V3c/V0=2.32 | 5.8-12.0
+e | 826 ms (647-1283, 2.0x UNRELIABLE) | 2816 ms (2364-5188, 2.2x UNRELIABLE) | 824 ms (596-1436, 2.4x UNRELIABLE) | 1022 ms (947-2955, 3.1x UNRELIABLE) | V1/V0=3.41, V2/V0=1.00, V3c/V0=1.24 | 5.8-12.0
+f | 211 ms (145-419, 2.9x UNRELIABLE) | 3915 ms (3169-5298, 1.7x UNRELIABLE) | 242 ms (167-371, 2.2x UNRELIABLE) | 638 ms (609-1027, 1.7x UNRELIABLE) | V1/V0=18.55, V2/V0=1.15, V3c/V0=3.02 | 5.8-12.0
+== V2 without partial indexes (shape a, d): does the partial index matter?
+-- with partial idx: SELECT count(*) FROM spike_finding WHERE status='open'
+               ->  Parallel Index Only Scan using spike_finding_live_idx on spike_finding  (cost=0.42..5859.96 rows=161840 width=0) (actual time=0.043..21.296 rows=129307.67 loops=3)
+ Execution Time: 30.903 ms
+-- with partial idx: SELECT from_entity_id FROM tap_edge WHERE edge_type='X'
+ Bitmap Heap Scan on tap_edge  (cost=4165.22..35036.55 rows=372747 width=16) (actual time=18.558..223.738 rows=376109.00 loops=1)
+   ->  Bitmap Index Scan on tap_edge_live_type_idx  (cost=0.00..4072.03 rows=372747 width=0) (actual time=15.720..15.722 rows=376109.00 loops=1)
+ Execution Time: 248.802 ms
+-- without partial idx: SELECT count(*) FROM spike_finding WHERE status='open'
+               ->  Parallel Seq Scan on spike_finding  (cost=0.00..21960.33 rows=161840 width=0) (actual time=0.104..37.445 rows=129307.67 loops=3)
+ Execution Time: 108.127 ms
+-- without partial idx: SELECT from_entity_id FROM tap_edge WHERE edge_type='X'
+ Bitmap Heap Scan on tap_edge  (cost=4506.61..35680.27 rows=372747 width=16) (actual time=11.055..83.231 rows=376109.00 loops=1)
+   ->  Bitmap Index Scan on tap_edge_edge_type_idx  (cost=0.00..4413.42 rows=396933 width=0) (actual time=8.550..8.551 rows=400000.00 loops=1)
+ Execution Time: 95.834 ms
+== PG plan for V1 shape a (semi-join or SubPlan?)
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8477252.92..8477252.93 rows=1 width=8)
+   ->  Seq Scan on spike_finding  (cost=0.00..8476752.00 rows=200367 width=0)
+         Filter: ((status = 'open'::text) AND EXISTS(SubPlan 1))
+         SubPlan 1
+           ->  Index Scan using tap_entity_pkey on tap_entity e  (cost=0.43..8.45 rows=1 width=0)
+                 Index Cond: (id = spike_finding.entity_id)
+                 Filter: ((deleted_at IS NULL) AND (deleted_at IS NULL))
+ JIT:
+   Functions: 9
+   Options: Inlining true, Optimization true, Expressions true, Deforming true
+(10 rows)
+
+== done Sun Nov  1 11:29:10 PST 2026 load: load averages: 5.85 10.34 15.14
+RUN_COMPLETE
+== cleanup
+CLEANED
