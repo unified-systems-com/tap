@@ -107,9 +107,17 @@ The attribute gap is structural: nested block attributes look identical to top-l
 telling them apart means tracking brace depth, which is writing a parser. The `d.Set` gap is scope: tree-sitter
 follows calls from the read function through helpers in other files, which a per-file pattern cannot. Where the
 structure is flat (the generated registry, the `d.Set` keys) string matching is close; where nesting or scope
-matters, it is not. Neither extraction is ground truth, and the individual disagreements were sampled by name,
-not hand-checked. A one-time comparison against `terraform providers schema -json` would settle accuracy; it
-means running the provider once as a validation of the reader, not as an input.
+matters, it is not. Neither string matching nor tree-sitter is ground truth, so tree-sitter was checked against the provider's own
+schema dump (**ran**: `terraform init` in an empty directory fetched the signed AWS provider v6.71.0, then
+`terraform providers schema -json` wrote about 20 MB in 8 seconds; no credentials, nothing created). The dump
+lists 1,746 resources, every attribute with type and Required, Optional, Computed, sensitive and deprecated
+flags, nested blocks (6,311 attributes sit inside nested blocks), identity schemas for 562 resources, and
+`tags_all` on 865. Ignoring `id`, `region` and `timeouts`, which the provider framework adds at runtime and
+which are not in the Go source, the top-level attribute names agree exactly on 1,200 of 1,233 resources (97.3%).
+The dump has 271 further names (mostly attributes injected by shared helper functions) and tree-sitter 58 the
+dump lacks (not examined). The dump has no API response field for an attribute and no read operations, which
+exist only in the code, so tree-sitter stays necessary for those two. Disagreements in the string-matching
+comparison were sampled by name, not hand-checked.
 
 ## Open points
 
