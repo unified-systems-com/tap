@@ -1,5 +1,7 @@
 """Tests for ORM search execution mode — req-grid-search-orm."""
 
+from typing import Any
+
 import pytest
 
 from tap_grid.exceptions import InvalidSearchDefinitionError
@@ -8,7 +10,7 @@ from tap_grid.orm_compiler import compile_orm_query
 from tap_grid.search import execute_search
 
 
-def _orm_search(**kwargs):
+def _orm_search(**kwargs: Any) -> Search:
     defaults = {
         "name": "ORM Test",
         "search_type": "orm",
@@ -24,46 +26,49 @@ def _orm_search(**kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _node_entity_id(node):
+def _node_entity_id(node: dict[str, Any]) -> str:
     """Extract entity_id from a GRIFT envelope (spec-grift-envelope)."""
-    return node["entity_id"]
+    return str(node["entity_id"])
 
 
-def _node_entity_type(node):
+def _node_entity_type(node: dict[str, Any]) -> str:
     """Extract entity_type from a GRIFT envelope (spec-grift-envelope)."""
-    return node["entity_type"]
+    return str(node["entity_type"])
 
 
-def _edge_entity_id(edge):
+def _edge_entity_id(edge: dict[str, Any]) -> str:
     """Extract entity_id from a GRIFT envelope (spec-grift-envelope)."""
-    return edge["entity_id"]
+    return str(edge["entity_id"])
 
 
-def _edge_type(edge):
+def _edge_type(edge: dict[str, Any]) -> str:
     """Extract edge_type from a GRIFT envelope — lives inside `data` lane."""
-    return edge["data"]["edge_type"]
+    return str(edge["data"]["edge_type"])
 
 
-def _make_character(description="Test"):
+def _make_character(description: str = "Test") -> Any:
     from tap_plugin.grid_fixtures.models import ConstrainedSource
 
     return ConstrainedSource.objects.create(description=description)
 
 
-def _make_wanderer(description="Test"):
+def _make_wanderer(description: str = "Test") -> Any:
     """Unconstrained has no edge constraints — safe for tests with arbitrary edge types."""
     from tap_plugin.grid_fixtures.models import Unconstrained
 
     return Unconstrained.objects.create(description=description)
 
 
-def _make_edge(from_entity, to_entity, edge_type="RELATED_TO", properties=None):
-    return Edge.objects.create(
+def _make_edge(
+    from_entity: Any, to_entity: Any, edge_type: str = "RELATED_TO", properties: dict[str, Any] | None = None
+) -> Edge:
+    edge: Edge = Edge.objects.create(
         from_entity=from_entity,
         to_entity=to_entity,
         edge_type=edge_type,
         properties=properties or {},
     )
+    return edge
 
 
 # ---------------------------------------------------------------------------
@@ -411,3 +416,140 @@ class TestCompileOrmQueryUnit:
         )
         with pytest.raises(InvalidSearchDefinitionError, match="one hop"):
             compile_orm_query(s, "search_readonly")
+
+
+# ---------------------------------------------------------------------------
+# Tombstones (req-grid-search-orm-10, Issue# 1144 - tap)
+# ---------------------------------------------------------------------------
+
+
+def _tombstone(entity: Any) -> None:
+    """Tombstone an entity the way test_models does: a direct `deleted_at` write on the spine."""
+    from django.utils import timezone
+
+    from tap_grid.models import Entity
+
+    Entity.objects.filter(pk=entity.pk).update(deleted_at=timezone.now())
+
+
+@pytest.mark.spec("req-grid-search-orm-10")
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestTombstonesNeverReturned:
+    def test_node_root_omits_tombstoned_node_and_its_count(self):
+        live = _make_wanderer("Live")
+        gone = _make_wanderer("Gone")
+        s = Search.objects.create(
+            name="Node Root",
+            search_type="orm",
+            root="node",
+            definition={"filters": {"entity_type": "grid_fixtures__unconstrained"}},
+        )
+        before = execute_search(s)["info"]["total_count"]
+        _tombstone(gone.entity)
+        result = execute_search(s)
+        node_ids = {_node_entity_id(n) for n in result["nodes"]}
+        assert str(live.entity_id) in node_ids
+        assert str(gone.entity_id) not in node_ids
+        assert result["info"]["total_count"] == before - 1
+
+    def test_node_root_out_hop_omits_tombstoned_endpoint(self):
+        root = _make_wanderer("Root")
+        target = _make_wanderer("Target")
+        edge = _make_edge(root.entity, target.entity, edge_type="CONNECTS_TO")
+        _tombstone(target.entity)  # the edge is left live on purpose: the compiler must not rely on it
+        s = Search.objects.create(
+            name="Out Hop",
+            search_type="orm",
+            root="node",
+            definition={
+                "filters": {"entity_type": "grid_fixtures__unconstrained", "id": str(root.entity_id)},
+                "hops": [{"direction": "out", "edge_type": "CONNECTS_TO"}],
+            },
+        )
+        result = execute_search(s)
+        assert {_node_entity_id(n) for n in result["nodes"]} == {str(root.entity_id)}
+        assert str(edge.entity_id) not in {_edge_entity_id(e) for e in result["edges"]}
+
+    def test_node_root_in_hop_omits_tombstoned_endpoint(self):
+        source = _make_wanderer("Source")
+        root = _make_wanderer("Root")
+        _make_edge(source.entity, root.entity, edge_type="CONNECTS_TO")
+        _tombstone(source.entity)
+        s = Search.objects.create(
+            name="In Hop",
+            search_type="orm",
+            root="node",
+            definition={
+                "filters": {"entity_type": "grid_fixtures__unconstrained", "id": str(root.entity_id)},
+                "hops": [{"direction": "in", "edge_type": "CONNECTS_TO"}],
+            },
+        )
+        result = execute_search(s)
+        assert {_node_entity_id(n) for n in result["nodes"]} == {str(root.entity_id)}
+
+    def test_edge_root_hop_omits_tombstoned_endpoint(self):
+        a = _make_wanderer("A")
+        b = _make_wanderer("B")
+        _make_edge(a.entity, b.entity, edge_type="LINKS_TO")
+        _tombstone(b.entity)
+        s = Search.objects.create(
+            name="Edge Root Hop",
+            search_type="orm",
+            root="edge",
+            definition={
+                "filters": {"edge_type": "LINKS_TO", "from_entity_id": str(a.entity_id)},
+                "hops": [{"direction": "out", "edge_type": "LINKS_TO"}],
+            },
+        )
+        result = execute_search(s)
+        assert str(b.entity_id) not in {_node_entity_id(n) for n in result["nodes"]}
+
+    def test_edge_root_omits_tombstoned_edge(self):
+        a = _make_wanderer("A")
+        b = _make_wanderer("B")
+        edge = _make_edge(a.entity, b.entity, edge_type="LINKS_TO")
+        _tombstone(edge.entity)
+        s = Search.objects.create(
+            name="Edge Root",
+            search_type="orm",
+            root="edge",
+            definition={"filters": {"edge_type": "LINKS_TO", "from_entity_id": str(a.entity_id)}},
+        )
+        assert str(edge.entity_id) not in {_edge_entity_id(e) for e in execute_search(s)["edges"]}
+
+
+@pytest.mark.spec("req-grid-search-orm-10")
+def test_compiler_never_starts_a_query_from_an_unfiltered_entity_manager():
+    """Every `Entity.objects` chain in orm_compiler.py calls `.live()`.
+
+    Behaviour is pinned by the class above; this catches the next query a maintainer adds that
+    starts from the spine manager, which is unfiltered by design (Issue# 1144 - tap).
+    """
+    import ast
+    from pathlib import Path
+
+    import tap_grid.orm_compiler as compiler
+
+    tree = ast.parse(Path(compiler.__file__).read_text(encoding="utf-8"))
+    parents: dict[int, ast.AST] = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"objects", "all_objects"}
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "Entity"
+        ):
+            continue
+        chain: list[str] = []
+        current: ast.AST = node
+        while True:
+            parent = parents.get(id(current))
+            if isinstance(parent, ast.Attribute) and parent.value is current:
+                chain.append(parent.attr)
+            elif not (isinstance(parent, ast.Call) and parent.func is current):
+                break
+            current = parent
+        if node.attr == "all_objects" or "live" not in chain:
+            offenders.append(f"orm_compiler.py:{node.lineno}")
+    assert not offenders, f"Entity queried without .live(): {offenders}"
