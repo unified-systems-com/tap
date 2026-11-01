@@ -367,6 +367,13 @@ renderable excerpts, or external source references belong on `code_file`.
 Add `sha256` or a similar hash field later when file identity, source integrity,
 and diff/history behavior need it.
 
+### Tree-Sitter Extraction
+
+Tree-sitter grammars ship a language-neutral tags query whose captures (function, method and type
+definitions, and call references) line up with `code_unit` kinds and `CALLS_CODE_UNIT`. What the
+captures give, what a syntax parser cannot resolve, measured volume and a comparison with string
+matching are in `docs/misc/doc-code-core-tree-sitter.md`.
+
 ### Annotations And Third-Party Analysis Labels
 
 Trailmark supports annotations as a way to attach analysis-produced labels or
