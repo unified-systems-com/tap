@@ -86,7 +86,7 @@ def _reconcile_without_delete_actor() -> Any:
     from tap_auth.models import User
 
     collector = get_builtin_actor(COLLECTOR)
-    held = Permission.objects.filter(group__user=collector).exclude(
+    held = Permission.objects.filter(group__user__pk=collector.pk).exclude(
         codename=caps.codename_for(caps.DELETE_CAPABILITY)
     )
     group = Group.objects.create(name="reconcile-without-delete")
