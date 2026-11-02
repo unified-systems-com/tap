@@ -95,7 +95,8 @@ ALL_CAPABILITY_NAMES: tuple[str, ...] = tuple(c.name for c in CAPABILITIES)
 # On By Default), checked statelessly against what the actor holds. A create/update
 # op requires grid.write; a delete op requires grid.delete *specifically*. Broad
 # covers (grid.import_grift, grid.admin) deliberately do NOT satisfy the delete
-# check — so a bootloader/collector cannot tombstone through an import cover
+# check — so a bootloader cannot tombstone through an import cover (the collector
+# role holds grid.delete directly, interim and global)
 # (doc-auth-per-app-standards "split cover semantics"). The grift importer
 # authorizes grid.delete explicitly in its own scope when its batch contains
 # removals, so an actor lacking it gets a clean denial rather than tripping this
