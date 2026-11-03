@@ -146,6 +146,22 @@ services:
       timeout: 5s       # Fail if check takes longer than 5 seconds
       retries: 5        # Give up after 5 failures
 
+    # Stop the database cleanly. The command above turns fsync, synchronous_commit and
+    # full_page_writes off, so an unclean stop can corrupt the cluster, and a normal host
+    # reboot or halt stops every container at once. Two defaults work against that:
+    #   - SIGTERM is Postgres's SMART shutdown: it waits for every open connection to close.
+    #     web holds connections and is stopped at the same moment, so db can sit waiting on it
+    #     until the grace period ends and Docker sends SIGKILL. SIGINT is the FAST shutdown:
+    #     it disconnects clients, checkpoints and exits 0.
+    #   - Docker's default grace period is 10s, which the checkpoint can exceed.
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+
+    # Restart only after a crash. Nothing here brings a stack back after a reboot or halt:
+    # a clean stop exits 0 and `on-failure` leaves an exit 0 alone, so a stack the operator
+    # stopped, or one the host stopped, stays stopped until `scripts/dc up -d`.
+    restart: on-failure
+
   # ============================================================================
   # Django Web Application
   # ============================================================================

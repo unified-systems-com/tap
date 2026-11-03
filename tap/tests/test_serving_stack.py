@@ -735,14 +735,31 @@ def test_compose_declares_the_container_stop_allowance_the_drain_needs() -> None
 
     Absent this key the value is Docker's 10s default — a budget nobody chose, truncating
     one that was chosen. This asserts the declaration exists AND agrees; it does not observe
-    a shutdown.
+    a shutdown. It reads the ``web`` service's own key: the ``db`` service declares a longer
+    allowance of its own (a clean Postgres stop), which is not the serving drain's budget.
     """
-    lines = [
-        line.strip()
-        for line in (_REPO_ROOT / "docker-compose.yml").read_text().splitlines()
-        if line.strip().startswith("stop_grace_period:")
-    ]
-    assert lines == [f"stop_grace_period: {serving.CONTAINER_STOP_GRACE_SECONDS}s"], lines
+    import yaml
+
+    services = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]
+    assert services["web"].get("stop_grace_period") == f"{serving.CONTAINER_STOP_GRACE_SECONDS}s"
+
+
+def test_compose_stops_the_database_cleanly_and_restarts_it_only_after_a_crash() -> None:
+    """The dev database runs with fsync off, so an unclean stop can corrupt it.
+
+    SIGTERM is Postgres's smart shutdown, which waits for web's connections while web is being
+    stopped too, until Docker's SIGKILL; SIGINT is the fast shutdown. ``on-failure`` restarts a
+    crash and leaves a clean stop (exit 0, a reboot or halt) stopped. Measured 2026-11-03 on a
+    local stack: SIGTERM with one held connection took the full 10s and exited 137, then the next
+    start ran crash recovery; the settings below took under a second and exited 0. This asserts the
+    declaration; it does not observe a shutdown.
+    """
+    import yaml
+
+    db = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]["db"]
+    assert db.get("stop_signal") == "SIGINT"
+    assert db.get("stop_grace_period") == "60s"
+    assert db.get("restart") == "on-failure"
 
 
 @pytest.mark.spec("req-tap-serving-delta-2")
