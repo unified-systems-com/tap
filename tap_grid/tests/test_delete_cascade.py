@@ -366,6 +366,8 @@ class TestContainedCascade:
         """Grok on #568: the walk is iterative, so depth is bounded by the cap, not the stack."""
         import sys
 
+        from django.db import connection
+
         depth = sys.getrecursionlimit() + 100
         head = _node(TARGET, "link-0")
         prev = head
@@ -373,6 +375,12 @@ class TestContainedCascade:
             nxt = _node(TARGET, f"link-{i}")
             create_edge(prev, nxt, NESTS)
             prev = nxt
+        # The chain was created inside this test's transaction, so autoanalyze has not seen it and
+        # the planner thinks the tables are empty. It then drives each child lookup from the
+        # live-entity index and scans every live entity once per node: 28 s with statistics against
+        # 248 s without at depth 400, and the walk's cost grows with the square of the depth.
+        with connection.cursor() as cursor:
+            cursor.execute("ANALYZE")
         with override_settings(TAP_CASCADE_MAX_CLOSURE=depth + 10):
             result = delete_node(head.pk, cascade="contained")
         assert result.success, result.errors
