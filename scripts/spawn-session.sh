@@ -30,6 +30,8 @@ set -euo pipefail
 # Resolve the repo root from this script's own location, not $PWD, so the
 # script can be invoked from anywhere (e.g. via a PATH symlink or alias).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/container-engine.sh
+source "$SCRIPT_DIR/lib/container-engine.sh"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 bold()  { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
@@ -500,7 +502,11 @@ command -v git >/dev/null 2>&1 || fail "git not found on PATH."
 command -v python3 >/dev/null 2>&1 || fail "python3 not found on PATH (spawn uses it to mint ids and passwords)."
 command -v docker >/dev/null 2>&1 || fail "docker not found on PATH.
     macOS: install Docker Desktop. Linux: install Docker Engine + the Compose v2 plugin.
+    Podman works as the engine, but the Docker CLI + Compose v2 plugin are still the client.
     See 'Host prerequisites' in docs/misc/doc-dev-multisession-onboarding.md."
+# Docker first; Podman's Docker-compatible socket only when Docker is not answering and the
+# caller has not chosen an engine (req-dev-multisession-container-engine).
+tap_engine_select
 docker compose version >/dev/null 2>&1 || fail "'docker compose' (the v2 plugin) is not available.
     The retired v1 'docker-compose' binary is not supported. Linux: apt install docker-compose-plugin."
 # The port-band probe (Step 1) reads nothing when lsof is absent and would
@@ -508,14 +514,19 @@ docker compose version >/dev/null 2>&1 || fail "'docker compose' (the v2 plugin)
 command -v lsof >/dev/null 2>&1 || fail "lsof not found — the port-band probe depends on it. Install it (e.g. apt install lsof) and re-run."
 
 if ! with_timeout 8 docker info >/dev/null 2>&1; then
+  if [[ "${TAP_ENGINE:-}" == "sticky" || "${TAP_ENGINE:-}" == "podman" ]]; then
+    fail "The Podman socket ($DOCKER_HOST) is not responding.
+    macOS: podman machine start. Linux: systemctl --user start podman.socket."
+  fi
   if with_timeout 8 sh -c 'docker info 2>&1' | grep -qi "permission denied"; then
     fail "Docker daemon refused the connection: permission denied.
     Linux: add yourself to the docker group (sudo usermod -aG docker \$USER), then log out and back in."
   fi
-  fail "Docker daemon is not responding.
-    Start Docker Desktop (macOS) or the engine (Linux: systemctl start docker) and re-run."
+  fail "Neither Docker nor Podman is responding.
+    Start Docker Desktop (macOS) or the engine (Linux: systemctl start docker) and re-run.
+    For Podman, start the machine (macOS: podman machine start) and re-run — it is picked up automatically."
 fi
-info "Toolchain OK: docker + compose v2 + lsof + python3."
+info "Toolchain OK: docker + compose v2 + lsof + python3 (engine: ${TAP_ENGINE:-docker})."
 
 # Layout seatbelt: the primary clone lives at ~/tap-sessions/main — the layout
 # the registry, promote, and despawn lifecycles standardize on. Derived from git
@@ -974,6 +985,7 @@ TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false
 TAP_WEB_IMAGE=ghcr.io/unified-systems-com/tap-web:latest
 TAP_DB_IMAGE=ghcr.io/unified-systems-com/tap-db:latest
 EOF
+tap_engine_persist "$WORKTREE/.env.local"
 info "Wrote $WORKTREE/.env.local (gitignored)."
 
 # ============================================================================
@@ -1095,6 +1107,10 @@ else
 
   SESSION_NAME="$PROMOTE_NAME"   # arms the on_failure recovery hint from here on
   cd "$WORKTREE"
+
+  # Step 0.1 is skipped here, so the engine is chosen here — and a lite session created on
+  # Podman keeps its recorded socket (.env.local) even if Docker has since come up.
+  tap_engine_select "$WORKTREE"
 
   # Step 0.1 (host readiness) is skipped in this branch, but allocate_port_band
   # below has the exact same lsof dependency Step 0.1 enforces for a normal

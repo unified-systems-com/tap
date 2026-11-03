@@ -83,7 +83,7 @@ def _execute_node_query(
 ) -> dict[str, Any]:
     from tap_grid.models import Edge, Entity
 
-    root_qs = Entity.objects.using(db_alias).exclude(entity_type="edge")
+    root_qs = Entity.objects.using(db_alias).live().exclude(entity_type="edge")
     if filters:
         root_qs = root_qs.filter(**filters)
     root_qs = _apply_order(root_qs, order_by, default=["id"])
@@ -115,7 +115,7 @@ def _execute_node_query(
         endpoint_ids = list(hop_edge_qs.values_list("from_entity_id", flat=True))
         endpoint_filters = hop.get("source_filters", {})
 
-    endpoint_qs = Entity.objects.using(db_alias).filter(id__in=endpoint_ids)
+    endpoint_qs = Entity.objects.using(db_alias).live().filter(id__in=endpoint_ids)
     if endpoint_filters:
         endpoint_qs = endpoint_qs.filter(**endpoint_filters)
 
@@ -180,7 +180,7 @@ def _execute_edge_query(
         endpoint_ids = [e.from_entity_id for e in edges_list]
         endpoint_filters = hop.get("source_filters", {})
 
-    endpoint_qs = Entity.objects.using(db_alias).filter(id__in=endpoint_ids)
+    endpoint_qs = Entity.objects.using(db_alias).live().filter(id__in=endpoint_ids)
     if endpoint_filters:
         endpoint_qs = endpoint_qs.filter(**endpoint_filters)
 

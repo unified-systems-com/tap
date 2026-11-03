@@ -44,6 +44,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 REGISTRY="$HOME/tap-sessions/.registry"
+# shellcheck source=lib/container-engine.sh
+source "$SCRIPT_DIR/lib/container-engine.sh"
 
 bold()   { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
 info()   { printf "    %s\n" "$1"; }
@@ -101,6 +103,11 @@ fi
 # base. Default ~/tap-sessions preserves existing behaviour.
 WORKTREE="${WORKTREE_BASE:-$HOME/tap-sessions}/$SESSION_NAME"
 PROJECT="tap_${SESSION_NAME}"
+
+# The engine this session lives on (req-dev-multisession-container-engine): read from its own
+# .env.local while the worktree still exists, so a despawn from a fresh shell reaches the same
+# daemon the spawn used instead of finding nothing there and reporting success.
+tap_engine_select "$WORKTREE"
 
 # ---------------------------------------------------------------------------
 # Show the plan, get confirmation
@@ -257,6 +264,7 @@ fi
 # 1. Stop docker stack (preferring scripts/dc inside the worktree so .env.local
 #    is honored; fall back to the project name if dc is unavailable).
 # ---------------------------------------------------------------------------
+tap_engine_warn_other "$PROJECT"
 bold "Stopping docker stack"
 if [[ -d "$WORKTREE" && -x "$WORKTREE/scripts/dc" ]]; then
   ( cd "$WORKTREE" && scripts/dc down -v --remove-orphans 2>&1 ) || warn "scripts/dc down returned non-zero (may already be down)"

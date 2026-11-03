@@ -26,6 +26,7 @@ Write operations are where the TAP service layer earns its keep. The write contr
 | req-grid-service-write-schema-cleanup | [Service Schema Simplification](#service-schema-simplification) | Implemented | Replace per-verb `SERVICE_CRUD_SCHEMA` with a simpler writable-field contract |
 | req-grid-service-write-patch | [Patch And Replace Rules](#patch-and-replace-rules) | Implemented | Deep merge and immutable edge type rules |
 | req-grid-service-write-observation | [Observation-Aware Writes](#observation-aware-writes) | Implemented | Explicit-null preservation + per-touched-field FLIP stamping; realizes the field-observation convention's write-path dependency |
+| req-grid-service-write-keepabsent | [Keep-Absent Replace](#keep-absent-replace) | Proposed | `replace_node` / `replace_edge` opt in to leaving payload-absent fields untouched; the mode the GRIFT importer uses for existing entities (tap#1128) |
 | req-grid-service-write-validate | [Write Validation Stack](#write-validation-stack) | Implemented | full_clean, constraints, hotlinks |
 | req-grid-service-write-results | [Write Result Envelopes](#write-result-envelopes) | Implemented | Minimal, standard, verbose |
 
@@ -364,6 +365,40 @@ Replace semantics:
 | req-grid-service-write-patch-5 | Only Objects Merge | Implemented | A patch deep-merges a JSONField value only when both the incoming value and the stored value are objects; an array, string, number or boolean replaces what was stored, and so does an object patched over a value that is not an object. An explicit `null` still clears (`req-grid-service-write-observation-4`). | `patch_node` of a list into a list-valued JSONField (`compliance_vulnerability.cwes`) used to raise `'list' object has no attribute 'items'` (tap#1094). |
 
 
+### Keep-Absent Replace
+----
+RID: `req-grid-service-write-keepabsent`
+
+Status: `Proposed`
+
+`replace_node` and `replace_edge` reset a payload-absent optional field to its model default: replace asserts the complete object (the PUT camp). A sender that can observe only some of an entity's fields, such as a collector whose call for one field was denied or failed, has no way to say "no comment" about the others under that rule, so the failure erases the stored value. Keep-absent replace is the opt-in mode that gives it one (ruled 2026-10-28, maintainer; `unified-systems-com/tap#1128`; origin `unified-systems-com/aws-core-tap#60`).
+
+#### Implementation
+
+`WriteOperation` carries `absent: Literal["reset", "keep"] = "reset"`. The default is today's behaviour, so direct callers of `replace_node` and `replace_edge` are unchanged. With `absent="keep"`:
+
+| Inbound intent | Action |
+| --- | --- |
+| Field **absent** from payload | Left alone: the stored value stays, and no FLIP entry is stamped. |
+| Field present with a value | The stored value is replaced **whole**. A JSON object or array is not merged with what was stored, so a key the sender no longer sends is dropped. |
+| Field present, explicit `null`, null permitted | Cleared to `null` and FLIP-stamped (`req-grid-service-write-observation-1`). |
+| Field present, explicit `null`, null not permitted | Reset to the model default and FLIP-stamped. Replaces the drop-as-absent rule for this mode only (`req-grid-service-write-observation-2` stands for `absent="reset"`). |
+
+Required fields (`REPLACE_REQUIRED`, else `CREATE_REQUIRED`) stay required: validation is unchanged, so a keep-absent payload must still carry them. `absent="keep"` on any verb other than `replace_node` and `replace_edge` is refused with `absent_not_allowed` rather than ignored (apply-or-reject).
+
+Patch is not the tool for this: it deep-merges JSON objects (`req-grid-service-write-patch-1`), which cannot remove a key the sender stopped sending.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-write-keepabsent-1 | Default Is Reset | Proposed | A `replace_node` / `replace_edge` with `absent="reset"` or no `absent` resets payload-absent optional fields to their model default, exactly as before. | Direct callers unchanged. |
+| req-grid-service-write-keepabsent-2 | Absent Is Left Alone | Proposed | With `absent="keep"`, a payload-absent field keeps its stored value and receives no FLIP entry. | |
+| req-grid-service-write-keepabsent-3 | Present Replaces Whole | Proposed | With `absent="keep"`, a present field replaces its stored value whole; a JSON object or array is not merged. | A removed tag is gone. |
+| req-grid-service-write-keepabsent-4 | Null On A Non-Null Field Resets | Proposed | With `absent="keep"`, an explicit `null` on a field whose schema does not permit null sets the model default and is FLIP-stamped; on a null-permitting field it clears, as in `req-grid-service-write-observation-1`. | |
+| req-grid-service-write-keepabsent-5 | Only Replace Verbs Accept It | Proposed | `absent="keep"` on a verb other than `replace_node` / `replace_edge` is refused with `absent_not_allowed`. | |
+| req-grid-service-write-keepabsent-6 | FLIP Scoped To Sent Fields | Proposed | With `absent="keep"`, FLIP stamps the payload-present fields (including null resets) and nothing else, not the full replace surface. | Refines `req-grid-service-write-observation-5`. |
+
 ### Observation-Aware Writes
 ----
 RID: `req-grid-service-write-observation`
@@ -394,7 +429,7 @@ The JSON `absent`-vs-`null` distinction is preserved by Python dict semantics (m
 | --- | --- |
 | `create_node` / `create_edge` | the fields present in the payload (explicitly provided, including explicit nulls) |
 | `patch_node` / `patch_edge` | the fields present in the payload |
-| `replace_node` / `replace_edge` | the full replace surface (replace asserts the complete object) |
+| `replace_node` / `replace_edge` | the full replace surface (replace asserts the complete object); with `absent="keep"`, only the payload-present fields (`req-grid-service-write-keepabsent-6`) |
 
 A field omitted from a create or patch is left out of FLIP — no entry — so it reads as an *unknown unknown* (nobody asserted it) per the convention. The signal is carried to `BaseModel.save()` as an explicit `flip_changed_fields` argument; when absent (non-pipeline saves), the existing `update_fields`-derived behavior is unchanged.
 
@@ -412,7 +447,7 @@ A field omitted from a create or patch is left out of FLIP — no entry — so i
 | req-grid-service-write-observation-6 | Create Stamps Only Provided Fields | Implemented | A create stamps FLIP only for provided fields; defaulted/omitted fields receive no FLIP entry. | Defaulted `""` is not provenance-bearing. |
 
 #### Future
-- **Reject null on non-null fields.** Tighten `req-grid-service-write-observation-2` from drop to a structured validation error once callers/import paths are confirmed not to rely on the lenient drop.
+- **Reject null on non-null fields.** Withdrawn for `absent="keep"`: ruled 2026-10-28 that a null on a non-null field resets to the model default there (`req-grid-service-write-keepabsent-4`). Whether `absent="reset"` should tighten from drop to a structured error remains open.
 - **Not-applicable flavor (Phase 2).** When the convention's Phase 2 lands, an inbound *not-applicable* assertion (`x-tap-absence.not_applicable.permitted`) stores `null` and records the flavor via extended FLIP — built on the explicit-null boundary defined here. See `req-grid-node-observation-8`.
 
 

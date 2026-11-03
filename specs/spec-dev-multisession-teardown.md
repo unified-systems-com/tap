@@ -136,6 +136,7 @@ git branch --list "session/<name>" | grep .                           # no outpu
 | req-dev-multisession-teardown-cleanup-4 | Worktree removed | Proposed | The `~/tap-sessions/<name>` directory is gone. | |
 | req-dev-multisession-teardown-cleanup-5 | Branch removed | Proposed | The `session/<name>` branch is gone (unless `--keep-branch`). | |
 | req-dev-multisession-teardown-cleanup-6 | Registry row removed | Proposed | The session's row in `~/tap-sessions/.registry` is gone, freeing its band for reuse. | |
+| req-dev-multisession-teardown-cleanup-7 | Same engine as the spawn | Implemented | Despawn tears the stack down on the container engine the session was spawned on, read from the session's own `.env.local`, and warns (with the removal command) when the compose project also holds containers on the other engine. See `req-dev-multisession-container-engine` in `spec-dev-multisession.md`. | |
 
 ### Safety Rails
 ----

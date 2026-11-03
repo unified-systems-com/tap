@@ -480,6 +480,7 @@ Keep the ORM DSL graph-native and small. If future requirements demand traversal
 | req-grid-search-orm-7 | Endpoint Filters Supported | Implemented | A hop may apply endpoint filters to the connected node set. | |
 | req-grid-search-orm-8 | Non-TAP Models Excluded | Implemented | ORM search definitions cannot target models outside TAP-managed `BaseModel` descendants. | |
 | req-grid-search-orm-9 | Deterministic Ordering | Implemented | ORM execution applies explicit or default deterministic ordering before pagination. | |
+| req-grid-search-orm-10 | Tombstones Never Returned | Implemented | ORM execution never returns a tombstoned entity: not as a node root, not as a hop endpoint, and not in `total_count`. Edge roots are already live through `Edge.objects`; node and endpoint queries start from `Entity.objects`, which is unfiltered, so they call `.live()` (`Issue# 1144 - tap`). | |
 
 #### Future
 Consider supporting boolean composition (`OR`, `NOT`, nested logical expressions`) once real searches demonstrate the need.

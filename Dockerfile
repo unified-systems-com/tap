@@ -204,10 +204,16 @@ WORKDIR /app
 # FIPS provider's own pin is tracked: a deliberate, named pin, revisited for a real reason (apk
 # fails to resolve, Wolfi EOLs the 3.6 track, or a CVE in these exact packages), never silently
 # bumped to "whatever's current" without re-checking the SONAME each depends on.
+#
+# `py3-pip-wheel` is pulled in by python-3.14-base and pinned here for a different reason: the
+# registry build cache keeps this layer while the line is unchanged, so a fixed Wolfi revision
+# never reached the image (v0.3.2 CVE gate: CVE-2026-114613 in 26.2.2-r0, fixed in -r1). The pin
+# changes the line and so busts the cache; bump it when the release CVE gate names it again.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
     python-3.14=3.14.8_git20261001-r0 \
     python-3.14-base=3.14.8_git20261001-r0 \
+    py3-pip-wheel=26.2.2-r2 \
     git \
     bash \
     postgresql-18-client=18.6-r4 \

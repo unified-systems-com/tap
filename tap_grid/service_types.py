@@ -43,6 +43,11 @@ class WriteOperation:
             match. Create verbs reject the parameter with
             `entity_expected_version_not_allowed_on_create`. Omitted means
             no version check (current behavior).
+        absent: What a replace verb does with a field the payload omits
+            (req-grid-service-write-keepabsent). ``"reset"`` (default) resets it to
+            its model default, the PUT behaviour. ``"keep"`` leaves the stored value
+            alone, replaces a present field whole, and resets a null on a non-null
+            field to its default. Only replace_node / replace_edge accept ``"keep"``.
     """
 
     verb: str
@@ -58,6 +63,7 @@ class WriteOperation:
     reason: str | None = None
     metadata: dict[str, Any] | None = None
     cascade: Literal["none", "contained"] = "none"
+    absent: Literal["reset", "keep"] = "reset"
 
 
 # Retirement reasons — a closed vocabulary (req-grid-service-delete-reason-3). A third
@@ -118,6 +124,8 @@ class ServiceError:
         "cascade_closure_too_large",
         # A minting write with no name or description (req-grid-service-batch-label-required).
         "batch_label_required",
+        # absent="keep" on a verb that is not a replace (req-grid-service-write-keepabsent-5).
+        "absent_not_allowed",
     ]
     message: str
     field: str | None = None

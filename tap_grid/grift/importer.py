@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/603c3fde26f2 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/9da071833305 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2888,7 +2888,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/ad93e08e70c9 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/a8591b861a7a (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3157,6 +3157,7 @@ def _execute_grift_batch(
                             target=node_entity_id,
                             payload=payload,
                             entity_expected_version=envelope_expected_version,
+                            absent="keep",
                         )
                     )
                     replace_spine_intents.append(
@@ -3260,6 +3261,7 @@ def _execute_grift_batch(
                             target=edge_entity_id,
                             payload={"properties": properties},
                             entity_expected_version=envelope_expected_version,
+                            absent="keep",
                         )
                     )
                     upserted_entities.append(

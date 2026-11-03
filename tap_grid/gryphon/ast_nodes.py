@@ -325,7 +325,7 @@ class TemporalComparison:
     `field op value`, so every walker that tests for `Comparison` must decide what to do
     with it (apply or reject, never fall through).
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@f1096576be62/25bec85d4292 (surface) — the temporal
+    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@7531c8606d14/25bec85d4292 (surface) — the temporal
         offset predicate is declared on this node; its lowering is `_temporal_to_q`.
 
     True when the base shifted by the offset is strictly before (`<`), at or before

@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 6 |
+| mapped | 7 |
 | unbuilt | 1 |
 | unaccounted | 3 |
 | 0-ACID (payable) | 0 |
@@ -13,6 +13,7 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-grid-service-write-keepabsent` | Proposed | Tested | — | `req-grid-service-write-keepabsent-1`, `req-grid-service-write-keepabsent-2`, `req-grid-service-write-keepabsent-3`, `req-grid-service-write-keepabsent-4`, `req-grid-service-write-keepabsent-5`, `req-grid-service-write-keepabsent-6` |
 | `req-grid-service-write-observation` | Implemented | Tested | — | `req-grid-service-write-observation-2` |
 | `req-grid-service-write-occ` | Implemented | Tested | — | `req-grid-service-write-occ-2` |
 | `req-grid-service-write-patch` | Implemented | Tested | — | `req-grid-service-write-patch-1`, `req-grid-service-write-patch-4`, `req-grid-service-write-patch-5` |

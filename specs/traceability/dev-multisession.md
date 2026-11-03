@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 2 |
+| mapped | 3 |
 | excluded | 10 |
 | unbuilt | 4 |
 | unaccounted | 1 |
@@ -31,5 +31,6 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-dev-multisession-container-engine` | Implemented | Tested | — | `req-dev-multisession-container-engine-1`, `req-dev-multisession-container-engine-2`, `req-dev-multisession-container-engine-3`, `req-dev-multisession-container-engine-4`, `req-dev-multisession-container-engine-5`, `req-dev-multisession-container-engine-6`, `req-dev-multisession-container-engine-7`, `req-dev-multisession-container-engine-8` |
 | `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4`, `req-dev-multisession-pr-open-redirect-5`, `req-dev-multisession-pr-open-redirect-6` |
 | `req-dev-multisession-session-author-scope` | Implemented | Tested | — | `req-dev-multisession-session-author-scope-1`, `req-dev-multisession-session-author-scope-2`, `req-dev-multisession-session-author-scope-3` |

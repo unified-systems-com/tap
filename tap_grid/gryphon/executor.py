@@ -40,6 +40,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from django.db import DataError, ProgrammingError
+from django.db.models import BooleanField, Expression
 from django.utils import timezone
 
 from tap.db_aliases import SEARCH_READONLY
@@ -1210,7 +1211,7 @@ def _typescan_aggregate_rows(
 ) -> list[dict[str, Any]]:
     """Aggregate a node-only type scan: ``MATCH (a:T) RETURN MAX(a.data.x) AS m, COUNT(a) AS n``.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-nodeonly-agg@ba484de43853/4155db03c7f9 (derivation) — COUNT / MIN / MAX over a node-only scan lower here
+    TAP-IMPLEMENTS: req-grid-gryphon-nodeonly-agg@ba484de43853/00f5546e7367 (derivation) — COUNT / MIN / MAX over a node-only scan lower here
 
     Rung 1, the same mechanism the edge-chain path uses: non-aggregate RETURN items are the
     GROUP BY keys, the aggregates are ``Count`` / ``Min`` / ``Max`` over annotated columns, and
@@ -1258,7 +1259,7 @@ def _typescan_aggregate_rows(
                 if not arg.steps:
                     annotations[src_alias] = F("pk")
                 elif len(arg.steps) == 1 and isinstance(arg.steps[0], DotStep):
-                    annotations[src_alias] = F(_typescan_orm_path(arg, model_cls))
+                    annotations[src_alias] = _path_ref(_typescan_orm_path(arg, model_cls))
                 else:
                     raise SearchExecutionError("COUNT argument must be a bare variable or single dot-step.")
                 aggregate_annotations[agg_alias] = Count(src_alias)
@@ -1289,7 +1290,7 @@ def _typescan_aggregate_rows(
             )
         _reject_non_projectable_return_path(item.path)
         internal = f"_ts_col_{idx}"
-        annotations[internal] = F(_typescan_orm_path(item.path, model_cls))
+        annotations[internal] = _path_ref(_typescan_orm_path(item.path, model_cls))
         group_pairs.append((internal, _return_item_key(item)))
 
     # ORDER BY names RETURN outputs by key. The group columns are the deterministic default
@@ -1331,7 +1332,7 @@ def _typescan_order_cols(
     items: tuple,
     var: str,
     model_cls: type | None,
-) -> tuple[str, ...]:
+) -> tuple[Any, ...]:
     """Resolve the type-scan projection ORDER BY convention into `.order_by()` columns.
 
     ORDER BY terms name RETURN outputs by key; each maps to the ORM lookup path of
@@ -1354,7 +1355,7 @@ def _typescan_order_cols(
             if not isinstance(item, ReturnItem) or item.path.variable != var:
                 continue
             key_to_path[_return_item_key(item)] = _typescan_orm_path(item.path, model_cls)
-        cols: list[str] = []
+        cols: list[Any] = []
         for ob in order_by.items:
             if ob.path.steps:
                 raise SearchExecutionError(
@@ -1367,8 +1368,7 @@ def _typescan_order_cols(
                 raise SearchExecutionError(
                     f"ORDER BY references '{ob.key}', which is not a RETURN output of this query."
                 )
-            col = key_to_path[ob.key]
-            cols.append(f"-{col}" if ob.descending else col)
+            cols.append(_path_order(key_to_path[ob.key], descending=ob.descending))
         cols.append("entity_id")
         return tuple(cols)
     if limit is not None:
@@ -1386,7 +1386,7 @@ def _apply_order_limit_typescan_envelope(
 ):
     """Apply ORDER BY / LIMIT to a type-scan queryset in graph-envelope mode.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-order-by-envelope@26c6977be171/17bd2b7a441d (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-order-by-envelope@26c6977be171/0537d76762db (derivation) —
         ORDER BY / LIMIT on a type-scan graph envelope is applied here.
 
     Envelope mode has no RETURN aliases, so ORDER BY terms must carry a full
@@ -1419,7 +1419,7 @@ def _apply_order_limit_typescan_envelope(
           ORDER BY n.data.fetched_at DESC LIMIT 1
     """
     if order_by is not None:
-        order_cols: list[str] = []
+        order_cols: list[Any] = []
         for ob in order_by.items:
             if not ob.path.steps:
                 raise SearchExecutionError(
@@ -1435,7 +1435,7 @@ def _apply_order_limit_typescan_envelope(
                     f"'{var}')."
                 )
             col = _typescan_orm_path(ob.path, qs.model)
-            order_cols.append(f"-{col}" if ob.descending else col)
+            order_cols.append(_path_order(col, descending=ob.descending))
         order_cols.append("entity_id")
         qs = qs.order_by(*order_cols)
     elif limit is not None:
@@ -1617,7 +1617,7 @@ def _typescan_orm_path(field_path: FieldPath, model_cls: type | None) -> str:
     # is queried by bracket; a dotted path is REFUSED — see `_json_spine_inner_path`.
     if first in _JSON_TYPED_SPINE_FIELDS:
         inner = _json_spine_inner_path(rest_steps, context="Spine JSON access")
-        return f"entity__{first}__{inner}"
+        return _LiteralKeyPath(f"entity__{first}", inner)
 
     if first in spine_fields:
         raise SearchExecutionError(
@@ -1680,7 +1680,11 @@ _JSON_TYPED_SPINE_FIELDS: frozenset[str] = frozenset({"dimensions"})
 
 
 def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
-    """Lower the steps AFTER a JSON-typed spine field into a Django key path.
+    """Return the ONE literal key addressed by the steps AFTER a JSON-typed spine field.
+
+    The key is returned as itself, never `__`-joined into an ORM string: callers wrap it in
+    :class:`_LiteralKeyPath`, which lowers it through `KeyTransform` so Django never
+    re-splits it (`req-grid-dimension-query-form-4`, `unified-systems-com/tap#1125`).
 
     `Entity.dimensions` is a **flat** object by construction: `req-grid-dimension-em`
     constrains it to "a flat JSON object, not nested namespace objects" whose keys are
@@ -1741,7 +1745,90 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
             f'never holds. Write `dimensions["{suggested}"]` instead.'
         )
 
-    return "__".join(names)
+    return names[0]
+
+
+class _LiteralKeyPath(str):
+    """An ORM path to ONE literal key of a JSON column, e.g. `entity__dimensions` + `tap__cloud`.
+
+    A dimension key is data, not ORM syntax. Spliced into an `entity__dimensions__<key>`
+    string, Django re-splits it on `__` and re-reads a key spelled like a lookup (`isnull`,
+    `contains`, `regex`) as that lookup, so `n.dimensions["tap__cloud"]` returned zero rows
+    (`unified-systems-com/tap#1125`). This path carries the column and the key apart and
+    every consumer lowers it through `KeyTransform` (`_path_ref`, `_path_q`, `_path_order`).
+
+    The `str` value is deliberately NOT a resolvable lookup: a consumer that has not been
+    taught this type fails with a Django `FieldError` instead of silently matching nothing.
+    """
+
+    column: str
+    key: str
+
+    def __new__(cls, column: str, key: str) -> _LiteralKeyPath:
+        self = super().__new__(cls, f"<literal JSON key of {column}>")
+        self.column = column
+        self.key = key
+        return self
+
+
+def _path_ref(path: str) -> Any:
+    """A Django expression for a resolved ORM path (`F(path)`, or `KeyTransform` for a literal key)."""
+    from django.db.models import F
+
+    if isinstance(path, _LiteralKeyPath):
+        from django.db.models.fields.json import KeyTransform
+
+        return KeyTransform(path.key, F(path.column))
+    return F(path)
+
+
+def _path_order(path: str, *, descending: bool) -> Any:
+    """An `.order_by()` term for a resolved ORM path."""
+    if isinstance(path, _LiteralKeyPath):
+        ref = _path_ref(path)
+        return ref.desc() if descending else ref.asc()
+    return f"-{path}" if descending else path
+
+
+def _path_q(path: str, lookup: str, value: Any) -> Any:
+    """`Q(<path>__<lookup>=value)`; a literal key is looked up on its `KeyTransform`, not re-split.
+
+    `lookup` is Django's lookup name (`exact`, `in`, `isnull`, `regex`, `lt`, ...). For an
+    ordinary path this is byte-for-byte the kwarg form the compiler always used.
+    """
+    from django.db.models import Q
+
+    if isinstance(path, _LiteralKeyPath):
+        return Q(_KeyLookup(path.column, path.key, lookup, value))
+    return Q(**{path if lookup == "exact" else f"{path}__{lookup}": value})
+
+
+class _KeyLookup(Expression):
+    """A conditional expression: `<column> -> <key>` compared with `lookup` to `value`.
+
+    It is resolved against the query being built, so the right-hand side is prepared by the
+    key transform's own output field exactly as the kwarg form prepares it.
+    """
+
+    conditional = True
+
+    def __init__(self, column: str, key: str, lookup: str, value: Any):
+        super().__init__(output_field=BooleanField())
+        self.column, self.key, self.lookup, self.value = column, key, lookup, value
+
+    def resolve_expression(
+        self,
+        query: Any = None,
+        allow_joins: bool = True,
+        reuse: Any = None,
+        summarize: bool = False,
+        for_save: bool = False,
+    ) -> Any:
+        from django.db.models import F
+        from django.db.models.fields.json import KeyTransform
+
+        lhs = KeyTransform(self.key, F(self.column)).resolve_expression(query, allow_joins, reuse, summarize)
+        return query.build_lookup([self.lookup], lhs, self.value)
 
 
 def _predicate_field_paths(predicate: Any) -> list[FieldPath]:
@@ -1792,11 +1879,10 @@ def _bare_spine_orm_path(field_path: FieldPath) -> str:
         if not rest:
             return first
         if first in _JSON_TYPED_SPINE_FIELDS:
-            for step in rest:
-                if not isinstance(step, (DotStep, KeyStep)):
-                    raise SearchExecutionError("Spine JSON access supports dot-steps and bracket-key steps only.")
-            inner = "__".join(s.name if isinstance(s, DotStep) else s.key for s in rest)
-            return f"{first}__{inner}"
+            # The bare spine scan must enforce the same flat-key invariant as
+            # typed scans and chain bindings; a private join bypassed B2 here.
+            inner = _json_spine_inner_path(rest, context="Spine JSON access")
+            return _LiteralKeyPath(first, inner)
         raise SearchExecutionError(f"Spine field {first!r} is a scalar; it cannot be walked into.")
     raise SearchExecutionError(
         f"Field {first!r} is not a spine field; address per-model fields as `<var>.data.{first}`."
@@ -2303,9 +2389,9 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
         if role == "edge":
             ep = binding["edge_path"]
             prefix = f"{ep}__" if ep else ""
-            return f"{prefix}entity__{head}__{inner_path}"
+            return _LiteralKeyPath(f"{prefix}entity__{head}", inner_path)
         ep = binding["entity_path"]
-        return f"{ep}__{head}__{inner_path}"
+        return _LiteralKeyPath(f"{ep}__{head}", inner_path)
 
     if head != _DATA_LANE_PREFIX:
         raise SearchExecutionError(
@@ -2425,10 +2511,25 @@ def _pattern_position_paths(
     return node_paths, edge_paths
 
 
+def _node_edge_name_clash(var: str) -> SearchExecutionError:
+    """The one refusal for a name used as both a node and an edge.
+
+    Shared by the chain lowering (`_repeated_variable_equality_filters`) and the
+    OPTIONAL MATCH builder, so the rule and its remedy cannot hold at one site and
+    not the other (req-grid-traversal-lang-shape-9).
+    """
+    return SearchExecutionError(
+        f"Variable '{var}' names both a node and an edge in the same pattern. "
+        "A node binds an Entity and an edge binds an Edge record, so no value "
+        "can be both and there is no join to apply. Use distinct names — e.g. "
+        f"(...)-[{var}_edge:E]->({var})."
+    )
+
+
 def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[dict[str, str]]) -> dict[str, Any]:
     """Unify a variable that occurs at more than one position in ONE pattern.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@0f9be1cd3ff0/ed5a2974378f (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@1ea7ff0cf469/75ae565cf150 (derivation) —
         `req-grid-traversal-lang-shape-9`: in-pattern variable reuse is a join, and this
         is the join — the one place the equality between two positions is emitted.
 
@@ -2470,12 +2571,7 @@ def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[di
             return
         seen = first_seen.setdefault(var, (role, path))
         if seen[0] != role:
-            raise SearchExecutionError(
-                f"Variable '{var}' names both a node and an edge in the same pattern. "
-                "A node binds an Entity and an edge binds an Edge record, so no value "
-                "can be both and there is no join to apply. Use distinct names — e.g. "
-                f"(...)-[{var}_edge:E]->({var})."
-            )
+            raise _node_edge_name_clash(var)
         if seen[1] == path:
             return
 
@@ -2793,7 +2889,7 @@ def _apply_predicate_to_qs(
 ):
     """Apply a WHERE predicate tree to an already-built chain queryset.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@24f593de1742/7b84984d6834 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@6de95ee80557/7b84984d6834 (derivation) —
         WHERE field filtering lowers to the queryset here.
 
     TAP-IMPLEMENTS: req-grid-traversal-lang-combinators@0e5170677022/7b84984d6834 (derivation) —
@@ -2872,8 +2968,6 @@ def _predicate_to_q(
     path supplies it (it holds the bindings the leaf's base is typed against), so on every
     other path the leaf is refused here rather than dropped.
     """
-    from django.db.models import Q
-
     if isinstance(predicate, TemporalComparison):
         if temporal is None:
             raise SearchExecutionError(
@@ -2885,12 +2979,12 @@ def _predicate_to_q(
         return _comparison_to_q(predicate, resolve(predicate.field_path), inputs, declared_types)
     if isinstance(predicate, IsNullComparison):
         path = resolve(predicate.field_path)
-        return Q(**{f"{path}__isnull": not predicate.negated})
+        return _path_q(path, "isnull", not predicate.negated)
     if isinstance(predicate, ObservationComparison):
         # Null axis: IS UNKNOWN -> __isnull=True, IS KNOWN -> __isnull=False.
         # Type-agnostic (req-grid-traversal-lang-observation).
         path = resolve(predicate.field_path)
-        return Q(**{f"{path}__isnull": predicate.kind == "unknown"})
+        return _path_q(path, "isnull", predicate.kind == "unknown")
     if isinstance(predicate, AndPred):
         return _predicate_to_q(predicate.left, inputs, resolve, declared_types, temporal) & _predicate_to_q(
             predicate.right, inputs, resolve, declared_types, temporal
@@ -3421,7 +3515,7 @@ class MaterializationPlan:
     aggregate_pairs: tuple[tuple[str, str], ...]
     # Fully-resolved `.order_by()` column args (incl. shape-specific tiebreakers).
     # Empty => do not reorder (keep the queryset's inherited ordering).
-    order_cols: tuple[str, ...]
+    order_cols: tuple[Any, ...]
     # LIMIT AST node (carries `.count`) or None.
     limit: Any = None
     # DISTINCT flag. Always False until `req-grid-gryphon-distinct` lands; the
@@ -3815,7 +3909,7 @@ def _lookup_value_expr(source: _LookupSource, path: FieldPath) -> Any:
 def _temporal_to_q(leaf: TemporalComparison, bindings: dict[str, dict[str, Any]], inputs: dict[str, Any]) -> Any:
     """Lower a temporal leaf to a ``Q``: the comparison conjoined with a not-null guard on the base.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@f1096576be62/46caab7a343b (derivation) — the offset comparison
+    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@7531c8606d14/46caab7a343b (derivation) — the offset comparison
         lowers here: base shifted by whole hours, compared with the clock or a supplied instant.
 
     Rung 1: ``F``/``Cast`` of the base, plus-or-minus an ``ExpressionWrapper`` of the integer
@@ -4203,10 +4297,10 @@ def _compute_rows(
 ) -> list[dict[str, Any]]:
     """Execute the queryset and produce row dicts honoring RETURN aliases and aggregates.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-count@3d4f1458fd64/1ae3a8085fbc (derivation) — COUNT
+    TAP-IMPLEMENTS: req-grid-gryphon-count@3d4f1458fd64/d62cc67d040f (derivation) — COUNT
         aggregation and its implicit GROUP BY key set compute here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-rows@577171676b4f/1ae3a8085fbc (derivation) — the envelope's
+    TAP-IMPLEMENTS: req-grid-gryphon-rows@577171676b4f/d62cc67d040f (derivation) — the envelope's
         rows field is populated here.
 
     All RETURN columns are first annotated as F-aliases on the queryset, then
@@ -4267,7 +4361,7 @@ def _compute_rows(
         last_dot_step_name = fp.steps[-1].name if isinstance(fp.steps[-1], DotStep) else fp.steps[0].name
         user_alias = fi.alias or last_dot_step_name
         internal = f"_g_col_{idx}"
-        annotations[internal] = F(orm_path)
+        annotations[internal] = _path_ref(orm_path)
         group_by_pairs.append((internal, user_alias))
 
     aggregate_annotations: dict[str, Any] = {}
@@ -4549,10 +4643,10 @@ def _comparison_to_q(
 ):
     """Translate a single comparison leaf into a Django ``Q`` over ``orm_path``.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-string-match@252cba1f51eb/a58650d98495 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-string-match@252cba1f51eb/4d2ba56043d6 (derivation) —
         STARTS_WITH / ENDS_WITH / CONTAINS lower to Q objects here.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-regex@27b99acd119d/a58650d98495 (derivation) — the =~
+    TAP-IMPLEMENTS: req-grid-traversal-lang-regex@27b99acd119d/4d2ba56043d6 (derivation) — the =~
         regex predicate lowers to a Q object here.
 
     The shared leaf compiler for every WHERE path: :func:`_predicate_to_q` calls
@@ -4612,15 +4706,15 @@ def _comparison_to_q(
 
     if isinstance(comp, InComparison):
         members = [_resolve_value(v, inputs) for v in comp.values]
-        return Q(**{f"{orm_path}__in": members})
+        return _path_q(orm_path, "in", members)
 
     if isinstance(comp, IsNullComparison):
-        return Q(**{f"{orm_path}__isnull": not comp.negated})
+        return _path_q(orm_path, "isnull", not comp.negated)
 
     if isinstance(comp, ObservationComparison):
         # IS UNKNOWN -> __isnull=True, IS KNOWN -> __isnull=False (null axis;
         # used here so the OPTIONAL MATCH Count(filter=...) leaf path handles it).
-        return Q(**{f"{orm_path}__isnull": comp.kind == "unknown"})
+        return _path_q(orm_path, "isnull", comp.kind == "unknown")
 
     value = _resolve_value(comp.value, inputs)
 
@@ -4639,27 +4733,27 @@ def _comparison_to_q(
         return ~Q(pk__isnull=True) & Q(pk__isnull=True)
 
     if comp.op == "!=":
-        return ~Q(**{orm_path: value})
+        return ~_path_q(orm_path, "exact", value)
     # The regex operator (req-grid-traversal-lang-regex) always lowers to
     # Django's `__regex` lookup (Postgres `~`). Inline flags `(?i)`, `(?s)`,
     # `(?m)`, `(?x)` are passed through verbatim — the executor does NOT
     # detect, strip, or rewrite any flag.
     if comp.op == "regex":
-        return Q(**{f"{orm_path}__regex": value})
+        return _path_q(orm_path, "regex", value)
     # The scalar comparison operators plus the substring operators
     # (req-grid-traversal-lang-string-match) -- all positive, single-value
     # lookups on `orm_path`.
     suffix = {
-        "=": "",
-        "<": "__lt",
-        ">": "__gt",
-        "<=": "__lte",
-        ">=": "__gte",
-        "starts_with": "__startswith",
-        "ends_with": "__endswith",
-        "contains": "__contains",
+        "=": "exact",
+        "<": "lt",
+        ">": "gt",
+        "<=": "lte",
+        ">=": "gte",
+        "starts_with": "startswith",
+        "ends_with": "endswith",
+        "contains": "contains",
     }[comp.op]
-    return Q(**{f"{orm_path}{suffix}": value})
+    return _path_q(orm_path, suffix, value)
 
 
 def _execute_optional_match(
@@ -4672,7 +4766,7 @@ def _execute_optional_match(
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/c4283cd7b217 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/c698d3c040f1 (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -4704,7 +4798,7 @@ def _execute_optional_match(
           OPTIONAL MATCH (t)<-[:PG_OPTIONAL__grid_fixtures]-(g:grid_fixtures__node)
           RETURN t.entity_id AS target, COUNT(g) AS guards ORDER BY target
     """
-    from django.db.models import Count, F, Q
+    from django.db.models import Count, Q
 
     from tap_grid.registry import get_model_class
 
@@ -4762,6 +4856,20 @@ def _execute_optional_match(
             f"The OPTIONAL MATCH pattern must start from the MATCH variable '{v}', e.g. OPTIONAL MATCH ({v})-[:E]->(w)."
         )
 
+    # A name may repeat across the optional pattern only in the same role (the
+    # mandatory node `v` and the pattern's left node). The edge and the optional
+    # node bind into one dict below, so a node/edge clash would let one overwrite
+    # the other — refuse it through the same helper the chain path uses.
+    roles: dict[str, str] = {v: "node"}
+    for role_var, role in ((opt_edge.variable, "edge"), (w_node.variable, "node")):
+        if role_var is not None and roles.setdefault(role_var, role) != role:
+            raise _node_edge_name_clash(role_var)
+    if left_node.label and left_node.label != anchor_node.label:
+        raise SearchExecutionError(
+            f"The OPTIONAL MATCH anchor ({v}:{left_node.label}) repeats the MATCH variable with a different "
+            f"label than its MATCH '{anchor_node.label}'. Drop the label or make it match."
+        )
+
     try:
         model_cls = get_model_class(anchor_node.label)
     except KeyError:
@@ -4811,6 +4919,19 @@ def _execute_optional_match(
             inputs,
             _binding_path_resolver(w_binding),
             _label_declared_types(w_node.label) if w_node.label else None,
+        ).items():
+            opt_q &= Q(**{orm_path: value})
+    # An inline map on the repeated anchor `(t {k: v})-[...]` is a condition of
+    # the optional JOIN, not of the outer scan: a row of `t` that fails it stays
+    # in the result with COUNT 0 (Cypher semantics), so it joins `opt_q` and is
+    # NOT applied to `qs` the way the MATCH anchor's own map is. Dropping it was
+    # accept-and-drop (req-grid-traversal-lang-filters-1).
+    if left_node.inline_props:
+        for orm_path, value in _node_inline_prop_filters(
+            left_node,
+            inputs,
+            lambda fp: _typescan_orm_path(fp, model_cls),
+            lambda fp: _declared_data_types(model_cls, fp),
         ).items():
             opt_q &= Q(**{orm_path: value})
 
@@ -4866,7 +4987,7 @@ def _execute_optional_match(
                     "optional variable can only be COUNTed."
                 )
             internal = f"_om_col_{idx}"
-            group_annotations[internal] = F(_typescan_orm_path(fp, model_cls))
+            group_annotations[internal] = _path_ref(_typescan_orm_path(fp, model_cls))
             group_pairs.append((internal, _return_item_key(item)))
         elif isinstance(item, AggregateReturnItem):
             agg = item.aggregate

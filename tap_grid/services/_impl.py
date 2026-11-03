@@ -92,13 +92,19 @@ _schema_permits_null = schema_permits_null
 _prepare_null_payload = prepare_null_payload
 
 
-def _flip_touched_for_verb(verb: str, payload: dict[str, Any]) -> list[str] | None:
+def _flip_touched_for_verb(
+    verb: str, payload: dict[str, Any], *, absent: str = "reset", reset_to_default: frozenset[str] = frozenset()
+) -> list[str] | None:
     """The FLIP-touched field set for a write (req-grid-service-write-observation-5).
 
     create/patch stamp exactly the payload-present fields; replace asserts the
-    complete object, so it stamps the full service-writeable surface (None).
+    complete object, so it stamps the full service-writeable surface (None). A
+    keep-absent replace asserts only what it sent, so it stamps the payload-present
+    fields and the fields reset from a null (req-grid-service-write-keepabsent-6).
     """
     if verb in ("replace_node", "replace_edge"):
+        if absent == "keep":
+            return [*payload.keys(), *sorted(reset_to_default)]
         return None
     return list(payload.keys())
 
@@ -131,6 +137,15 @@ def _apply_patch(instance: Any, payload: dict[str, Any]) -> None:
             setattr(instance, field_name, value)
 
 
+def _model_default(instance: Any, field_name: str) -> Any:
+    """The value a field takes when nothing sets it: its declared default, else ``""`` for text, else ``None``."""
+    model_field = instance._meta.get_field(field_name)
+    default = model_field.default
+    if default is not django_models.fields.NOT_PROVIDED:
+        return default() if callable(default) else default
+    return "" if isinstance(model_field, (django_models.CharField, django_models.TextField)) else None
+
+
 def _apply_replace(instance: Any, payload: dict[str, Any], model_cls: type) -> None:
     """Apply replace payload to an instance.
 
@@ -144,15 +159,22 @@ def _apply_replace(instance: Any, payload: dict[str, Any], model_cls: type) -> N
         else:
             # Reset to model field default for optional fields absent from payload.
             try:
-                model_field = instance._meta.get_field(field_name)
-                default = model_field.default
-                if default is not django_models.fields.NOT_PROVIDED:
-                    value = default() if callable(default) else default
-                else:
-                    value = "" if isinstance(model_field, (django_models.CharField, django_models.TextField)) else None
-                setattr(instance, field_name, value)
+                setattr(instance, field_name, _model_default(instance, field_name))
             except Exception:
                 pass
+
+
+def _apply_replace_keep(instance: Any, payload: dict[str, Any], reset_to_default: frozenset[str]) -> None:
+    """Apply a keep-absent replace (``WriteOperation.absent == "keep"``).
+
+    A field the payload omits is left alone. A present field replaces its stored value whole, so a JSON object
+    is never merged. A field in ``reset_to_default`` was sent as an explicit null on a field that does not permit
+    null, and takes its model default (req-grid-service-write-keepabsent-3 and -4).
+    """
+    for field_name, value in payload.items():
+        setattr(instance, field_name, value)
+    for field_name in reset_to_default:
+        setattr(instance, field_name, _model_default(instance, field_name))
 
 
 def _django_errors_to_service_errors(exc: DjangoValidationError) -> list[ServiceError]:
@@ -582,6 +604,21 @@ def _execute_write_pipeline(
         is_create = op.verb in ("create_node", "create_edge")
         is_delete = op.verb in ("delete_node", "delete_edge")
 
+        # req-grid-service-write-keepabsent-5: keep-absent is a replace-only mode; refuse it elsewhere
+        # rather than ignore it.
+        if op.absent == "keep" and op.verb not in ("replace_node", "replace_edge"):
+            return WriteResult(
+                success=False,
+                batch_id=batch_id,
+                operation=op.verb,
+                errors=[
+                    ServiceError(
+                        code="absent_not_allowed",
+                        message=f"{op.verb} does not accept absent='keep'; only replace_node and replace_edge do.",
+                    )
+                ],
+            )
+
         # OCC pre-check: reject `entity_expected_version` on create verbs.
         # No prior version exists to expect, so this is always a caller mistake.
         # (req-grid-service-batch-occ-4 / req-grid-service-write-occ-2.)
@@ -603,6 +640,7 @@ def _execute_write_pipeline(
 
         model_cls: type
         instance: Any
+        reset_to_default: frozenset[str] = frozenset()
         from_entity: Entity | None = None
         to_entity: Entity | None = None
         target_uuid = _coerce_uuid(op.target)
@@ -732,7 +770,11 @@ def _execute_write_pipeline(
             # Drop an explicit null only where the field does not permit null; preserve it
             # where the schema allows null so it clears the field and earns FLIP
             # (req-grid-service-write-observation-1/2).
-            payload = _prepare_null_payload(payload, schema)
+            prepared_payload = _prepare_null_payload(payload, schema)
+            if op.absent == "keep":
+                # A null the prep dropped (null on a non-null field) resets to the default in this mode.
+                reset_to_default = frozenset(key for key in payload if key not in prepared_payload)
+            payload = prepared_payload
             try:
                 jsonschema.validate(instance=payload, schema=schema)
             except jsonschema.ValidationError as exc:
@@ -754,7 +796,10 @@ def _execute_write_pipeline(
         elif op.verb in ("patch_node", "patch_edge"):
             _apply_patch(instance, payload)
         elif op.verb in ("replace_node", "replace_edge"):
-            _apply_replace(instance, payload, model_cls)
+            if op.absent == "keep":
+                _apply_replace_keep(instance, payload, reset_to_default)
+            else:
+                _apply_replace(instance, payload, model_cls)
 
         # Step 6: Model validation (full_validate + Django full_clean).
         if not is_delete:
@@ -983,7 +1028,9 @@ def _execute_write_pipeline(
             instance.save(
                 skip_validation=True,
                 _spine_just_created=spine_just_created,
-                flip_changed_fields=_flip_touched_for_verb(op.verb, payload),
+                flip_changed_fields=_flip_touched_for_verb(
+                    op.verb, payload, absent=op.absent, reset_to_default=reset_to_default
+                ),
             )
             entity_id_out = instance.entity_id
             # Record provenance for non-delete writes too so the BatchEvent log
