@@ -62,10 +62,13 @@ case "$cmd" in
       [[ -n "$line" ]] && attach_args+=(--attach "$line")
     done <<< "$(dc_py verify-send "$file" --print attachments "$@" "${host_flags[@]}")"
     # Capture the help text first: `grep -q` exiting early would SIGPIPE gh and fail the pipeline under pipefail.
-    create_help="$(gh issue create --help 2>/dev/null || true)"
-    if [[ ${#attach_args[@]} -gt 0 ]] && ! grep -q -- '--attach' <<< "$create_help"; then
-      echo "bug-report: the installed gh does not support 'gh issue create --attach' (observed in gh 2.100.0). Nothing was sent. Upgrade gh, or send without screenshots." >&2
-      exit 1
+    # Only when there are screenshots to attach: a report without them makes exactly one gh call.
+    if [[ ${#attach_args[@]} -gt 0 ]]; then
+      create_help="$(gh issue create --help 2>/dev/null || true)"
+      if ! grep -q -- '--attach' <<< "$create_help"; then
+        echo "bug-report: the installed gh does not support 'gh issue create --attach' (observed in gh 2.100.0). Nothing was sent. Upgrade gh, or send without screenshots." >&2
+        exit 1
+      fi
     fi
     out_file="$(mktemp)"; err_file="$(mktemp)"
     trap 'rm -f "$out_file" "$err_file"' EXIT
