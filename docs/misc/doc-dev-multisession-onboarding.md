@@ -83,8 +83,9 @@ therefore does not document. macOS needs only Docker Desktop; a Linux desktop ne
 
 Docker is used whenever it answers. If it does not and Podman is installed with its
 machine running, the scripts pick up Podman's Docker-compatible socket on their own
-(`req-dev-multisession-container-engine`) — you still need the **Docker CLI and the Compose
-v2 plugin** as the client; only the engine changes.
+(`req-dev-multisession-container-engine`). The Docker CLI is optional: with only Podman
+installed, the scripts put a `docker` → `podman` forwarder on PATH themselves. You do need a
+compose provider (`brew install docker-compose`, or `podman-compose`) for `podman compose`.
 
 - **macOS:** `podman machine init && podman machine start`, then run `scripts/lite-spawn.sh` as
   usual. Tested rootless with the libkrun provider.
@@ -95,7 +96,7 @@ v2 plugin** as the client; only the engine changes.
 - **Mixed hosts:** if Docker Desktop and a Podman machine are both running, sessions go to
   Docker unless you export `DOCKER_HOST` yourself. Despawn warns, with the removal command, if
   the session's stack is on the engine it is not talking to.
-- **Not covered:** a host with only `podman compose` / `podman-compose` and no Docker CLI; Linux
+- **Not covered:** `podman-compose` as the provider (only `docker-compose` was exercised); Linux
   rootless uid mapping and SELinux (`:z`/`:Z`) against the bind-mounted checkout were not
   exercised.
 

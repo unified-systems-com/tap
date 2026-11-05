@@ -500,15 +500,17 @@ bold "Step 0.1: Host readiness"
 
 command -v git >/dev/null 2>&1 || fail "git not found on PATH."
 command -v python3 >/dev/null 2>&1 || fail "python3 not found on PATH (spawn uses it to mint ids and passwords)."
-command -v docker >/dev/null 2>&1 || fail "docker not found on PATH.
-    macOS: install Docker Desktop. Linux: install Docker Engine + the Compose v2 plugin.
-    Podman works as the engine, but the Docker CLI + Compose v2 plugin are still the client.
-    See 'Host prerequisites' in docs/misc/doc-dev-multisession-onboarding.md."
 # Docker first; Podman's Docker-compatible socket only when Docker is not answering and the
-# caller has not chosen an engine (req-dev-multisession-container-engine).
+# caller has not chosen an engine (req-dev-multisession-container-engine). With no Docker CLI
+# at all, the helper puts a docker->podman forwarder on PATH, so Podman alone is enough.
+command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1 || fail "neither docker nor podman found on PATH.
+    macOS: install Docker Desktop or Podman. Linux: install Docker Engine + the Compose v2 plugin, or Podman.
+    A Podman-only host also needs a compose provider (docker-compose or podman-compose).
+    See 'Host prerequisites' in docs/misc/doc-dev-multisession-onboarding.md."
 tap_engine_select
 docker compose version >/dev/null 2>&1 || fail "'docker compose' (the v2 plugin) is not available.
-    The retired v1 'docker-compose' binary is not supported. Linux: apt install docker-compose-plugin."
+    The retired v1 'docker-compose' binary is not supported. Linux: apt install docker-compose-plugin.
+    Podman-only host: install a compose provider (brew install docker-compose, or podman-compose)."
 # The port-band probe (Step 1) reads nothing when lsof is absent and would
 # silently allocate a busy band — so a missing lsof fails HERE, loudly.
 command -v lsof >/dev/null 2>&1 || fail "lsof not found — the port-band probe depends on it. Install it (e.g. apt install lsof) and re-run."

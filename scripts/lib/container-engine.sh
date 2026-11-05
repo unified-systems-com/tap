@@ -33,6 +33,18 @@ _tap_engine_t() {  # <seconds> <cmd...>
   fi
 }
 
+# No Docker CLI but Podman present: put the `docker` -> `podman` forwarder on PATH so every
+# script that runs `docker ...` (spawn, dc, despawn, prune-images, gate-lean) works unchanged.
+# Derived on each run from what is installed, so nothing needs recording in .env.local.
+_TAP_ENGINE_SHIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-shim"
+_tap_engine_use_shim() {
+  if command -v docker >/dev/null 2>&1; then
+    case ":$PATH:" in *":$_TAP_ENGINE_SHIM_DIR:"*) return 0 ;; *) return 1 ;; esac
+  fi
+  command -v podman >/dev/null 2>&1 || return 1
+  PATH="$_TAP_ENGINE_SHIM_DIR:$PATH"; export PATH
+}
+
 # Progress lines; scripts/dc runs on every compose call and sets TAP_ENGINE_QUIET to stay silent.
 _tap_engine_say() {  # <message>
   [[ -n "${TAP_ENGINE_QUIET:-}" ]] || printf '    %s\n' "$1" >&2
@@ -62,6 +74,8 @@ tap_engine_podman_socket() {
 tap_engine_select() {
   local wt="${1:-}" sticky="" sock=""
   TAP_ENGINE="none"
+  local shimmed=0
+  _tap_engine_use_shim && shimmed=1
 
   if [[ -n "${DOCKER_HOST:-}" || -n "${DOCKER_CONTEXT:-}" ]]; then
     TAP_ENGINE="explicit"; export TAP_ENGINE; return 0
@@ -82,14 +96,18 @@ tap_engine_select() {
     fi
   fi
 
-  if command -v docker >/dev/null 2>&1 && _tap_engine_t 8 docker info >/dev/null 2>&1; then
+  if [[ "$shimmed" -eq 0 ]] && command -v docker >/dev/null 2>&1 && _tap_engine_t 8 docker info >/dev/null 2>&1; then
     TAP_ENGINE="docker"; export TAP_ENGINE; return 0
   fi
 
   if command -v docker >/dev/null 2>&1 && sock="$(tap_engine_podman_socket)"; then
     if DOCKER_HOST="unix://$sock" _tap_engine_t 8 docker info >/dev/null 2>&1; then
       export DOCKER_HOST="unix://$sock"; TAP_ENGINE="podman"; export TAP_ENGINE
-      _tap_engine_say "Container engine: Docker is not responding; using Podman at $DOCKER_HOST."
+      if [[ "$shimmed" -eq 1 ]]; then
+        _tap_engine_say "Container engine: no Docker CLI installed; using Podman at $DOCKER_HOST."
+      else
+        _tap_engine_say "Container engine: Docker is not responding; using Podman at $DOCKER_HOST."
+      fi
       return 0
     fi
   fi
@@ -114,6 +132,7 @@ tap_engine_persist() {  # <env-file>
 # on the other engine. Looks for the compose project on the engine this run is NOT using.
 tap_engine_warn_other() {  # <compose-project>
   local project="$1" ids="" sock="" other=""
+  _tap_engine_use_shim && return 0   # Podman is the only engine on this host
   case "${TAP_ENGINE:-}" in
     podman|sticky)
       other="the default Docker daemon"

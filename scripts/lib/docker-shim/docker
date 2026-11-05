@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# `docker` for a host that has Podman and no Docker CLI. NEVER on PATH by default:
+# scripts/lib/container-engine.sh puts this directory on PATH only when `docker` is missing
+# and `podman` is present, so a real Docker CLI always wins.
+#
+# Podman's CLI accepts the Docker verbs the dev scripts use (info, ps, volume, network, rmi,
+# inspect, exec), and `podman compose` hands off to an installed docker-compose or
+# podman-compose provider, so forwarding the whole command line is enough.
+exec podman "$@"
