@@ -429,6 +429,18 @@ def test_skip_stack_goes_past_the_check_and_prints_the_cleanup_command(sandbox: 
 
 
 @pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
+def test_skip_stack_never_touches_the_stack_volumes_or_networks(sandbox: Path, dead_podman_session: Path) -> None:
+    # A logging docker: whatever despawn asks the engine to do is recorded, so "left running" is checked, not assumed.
+    _install(sandbox, "docker", '#!/bin/sh\necho "$@" >> "$FAKE_DOCKER_LOG"\n' + FAKE_DOCKER.split("\n", 1)[1])
+    log = sandbox / "docker.log"
+    run = _despawn(sandbox, "--skip-stack", "--yes", FAKE_DOCKER_UP="1", FAKE_DOCKER_LOG=str(log))
+    assert "Skipping stack teardown" in run.stdout, run.stdout + run.stderr
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    for forbidden in ("compose -p", " down", "volume rm", "network rm", "volume ls", "network ls", "rmi"):
+        assert forbidden not in calls, calls
+
+
+@pytest.mark.spec("req-dev-multisession-teardown-cleanup-8")
 def test_despawn_checks_the_engine_before_the_stack_is_touched() -> None:
     text = (ROOT / "scripts" / "despawn-session.sh").read_text(encoding="utf-8")
     assert "tap_engine_reachable" in text

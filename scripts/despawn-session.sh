@@ -289,11 +289,16 @@ fi
 #    is honored; fall back to the project name if dc is unavailable).
 # ---------------------------------------------------------------------------
 tap_engine_warn_other "$PROJECT"
-bold "Stopping docker stack"
-if [[ -d "$WORKTREE" && -x "$WORKTREE/scripts/dc" ]]; then
-  ( cd "$WORKTREE" && scripts/dc down -v --remove-orphans 2>&1 ) || warn "scripts/dc down returned non-zero (may already be down)"
+if [[ "$SKIP_STACK" -eq 1 ]]; then
+  bold "Skipping stack teardown (--skip-stack)"
+  info "  the engine was not answering; containers and volumes are left as they are"
 else
-  docker compose -p "$PROJECT" down -v --remove-orphans 2>&1 || warn "docker compose down returned non-zero (may already be down)"
+  bold "Stopping docker stack"
+  if [[ -d "$WORKTREE" && -x "$WORKTREE/scripts/dc" ]]; then
+    ( cd "$WORKTREE" && scripts/dc down -v --remove-orphans 2>&1 ) || warn "scripts/dc down returned non-zero (may already be down)"
+  else
+    docker compose -p "$PROJECT" down -v --remove-orphans 2>&1 || warn "docker compose down returned non-zero (may already be down)"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -301,24 +306,28 @@ fi
 #    valid .env.local to identify the project, named volumes/networks may
 #    still exist.
 # ---------------------------------------------------------------------------
-bold "Removing residual docker volumes and networks"
-volumes_to_rm="$(docker volume ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
-if [[ -n "$volumes_to_rm" ]]; then
-  echo "$volumes_to_rm" | while read -r v; do
-    info "  volume: $v"
-    docker volume rm "$v" >/dev/null 2>&1 || warn "    (failed)"
-  done
+if [[ "$SKIP_STACK" -eq 1 ]]; then
+  bold "Skipping residual volume and network cleanup (--skip-stack)"
 else
-  info "  no volumes"
-fi
-networks_to_rm="$(docker network ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
-if [[ -n "$networks_to_rm" ]]; then
-  echo "$networks_to_rm" | while read -r n; do
-    info "  network: $n"
-    docker network rm "$n" >/dev/null 2>&1 || warn "    (failed)"
-  done
-else
-  info "  no networks"
+  bold "Removing residual docker volumes and networks"
+  volumes_to_rm="$(docker volume ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
+  if [[ -n "$volumes_to_rm" ]]; then
+    echo "$volumes_to_rm" | while read -r v; do
+      info "  volume: $v"
+      docker volume rm "$v" >/dev/null 2>&1 || warn "    (failed)"
+    done
+  else
+    info "  no volumes"
+  fi
+  networks_to_rm="$(docker network ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
+  if [[ -n "$networks_to_rm" ]]; then
+    echo "$networks_to_rm" | while read -r n; do
+      info "  network: $n"
+      docker network rm "$n" >/dev/null 2>&1 || warn "    (failed)"
+    done
+  else
+    info "  no networks"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
