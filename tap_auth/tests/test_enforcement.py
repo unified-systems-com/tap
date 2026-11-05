@@ -140,8 +140,8 @@ class TestWriteBackstop:
 
     def test_import_grift_cover_does_not_satisfy_delete(self, synced):
         """The {grid.delete}-only split: a broad cover (grid.import_grift) does NOT
-        satisfy the delete backstop — only grid.delete does. A bootloader/collector
-        holds import_grift but must not tombstone through it."""
+        satisfy the delete backstop — only grid.delete does. A bootloader holds
+        import_grift but must not tombstone through it."""
         ctx = _ctx_with_caps("grid.import_grift", "grid.write", username="importer")
         assert_write_authorized(ctx, needs_write=True, needs_delete=False)  # write ok
         with pytest.raises(UnguardedOperation, match="unguarded delete"):

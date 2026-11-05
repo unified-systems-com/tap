@@ -73,6 +73,29 @@ def _snapshot() -> dict[uuid.UUID, tuple[bool, int, str]]:
     return {e.pk: (e.deleted_at is not None, e.version, e.name) for e in Entity.objects.exclude(entity_type="batch")}
 
 
+def _reconcile_without_delete_actor() -> Any:
+    """An actor holding the collector's capabilities except ``grid.delete``.
+
+    The shared collector role holds ``grid.delete`` (interim, global: a GRIFT ``deletes`` section
+    retires its own superseded edges), so it no longer shows that ``grid.reconcile`` is the only
+    door to a delete inside the verb. This actor does: reconcile and write, never delete."""
+    from django.contrib.auth.models import Group, Permission
+
+    from tap_auth import capabilities as caps
+    from tap_auth.actors import COLLECTOR, get_builtin_actor
+    from tap_auth.models import User
+
+    collector = get_builtin_actor(COLLECTOR)
+    held = Permission.objects.filter(group__user__pk=collector.pk).exclude(
+        codename=caps.codename_for(caps.DELETE_CAPABILITY)
+    )
+    group = Group.objects.create(name="reconcile-without-delete")
+    group.permissions.set(held.distinct())
+    actor = User.objects.create_user(username="reconcile-without-delete", password="x")
+    actor.groups.add(group)
+    return actor
+
+
 def _run_with_candidates(graph: Graph, *observed: Entity) -> tuple[Batch, set[str]]:
     """P's surface complete; the given children observed → the rest are candidates."""
     write = graph.observe(graph.p, *observed)
@@ -338,16 +361,17 @@ class TestApplying:
         after = _snapshot()
         assert {k for k in after if after[k] != before.get(k)} == {edge.entity_id}
 
-    def test_the_apply_works_as_the_collector_actor_which_holds_reconcile_but_not_delete(self, graph: Graph) -> None:
-        """The production actor shape (Grok on PR# 653 - tap): tap_cares.collector holds
-        grid.reconcile and grid.write, not grid.delete. The verb's tombstone is its own write,
-        licensed by grid.reconcile, so it lands under that actor."""
-        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    def test_the_apply_works_as_an_actor_which_holds_reconcile_but_not_delete(self, graph: Graph) -> None:
+        """The production actor shape (Grok on PR# 653 - tap): the collector holds grid.reconcile
+        and grid.write. It now also holds grid.delete (interim, global), so the shape is built
+        without it: the verb's tombstone is its own write, licensed by grid.reconcile, and lands
+        under an actor that could not delete anywhere else."""
+        from tap_auth.actors import acting_as
         from tap_auth.capabilities import DELETE_CAPABILITY, RECONCILE_CAPABILITY
         from tap_auth.policy import can
         from tap_grid.caller_context import CallerContext
 
-        actor = get_builtin_actor(COLLECTOR)
+        actor = _reconcile_without_delete_actor()
         ctx = CallerContext(user=actor)
         assert can(ctx, RECONCILE_CAPABILITY) and not can(ctx, DELETE_CAPABILITY)
         run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
@@ -374,13 +398,13 @@ class TestApplying:
         to targets: opened for one row it licenses a delete of that row and nothing else; opened
         for nothing it licenses nothing. The collector actor, holding grid.reconcile and not
         grid.delete, cannot widen it into a delete of an unrelated entity."""
-        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.actors import acting_as
         from tap_auth.errors import UnguardedOperation
         from tap_grid.service_types import WriteOperation
         from tap_grid.services import write_batch
         from tap_grid.write_guard import reconcile_write_scope
 
-        actor = get_builtin_actor(COLLECTOR)
+        actor = _reconcile_without_delete_actor()
         unrelated = WriteOperation(verb="delete_node", target=graph.c[1].pk, reason="test")
         with acting_as(actor):
             with reconcile_write_scope(()), pytest.raises(UnguardedOperation):
@@ -395,7 +419,7 @@ class TestApplying:
         """Codex on PR# 658 - tap: the licence must not be read off the operation, or a defect in
         operation construction licenses itself. It is derived from the verdict entry; here the
         construction is broken on purpose to target a sibling, and the pass fails closed."""
-        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.actors import acting_as
         from tap_auth.errors import UnguardedOperation
         from tap_grid.service_types import WriteOperation
 
@@ -406,8 +430,8 @@ class TestApplying:
         wrong = WriteOperation(verb="delete_node", target=graph.c[1].pk, reason="defect", cascade="contained")
         monkeypatch.setattr("tap_grid.reconcile._operation_for", lambda entry, batch, generation: wrong)
         before = _snapshot()
-        # As the production actor: grid.reconcile without grid.delete, so the licence is the only door.
-        with acting_as(get_builtin_actor(COLLECTOR)), pytest.raises(UnguardedOperation):
+        # grid.reconcile without grid.delete, so the licence is the only door.
+        with acting_as(_reconcile_without_delete_actor()), pytest.raises(UnguardedOperation):
             _reconcile_armed(run)
         assert _snapshot() == before, "nothing retired, nothing recorded"
 

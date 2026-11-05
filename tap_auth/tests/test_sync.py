@@ -125,6 +125,7 @@ class TestSyncGroupsAndActors:
             "grid_write",
             "grid_import_grift",
             "grid_reconcile",
+            "grid_delete",
             "cares_run_collectors",
             "cares_self_test_collectors",
         }

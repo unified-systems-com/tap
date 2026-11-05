@@ -38,14 +38,15 @@
       ]
     },
     "tap_cares.collector": {
-      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only. Holds grid.reconcile so the run's final phase can reconcile; the per-collector reconcile_authority switch (off by default) is the operator's control, and collector code never calls a delete verb (req-grid-reconcile-verb-1/-2).",
+      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only. Holds grid.reconcile so the run's final phase can reconcile; the per-collector reconcile_authority switch (off by default) is the operator's control, and collector code never calls a delete verb (req-grid-reconcile-verb-1/-2). Also holds grid.delete so a collector's GRIFT batch may carry a `deletes` section and retire its own superseded edges; a `deletes` section is data, not a verb call. Interim and deliberately global: replace this grant with per-collector / plugin permission sets (req-tap-auth-program-users and the per-collector actor split) once a second or third case justifies them.",
       "capabilities": [
         "grid.read",
         "grid.write",
         "grid.import_grift",
         "cares.run_collectors",
         "cares.self_test_collectors",
-        "grid.reconcile"
+        "grid.reconcile",
+        "grid.delete"
       ],
       "assignable_to": [
         "program"

@@ -433,3 +433,50 @@ def test_despawn_checks_the_engine_before_the_stack_is_touched() -> None:
     text = (ROOT / "scripts" / "despawn-session.sh").read_text(encoding="utf-8")
     assert "tap_engine_reachable" in text
     assert text.index("tap_engine_reachable") < text.index("tap_engine_warn_other") < text.index('bold "Stopping docker stack"')
+
+
+# A host with Podman and NO docker binary. The fake logs its argv so the test can prove that what the
+# scripts run as `docker ...` really reaches `podman`.
+FAKE_PODMAN_LOGGING = """#!/bin/sh
+echo "$@" >> "$FAKE_PODMAN_LOG"
+case "$1 $2" in
+  "machine inspect") echo "$FAKE_MACHINE_SOCK"; exit 0 ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-10")
+def test_podman_alone_is_enough_and_docker_commands_reach_it(sandbox: Path) -> None:
+    _install(sandbox, "podman", FAKE_PODMAN_LOGGING)
+    sock = str(_socket(sandbox / "p.sock"))
+    log = sandbox / "podman.log"
+    body = 'tap_engine_select\ndocker volume ls --filter name=x --format "{{.Name}}"\ndocker compose version\ncommand -v docker'
+    run = _run(sandbox, body, FAKE_MACHINE_SOCK=sock, FAKE_PODMAN_LOG=str(log))
+    assert _verdict(run) == ("podman", f"unix://{sock}")
+    assert run.stdout.splitlines()[0].endswith("scripts/lib/docker-shim/docker")
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert 'volume ls --filter name=x --format {{.Name}}' in calls
+    assert "compose version" in calls
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-10")
+def test_a_real_docker_cli_is_never_shadowed_by_the_forwarder(sandbox: Path) -> None:
+    sock = _podman_machine(sandbox)
+    run = _run(sandbox, "tap_engine_select\ncommand -v docker", FAKE_DOCKER_UP="1", FAKE_MACHINE_SOCK=sock)
+    assert _verdict(run) == ("docker", "")
+    assert run.stdout.splitlines()[0] == str(sandbox / "bin" / "docker")
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-10")
+def test_no_docker_and_no_podman_leaves_the_engine_unchosen(sandbox: Path) -> None:
+    run = _run(sandbox, "tap_engine_select")
+    assert _verdict(run) == ("none", "")
+
+
+@pytest.mark.spec("req-dev-multisession-container-engine-10")
+def test_the_cross_engine_warning_is_silent_when_podman_is_the_only_engine(sandbox: Path) -> None:
+    _install(sandbox, "podman", FAKE_PODMAN_LOGGING)
+    sock = str(_socket(sandbox / "p.sock"))
+    run = _run(sandbox, "tap_engine_select\ntap_engine_warn_other tap_x", FAKE_MACHINE_SOCK=sock, FAKE_PODMAN_LOG=str(sandbox / "l"))
+    assert "also has containers" not in run.stderr
