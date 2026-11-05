@@ -85,6 +85,13 @@ _FOUNDATIONAL_LOGGERS: dict[str, str] = {
 # configured (e.g. one mid-development that hasn't been added to INSTALLED_APPS).
 _PLUGIN_WILDCARD_LEVEL = "INFO"
 
+# req-tap-logging-plugin-loggers-5 — the import namespaces a plugin's modules (and so
+# its `getLogger(__name__)` loggers) live under. `tap_plugin` is the PEP 420 namespace
+# every installed plugin uses (`tap_plugin.<slug>.apps.<Config>`); `plugins` is the
+# retired in-tree layout (`plugins.<slug>.…`), kept so a checkout that still has it is
+# not silenced.
+_PLUGIN_NAMESPACES: tuple[str, ...] = ("tap_plugin", "plugins")
+
 # req-tap-logging-env-overrides-4 — valid level set for env-var validation.
 _VALID_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
@@ -104,32 +111,34 @@ def _foundational_logger_configs() -> dict[str, dict[str, Any]]:
     return {name: _logger_entry(level) for name, level in _FOUNDATIONAL_LOGGERS.items()}
 
 
-def _discover_plugin_slugs(installed_apps: list[str]) -> list[str]:
-    """Extract plugin slugs from INSTALLED_APPS, preserving order, de-duplicated.
+def _discover_plugin_loggers(installed_apps: list[str]) -> list[str]:
+    """Extract per-plugin logger names from INSTALLED_APPS, in order, de-duplicated.
 
-    Plugin entries look like `plugins.<slug>.apps.<ConfigClass>` or `plugins.<slug>`.
+    Plugin entries look like `tap_plugin.<slug>.apps.<ConfigClass>` or `tap_plugin.<slug>`
+    (and, for the retired in-tree layout, `plugins.<slug>…`). The logger name is the first
+    two parts, `<namespace>.<slug>`: exactly the prefix the plugin's modules' loggers carry.
     """
-    slugs: list[str] = []
+    names: list[str] = []
     seen: set[str] = set()
     for entry in installed_apps:
         parts = entry.split(".")
-        if len(parts) < 2 or parts[0] != "plugins":
+        if len(parts) < 2 or parts[0] not in _PLUGIN_NAMESPACES:
             continue
-        slug = parts[1]
-        if slug in seen:
+        name = f"{parts[0]}.{parts[1]}"
+        if name in seen:
             continue
-        seen.add(slug)
-        slugs.append(slug)
-    return slugs
+        seen.add(name)
+        names.append(name)
+    return names
 
 
 def plugin_logger_config(installed_apps: list[str]) -> dict[str, dict[str, Any]]:
-    """Return logger configs for registered plugins plus the wildcard fallback."""
+    """Return logger configs for registered plugins plus the wildcard fallbacks."""
     config: dict[str, dict[str, Any]] = {
-        "plugins": _logger_entry(_PLUGIN_WILDCARD_LEVEL),
+        namespace: _logger_entry(_PLUGIN_WILDCARD_LEVEL) for namespace in _PLUGIN_NAMESPACES
     }
-    for slug in _discover_plugin_slugs(installed_apps):
-        config[f"plugins.{slug}"] = _logger_entry("INFO")
+    for name in _discover_plugin_loggers(installed_apps):
+        config[name] = _logger_entry("INFO")
     return config
 
 
