@@ -2,7 +2,7 @@
 
 ## Philosophy
 
-TAP runs as a Django web process plus a Steady Queue supervisor (`docker/entrypoint.sh`), with first-party apps (`tap_grid`, `tap_api`, `tap_cares`, `tap_web`, `tap_viz`, `tap_plugins`) and third-party plugins (`plugins/<slug>/...`) all running in the same Python process. Today every one of those components emits log records through `logging.getLogger(__name__)` to Python's root logger, which has no configured handlers or formatters in `tap/settings.py` — so output lands on container stdout/stderr through Django's default handler with no per-component levels and no consistent format. That works for "tail and read" but breaks down as soon as you want to crank `tap_cares.scheduler` to DEBUG, silence `django.db.backends`, or tell at a glance whether a noisy line came from `plugins.fedramp_20x_ksi` or `plugins.genericom`.
+TAP runs as a Django web process plus a Steady Queue supervisor (`docker/entrypoint.sh`), with first-party apps (`tap_grid`, `tap_api`, `tap_cares`, `tap_web`, `tap_viz`, `tap_plugins`) and third-party plugins (`plugins/<slug>/...`) all running in the same Python process. Today every one of those components emits log records through `logging.getLogger(__name__)` to Python's root logger, which has no configured handlers or formatters in `tap/settings.py` — so output lands on container stdout/stderr through Django's default handler with no per-component levels and no consistent format. That works for "tail and read" but breaks down as soon as you want to crank `tap_cares.scheduler` to DEBUG, silence `django.db.backends`, or tell at a glance whether a noisy line came from `tap_plugin.fedramp_20x_ksi` or `tap_plugin.genericom`.
 
 This spec defines the v0 logging configuration: a single `LOGGING` dict in `tap/settings.py` that names each first-party app and each registered plugin as its own logger, applies a consistent text format that includes source file and line on every record, and exposes per-logger level overrides through environment variables. It also defines a call-site site-ID convention — a stable hex token of the form `[a8f3]` that travels with the log statement across refactors, where the unique callsite *path* is the logger name (already on every record), not a human-authored slug — enforced by a scanner test with a baseline-ratchet so existing code isn't broken on day one. Library log levels are owned where they make sense: foundational libraries used transitively by anything (`urllib3`, `django.*`) stay top-level; libraries pulled in for a specific component's job (`steady_queue` for `tap_cares`, `boto3` for an AWS plugin) are owned by that component through an `app_logger_config()` helper.
 
@@ -35,7 +35,7 @@ Logging is read-only by construction. Nothing in this spec describes capturing a
 | req-tap-logging-domain-tags | [Domain Tags](#domain-tags) | Implemented | Shared registered specialty-routing vocabulary (`security`/`operational`/`data`/`config`/`integration`) inherited by both `FLAW` (`flaw_tags`) and `CONCERN` (`tags`); one home in `tap/logging_domain_tags.py` |
 | req-tap-logging-format | [Object Rendering](#object-rendering) | Proposed | Per-handler rendering of the message object — text on `console`, JSON on a structured sink |
 | req-tap-logging-app-loggers | [First-Party App Loggers](#first-party-app-loggers) | Proposed | One logger per `tap_*` app with a sensible default level |
-| req-tap-logging-plugin-loggers | [Plugin Loggers](#plugin-loggers) | Proposed | `plugins.<slug>` namespace; per-plugin level + wildcard default |
+| req-tap-logging-plugin-loggers | [Plugin Loggers](#plugin-loggers) | Proposed | `tap_plugin.<slug>` namespace; per-plugin level + wildcard default |
 | req-tap-logging-foundational-loggers | [Foundational Third-Party Loggers](#foundational-third-party-loggers) | Proposed | `urllib3`, `django.*` — pan-system libs with no single owner |
 | req-tap-logging-component-libs | [Component-Owned Library Loggers](#component-owned-library-loggers) | Proposed | Apps and plugins own levels for libs they pulled in (e.g. `steady_queue` → `tap_cares`) |
 | req-tap-logging-callsite-convention | [Call-Site Convention](#call-site-convention) | Proposed | `logger = logging.getLogger(__name__)`, `%s` placeholders, `.exception` in `except` |
@@ -390,28 +390,29 @@ Plugins are addressable through the logger tree by slug, so a noisy plugin can b
 
 #### Implementation
 
-- All plugins follow the call-site convention (`req-tap-logging-callsite-convention`); their module-level `getLogger(__name__)` calls produce loggers named `plugins.<plugin_slug>.<module>`.
-- `LOGGING["loggers"]` declares one entry per registered plugin slug, plus a wildcard fallback at `plugins`:
-  - `plugins`: `INFO` — catches any plugin that hasn't been individually listed.
-  - `plugins.<slug>`: explicit per-plugin entry for each plugin shipped with the platform.
-- Per-plugin entries set `propagate: False` so a plugin's records don't double-emit through both `plugins` and `plugins.<slug>`.
+- All plugins follow the call-site convention (`req-tap-logging-callsite-convention`); their module-level `getLogger(__name__)` calls produce loggers named `tap_plugin.<plugin_slug>.<module>`. `tap_plugin` is the PEP 420 namespace every installed plugin lives under (`tap_plugin.<slug>.apps.<Config>` in `INSTALLED_APPS`); the retired in-tree layout's `plugins.<plugin_slug>.<module>` is still recognised alongside it (`req-tap-logging-plugin-loggers-5`).
+- `LOGGING["loggers"]` declares one entry per registered plugin slug, plus a wildcard fallback at `tap_plugin`:
+  - `tap_plugin`: `INFO` — catches any plugin that hasn't been individually listed.
+  - `tap_plugin.<slug>`: explicit per-plugin entry for each plugin shipped with the platform.
+- Per-plugin entries set `propagate: False` so a plugin's records don't double-emit through both `tap_plugin` and `tap_plugin.<slug>`.
+- A logger that no entry covers inherits the root logger's `WARNING`, which silently drops a plugin's `INFO` and `DEBUG` records. That is why the plugin namespace here must be the one plugins really use: matching a retired prefix configures nothing and looks like a plugin that does not log.
 - The list of explicit plugin slugs is generated from the registered plugin set at settings-load time. `tap/logging.py` exposes `plugin_logger_config()` which iterates the plugin manifest registry and returns the per-slug `{logger: {level, handlers, propagate}}` map; the builder merges it into `LOGGING["loggers"]`.
 
 Currently shipping plugins (snapshot at spec authoring):
 
 | Plugin Slug | Logger | Default Level |
 | --- | --- | --- |
-| `administrivia` | `plugins.administrivia` | `INFO` |
-| `fedramp_20x_ksi` | `plugins.fedramp_20x_ksi` | `INFO` |
-| `genericom` | `plugins.genericom` | `INFO` |
-| `aws_core` | `plugins.aws_core` | `INFO` |
-| `computing_core` | `plugins.computing_core` | `INFO` |
+| `administrivia` | `tap_plugin.administrivia` | `INFO` |
+| `fedramp_20x_ksi` | `tap_plugin.fedramp_20x_ksi` | `INFO` |
+| `genericom` | `tap_plugin.genericom` | `INFO` |
+| `aws_core` | `tap_plugin.aws_core` | `INFO` |
+| `computing_core` | `tap_plugin.computing_core` | `INFO` |
 
 The list updates automatically as plugins are registered or removed.
 
 #### Development
 
-Plugin disambiguation is the second goal of this spec because it's the dimension dev pain shows up along — when triaging a noisy log stream, "which plugin is this?" is the first question and the current logger name (`plugins.fedramp_20x_ksi.panels.finding_strip`) already answers it once the format is in place. The wildcard `plugins` entry exists so a plugin that's mid-development and not yet registered still gets its records formatted and shipped — it just shares the default level until it's added explicitly.
+Plugin disambiguation is the second goal of this spec because it's the dimension dev pain shows up along — when triaging a noisy log stream, "which plugin is this?" is the first question and the current logger name (`tap_plugin.fedramp_20x_ksi.panels.finding_strip`) already answers it once the format is in place. The wildcard `tap_plugin` entry exists so a plugin that's mid-development and not yet registered still gets its records formatted and shipped — it just shares the default level until it's added explicitly.
 
 Generating the per-slug entries from the manifest registry (rather than a hand-maintained list in settings) means adding a plugin doesn't require a settings edit. The builder calls the helper lazily — if the manifest registry isn't available at settings load time (e.g. circular import), the helper falls back to the wildcard-only config and a warning is logged.
 
@@ -419,10 +420,11 @@ Generating the per-slug entries from the manifest registry (rather than a hand-m
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-logging-plugin-loggers-1 | Wildcard Plugin Logger | Proposed | `LOGGING["loggers"]` declares a `plugins` entry at `INFO`. | |
-| req-tap-logging-plugin-loggers-2 | Per-Slug Entries | Proposed | Each registered plugin slug has a `plugins.<slug>` entry. | |
+| req-tap-logging-plugin-loggers-1 | Wildcard Plugin Logger | Proposed | `LOGGING["loggers"]` declares a `tap_plugin` entry at `INFO`. | |
+| req-tap-logging-plugin-loggers-2 | Per-Slug Entries | Proposed | Each registered plugin slug has a `tap_plugin.<slug>` entry. | |
 | req-tap-logging-plugin-loggers-3 | Helper-Driven | Proposed | Per-slug entries are generated by `tap/logging.py::plugin_logger_config()` reading the manifest registry, not hand-maintained in settings. | |
 | req-tap-logging-plugin-loggers-4 | No Propagation | Proposed | Per-plugin loggers set `propagate: False`. | |
+| req-tap-logging-plugin-loggers-5 | Both Namespaces | Proposed | A plugin logger is recognised under `tap_plugin.<slug>` (the installed namespace) and under the retired in-tree `plugins.<slug>`; an `INFO` record from `tap_plugin.<slug>.<module>` is emitted, not dropped by the root logger's `WARNING`. | |
 
 ### Foundational Third-Party Loggers
 ----
@@ -519,7 +521,7 @@ Every module that emits log records does so through a logger whose name equals t
   logger = logging.getLogger(__name__)
   ```
 - No module hardcodes a logger name (`logging.getLogger("tap_cares")` is wrong; `logging.getLogger(__name__)` is right).
-- Plugins follow the same convention — `plugins.fedramp_20x_ksi.scheduler` gets a logger named `plugins.fedramp_20x_ksi.scheduler` automatically.
+- Plugins follow the same convention — `tap_plugin.fedramp_20x_ksi.scheduler` gets a logger named `tap_plugin.fedramp_20x_ksi.scheduler` automatically.
 - Exception emission inside `except` blocks uses `logger.exception(...)` so the traceback is attached.
 - Other levels use `logger.info / warning / error / critical` with `%s` placeholders, not f-strings, so the object builder captures the unformatted message and its arguments into the `message` field (`req-tap-logging-message-object`) rather than a pre-flattened string.
 
@@ -562,7 +564,7 @@ The hex only needs to be unique **within its file** — the logger name (the mod
 
 #### Path Is Derived, Not Authored
 
-The structurally-unique identity of a call site is its Python import path (`tap_cares.scheduler`, `plugins.fedramp_20x_ksi.collectors.steampipe_runner`). It is unique by construction — two packages cannot occupy the same import path, and Django will not load two apps with the same module — with no registry to keep in sync and nothing for a human to mint.
+The structurally-unique identity of a call site is its Python import path (`tap_cares.scheduler`, `tap_plugin.fedramp_20x_ksi.collectors.steampipe_runner`). It is unique by construction — two packages cannot occupy the same import path, and Django will not load two apps with the same module — with no registry to keep in sync and nothing for a human to mint.
 
 Earlier drafts put a human-chosen app/plugin *slug* in the token. That was abandoned because it has a social failure mode with no good resolution: two independent plugin authors can pick the same clever slug, and the only fixes are forcing one of them to rename (awful) or maintaining a shadow uniqueness registry (the thing the design was trying to avoid). Deriving the path from the import system removes the problem entirely — the only authored part is the hex, and its uniqueness scope is one file.
 
@@ -659,7 +661,7 @@ Operators can change any logger's level by setting an environment variable, with
   - **`TAP_LOG_LEVEL`** — single value, applied to the root logger. Coarse but useful for "give me everything."
 - Examples:
   - `TAP_LOG_LEVELS=tap_cares=DEBUG`
-  - `TAP_LOG_LEVELS=tap_cares=DEBUG,django.db.backends=DEBUG,plugins.fedramp_20x_ksi=INFO`
+  - `TAP_LOG_LEVELS=tap_cares=DEBUG,django.db.backends=DEBUG,tap_plugin.fedramp_20x_ksi=INFO`
   - `TAP_LOG_LEVEL=DEBUG`
 - Parsing rules:
   - Whitespace around tokens is stripped.
