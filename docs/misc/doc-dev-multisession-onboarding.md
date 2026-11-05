@@ -96,6 +96,10 @@ compose provider (`brew install docker-compose`, or `podman-compose`) for `podma
 - **Mixed hosts:** if Docker Desktop and a Podman machine are both running, sessions go to
   Docker unless you export `DOCKER_HOST` yourself. Despawn warns, with the removal command, if
   the session's stack is on the engine it is not talking to.
+- **Machine stopped or recreated:** if a Podman session's recorded socket no longer answers,
+  `scripts/despawn-session.sh` stops before removing anything (start the machine and re-run).
+  `--skip-stack` removes the worktree anyway, leaves the containers and volumes running, and
+  prints the command that removes them.
 - **Not covered:** `podman-compose` as the provider (only `docker-compose` was exercised); Linux
   rootless uid mapping and SELinux (`:z`/`:Z`) against the bind-mounted checkout were not
   exercised.

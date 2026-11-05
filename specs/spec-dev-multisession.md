@@ -302,6 +302,7 @@ Out of scope: a `podman-compose` provider (labels not checked); Linux rootless u
 | req-dev-multisession-container-engine-10 | Podman Without A Docker CLI | Implemented | With no `docker` binary and `podman` present, the helper puts `scripts/lib/docker-shim/docker` (a forwarder to `podman`) on PATH, so every `docker ...` and `docker compose ...` the scripts run reaches Podman; a real Docker CLI is never shadowed; spawn requires docker or podman, not docker alone. A Podman-only host needs a compose provider (docker-compose or podman-compose) (tap#1149). | |
 | req-dev-multisession-container-engine-7 | One Helper, Every Daemon Script | Implemented | `spawn-session.sh` (fresh and `--promote`), `dc`, `despawn-session.sh`, `prune-images` and `gate-lean` all source the one helper and select the engine; despawn selects from the session's own worktree before it touches the stack. | |
 | req-dev-multisession-container-engine-8 | Podman-Aware Messages And Prune | Implemented | The spawn failure names Podman's remedy, and `prune-images` skips the buildx-builder prune on Podman. | |
+| req-dev-multisession-container-engine-9 | Bounded Probes Without GNU Timeout | Implemented | Every daemon probe the helper makes returns within its bound on a host that has neither `timeout` nor `gtimeout` (stock macOS); a probe that does not return is treated as the engine not answering (tap#1139). | |
 
 ### Granular Grift Import Failure Mode
 ----
