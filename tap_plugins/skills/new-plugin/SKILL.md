@@ -412,6 +412,12 @@ already carries (`release-type: "python"`, `packages: {".": {"package-name": "<d
 an existing plugin's pair and change the name. `validate_plugin --repo --strict` then reports
 `repo-release-please-pair` as `pass`, not `warn`.
 
+**The manifest starts at `0.1.0`, and the plugin is tagged `v0.1.0` when it lands** (Step 13).
+`.release-please-manifest.json` is `{".": "0.1.0"}`, and `plugin_version = "0.1.0"` in
+`tap-plugin.toml` is written bare, with no `v`, and carries the `# x-release-please-version` marker, as
+every plugin's does. release-please reads the manifest as "the last release" and finds that release by
+its tag, so a manifest with no matching tag has no baseline.
+
 ## Step 12: Validate, in layers
 
 1. Structure, no Django: `python -m tap_plugins.validate_plugin tap_plugin/<slug> --strict` (inside the
@@ -428,9 +434,40 @@ Fix every gate failure before opening the PR; they fail closed by design.
 
 Every change rides a PR to the plugin repository's default branch; the org ruleset (where one exists)
 refuses direct pushes. Commit trailers name the issue (`Closes:` / `Part-of:`). Releases are immutable
-`v<x.y.z>` tags cut by `scripts/release-plugin.sh` from a `--dev-plugins` workspace (pre-release guard:
-`validate_plugin --strict` + the plugin's tests; PR-based landing; tag). A release changes no boot pin —
-consumers bump their own records deliberately.
+`v<x.y.z>` tags. A plugin with the release-please pair (Step 11) is released by merging its release PR;
+`scripts/release-plugin.sh` cuts one for a plugin without the pair, from a `--dev-plugins` workspace
+(pre-release guard: `validate_plugin --strict` + the plugin's tests; PR-based landing; tag). A release
+changes no boot pin — consumers bump their own records deliberately.
+
+### Every plugin lands tagged: `v0.1.0` is part of landing it
+
+The first landing is not finished until the default-branch commit that carries `plugin_version =
+"0.1.0"` and (with Step 11's pair) `.release-please-manifest.json` `{".": "0.1.0"}` has the immutable
+tag `v0.1.0` and a published GitHub Release. The Release is also what starts the repository's tag-push
+workflows (`release-sbom.yml`). This is the one release cut by hand, because release-please has no
+baseline to propose from until it exists:
+
+```bash
+git fetch origin
+gh release create v0.1.0 --target "$(git rev-parse origin/main)" --title v0.1.0 --notes "Initial release."
+```
+
+Run it once the landing PR has merged, with `origin/main` at the commit that carries the manifest and
+`plugin_version` above, and confirm `git ls-remote --tags origin v0.1.0` shows that commit. After that,
+every release is a release PR: a human merges it and the org's `release-please` job (org-bots) tags the
+merge commit and publishes the Release. Never cut a later version by hand, and never advance the
+manifest without the tag or the tag without the manifest.
+
+**`scripts/release-plugin.sh` is not this path.** It is for a plugin without the release-please pair.
+On a plugin that has the pair it rewrites `plugin_version` as `"v<x.y.z>"` (with the `v`, which the
+bare `x.y.z` convention above does not use) and does not move `.release-please-manifest.json`, which is
+how a manifest and its tags drift apart. Read from the script; the release PR is the release.
+
+Why this is a step and not an option: with no tag, release-please has no baseline and proposes the
+plugin's entire history as its first release, and a manifest that drifts from the tags makes it propose
+a version that already exists. A 2026-11-05 audit of the plugin fleet found 7 plugins at manifest
+`0.1.0` with no tag at all, and 6 whose manifest was behind, or ahead of, their latest tag after
+releases were cut by hand. This step prevents both.
 
 ## Step 14: Spec back in sync
 
