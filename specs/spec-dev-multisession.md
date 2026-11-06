@@ -55,6 +55,7 @@ Trace: `non-python` — docker-compose.yml
 - `COMPOSE_PROJECT_NAME` — namespace for containers, networks, volumes (Compose reads this natively).
 - `WEB_PORT` — host port mapped to Django container `8000`. Default `8000`.
 - `POSTGRES_PORT` — host port mapped to Postgres container `5432`. Default `5432`.
+- `TAP_BIND` / `WEB_BIND` / `POSTGRES_BIND` — host address each published port listens on. Default `127.0.0.1`: a stack is reachable from the machine it runs on and nowhere else. `WEB_BIND` and `POSTGRES_BIND` set one port; `TAP_BIND` sets both; a per-port setting wins over `TAP_BIND`. Opening a stack to the network (`0.0.0.0` or a host address) is a deliberate per-stack setting in `.env.local`. The address is always written into the port mapping, so a Docker daemon-wide default binding neither decides nor blocks it (tap#1158).
 - `TAP_GRID_ID` — installation identity. Default the current hardcoded UUID; spawn script (Phase 2) generates a new one per session.
 - `TAP_PRODUCT_NAME` — product name shown in the UI title bar, header, and `<title>` element. Default `"TAP"`. Set per-session in `.env.local` (e.g. `RAMPART`) for branded demo instances; the value is read by `tap_web/context_processors.py` and exposed to every template as `{{ product_name }}`.
 
@@ -80,6 +81,8 @@ If we add Redis, mailcatcher, or other host-exposed services, follow the same pa
 | req-dev-multisession-compose-parameterized-5 | Dependency sync at entrypoint | Proposed | `uv sync` runs from `docker/entrypoint.sh`, not the Dockerfile, so the install lands in the container venv and uv cache named volumes rather than in image layers. | |
 | req-dev-multisession-compose-parameterized-6 | Container venv is a named volume | Proposed | The web service mounts `venv:/app/.venv` so container-side `uv sync` never writes the host worktree's `.venv` directory. | Prevents host/container virtualenv path and binary-wheel collisions. |
 | req-dev-multisession-compose-parameterized-7 | Host Python uses a separate env | Proposed | Documentation and scripts treat `/app/.venv` as container-owned; any host-side Python workflow uses a distinct env path such as `.venv-host`. | Avoids two OSes mutating one virtualenv. |
+| req-dev-multisession-compose-parameterized-8 | Published ports bind loopback by default | Proposed | Every published port in a compose file in the repository names a host address, and with no `TAP_BIND`, `WEB_BIND` or `POSTGRES_BIND` set that address is `127.0.0.1` (or `::1`). A port that omits the address, or defaults to `0.0.0.0`, fails a test. | Closes tap#1158: the dev database password is a literal in this public repo. |
+| req-dev-multisession-compose-parameterized-9 | Bind address is chosen per stack and per port | Proposed | Setting `TAP_BIND` changes the host address of every published port; setting `WEB_BIND` or `POSTGRES_BIND` changes that port only and wins over `TAP_BIND`; an empty value falls back to loopback. | Existing stacks need a recreate (`scripts/dc up -d`) to pick it up. |
 
 ### Env File Cascade
 ----

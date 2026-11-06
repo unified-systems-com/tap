@@ -135,8 +135,14 @@ services:
     #
     # Host port is parameterized to support multiple concurrent dev sessions
     # (see spec-dev-multisession.md). Container port stays fixed at 5432.
+    #
+    # Bound to 127.0.0.1 unless told otherwise (tap#1158): the dev database password is a
+    # literal in this public repo, so this port must not listen on the network by default.
+    # POSTGRES_BIND opens this port alone; TAP_BIND opens every published port; both are
+    # set per stack in `.env.local`. The address is always written out, so a daemon-wide
+    # default never decides it.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND:-${TAP_BIND:-127.0.0.1}}:${POSTGRES_PORT:-5432}:5432"
 
     # Health check to verify database is ready to accept connections
     # Other services can wait for this before starting
@@ -282,8 +288,11 @@ services:
     #
     # Host port is parameterized to support multiple concurrent dev sessions
     # (see spec-dev-multisession.md). Container port stays fixed at 8000.
+    #
+    # Bound to 127.0.0.1 unless told otherwise (tap#1158). WEB_BIND opens this port alone,
+    # TAP_BIND opens every published port; set either per stack in `.env.local`.
     ports:
-      - "${WEB_PORT:-8000}:8000"
+      - "${WEB_BIND:-${TAP_BIND:-127.0.0.1}}:${WEB_PORT:-8000}:8000"
 
     # Environment variables for Django
     environment:
