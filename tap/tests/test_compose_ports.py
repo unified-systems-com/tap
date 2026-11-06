@@ -21,7 +21,24 @@ import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COMPOSE_FILES = sorted(_REPO_ROOT.glob("docker-compose*.yml"))
+# Directories that hold other people's files or build output, not this repository's compose files.
+_PRUNED = {".git", "node_modules", ".venv", "venv", "_dev-plugins", "build", "dist"}
+_COMPOSE_NAME = re.compile(r"^(docker-)?compose[^/]*\.ya?ml$")
+
+
+def compose_files(root: Path = _REPO_ROOT) -> list[Path]:
+    """Every compose file under ``root``, at any depth: `docker-compose*.y[a]ml` and `compose*.y[a]ml`."""
+    found = []
+    for path in root.rglob("*"):
+        rel = path.relative_to(root)
+        if _PRUNED.intersection(rel.parts[:-1]) or not path.is_file():
+            continue
+        if _COMPOSE_NAME.match(path.name):
+            found.append(path)
+    return sorted(found)
+
+
+_COMPOSE_FILES = compose_files()
 _LOOPBACK = {"127.0.0.1", "::1"}
 # `${NAME}` or `${NAME:-default}`, innermost first (the default may not itself contain `${`).
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^${}]*))?\}")
@@ -72,21 +89,39 @@ def non_loopback_defaults(compose: Mapping[str, Any]) -> list[str]:
     return bad
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-8")
-@pytest.mark.parametrize("path", _COMPOSE_FILES, ids=lambda p: p.name)
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
+@pytest.mark.parametrize("path", _COMPOSE_FILES, ids=lambda p: p.relative_to(_REPO_ROOT).as_posix())
 def test_every_published_port_binds_loopback_by_default(path: Path) -> None:
     compose = yaml.safe_load(path.read_text())
     assert non_loopback_defaults(compose) == []
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-8")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
+def test_compose_files_are_found_at_any_depth_and_under_either_name(tmp_path: Path) -> None:
+    for rel in ("docker-compose.yml", "compose.yaml", "deploy/docker-compose.prod.yml", "a/b/compose.override.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("services: {}\n")
+    for rel in ("node_modules/x/docker-compose.yml", "_dev-plugins/p/compose.yml", "notes/compose-notes.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("services: {}\n")
+    found = {p.relative_to(tmp_path).as_posix() for p in compose_files(tmp_path)}
+    assert found == {"docker-compose.yml", "compose.yaml", "deploy/docker-compose.prod.yml", "a/b/compose.override.yml"}
+
+
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
+def test_the_repositorys_own_compose_files_are_all_found() -> None:
+    names = {p.relative_to(_REPO_ROOT).as_posix() for p in _COMPOSE_FILES}
+    assert {"docker-compose.yml", "docker-compose.ci.yml", "docker-compose.codespaces.yml", "docker-compose.build.yml"} <= names
+
+
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
 def test_the_web_and_database_ports_are_actually_checked() -> None:
     """Guard against a vacuous pass: the base file publishes exactly these two."""
     compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
     assert sorted(service for service, _ in published_ports(compose)) == ["db", "web"]
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-8")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
 @pytest.mark.parametrize(
     "entry",
     [
@@ -104,7 +139,7 @@ def test_the_check_rejects_a_port_that_would_listen_outward(entry: Any) -> None:
     assert non_loopback_defaults({"services": {"x": {"ports": [entry]}}}) != []
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-8")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-1")
 @pytest.mark.parametrize(
     "entry",
     ["127.0.0.1:8000:8000", "[::1]:8000:8000/tcp", {"target": 8000, "published": 8000, "host_ip": "127.0.0.1"}],
@@ -118,13 +153,13 @@ def _real_entries() -> dict[str, str]:
     return {service: entry for service, entry in published_ports(compose)}
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-9")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-2")
 def test_tap_bind_opens_every_published_port() -> None:
     for entry in _real_entries().values():
         assert host_address(entry, {"TAP_BIND": "0.0.0.0"}) == "0.0.0.0"
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-9")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-2")
 def test_a_per_port_setting_opens_that_port_only_and_beats_tap_bind() -> None:
     entries = _real_entries()
     assert host_address(entries["web"], {"WEB_BIND": "0.0.0.0"}) == "0.0.0.0"
@@ -134,7 +169,7 @@ def test_a_per_port_setting_opens_that_port_only_and_beats_tap_bind() -> None:
     assert host_address(entries["web"], env) == "0.0.0.0"
 
 
-@pytest.mark.spec("req-dev-multisession-compose-parameterized-9")
+@pytest.mark.spec("req-dev-multisession-bind-loopback-2")
 def test_an_empty_setting_falls_back_to_loopback() -> None:
     for entry in _real_entries().values():
         assert host_address(entry, {"TAP_BIND": "", "WEB_BIND": "", "POSTGRES_BIND": ""}) == "127.0.0.1"
