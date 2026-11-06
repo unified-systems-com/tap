@@ -69,7 +69,14 @@ the runtime; only the last is new code, and it goes to tap_viz.
    - `tiered-rows` for rows by entity-type membership (`tiers`), such as "load balancers, then compute,
      then data";
    - `ranked` for columns by an integer stage (`_stage`) and in-column order (`_order`, with
-     `sort: "order"`), which is how any data-driven row or column placement is expressed.
+     `sort: "order"`), which is how any data-driven row or column placement is expressed. Add
+     `axis: "rows"` and a stage becomes a horizontal row instead of a column, each row centred: one
+     child at stage 0 over several at stage 1 is a leader alone, top-centre, above a row of its parts
+     (`req-viz-nested-projection-natural-layouts-8`);
+   - one container of a type that needs a different arrangement from its siblings of the same type
+     (a team of teams beside a team of people): stamp `_inner_layout` on that node, a layout name or
+     `{name, ...opts}`, from a fact on the graph. It beats `innerLayouts[entity_type]` for that
+     container only (`req-viz-nested-projection-container-size-from-children-5`).
 2. **Data-driven order.** When the order a human wants is a fact, put the fact on the node, not in the
    code: a typed field the collector or seed already fills (an availability zone, a tier, an
    environment), or a neutral `layout:*` tag for design-time intent. The module reads it and stamps

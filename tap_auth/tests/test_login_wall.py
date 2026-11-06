@@ -103,3 +103,13 @@ def test_login_success_message_is_suppressed():
     from django.template.loader import render_to_string
 
     assert render_to_string("account/messages/logged_in.txt", {}).strip() == ""
+
+
+def test_logout_message_is_suppressed():
+    """allauth's "You have signed out." flash is suppressed (an empty
+    account/messages/logged_out.txt override). The login page renders no messages,
+    so the one-shot message used to wait and show on the landing page after the
+    NEXT sign-in. Guards against the override being removed. See req-web-render-flash."""
+    from django.template.loader import render_to_string
+
+    assert render_to_string("account/messages/logged_out.txt", {}).strip() == ""

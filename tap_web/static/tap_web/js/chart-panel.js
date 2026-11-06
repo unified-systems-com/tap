@@ -35,6 +35,9 @@
     };
     var palette = [];
     for (var i = 1; i <= 8; i++) palette.push(t.v("accent-" + i, "#0072b2"));
+    // Data labels are solid filled text: no outline (ECharts' text border is what made them hard to read on
+    // the dark frame), the theme's text colour unless the config sets one (req-web-panels-chart-theme-5).
+    var solid = { label: { color: text, textBorderWidth: 0, textBorderColor: "transparent", textShadowBlur: 0 } };
     return {
       color: palette,
       backgroundColor: "transparent",
@@ -53,13 +56,16 @@
         confine: true,
         extraCssText: "max-width:min(22rem,90vw);white-space:normal;overflow-wrap:anywhere;"
       },
-      pie: { itemStyle: { borderColor: bg, borderWidth: 1 }, label: { color: text } },
-      treemap: { itemStyle: { borderColor: bg }, label: { color: "#ffffff" } },
-      sunburst: { itemStyle: { borderColor: bg }, label: { color: text } },
+      bar: solid,
+      line: solid,
+      scatter: solid,
+      pie: { itemStyle: { borderColor: bg, borderWidth: 1 }, label: solid.label },
+      treemap: { itemStyle: { borderColor: bg }, label: { color: "#ffffff", textBorderWidth: 0 } },
+      sunburst: { itemStyle: { borderColor: bg }, label: solid.label },
       gauge: { title: { color: muted }, detail: { color: text } },
       radar: { axisName: { color: muted }, splitLine: { lineStyle: { color: grid } }, axisLine: { lineStyle: { color: grid } } },
-      heatmap: { label: { color: text } },
-      funnel: { label: { color: text }, itemStyle: { borderColor: bg } }
+      heatmap: { label: solid.label },
+      funnel: { label: solid.label, itemStyle: { borderColor: bg } }
     };
   }
 
@@ -97,6 +103,38 @@
     });
   }
 
+  /** A series label the config declares gets the solid, outline-free defaults for whatever it leaves unset. */
+  function solidLabels(option, t) {
+    var text = t.v("text", "#0f172a");
+    var series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : [];
+    series.forEach(function (s) {
+      ["label", "emphasis", "select", "blur"].forEach(function (key) {
+        var l = key === "label" ? s.label : s[key] && s[key].label;
+        if (!l || typeof l !== "object") return;
+        if (l.textBorderWidth === undefined) l.textBorderWidth = 0;
+        if (l.textShadowBlur === undefined) l.textShadowBlur = 0;
+        if (l.color === undefined && key === "label") l.color = text;
+      });
+    });
+  }
+
+  /** A same-origin path (never protocol-relative), judged on what the browser will navigate to. */
+  function safePath(url) {
+    if (typeof url !== "string" || url.charAt(0) !== "/") return false;
+    try { return new URL(url, window.location.href).origin === window.location.origin; } catch (e) { return false; }
+  }
+
+  /** Click-through: a bar or scatter item whose row carries a server-filled `_url` navigates to it. */
+  function wireClick(entry) {
+    entry.chart.on("click", function (p) {
+      var url = p && p.data && !Array.isArray(p.data) && typeof p.data === "object" ? p.data._url : null;
+      if (!url || (p.seriesType !== "bar" && p.seriesType !== "scatter") || !safePath(url)) return;
+      var ev = p.event && p.event.event;
+      if (ev && (ev.ctrlKey || ev.metaKey)) window.open(url, "_blank", "noopener");
+      else window.location.assign(url);
+    });
+  }
+
   function showError(root, message) {
     var box = root.querySelector(".tap-chart__error");
     if (box) { box.textContent = message; box.hidden = false; }
@@ -111,6 +149,7 @@
     if (entry.chart) entry.chart.dispose();
     var option = JSON.parse(JSON.stringify(entry.option));
     if (entry.colorSpec) applyColors(option, resolveColors(entry.colorSpec, t));
+    solidLabels(option, t);
     // ECharts' generated description misreads dataset-encoded series; the server's label (what the chart
     // shows, how many rows) is the accessible name, and the hidden table carries the data.
     var label = entry.root.getAttribute("data-tap-chart-label");
@@ -119,6 +158,7 @@
     option.aria = aria;
     entry.chart = echarts.init(entry.mount, "tap-chart-theme", { renderer: "canvas" });
     entry.chart.setOption(option);
+    wireClick(entry);
   }
 
   function dispose(entry) {
@@ -181,7 +221,7 @@
     live.forEach(function (e) { if (e.chart) e.chart.resize(); });
   });
 
-  window.TapChart = { run: run, redraw: redrawAll, theme: theme, applyColors: applyColors };
+  window.TapChart = { run: run, redraw: redrawAll, theme: theme, applyColors: applyColors, solidLabels: solidLabels, safePath: safePath };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () { run(document); });

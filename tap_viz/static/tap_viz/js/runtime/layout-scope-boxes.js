@@ -37,6 +37,18 @@
  *
  * Returns a handle with a destroy() method that removes the overlay
  * container and detaches event listeners.
+ *
+ * Two guards keep the box from fighting the scene it measures
+ * (spec-viz-layouts § Scope Box Overlay, req-viz-layout-scope-box):
+ *   - re-entrancy: measuring members (`boundingBox`) can itself dirty a
+ *     bbox cache and emit `bounds`/`position` again, which re-enters the
+ *     sync until the stack overflows (the tap#289 class, as badge-nodes.js
+ *     and stack.js already guard). A sync that is already running is not
+ *     started again.
+ *   - hidden container: while the graph element is hidden (the projection
+ *     reveal sets `visibility: hidden`; the owner can set `display: none`)
+ *     the boxes are not drawn or measured. The first render after the
+ *     container is shown draws them.
  */
 
 const CONTAINER_CLASS = "tap-scope-box-container";
@@ -140,29 +152,56 @@ export function applyScopeBoxes(cy, boxes) {
         s.transform = t;
     }
 
+    // True while the cytoscape element is hidden by its owner (inline style, the form every TAP runtime uses).
+    function containerHidden() {
+        const st = cyContainer.style;
+        return !!st && (st.visibility === "hidden" || st.display === "none");
+    }
+
+    let syncing = false;
+    let deferred = false;
+
     function syncBoxes() {
-        wrappers.forEach(({config, style, wrapper}) => {
-            const members = resolveMembers(config);
-            if (members.length === 0) {
-                wrapper.style.display = "none";
-                return;
-            }
-            const bb = members.boundingBox({includeLabels: false});
-            if (isNaN(bb.x1) || isNaN(bb.y1)) {
-                wrapper.style.display = "none";
-                return;
-            }
-            const pad = style.padding;
-            const left = bb.x1 - pad;
-            const top = bb.y1 - pad;
-            const width = (bb.x2 - bb.x1) + 2 * pad;
-            const height = (bb.y2 - bb.y1) + 2 * pad;
-            wrapper.style.display = "";
-            wrapper.style.left = `${left}px`;
-            wrapper.style.top = `${top}px`;
-            wrapper.style.width = `${width}px`;
-            wrapper.style.height = `${height}px`;
-        });
+        // Re-entrancy guard (the tap#289 class): reading a member's bounding box below can emit `bounds` on it again.
+        if (syncing) return;
+        if (containerHidden()) {
+            deferred = true;
+            wrappers.forEach(({wrapper}) => { wrapper.style.display = "none"; });
+            return;
+        }
+        deferred = false;
+        syncing = true;
+        try {
+            wrappers.forEach(({config, style, wrapper}) => {
+                const members = resolveMembers(config);
+                if (members.length === 0) {
+                    wrapper.style.display = "none";
+                    return;
+                }
+                const bb = members.boundingBox({includeLabels: false});
+                if (!isFinite(bb.x1) || !isFinite(bb.y1) || !isFinite(bb.x2) || !isFinite(bb.y2)) {
+                    wrapper.style.display = "none";
+                    return;
+                }
+                const pad = style.padding;
+                const left = bb.x1 - pad;
+                const top = bb.y1 - pad;
+                const width = (bb.x2 - bb.x1) + 2 * pad;
+                const height = (bb.y2 - bb.y1) + 2 * pad;
+                wrapper.style.display = "";
+                wrapper.style.left = `${left}px`;
+                wrapper.style.top = `${top}px`;
+                wrapper.style.width = `${width}px`;
+                wrapper.style.height = `${height}px`;
+            });
+        } finally {
+            syncing = false;
+        }
+    }
+
+    // Draws the boxes a hidden container deferred, on the first render after it is shown.
+    function drawDeferred() {
+        if (deferred) syncBoxes();
     }
 
     syncPanZoom();
@@ -172,12 +211,14 @@ export function applyScopeBoxes(cy, boxes) {
     // bounds catches compound-parent bbox changes; position catches simple moves.
     cy.on("position bounds", "node", syncBoxes);
     cy.on("layoutstop", syncBoxes);
+    cy.on("render", drawDeferred);
 
     return {
         destroy: () => {
             cy.off("pan zoom", syncPanZoom);
             cy.off("position bounds", "node", syncBoxes);
             cy.off("layoutstop", syncBoxes);
+            cy.off("render", drawDeferred);
             if (container.parentNode) container.parentNode.removeChild(container);
         },
     };

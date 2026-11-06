@@ -49,7 +49,7 @@ showing only features Gryphon does **not** fully ship today:
 | 2 | **`COLLECT`** | **14.9%** | 10/11 repos | ❌ not in grammar | **C2** |
 | 3 | **var-length path** `-[*n..m]-` | **14.5%** | 7/11 repos | ⚠ parses, executor **rejects** | **E1** |
 | 4 | **`DISTINCT`** | **12.2%** | 7/11 repos | ❌ not in grammar | **A4** |
-| 5 | arithmetic in expressions (`a.x + b.y`) | 10.4% | 10/11 repos | ❌ not built | — (no bucket) |
+| 5 | arithmetic in expressions (`a.x + b.y`) | 10.4% | 10/11 repos | ⚠ first slice built: a date-time field shifted by whole hours in `WHERE` (`req-grid-traversal-lang-temporal-offset`); general arithmetic and `RETURN` arithmetic ❌ | — (no bucket) |
 | 6 | `coalesce()` | 8.7% | 5/11 repos | ❌ not in grammar | H1 |
 | ~~7~~ | `labels()` / `type()` / `keys()` | 6.7% | 7/11 repos | ✅ **not a gap** — values exported by the typed envelope (§3.6) | — |
 | 8 | string fns (`toLower`, `substring`, …) | 6.0% | 5/11 repos | ❌ not built | H2 |
@@ -164,7 +164,7 @@ as it is built; the first named candidate is `DISTINCT`'s container case
 | **`COLLECT`** | **14.9** | 10/11 | 11.0 | ❌ not in grammar (C2) | 🟡&nbsp;**Medium** | `ArrayAgg` annotation + list-ordering / empty-collect corners | container→ |
 | **var-length path** `-[*n..m]-` | **14.5** | 7/11 | 7.5 | ⚠ parses, executor **rejects** (E1) | 🔴&nbsp;**Very&nbsp;High** | recursive CTE (rung 4); or supplanted by named paths | — |
 | **`DISTINCT`** | **12.2** | 7/11 | 8.1 | ❌ not in grammar (A4) | 🟢&nbsp;**Low** | `.distinct()` | scalar · container→ |
-| arithmetic in expressions | 10.4 | 10/11 | 6.1 | ❌ not built | 🟡&nbsp;**Medium** | `F()`-expression node in projection / WHERE | scalar |
+| arithmetic in expressions | 10.4 | 10/11 | 6.1 | ⚠ first slice built (`WHERE base ± hours(x) <op> now()`; temporal-offset) | 🟡&nbsp;**Medium** | `F()`-expression node in projection / WHERE; the built slice is rung 1 (`ExpressionWrapper` over a `Cast` and a scalar `Subquery`) | scalar |
 | `STARTS_WITH`/`ENDS_WITH`/`CONTAINS` | 10.3 | 5/11 | 4.6 | ✅ shipped (B2) | — | — | scalar |
 | undirected edge | 10.1 | 8/11 | 5.7 | ✅ shipped | — | — | — |
 | `COUNT` | 9.9 | 10/11 | 11.7 | ✅ shipped | — | — | — |

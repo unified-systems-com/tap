@@ -39,7 +39,8 @@
          id="tap-table-mount-{{ panel.entity_id }}"
          {% if table_height %}data-tap-table-height="{{ table_height }}"{% endif %}
          {% if table_refresh_seconds %}data-tap-table-refresh="{{ table_refresh_seconds }}"{% endif %}
-         class="tap-table-container"></div>
+         {% if table_empty_text %}data-tap-table-empty-text="{{ table_empty_text }}"{% endif %}
+         class="tap-table-container{% if table_striped %} tap-table--striped{% endif %}"></div>
 
     {# Embedded search result payload (req-web-stdpanel-table-render-3). #}
     {{ table_nodes|json_script:table_data_script_id }}

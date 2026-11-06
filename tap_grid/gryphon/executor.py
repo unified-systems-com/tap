@@ -31,12 +31,17 @@ deduplication — advanced-path queries (NOT EXISTS, COUNT, multi-hop) require a
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from django.db import DataError
+from django.db import DataError, ProgrammingError
+from django.db.models import BooleanField, Expression
+from django.utils import timezone
 
 from tap.db_aliases import SEARCH_READONLY
 from tap_auth.capabilities import READ_CAPABILITY
@@ -67,10 +72,12 @@ from tap_grid.gryphon.ast_nodes import (
     InComparison,
     IsNullComparison,
     KeyStep,
+    LookupClause,
     MatchClause,
     NodePattern,
     NotExistsClause,
     NotPred,
+    NowRef,
     ObservationComparison,
     OrPred,
     ParamNullTest,
@@ -79,6 +86,7 @@ from tap_grid.gryphon.ast_nodes import (
     Predicate,
     ReturnClause,
     ReturnItem,
+    TemporalComparison,
     WhereClause,
 )
 from tap_grid.gryphon.capture import capture_sql, gryphon_stage
@@ -102,6 +110,7 @@ def execute_gryphon(
     *,
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
+    clock: Callable[[], datetime] = timezone.now,
 ) -> dict[str, Any]:
     """Execute a gryphon-type Search and return the canonical graph envelope.
 
@@ -111,6 +120,7 @@ def execute_gryphon(
         db_alias: Database alias for all queries. Defaults to the read-only search alias
             (`READONLY_DB_ALIAS`); pass a writable alias only for a deliberate, reviewed reason.
         layer: GRIFT subgraph return layer (lite, full, extended).
+        clock: Supplies ``now()`` for a temporal comparison; read once per execution.
 
     Returns:
         ``{"nodes": [...], "edges": [...]}`` canonical envelope.
@@ -122,7 +132,7 @@ def execute_gryphon(
     if not query:
         raise SearchExecutionError("Gryphon search definition is missing 'query'.")
 
-    return execute_gryphon_raw(query, inputs, db_alias=db_alias, layer=layer)
+    return execute_gryphon_raw(query, inputs, db_alias=db_alias, layer=layer, clock=clock)
 
 
 @requires_capability(READ_CAPABILITY, operation="execute_gryphon_raw")
@@ -133,6 +143,7 @@ def execute_gryphon_raw(
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
     scope: ReadScope = DEFAULT_SCOPE,
+    clock: Callable[[], datetime] = timezone.now,
 ) -> dict[str, Any]:
     """Execute a raw gryphon query string and return the canonical graph envelope.
 
@@ -159,6 +170,9 @@ def execute_gryphon_raw(
         layer: GRIFT subgraph return layer (lite, full, extended).
         scope: What the read may see (req-grid-traversal-exec-read-scope). Defaults to
             ``LiveNow``; only the caller chooses it — no query text can widen it.
+        clock: Supplies ``now()`` for a temporal comparison (``req-grid-traversal-lang-temporal-offset``).
+            Read once per execution, must return an aware datetime; a fixed clock makes captured SQL
+            and Gridkin past / future rows stable.
 
     Returns:
         ``{"nodes": [...], "edges": [...]}`` canonical envelope.
@@ -166,7 +180,7 @@ def execute_gryphon_raw(
     Raises:
         SearchExecutionError: If the query is malformed, unsupported, or execution fails.
     """
-    return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope)
+    return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock)
 
 
 def _execute_gryphon_raw_impl(
@@ -176,6 +190,7 @@ def _execute_gryphon_raw_impl(
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
     scope: ReadScope = DEFAULT_SCOPE,
+    clock: Callable[[], datetime] = timezone.now,
 ) -> dict[str, Any]:
     """Raw-query execution body, without the read gate.
 
@@ -275,15 +290,32 @@ def _execute_gryphon_raw_impl(
     # correlation) and are not mandatory clauses, so they are outside this walk.
     _reject_variables_bound_in_multiple_match_clauses(ast.match_clauses)
 
-    if ast.optional_match_clauses:
-        with gryphon_stage("optional-match"):
-            return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+    # A WHERE leaf on a variable the ONE mandatory MATCH does not bind is refused here, for the same
+    # reason (req-grid-traversal-lang-shape-10); a multi-MATCH union keeps its per-clause scoping.
+    _reject_unbound_where_variables(ast)
 
-    if _has_advanced_features(ast):
-        with gryphon_stage("advanced"):
-            return _execute_advanced(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+    # A RETURN item on a variable no mandatory MATCH clause binds is refused for the same reason
+    # (req-grid-traversal-lang-shape-11): the type-scan projection skipped it silently.
+    _reject_unbound_return_variables(ast)
 
-    return _execute_ast(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+    # A temporal offset comparison (and its LOOKUPs) is validated and resolved HERE, above the
+    # dispatch fork and after folding: shapes it cannot apply to are refused before any path
+    # that does not know the leaf can see it, then each lookup is checked by a counting read.
+    # The resolved context rides a context variable for the rest of the execution.
+    temporal_ctx = _prepare_temporal(ast, inputs, db_alias=db_alias, scope=scope, clock=clock)
+    token = _TEMPORAL_CTX.set(temporal_ctx)
+    try:
+        if ast.optional_match_clauses:
+            with gryphon_stage("optional-match"):
+                return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+
+        if _has_advanced_features(ast):
+            with gryphon_stage("advanced"):
+                return _execute_advanced(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+
+        return _execute_ast(ast, inputs, db_alias=db_alias, layer=layer, scope=scope)
+    finally:
+        _TEMPORAL_CTX.reset(token)
 
 
 @requires_capability(READ_CAPABILITY, operation="explain_gryphon_raw")
@@ -294,10 +326,11 @@ def explain_gryphon_raw(
     db_alias: str = READONLY_DB_ALIAS,
     layer: SubgraphLayer = "full",
     scope: ReadScope = DEFAULT_SCOPE,
+    clock: Callable[[], datetime] = timezone.now,
 ) -> dict[str, Any]:
     """Execute a raw gryphon query and return both the envelope and the SQL it ran.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@6f701679bd50/cd5080a5afef (surface) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@6f701679bd50/d05d384dc51c (surface) — the
         read-only seam that records issued SQL; snapshot tests and `gryphon explain` read it.
 
     Returns ``{"envelope": <canonical envelope>, "sql": <SqlCapture>}``. The
@@ -318,6 +351,7 @@ def explain_gryphon_raw(
         db_alias: Database alias for all queries.
         layer: GRIFT subgraph return layer (lite, full, extended).
         scope: What the read may see; see ``execute_gryphon_raw``.
+        clock: Supplies ``now()``; see ``execute_gryphon_raw``.
 
     Returns:
         ``{"envelope": {...}, "sql": SqlCapture}``.
@@ -340,7 +374,7 @@ def explain_gryphon_raw(
     # directly — routing through the gated execute_gryphon_raw would record a
     # second, redundant authz query inside the capture.
     with capture_sql() as capture:
-        envelope = _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope)
+        envelope = _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock)
     return {"envelope": envelope, "sql": capture}
 
 
@@ -435,6 +469,77 @@ def _reject_variables_bound_in_multiple_match_clauses(match_clauses: tuple[Match
                     "scans are what you want. Composition is not built (tap#433, "
                     "req-grid-traversal-lang-shape-7)."
                 )
+
+
+def _where_leaf_variables(predicate: Predicate | None) -> list[str]:
+    """Every variable a WHERE tree's leaves name, in source order (duplicates kept)."""
+    if predicate is None:
+        return []
+    if isinstance(predicate, (AndPred, OrPred)):
+        return _where_leaf_variables(predicate.left) + _where_leaf_variables(predicate.right)
+    if isinstance(predicate, NotPred):
+        return _where_leaf_variables(predicate.operand)
+    if isinstance(predicate, (Comparison, InComparison, IsNullComparison, ObservationComparison)):
+        return [predicate.field_path.variable]
+    if isinstance(predicate, TemporalComparison):
+        return [predicate.offset.base.variable]
+    return []
+
+
+def _reject_unbound_where_variables(ast: GryphonAST) -> None:
+    """Refuse a WHERE leaf that names a variable NO mandatory MATCH clause binds (GRY-ARCH-3).
+
+    ``_filter_predicate_for_bindings`` keeps only the leaves whose variable a clause binds. That is
+    right for a multi-MATCH union, where one global WHERE is applied to each clause and a leaf on
+    another clause's variable must not apply here (``req-grid-traversal-lang-shape-5``). A leaf that
+    NO clause binds belongs to nothing: with one MATCH, or with several, the drop is a plain
+    accept-and-drop — a mistyped variable turns the filter into no filter and the query answers a
+    different question. Apply is impossible (there is nothing to filter on), so the leaf is refused
+    with the bound variables named. A leaf some OTHER clause binds keeps the per-clause scoping.
+    Only NAMED node and edge variables bind: an unnamed labelled node is not addressable by its
+    label. OPTIONAL MATCH shares its anchor with the MATCH by design and keeps its own scoping, which
+    already refuses an unbound variable (``req-grid-traversal-lang-shape-10``).
+    """
+    if ast.optional_match_clauses or ast.where_clause is None:
+        return
+    bound: set[str] = set()
+    for mc in ast.match_clauses:
+        bound |= _clause_bound_variables(mc)
+    for var in _where_leaf_variables(ast.where_clause.predicate):
+        if var not in bound:
+            named = ", ".join(f"'{v}'" for v in sorted(bound)) or "none"
+            scope = "this MATCH" if len(ast.match_clauses) == 1 else "any MATCH clause"
+            raise SearchExecutionError(
+                f"WHERE names variable '{var}', which {scope} does not bind (bound: {named}). "
+                "Applying the filter is impossible, and dropping it would return every row the pattern "
+                "matches. Name the node in the pattern, e.g. (x:label), and use that name in WHERE "
+                "(req-grid-traversal-lang-shape-10)."
+            )
+
+
+def _reject_unbound_return_variables(ast: GryphonAST) -> None:
+    """Refuse a RETURN item that names a variable NO mandatory MATCH clause binds (GRY-ARCH-3).
+
+    The node-only type-scan projection skips a RETURN item whose variable is not the scan variable,
+    which is right for a multi-MATCH union (one global RETURN, each clause projects its own
+    variables) and wrong when no clause binds the name: ``MATCH (a:t) RETURN b.name`` then answered a
+    different question with the column missing. The chain road and aggregate arguments already refuse
+    this; the type scan now does too, naming the bound variables. A query with OPTIONAL MATCH keeps its own
+    RETURN handling (``req-grid-traversal-lang-shape-11``).
+    """
+    if ast.optional_match_clauses or ast.return_clause.items is None:
+        return
+    bound: set[str] = set()
+    for mc in ast.match_clauses:
+        bound |= _clause_bound_variables(mc)
+    for item in ast.return_clause.items:
+        if isinstance(item, ReturnItem) and item.path.variable not in bound:
+            named = ", ".join(f"'{v}'" for v in sorted(bound)) or "none"
+            raise SearchExecutionError(
+                f"Unknown variable '{item.path.variable}' in RETURN (bound: {named}). Returning it is "
+                "impossible, and skipping it would drop the column. Name the node in the pattern, e.g. "
+                "(x:label), and use that name in RETURN (req-grid-traversal-lang-shape-11)."
+            )
 
 
 def _fold_param_predicates(predicate: Predicate | None, inputs: dict[str, Any]) -> Predicate | bool | None:
@@ -1087,6 +1192,12 @@ def _reject_where_on_other_variables(predicate: Predicate | None, var: str) -> N
                 f"WHERE names variable '{predicate.field_path.variable}', which this MATCH does not bind; "
                 f"an aggregate over the scan of '{var}' cannot ignore it. Constrain '{var}' only."
             )
+    elif isinstance(predicate, TemporalComparison):
+        if predicate.offset.base.variable != var:
+            raise SearchExecutionError(
+                f"WHERE names variable '{predicate.offset.base.variable}', which this MATCH does not bind; "
+                f"an aggregate over the scan of '{var}' cannot ignore it. Constrain '{var}' only."
+            )
 
 
 def _typescan_aggregate_rows(
@@ -1100,7 +1211,7 @@ def _typescan_aggregate_rows(
 ) -> list[dict[str, Any]]:
     """Aggregate a node-only type scan: ``MATCH (a:T) RETURN MAX(a.data.x) AS m, COUNT(a) AS n``.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-nodeonly-agg@ba484de43853/4155db03c7f9 (derivation) — COUNT / MIN / MAX over a node-only scan lower here
+    TAP-IMPLEMENTS: req-grid-gryphon-nodeonly-agg@ba484de43853/00f5546e7367 (derivation) — COUNT / MIN / MAX over a node-only scan lower here
 
     Rung 1, the same mechanism the edge-chain path uses: non-aggregate RETURN items are the
     GROUP BY keys, the aggregates are ``Count`` / ``Min`` / ``Max`` over annotated columns, and
@@ -1148,7 +1259,7 @@ def _typescan_aggregate_rows(
                 if not arg.steps:
                     annotations[src_alias] = F("pk")
                 elif len(arg.steps) == 1 and isinstance(arg.steps[0], DotStep):
-                    annotations[src_alias] = F(_typescan_orm_path(arg, model_cls))
+                    annotations[src_alias] = _path_ref(_typescan_orm_path(arg, model_cls))
                 else:
                     raise SearchExecutionError("COUNT argument must be a bare variable or single dot-step.")
                 aggregate_annotations[agg_alias] = Count(src_alias)
@@ -1179,7 +1290,7 @@ def _typescan_aggregate_rows(
             )
         _reject_non_projectable_return_path(item.path)
         internal = f"_ts_col_{idx}"
-        annotations[internal] = F(_typescan_orm_path(item.path, model_cls))
+        annotations[internal] = _path_ref(_typescan_orm_path(item.path, model_cls))
         group_pairs.append((internal, _return_item_key(item)))
 
     # ORDER BY names RETURN outputs by key. The group columns are the deterministic default
@@ -1221,7 +1332,7 @@ def _typescan_order_cols(
     items: tuple,
     var: str,
     model_cls: type | None,
-) -> tuple[str, ...]:
+) -> tuple[Any, ...]:
     """Resolve the type-scan projection ORDER BY convention into `.order_by()` columns.
 
     ORDER BY terms name RETURN outputs by key; each maps to the ORM lookup path of
@@ -1244,7 +1355,7 @@ def _typescan_order_cols(
             if not isinstance(item, ReturnItem) or item.path.variable != var:
                 continue
             key_to_path[_return_item_key(item)] = _typescan_orm_path(item.path, model_cls)
-        cols: list[str] = []
+        cols: list[Any] = []
         for ob in order_by.items:
             if ob.path.steps:
                 raise SearchExecutionError(
@@ -1257,8 +1368,7 @@ def _typescan_order_cols(
                 raise SearchExecutionError(
                     f"ORDER BY references '{ob.key}', which is not a RETURN output of this query."
                 )
-            col = key_to_path[ob.key]
-            cols.append(f"-{col}" if ob.descending else col)
+            cols.append(_path_order(key_to_path[ob.key], descending=ob.descending))
         cols.append("entity_id")
         return tuple(cols)
     if limit is not None:
@@ -1276,7 +1386,7 @@ def _apply_order_limit_typescan_envelope(
 ):
     """Apply ORDER BY / LIMIT to a type-scan queryset in graph-envelope mode.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-order-by-envelope@26c6977be171/17bd2b7a441d (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-order-by-envelope@26c6977be171/0537d76762db (derivation) —
         ORDER BY / LIMIT on a type-scan graph envelope is applied here.
 
     Envelope mode has no RETURN aliases, so ORDER BY terms must carry a full
@@ -1309,7 +1419,7 @@ def _apply_order_limit_typescan_envelope(
           ORDER BY n.data.fetched_at DESC LIMIT 1
     """
     if order_by is not None:
-        order_cols: list[str] = []
+        order_cols: list[Any] = []
         for ob in order_by.items:
             if not ob.path.steps:
                 raise SearchExecutionError(
@@ -1325,7 +1435,7 @@ def _apply_order_limit_typescan_envelope(
                     f"'{var}')."
                 )
             col = _typescan_orm_path(ob.path, qs.model)
-            order_cols.append(f"-{col}" if ob.descending else col)
+            order_cols.append(_path_order(col, descending=ob.descending))
         order_cols.append("entity_id")
         qs = qs.order_by(*order_cols)
     elif limit is not None:
@@ -1507,7 +1617,7 @@ def _typescan_orm_path(field_path: FieldPath, model_cls: type | None) -> str:
     # is queried by bracket; a dotted path is REFUSED — see `_json_spine_inner_path`.
     if first in _JSON_TYPED_SPINE_FIELDS:
         inner = _json_spine_inner_path(rest_steps, context="Spine JSON access")
-        return f"entity__{first}__{inner}"
+        return _LiteralKeyPath(f"entity__{first}", inner)
 
     if first in spine_fields:
         raise SearchExecutionError(
@@ -1570,7 +1680,11 @@ _JSON_TYPED_SPINE_FIELDS: frozenset[str] = frozenset({"dimensions"})
 
 
 def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
-    """Lower the steps AFTER a JSON-typed spine field into a Django key path.
+    """Return the ONE literal key addressed by the steps AFTER a JSON-typed spine field.
+
+    The key is returned as itself, never `__`-joined into an ORM string: callers wrap it in
+    :class:`_LiteralKeyPath`, which lowers it through `KeyTransform` so Django never
+    re-splits it (`req-grid-dimension-query-form-4`, `unified-systems-com/tap#1125`).
 
     `Entity.dimensions` is a **flat** object by construction: `req-grid-dimension-em`
     constrains it to "a flat JSON object, not nested namespace objects" whose keys are
@@ -1631,7 +1745,90 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
             f'never holds. Write `dimensions["{suggested}"]` instead.'
         )
 
-    return "__".join(names)
+    return names[0]
+
+
+class _LiteralKeyPath(str):
+    """An ORM path to ONE literal key of a JSON column, e.g. `entity__dimensions` + `tap__cloud`.
+
+    A dimension key is data, not ORM syntax. Spliced into an `entity__dimensions__<key>`
+    string, Django re-splits it on `__` and re-reads a key spelled like a lookup (`isnull`,
+    `contains`, `regex`) as that lookup, so `n.dimensions["tap__cloud"]` returned zero rows
+    (`unified-systems-com/tap#1125`). This path carries the column and the key apart and
+    every consumer lowers it through `KeyTransform` (`_path_ref`, `_path_q`, `_path_order`).
+
+    The `str` value is deliberately NOT a resolvable lookup: a consumer that has not been
+    taught this type fails with a Django `FieldError` instead of silently matching nothing.
+    """
+
+    column: str
+    key: str
+
+    def __new__(cls, column: str, key: str) -> _LiteralKeyPath:
+        self = super().__new__(cls, f"<literal JSON key of {column}>")
+        self.column = column
+        self.key = key
+        return self
+
+
+def _path_ref(path: str) -> Any:
+    """A Django expression for a resolved ORM path (`F(path)`, or `KeyTransform` for a literal key)."""
+    from django.db.models import F
+
+    if isinstance(path, _LiteralKeyPath):
+        from django.db.models.fields.json import KeyTransform
+
+        return KeyTransform(path.key, F(path.column))
+    return F(path)
+
+
+def _path_order(path: str, *, descending: bool) -> Any:
+    """An `.order_by()` term for a resolved ORM path."""
+    if isinstance(path, _LiteralKeyPath):
+        ref = _path_ref(path)
+        return ref.desc() if descending else ref.asc()
+    return f"-{path}" if descending else path
+
+
+def _path_q(path: str, lookup: str, value: Any) -> Any:
+    """`Q(<path>__<lookup>=value)`; a literal key is looked up on its `KeyTransform`, not re-split.
+
+    `lookup` is Django's lookup name (`exact`, `in`, `isnull`, `regex`, `lt`, ...). For an
+    ordinary path this is byte-for-byte the kwarg form the compiler always used.
+    """
+    from django.db.models import Q
+
+    if isinstance(path, _LiteralKeyPath):
+        return Q(_KeyLookup(path.column, path.key, lookup, value))
+    return Q(**{path if lookup == "exact" else f"{path}__{lookup}": value})
+
+
+class _KeyLookup(Expression):
+    """A conditional expression: `<column> -> <key>` compared with `lookup` to `value`.
+
+    It is resolved against the query being built, so the right-hand side is prepared by the
+    key transform's own output field exactly as the kwarg form prepares it.
+    """
+
+    conditional = True
+
+    def __init__(self, column: str, key: str, lookup: str, value: Any):
+        super().__init__(output_field=BooleanField())
+        self.column, self.key, self.lookup, self.value = column, key, lookup, value
+
+    def resolve_expression(
+        self,
+        query: Any = None,
+        allow_joins: bool = True,
+        reuse: Any = None,
+        summarize: bool = False,
+        for_save: bool = False,
+    ) -> Any:
+        from django.db.models import F
+        from django.db.models.fields.json import KeyTransform
+
+        lhs = KeyTransform(self.key, F(self.column)).resolve_expression(query, allow_joins, reuse, summarize)
+        return query.build_lookup([self.lookup], lhs, self.value)
 
 
 def _predicate_field_paths(predicate: Any) -> list[FieldPath]:
@@ -1640,6 +1837,9 @@ def _predicate_field_paths(predicate: Any) -> list[FieldPath]:
         return []
     if isinstance(predicate, (Comparison, InComparison, IsNullComparison, ObservationComparison)):
         return [predicate.field_path]
+    if isinstance(predicate, TemporalComparison):
+        # The base is the only graph field the leaf reads; the lookup path is a scalar source.
+        return [predicate.offset.base]
     if isinstance(predicate, (AndPred, OrPred)):
         return _predicate_field_paths(predicate.left) + _predicate_field_paths(predicate.right)
     if isinstance(predicate, NotPred):
@@ -1679,11 +1879,10 @@ def _bare_spine_orm_path(field_path: FieldPath) -> str:
         if not rest:
             return first
         if first in _JSON_TYPED_SPINE_FIELDS:
-            for step in rest:
-                if not isinstance(step, (DotStep, KeyStep)):
-                    raise SearchExecutionError("Spine JSON access supports dot-steps and bracket-key steps only.")
-            inner = "__".join(s.name if isinstance(s, DotStep) else s.key for s in rest)
-            return f"{first}__{inner}"
+            # The bare spine scan must enforce the same flat-key invariant as
+            # typed scans and chain bindings; a private join bypassed B2 here.
+            inner = _json_spine_inner_path(rest, context="Spine JSON access")
+            return _LiteralKeyPath(first, inner)
         raise SearchExecutionError(f"Spine field {first!r} is a scalar; it cannot be walked into.")
     raise SearchExecutionError(
         f"Field {first!r} is not a spine field; address per-model fields as `<var>.data.{first}`."
@@ -2190,9 +2389,9 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
         if role == "edge":
             ep = binding["edge_path"]
             prefix = f"{ep}__" if ep else ""
-            return f"{prefix}entity__{head}__{inner_path}"
+            return _LiteralKeyPath(f"{prefix}entity__{head}", inner_path)
         ep = binding["entity_path"]
-        return f"{ep}__{head}__{inner_path}"
+        return _LiteralKeyPath(f"{ep}__{head}", inner_path)
 
     if head != _DATA_LANE_PREFIX:
         raise SearchExecutionError(
@@ -2312,10 +2511,25 @@ def _pattern_position_paths(
     return node_paths, edge_paths
 
 
+def _node_edge_name_clash(var: str) -> SearchExecutionError:
+    """The one refusal for a name used as both a node and an edge.
+
+    Shared by the chain lowering (`_repeated_variable_equality_filters`) and the
+    OPTIONAL MATCH builder, so the rule and its remedy cannot hold at one site and
+    not the other (req-grid-traversal-lang-shape-9).
+    """
+    return SearchExecutionError(
+        f"Variable '{var}' names both a node and an edge in the same pattern. "
+        "A node binds an Entity and an edge binds an Edge record, so no value "
+        "can be both and there is no join to apply. Use distinct names — e.g. "
+        f"(...)-[{var}_edge:E]->({var})."
+    )
+
+
 def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[dict[str, str]]) -> dict[str, Any]:
     """Unify a variable that occurs at more than one position in ONE pattern.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@c8c222fdd64d/ed5a2974378f (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@1ea7ff0cf469/75ae565cf150 (derivation) —
         `req-grid-traversal-lang-shape-9`: in-pattern variable reuse is a join, and this
         is the join — the one place the equality between two positions is emitted.
 
@@ -2357,12 +2571,7 @@ def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[di
             return
         seen = first_seen.setdefault(var, (role, path))
         if seen[0] != role:
-            raise SearchExecutionError(
-                f"Variable '{var}' names both a node and an edge in the same pattern. "
-                "A node binds an Entity and an edge binds an Edge record, so no value "
-                "can be both and there is no join to apply. Use distinct names — e.g. "
-                f"(...)-[{var}_edge:E]->({var})."
-            )
+            raise _node_edge_name_clash(var)
         if seen[1] == path:
             return
 
@@ -2607,6 +2816,17 @@ def _guard_negated_far_predicate(
         return
     if isinstance(predicate, (IsNullComparison, ObservationComparison)):
         return
+    if isinstance(predicate, TemporalComparison):
+        # The leaf's base path crosses the same relation a Comparison's does, so a negated
+        # temporal leaf on a far node is refused for the same reason. v0 applies the leaf to a
+        # single hop, where both ends are forward foreign keys, so this is expected not to fire.
+        binding = bindings.get(predicate.offset.base.variable)
+        if negated and binding is not None and _binding_is_multivalued_hop(binding):
+            raise SearchExecutionError(
+                "A negated temporal comparison on a node beyond the root edge of a multi-hop pattern "
+                f"(here on variable '{predicate.offset.base.variable}') is not supported."
+            )
+        return
     if isinstance(predicate, AndPred):
         _guard_negated_far_predicate(predicate.left, bindings, negated=negated)
         _guard_negated_far_predicate(predicate.right, bindings, negated=negated)
@@ -2658,7 +2878,7 @@ def _chain_predicate_q(
             return None
         return _declared_data_types(get_model_class(binding["label"]), field_path)
 
-    return _predicate_to_q(predicate, inputs, _resolve, _declared)
+    return _predicate_to_q(predicate, inputs, _resolve, _declared, lambda leaf: _temporal_to_q(leaf, bindings, inputs))
 
 
 def _apply_predicate_to_qs(
@@ -2669,7 +2889,7 @@ def _apply_predicate_to_qs(
 ):
     """Apply a WHERE predicate tree to an already-built chain queryset.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@24f593de1742/7b84984d6834 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@6de95ee80557/7b84984d6834 (derivation) —
         WHERE field filtering lowers to the queryset here.
 
     TAP-IMPLEMENTS: req-grid-traversal-lang-combinators@0e5170677022/7b84984d6834 (derivation) —
@@ -2718,13 +2938,24 @@ def _flatten_conjunction(
         return [predicate]
     if isinstance(predicate, AndPred):
         return _flatten_conjunction(predicate.left) + _flatten_conjunction(predicate.right)
+    if isinstance(predicate, TemporalComparison):
+        raise SearchExecutionError(
+            "A temporal offset comparison is not supported with OPTIONAL MATCH "
+            "(req-grid-traversal-lang-temporal-offset)."
+        )
     raise SearchExecutionError(
         "This WHERE clause supports only AND-joined comparisons; OR and NOT are not "
         "supported here (OPTIONAL MATCH v0 keeps an AND-only WHERE)."
     )
 
 
-def _predicate_to_q(predicate: Predicate, inputs: dict[str, Any], resolve: Any, declared_types: Any = None):
+def _predicate_to_q(
+    predicate: Predicate,
+    inputs: dict[str, Any],
+    resolve: Any,
+    declared_types: Any = None,
+    temporal: Callable[[TemporalComparison], Any] | None = None,
+):
     """Compile a WHERE predicate tree into a single Django ``Q`` expression.
 
     ``AND`` / ``OR`` / ``NOT`` and parenthesized grouping lower to ``Q`` ``&`` /
@@ -2733,30 +2964,37 @@ def _predicate_to_q(predicate: Predicate, inputs: dict[str, Any], resolve: Any, 
     a ``__isnull`` lookup (``Q(path__isnull=True/False)``). ``resolve`` maps a
     leaf's ``FieldPath`` to its ORM lookup path — the type-scan and chain
     executors pass different resolvers because their querysets are rooted
-    differently.
+    differently. ``temporal`` lowers a `TemporalComparison` leaf; only the single-hop chain
+    path supplies it (it holds the bindings the leaf's base is typed against), so on every
+    other path the leaf is refused here rather than dropped.
     """
-    from django.db.models import Q
-
+    if isinstance(predicate, TemporalComparison):
+        if temporal is None:
+            raise SearchExecutionError(
+                "A temporal offset comparison is not supported on this path: v0 applies it to a single-hop "
+                "pattern only (req-grid-traversal-lang-temporal-offset)."
+            )
+        return temporal(predicate)
     if isinstance(predicate, (Comparison, InComparison)):
         return _comparison_to_q(predicate, resolve(predicate.field_path), inputs, declared_types)
     if isinstance(predicate, IsNullComparison):
         path = resolve(predicate.field_path)
-        return Q(**{f"{path}__isnull": not predicate.negated})
+        return _path_q(path, "isnull", not predicate.negated)
     if isinstance(predicate, ObservationComparison):
         # Null axis: IS UNKNOWN -> __isnull=True, IS KNOWN -> __isnull=False.
         # Type-agnostic (req-grid-traversal-lang-observation).
         path = resolve(predicate.field_path)
-        return Q(**{f"{path}__isnull": predicate.kind == "unknown"})
+        return _path_q(path, "isnull", predicate.kind == "unknown")
     if isinstance(predicate, AndPred):
-        return _predicate_to_q(predicate.left, inputs, resolve, declared_types) & _predicate_to_q(
-            predicate.right, inputs, resolve, declared_types
+        return _predicate_to_q(predicate.left, inputs, resolve, declared_types, temporal) & _predicate_to_q(
+            predicate.right, inputs, resolve, declared_types, temporal
         )
     if isinstance(predicate, OrPred):
-        return _predicate_to_q(predicate.left, inputs, resolve, declared_types) | _predicate_to_q(
-            predicate.right, inputs, resolve, declared_types
+        return _predicate_to_q(predicate.left, inputs, resolve, declared_types, temporal) | _predicate_to_q(
+            predicate.right, inputs, resolve, declared_types, temporal
         )
     if isinstance(predicate, NotPred):
-        return ~_predicate_to_q(predicate.operand, inputs, resolve, declared_types)
+        return ~_predicate_to_q(predicate.operand, inputs, resolve, declared_types, temporal)
     raise SearchExecutionError(f"Unsupported WHERE predicate node: {type(predicate).__name__}")
 
 
@@ -2980,15 +3218,18 @@ def _collect_graph_envelope(
     edge_entity_ids: set[str] = set()
     node_count = len(node_columns)
 
-    for row in rows:
-        for i, val in enumerate(row):
-            if val is None:
-                continue
-            pk = str(val)
-            if i < node_count:
-                node_pks.add(pk)
-            else:
-                edge_entity_ids.add(pk)
+    # The main query runs when `rows` is iterated, so a stored value a temporal cast cannot hold
+    # (or a second lookup row appearing after the counting read) surfaces HERE.
+    with _temporal_read_errors():
+        for row in rows:
+            for i, val in enumerate(row):
+                if val is None:
+                    continue
+                pk = str(val)
+                if i < node_count:
+                    node_pks.add(pk)
+                else:
+                    edge_entity_ids.add(pk)
 
     # Bulk re-fetch under the same scope as the chain, so the envelope can never
     # re-hydrate an element the rows did not match (req-grid-traversal-exec-read-scope-6).
@@ -3016,6 +3257,11 @@ def _filter_predicate_for_bindings(
         return None
     if isinstance(predicate, (Comparison, InComparison, IsNullComparison, ObservationComparison)):
         if predicate.field_path.variable in bindings:
+            return predicate
+        return None
+    if isinstance(predicate, TemporalComparison):
+        # Scoped by the BASE field's variable: the lookup variable is not a binding.
+        if predicate.offset.base.variable in bindings:
             return predicate
         return None
     if isinstance(predicate, AndPred):
@@ -3269,7 +3515,7 @@ class MaterializationPlan:
     aggregate_pairs: tuple[tuple[str, str], ...]
     # Fully-resolved `.order_by()` column args (incl. shape-specific tiebreakers).
     # Empty => do not reorder (keep the queryset's inherited ordering).
-    order_cols: tuple[str, ...]
+    order_cols: tuple[Any, ...]
     # LIMIT AST node (carries `.count`) or None.
     limit: Any = None
     # DISTINCT flag. Always False until `req-grid-gryphon-distinct` lands; the
@@ -3335,6 +3581,424 @@ def _has_extremum(plan: MaterializationPlan) -> bool:
     return any(isinstance(agg, (Min, Max)) for agg in plan.aggregate_annotations.values())
 
 
+# ---------------------------------------------------------------------------
+# Temporal offset comparison (req-grid-traversal-lang-temporal-offset)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _LookupSource:
+    """One resolved ``LOOKUP``: the scoped, filtered relation and the typed expressions it serves.
+
+    ``relation`` is the SAME queryset object the counting read and the embedded scalar
+    subquery are both built from, so the two cannot drift (`...-temporal-offset-25`).
+    """
+
+    clause: LookupClause
+    model_cls: type
+    relation: Any
+
+
+@dataclass(frozen=True)
+class _TemporalContext:
+    """Per-execution state a temporal leaf needs: the clock and the resolved lookups.
+
+    Set in a context variable for the duration of one execution (the same mechanism the
+    SQL-capture stage label uses), so no inputs dict is polluted and no walker signature
+    grows a hidden parameter. ``now`` is read once.
+    """
+
+    now: datetime
+    lookups: dict[str, _LookupSource]
+    # The counting read, deferred so it runs INSIDE the dispatch stage that lowers the first temporal leaf
+    # (see `_temporal_to_q`) and its statements carry that stage's existing label.
+    run_checks: Callable[[], None] = lambda: None
+
+
+_TEMPORAL_CTX: ContextVar[_TemporalContext | None] = ContextVar("gryphon_temporal_ctx", default=None)
+
+# Postgres data errors a temporal cast or shift can raise: 22P02 invalid text representation (a bad cast),
+# 22007 invalid datetime format, 22008 datetime field overflow, 22003 numeric value out of range.
+_TEMPORAL_DATA_SQLSTATES = frozenset({"22P02", "22007", "22008", "22003"})
+
+_TEMPORAL_ACCEPTED = "date-time (a string with format date-time)"
+_HOURS_ACCEPTED = "integer"
+
+
+def _temporal_leaves(predicate: Any) -> list[TemporalComparison]:
+    """Every temporal leaf in a predicate tree (empty for ``None``)."""
+    if predicate is None:
+        return []
+    if isinstance(predicate, TemporalComparison):
+        return [predicate]
+    if isinstance(predicate, (AndPred, OrPred)):
+        return _temporal_leaves(predicate.left) + _temporal_leaves(predicate.right)
+    if isinstance(predicate, NotPred):
+        return _temporal_leaves(predicate.operand)
+    return []
+
+
+def _temporal_stored_value_error() -> SearchExecutionError:
+    """A stored value the temporal cast cannot hold, or a result outside the timestamp range.
+
+    Constant on purpose, like :func:`_stored_value_error`: the driver text can quote a stored
+    value, so it stays on ``__cause__`` and never reaches the caller.
+    """
+    return SearchExecutionError(
+        "A stored value could not be used in a temporal offset comparison, or the offset moved a date-time "
+        "outside the supported range (the date-time and hours fields are cast to their declared types and "
+        "the shifted result must be a valid timestamp). Check the stored values and the size of the offset."
+    )
+
+
+def _temporal_cardinality_error() -> SearchExecutionError:
+    return SearchExecutionError(
+        "A LOOKUP matched more than one row when the query ran (a row appeared after the lookup "
+        "was checked). A lookup must select exactly one row; narrow its properties."
+    )
+
+
+def _mapped_read_error(plan: MaterializationPlan | None, exc: Exception) -> SearchExecutionError | None:
+    """Map a database error from a Gryphon read to a refusal, or ``None`` to re-raise it.
+
+    A stored value the declared type cannot hold fails MIN / MAX or a temporal cast inside
+    Postgres (``DataError``); a second lookup row appearing after the counting read raises
+    sqlstate 21000 (``CardinalityViolation``, wrapped by Django as ``ProgrammingError``).
+    Anything else is not this module's to reinterpret.
+    """
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(exc, ProgrammingError):
+        if _TEMPORAL_CTX.get() is not None and getattr(cause, "sqlstate", None) == "21000":
+            return _temporal_cardinality_error()
+        return None
+    if isinstance(exc, DataError):
+        # Only the data errors a temporal cast or shift can raise are blamed on the temporal leaf; any
+        # other DataError (for example an invalid regex, 2201B) is not this feature's to relabel.
+        if _TEMPORAL_CTX.get() is not None and getattr(cause, "sqlstate", None) in _TEMPORAL_DATA_SQLSTATES:
+            return _temporal_stored_value_error()
+        if plan is not None and _has_extremum(plan):
+            return _stored_value_error()
+    return None
+
+
+@contextmanager
+def _temporal_read_errors() -> Iterator[None]:
+    """Map the temporal database errors raised inside the block (envelope path and lookup reads)."""
+    try:
+        yield
+    except (DataError, ProgrammingError) as exc:
+        mapped = _mapped_read_error(None, exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+
+
+def _require_aware(value: datetime, what: str) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        raise SearchExecutionError(
+            f"{what} is a naive date-time. A temporal comparison needs an instant that carries a UTC offset "
+            "(e.g. 2026-01-02T00:00:00Z); Gryphon does not guess a time zone."
+        )
+    return value
+
+
+def _validate_temporal_shape(ast: GryphonAST, temporal: list[TemporalComparison]) -> None:
+    """Refuse every query shape a temporal leaf cannot be applied to (GRY-ARCH-3).
+
+    v0 applies the leaf on exactly one shape: ONE `MATCH` clause with ONE directed single-hop
+    pattern, whatever RETURN form the one-hop machinery supports. Every other shape is refused
+    here, ABOVE the dispatch fork, so no walker on a path that does not know the leaf can drop
+    it silently (`req-grid-traversal-lang-temporal-offset-16/-23/-24`).
+    """
+
+    def refuse(what: str) -> SearchExecutionError:
+        return SearchExecutionError(
+            f"A temporal offset comparison is not supported with {what}. v0 applies it to ONE single-hop "
+            "pattern in ONE MATCH clause, e.g. MATCH (a:x)-[:E]->(b:y) WHERE b.data.opened_at + hours(12) "
+            "< now() (req-grid-traversal-lang-temporal-offset)."
+        )
+
+    if len(ast.match_clauses) != 1:
+        raise refuse("more than one MATCH clause")
+    if ast.optional_match_clauses:
+        raise refuse("OPTIONAL MATCH")
+    if ast.not_exists_clauses:
+        raise refuse("NOT EXISTS")
+    patterns = ast.match_clauses[0].patterns
+    if len(patterns) != 1:
+        raise refuse("more than one pattern in the MATCH clause")
+    pattern = patterns[0]
+    if not pattern.edges:
+        raise refuse("a node-only scan")
+    if len(pattern.edges) != 1:
+        raise refuse("a multi-hop pattern")
+    edge = pattern.edges[0]
+    if edge.direction == "any":
+        raise refuse("an undirected hop")
+    if edge.min_hops != 1 or edge.max_hops != 1:
+        raise refuse("a variable-length hop")
+
+    # The leaf's base must be a NAMED node of this pattern. `_filter_predicate_for_bindings` scopes a
+    # WHERE to the variables a clause binds and drops a leaf whose variable it does not (right for a
+    # multi-MATCH union, a silent drop for ONE MATCH), and an unnamed labelled node binds nothing.
+    named = {node.variable for node in pattern.nodes if node.variable}
+    for leaf in temporal:
+        base_var = leaf.offset.base.variable
+        if base_var not in named:
+            raise SearchExecutionError(
+                f"A temporal comparison reads '{base_var}', which is not a named node variable of the MATCH "
+                f"pattern (bound: {', '.join(sorted(named)) or 'none'}). Name the node and use that variable, "
+                "e.g. MATCH (r:x)-[:E]->(t:y) WHERE t.data.opened_at + hours(12) < now() "
+                "(req-grid-traversal-lang-temporal-offset)."
+            )
+
+    # ORDER BY / LIMIT follow what the one-hop path already allows: an aggregate RETURN routes to the
+    # advanced path, which orders and limits; an envelope or plain projection refuses them. Say so here,
+    # before any lookup runs.
+    has_aggregate = any(isinstance(item, AggregateReturnItem) for item in (ast.return_clause.items or ()))
+    if (ast.order_by is not None or ast.limit is not None) and not has_aggregate:
+        raise refuse("ORDER BY / LIMIT without an aggregate RETURN")
+
+
+def _prepare_temporal(
+    ast: GryphonAST,
+    inputs: dict[str, Any],
+    *,
+    db_alias: str,
+    scope: ReadScope,
+    clock: Callable[[], datetime],
+) -> _TemporalContext | None:
+    """Validate a temporal query, read the clock once and resolve every ``LOOKUP``; ``None`` if there is none.
+
+    Runs after parameter folding (so a lookup whose only use folded away is seen as unused) and
+    after the dispatch shape is validated, and BEFORE the main query: each lookup is checked by
+    a counting read built from the very relation the main query embeds as a scalar subquery.
+    Zero rows, more than one, or a null selected field raise, because a scalar subquery would
+    yield a silent NULL for none and a null offset lowered to FALSE becomes TRUE under NOT
+    (`...-temporal-offset-3/-10/-25`).
+    """
+    from tap_grid.registry import get_model_class
+
+    temporal = _temporal_leaves(ast.where_clause.predicate if ast.where_clause else None)
+    for nec in ast.not_exists_clauses:
+        # A leaf inside NOT EXISTS must reach the shape check (which refuses NOT EXISTS), not lowering.
+        if nec.where_clause is not None:
+            temporal += _temporal_leaves(nec.where_clause.predicate)
+    if not temporal:
+        if ast.lookup_clauses:
+            raise SearchExecutionError(
+                f"LOOKUP variable '{ast.lookup_clauses[0].variable}' is not used by any temporal comparison "
+                "(its only use was removed by an input-null predicate). An unused LOOKUP would silently "
+                "select nothing; remove it or keep the comparison it serves."
+            )
+        return None
+    _validate_temporal_shape(ast, temporal)
+
+    used_by_var: dict[str, list[FieldPath]] = {}
+    for leaf in temporal:
+        if isinstance(leaf.offset.hours, FieldPath):
+            used_by_var.setdefault(leaf.offset.hours.variable, []).append(leaf.offset.hours)
+    for lc in ast.lookup_clauses:
+        if lc.variable not in used_by_var:
+            raise SearchExecutionError(
+                f"LOOKUP variable '{lc.variable}' is not used by any temporal comparison (its only use was "
+                "removed by an input-null predicate). An unused LOOKUP would silently select nothing."
+            )
+
+    tick = clock()
+    if not isinstance(tick, datetime):
+        raise SearchExecutionError(
+            f"The query clock returned {type(tick).__name__}, not a date-time. A clock must return an aware datetime."
+        )
+    now = _require_aware(tick, "The query clock")
+    lookups: dict[str, _LookupSource] = {}
+    for lc in ast.lookup_clauses:
+        try:
+            model_cls = get_model_class(lc.label)
+        except KeyError:
+            raise SearchExecutionError(f"LOOKUP {lc.variable}: unknown entity type '{lc.label}'.") from None
+        for key, raw in lc.props.items():
+            if _resolve_value(raw, inputs) is None:
+                raise SearchExecutionError(
+                    f"LOOKUP {lc.variable} = (:{lc.label} ...): property '{key}' is null. A null key would match "
+                    "nothing and silently turn the deadline test into 'everything' under NOT; supply a value."
+                )
+        node = NodePattern(variable=lc.variable, label=lc.label, inline_props=lc.props)
+        resolve_path, declared = _model_path_helpers(model_cls)
+        relation = read_scope.node_relation(scope, model_cls, db_alias=db_alias).filter(
+            **_node_inline_prop_filters(node, inputs, resolve_path, declared)
+        )
+        lookups[lc.variable] = _LookupSource(clause=lc, model_cls=model_cls, relation=relation)
+
+    done = False
+
+    def run_checks() -> None:
+        """The counting read: each lookup must select exactly one row with a non-null field.
+
+        Runs once, at the first lowering of a temporal leaf, inside whichever dispatch stage is lowering. It deliberately carries NO stage label
+        of its own: a new `gryphon_stage` literal would change the executor's stage inventory, which the
+        Gridkin stage-coverage tripwire pins, and a statement with no label is itself refused there; the
+        label only names statements in captured SQL snapshots.
+        """
+        nonlocal done
+        if done:
+            return
+        done = True
+        for var, paths in used_by_var.items():
+            source = lookups[var]
+            exprs = {f"_lk{i}": _lookup_value_expr(source, path) for i, path in enumerate(dict.fromkeys(paths))}
+            token = _TEMPORAL_CTX.set(ctx)
+            try:
+                with _temporal_read_errors():
+                    rows = list(source.relation.annotate(**exprs).values_list(*exprs.keys())[:2])
+            finally:
+                _TEMPORAL_CTX.reset(token)
+            keys = ", ".join(f"{k}={_resolve_value(v, inputs)!r}" for k, v in source.clause.props.items())
+            where = f"LOOKUP {var} = (:{source.clause.label} {{{keys}}})"
+            if not rows:
+                raise SearchExecutionError(f"{where} matched no row. A lookup must select exactly one row.")
+            if len(rows) > 1:
+                raise SearchExecutionError(
+                    f"{where} matched more than one row. A lookup must select exactly one row; narrow its properties."
+                )
+            if any(value is None for value in rows[0]):
+                raise SearchExecutionError(
+                    f"{where} selected a row whose hours field is null. A null offset is refused, not treated "
+                    "as zero or as no match."
+                )
+
+    ctx = _TemporalContext(now=now, lookups=lookups, run_checks=run_checks)
+    return ctx
+
+
+def _model_path_helpers(
+    model_cls: type,
+) -> tuple[Callable[[FieldPath], str], Callable[[FieldPath], set[str] | None]]:
+    """The type-scan path resolver and declared-type lookup for one model (typed, not lambdas)."""
+
+    def resolve_path(fp: FieldPath) -> str:
+        return _typescan_orm_path(fp, model_cls)
+
+    def declared(fp: FieldPath) -> set[str] | None:
+        return _declared_data_types(model_cls, fp)
+
+    return resolve_path, declared
+
+
+def _lookup_value_expr(source: _LookupSource, path: FieldPath) -> Any:
+    """The typed (integer) expression for one lookup field, over the lookup model."""
+    resolve_path, _declared = _model_path_helpers(source.model_cls)
+
+    def resolve(_binding: dict[str, Any], fp: FieldPath) -> str:
+        return resolve_path(fp)
+
+    expr, _kind = _typed_data_lane_source(
+        f"hours({_format_field_path(path)})",
+        "hours() reads",
+        "hours(p.data.<field>) on LOOKUP p = (:<type> {...})",
+        f"hours() takes only an {_HOURS_ACCEPTED} field",
+        _HOURS_ACCEPTED,
+        frozenset({"integer"}),
+        {"role": "node", "label": source.clause.label},
+        path,
+        resolve,
+    )
+    return expr
+
+
+def _temporal_to_q(leaf: TemporalComparison, bindings: dict[str, dict[str, Any]], inputs: dict[str, Any]) -> Any:
+    """Lower a temporal leaf to a ``Q``: the comparison conjoined with a not-null guard on the base.
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@7531c8606d14/46caab7a343b (derivation) — the offset comparison
+        lowers here: base shifted by whole hours, compared with the clock or a supplied instant.
+
+    Rung 1: ``F``/``Cast`` of the base, plus-or-minus an ``ExpressionWrapper`` of the integer
+    hours times ``Value(timedelta(hours=1))`` (Django has no integer-times-duration rule without
+    the wrapper), compared through Django's own ``LessThan`` family and composed through ``Q``.
+    The guard is ``IsNull(base_expr, False)`` on the CAST expression itself: a conditional
+    expression gets no null guard from Django, and Django's key-path null test asks whether the key
+    EXISTS, so a key holding JSON ``null`` would pass a guard placed on the key path; the cast
+    (``->>``) turns that JSON null into SQL NULL, which is what the guard tests. Without the guard ``NOT`` of
+    a null-based row would be UNKNOWN and dropped, which disagrees with every sibling comparison.
+    """
+    from django.db.models import DateTimeField, DurationField, ExpressionWrapper, Q, Subquery, Value
+    from django.db.models.lookups import GreaterThan, GreaterThanOrEqual, IsNull, LessThan, LessThanOrEqual
+
+    ctx = _TEMPORAL_CTX.get()
+    if ctx is None:
+        raise SearchExecutionError("Internal: a temporal comparison reached lowering without an execution context.")
+    # The counting read runs at the first lowering of a temporal leaf: the queryset is lazy, so this precedes
+    # the main query on every route, inside whichever existing dispatch stage is lowering (no new stage label).
+    ctx.run_checks()
+
+    base_path = leaf.offset.base
+    binding = bindings.get(base_path.variable)
+    if binding is None:
+        raise SearchExecutionError(f"Unknown variable '{base_path.variable}' in WHERE predicate.")
+    base_expr, _ = _typed_data_lane_source(
+        f"{_format_field_path(base_path)} + hours(...)",
+        "a temporal offset shifts",
+        "t.data.<field> + hours(...) on (t:<type>)",
+        f"A temporal offset takes only a {_TEMPORAL_ACCEPTED} base",
+        _TEMPORAL_ACCEPTED,
+        frozenset({"date-time"}),
+        binding,
+        base_path,
+    )
+
+    hours = leaf.offset.hours
+    one_hour = Value(timedelta(hours=1), output_field=DurationField())
+    if isinstance(hours, FieldPath):
+        source = ctx.lookups[hours.variable]
+        field_expr = _lookup_value_expr(source, hours)
+        sub = source.relation.annotate(_lk=field_expr).values("_lk")
+        offset: Any = ExpressionWrapper(Subquery(sub) * one_hour, output_field=DurationField())
+    else:
+        count = _resolve_value(hours, inputs)
+        if count is None:
+            raise SearchExecutionError(
+                "hours(...) received a null value. A null offset is refused, not treated as zero."
+            )
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise SearchExecutionError(
+                f"hours(...) takes a whole number; got {type(count).__name__} ({count!r}). Gryphon does not coerce."
+            )
+        try:
+            offset = Value(timedelta(hours=count), output_field=DurationField())
+        except OverflowError:
+            raise SearchExecutionError(f"hours({count}) is outside the range an offset can hold.") from None
+
+    operand = leaf.operand
+    if isinstance(operand, NowRef):
+        instant = ctx.now
+    else:
+        raw = _resolve_value(operand, inputs)
+        if raw is None:
+            raise SearchExecutionError(
+                f"Input '{operand.name}' is null. A null instant is refused: a comparison with NULL would turn "
+                "into 'everything' under NOT. Supply an ISO-8601 date-time with a UTC offset."
+            )
+        if isinstance(raw, datetime):
+            instant = raw
+        elif isinstance(raw, str):
+            try:
+                instant = datetime.fromisoformat(raw)
+            except ValueError:
+                raise SearchExecutionError(
+                    f"Input '{operand.name}' ({raw!r}) is not an ISO-8601 date-time. Gryphon does not coerce."
+                ) from None
+        else:
+            raise SearchExecutionError(
+                f"Input '{operand.name}' must be an ISO-8601 date-time string; got {type(raw).__name__}."
+            )
+        instant = _require_aware(instant, f"Input '{operand.name}'")
+
+    shifted = base_expr + offset if leaf.offset.sign == "+" else base_expr - offset
+    lookup_cls = {"<": LessThan, "<=": LessThanOrEqual, ">": GreaterThan, ">=": GreaterThanOrEqual}[leaf.op]
+    comparison = lookup_cls(shifted, Value(instant, output_field=DateTimeField()))
+    return Q(comparison) & Q(IsNull(base_expr, False))
+
+
 def _json_null_collapsed(annotations: dict[str, Any], group_internals: list[str], qs: Any) -> dict[str, Any]:
     """Make a JSON group key treat a stored JSON ``null`` and an absent key as one group.
 
@@ -3368,7 +4032,7 @@ def _json_null_collapsed(annotations: dict[str, Any], group_internals: list[str]
 def materialize_rows(plan: MaterializationPlan) -> list[dict[str, Any]]:
     """The shared Layer-B row backend: a resolved plan -> the ``rows`` list.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-row-materialization@edbd98db287d/3243b67421f3 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-exec-row-materialization@edbd98db287d/7c14471245c6 (derivation) —
         the requirement exists to forbid per-dispatch row tails; this function is the one
         backend every shape reaches, so a fifth row tail is a defect by construction.
 
@@ -3417,10 +4081,11 @@ def materialize_rows(plan: MaterializationPlan) -> list[dict[str, Any]]:
             return []
         try:
             totals = qs.order_by().aggregate(**plan.aggregate_annotations)
-        except DataError as exc:
-            if not _has_extremum(plan):
+        except (DataError, ProgrammingError) as exc:
+            mapped = _mapped_read_error(plan, exc)
+            if mapped is None:
                 raise
-            raise _stored_value_error() from exc
+            raise mapped from exc
         return _rows_from_values([totals], plan.group_pairs, plan.aggregate_pairs, plan.aggregate_postprocess)
     qs = qs.values(*group_internals)
     if plan.aggregate_annotations:
@@ -3432,10 +4097,11 @@ def materialize_rows(plan: MaterializationPlan) -> list[dict[str, Any]]:
 
     try:
         raw_rows = list(qs)
-    except DataError as exc:
-        if not _has_extremum(plan):
+    except (DataError, ProgrammingError) as exc:
+        mapped = _mapped_read_error(plan, exc)
+        if mapped is None:
             raise
-        raise _stored_value_error() from exc
+        raise mapped from exc
     return _rows_from_values(raw_rows, plan.group_pairs, plan.aggregate_pairs, plan.aggregate_postprocess)
 
 
@@ -3459,6 +4125,107 @@ def _format_temporal(value: Any) -> str:
     return str(value.isoformat())
 
 
+def _typed_data_lane_source(
+    subject: str,
+    usage: str,
+    example: str,
+    only: str,
+    accepted: str,
+    kinds: frozenset[str],
+    binding: dict[str, Any],
+    arg: FieldPath,
+    resolve: Callable[[dict[str, Any], FieldPath], str] | None = None,
+) -> tuple[Any, str]:
+    """Resolve a typed data-lane field to an ORM expression cast to its declared type.
+
+    The one derivation of "what is this field's declared scalar type and how is it read as
+    that type", shared by MIN / MAX (``_extremum_aggregate``) and the temporal offset
+    (``_temporal_to_q``). Returns ``(expression, kind)`` where ``kind`` is ``integer``,
+    ``number``, ``date-time`` or ``date``. A JSON sub-key (``->>`` text) or a text column is
+    cast to the declared type unless the stored column already has it, so it never compares as
+    text. ``kinds`` narrows what the caller accepts. Anything undeclared, open, a spine field
+    or an edge field is rejected, naming ``accepted``.
+    """
+    from django.db import models as dj_models
+    from django.db.models import F
+    from django.db.models.fields.json import KeyTextTransform, KeyTransform
+    from django.db.models.functions import Cast
+
+    from tap_grid.registry import get_model_class
+
+    rendered = _format_field_path(arg)
+    steps = arg.steps
+    if (
+        binding.get("role") != "node"
+        or not binding.get("label")
+        or not steps
+        or not isinstance(steps[0], DotStep)
+        or steps[0].name != _DATA_LANE_PREFIX
+    ):
+        raise SearchExecutionError(
+            f"{subject} is not supported: {usage} a typed data-lane field of a labelled "
+            f"node, e.g. {example}. Accepted types: {accepted}."
+        )
+    model_cls = get_model_class(binding["label"])
+    leaf = _data_lane_leaf_schema(model_cls, arg)
+    declared = _schema_type_set(leaf) if leaf is not None else None
+    scalar = (declared or set()) - {"null"}
+    if leaf is None or not scalar:
+        raise SearchExecutionError(
+            f"{subject} is not supported: {rendered} has no declared scalar type "
+            f"(an undeclared field, or an open or opaque blob). Accepted types: {accepted}."
+        )
+    shown = ", ".join(sorted(scalar))
+    fmt = leaf.get("format")
+    if scalar <= {"integer"}:
+        target: Any = dj_models.BigIntegerField()
+        kind = "integer"
+    elif scalar <= {"integer", "number"}:
+        target = dj_models.FloatField()
+        kind = "number"
+    elif scalar == {"string"} and fmt == "date-time":
+        target = dj_models.DateTimeField()
+        kind = "date-time"
+    elif scalar == {"string"} and fmt == "date":
+        target = dj_models.DateField()
+        kind = "date"
+    else:
+        kind = ""
+    if kind not in kinds:
+        raise SearchExecutionError(
+            f"{subject} is not supported: {rendered} is declared {{{shown}}}"
+            f"{' (format ' + str(fmt) + ')' if fmt else ''}. {only}."
+        )
+
+    # The shared resolver (and its data-lane allowlist) produces the ORM path; a JSON
+    # sub-key is treated exactly as a column is, then cast to the declared type.
+    # `resolve` lets the node-only type scan supply its own resolver (the queryset there is on
+    # the per-model class, not the Edge chain); both run the same data-lane allowlist.
+    orm_path = (resolve or _resolve_orm_path)(binding, arg)
+    key_steps = len(steps) - 2  # steps after `data.<column>`
+    if key_steps > 0:
+        parts = orm_path.split("__")
+        expr: Any = F("__".join(parts[:-key_steps]))
+        keys = parts[-key_steps:]
+        for key in keys[:-1]:
+            expr = KeyTransform(key, expr)
+        source: Any = Cast(KeyTextTransform(keys[-1], expr), target)
+    else:
+        column_step = steps[1]
+        assert isinstance(column_step, DotStep)  # _data_lane_leaf_schema only resolves a dot-step column
+        column = model_cls._meta.get_field(column_step.name)  # type: ignore[attr-defined]
+        if kind in ("integer", "number"):
+            native = isinstance(column, dj_models.IntegerField) or (
+                kind == "number" and isinstance(column, dj_models.FloatField)
+            )
+        elif kind == "date-time":
+            native = isinstance(column, dj_models.DateTimeField)
+        else:
+            native = isinstance(column, dj_models.DateField) and not isinstance(column, dj_models.DateTimeField)
+        source = F(orm_path) if native else Cast(F(orm_path), target)
+    return source, kind
+
+
 def _extremum_aggregate(
     function: str,
     binding: dict[str, Any],
@@ -3467,7 +4234,7 @@ def _extremum_aggregate(
 ) -> tuple[Any, Callable[[str], Any], Callable[[Any], Any] | None]:
     """Lower ``MIN(<field path>)`` / ``MAX(<field path>)`` to an ORM aggregate.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-minmax@191d335b158b/47c4c3503018 (derivation) — MIN / MAX lower here: typed
+    TAP-IMPLEMENTS: req-grid-gryphon-minmax@191d335b158b/adcc5458701f (derivation) — MIN / MAX lower here: typed
         comparison, nulls ignored, the shared field-path resolver, ISO-string results.
 
     Returns ``(source_expression, aggregate_factory, postprocess)``: the expression
@@ -3501,83 +4268,21 @@ def _extremum_aggregate(
           MATCH (v:grid_fixtures__hub)-[:PG_LINKS__grid_fixtures]->(f:grid_fixtures__leaf)-[:PG_LINKS__grid_fixtures]->(a:grid_fixtures__node)
           RETURN v.name AS vulnerability, MIN(a.data.observed_at) AS first_seen, MAX(a.data.severity_score) AS highest
     """
-    from django.db import models as dj_models
-    from django.db.models import F, Max, Min
-    from django.db.models.fields.json import KeyTextTransform, KeyTransform
-    from django.db.models.functions import Cast
-
-    from tap_grid.registry import get_model_class
+    from django.db.models import Max, Min
 
     name = function.upper()
-    rendered = _format_field_path(arg)
-    steps = arg.steps
-    if (
-        binding.get("role") != "node"
-        or not binding.get("label")
-        or not steps
-        or not isinstance(steps[0], DotStep)
-        or steps[0].name != _DATA_LANE_PREFIX
-    ):
-        raise SearchExecutionError(
-            f"{name}({rendered}) is not supported: {name} compares a typed data-lane field of a labelled "
-            f"node, e.g. {name}(n.data.<field>) on (n:<type>). Accepted types: {_EXTREMUM_ACCEPTED}."
-        )
-    model_cls = get_model_class(binding["label"])
-    leaf = _data_lane_leaf_schema(model_cls, arg)
-    declared = _schema_type_set(leaf) if leaf is not None else None
-    scalar = (declared or set()) - {"null"}
-    if leaf is None or not scalar:
-        raise SearchExecutionError(
-            f"{name}({rendered}) is not supported: {rendered} has no declared scalar type "
-            f"(an undeclared field, or an open or opaque blob). Accepted types: {_EXTREMUM_ACCEPTED}."
-        )
-    shown = ", ".join(sorted(scalar))
-    fmt = leaf.get("format")
-    if scalar <= {"integer"}:
-        target: Any = dj_models.BigIntegerField()
-        kind = "integer"
-    elif scalar <= {"integer", "number"}:
-        target = dj_models.FloatField()
-        kind = "number"
-    elif scalar == {"string"} and fmt == "date-time":
-        target = dj_models.DateTimeField()
-        kind = "date-time"
-    elif scalar == {"string"} and fmt == "date":
-        target = dj_models.DateField()
-        kind = "date"
-    else:
-        raise SearchExecutionError(
-            f"{name}({rendered}) is not supported: {rendered} is declared {{{shown}}}"
-            f"{' (format ' + str(fmt) + ')' if fmt else ''}. {name} compares only {_EXTREMUM_ACCEPTED}."
-        )
-
-    # The shared resolver (and its data-lane allowlist) produces the ORM path; a JSON
-    # sub-key is treated exactly as a column is, then cast to the declared type.
-    # `resolve` lets the node-only type scan supply its own resolver (the queryset there is on
-    # the per-model class, not the Edge chain); both run the same data-lane allowlist.
-    orm_path = (resolve or _resolve_orm_path)(binding, arg)
+    source, kind = _typed_data_lane_source(
+        f"{name}({_format_field_path(arg)})",
+        f"{name} compares",
+        f"{name}(n.data.<field>) on (n:<type>)",
+        f"{name} compares only {_EXTREMUM_ACCEPTED}",
+        _EXTREMUM_ACCEPTED,
+        frozenset({"integer", "number", "date-time", "date"}),
+        binding,
+        arg,
+        resolve,
+    )
     postprocess = _format_temporal if kind in ("date-time", "date") else None
-    key_steps = len(steps) - 2  # steps after `data.<column>`
-    if key_steps > 0:
-        parts = orm_path.split("__")
-        expr: Any = F("__".join(parts[:-key_steps]))
-        keys = parts[-key_steps:]
-        for key in keys[:-1]:
-            expr = KeyTransform(key, expr)
-        source: Any = Cast(KeyTextTransform(keys[-1], expr), target)
-    else:
-        column_step = steps[1]
-        assert isinstance(column_step, DotStep)  # _data_lane_leaf_schema only resolves a dot-step column
-        column = model_cls._meta.get_field(column_step.name)  # type: ignore[attr-defined]
-        if kind in ("integer", "number"):
-            native = isinstance(column, dj_models.IntegerField) or (
-                kind == "number" and isinstance(column, dj_models.FloatField)
-            )
-        elif kind == "date-time":
-            native = isinstance(column, dj_models.DateTimeField)
-        else:
-            native = isinstance(column, dj_models.DateField) and not isinstance(column, dj_models.DateTimeField)
-        source = F(orm_path) if native else Cast(F(orm_path), target)
     agg_cls = Min if function == "min" else Max
     return source, (lambda alias: agg_cls(alias)), postprocess
 
@@ -3592,10 +4297,10 @@ def _compute_rows(
 ) -> list[dict[str, Any]]:
     """Execute the queryset and produce row dicts honoring RETURN aliases and aggregates.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-count@3d4f1458fd64/1ae3a8085fbc (derivation) — COUNT
+    TAP-IMPLEMENTS: req-grid-gryphon-count@3d4f1458fd64/d62cc67d040f (derivation) — COUNT
         aggregation and its implicit GROUP BY key set compute here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-rows@577171676b4f/1ae3a8085fbc (derivation) — the envelope's
+    TAP-IMPLEMENTS: req-grid-gryphon-rows@577171676b4f/d62cc67d040f (derivation) — the envelope's
         rows field is populated here.
 
     All RETURN columns are first annotated as F-aliases on the queryset, then
@@ -3656,7 +4361,7 @@ def _compute_rows(
         last_dot_step_name = fp.steps[-1].name if isinstance(fp.steps[-1], DotStep) else fp.steps[0].name
         user_alias = fi.alias or last_dot_step_name
         internal = f"_g_col_{idx}"
-        annotations[internal] = F(orm_path)
+        annotations[internal] = _path_ref(orm_path)
         group_by_pairs.append((internal, user_alias))
 
     aggregate_annotations: dict[str, Any] = {}
@@ -3938,10 +4643,10 @@ def _comparison_to_q(
 ):
     """Translate a single comparison leaf into a Django ``Q`` over ``orm_path``.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-string-match@252cba1f51eb/a58650d98495 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-string-match@252cba1f51eb/4d2ba56043d6 (derivation) —
         STARTS_WITH / ENDS_WITH / CONTAINS lower to Q objects here.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-regex@27b99acd119d/a58650d98495 (derivation) — the =~
+    TAP-IMPLEMENTS: req-grid-traversal-lang-regex@27b99acd119d/4d2ba56043d6 (derivation) — the =~
         regex predicate lowers to a Q object here.
 
     The shared leaf compiler for every WHERE path: :func:`_predicate_to_q` calls
@@ -4001,15 +4706,15 @@ def _comparison_to_q(
 
     if isinstance(comp, InComparison):
         members = [_resolve_value(v, inputs) for v in comp.values]
-        return Q(**{f"{orm_path}__in": members})
+        return _path_q(orm_path, "in", members)
 
     if isinstance(comp, IsNullComparison):
-        return Q(**{f"{orm_path}__isnull": not comp.negated})
+        return _path_q(orm_path, "isnull", not comp.negated)
 
     if isinstance(comp, ObservationComparison):
         # IS UNKNOWN -> __isnull=True, IS KNOWN -> __isnull=False (null axis;
         # used here so the OPTIONAL MATCH Count(filter=...) leaf path handles it).
-        return Q(**{f"{orm_path}__isnull": comp.kind == "unknown"})
+        return _path_q(orm_path, "isnull", comp.kind == "unknown")
 
     value = _resolve_value(comp.value, inputs)
 
@@ -4028,27 +4733,27 @@ def _comparison_to_q(
         return ~Q(pk__isnull=True) & Q(pk__isnull=True)
 
     if comp.op == "!=":
-        return ~Q(**{orm_path: value})
+        return ~_path_q(orm_path, "exact", value)
     # The regex operator (req-grid-traversal-lang-regex) always lowers to
     # Django's `__regex` lookup (Postgres `~`). Inline flags `(?i)`, `(?s)`,
     # `(?m)`, `(?x)` are passed through verbatim — the executor does NOT
     # detect, strip, or rewrite any flag.
     if comp.op == "regex":
-        return Q(**{f"{orm_path}__regex": value})
+        return _path_q(orm_path, "regex", value)
     # The scalar comparison operators plus the substring operators
     # (req-grid-traversal-lang-string-match) -- all positive, single-value
     # lookups on `orm_path`.
     suffix = {
-        "=": "",
-        "<": "__lt",
-        ">": "__gt",
-        "<=": "__lte",
-        ">=": "__gte",
-        "starts_with": "__startswith",
-        "ends_with": "__endswith",
-        "contains": "__contains",
+        "=": "exact",
+        "<": "lt",
+        ">": "gt",
+        "<=": "lte",
+        ">=": "gte",
+        "starts_with": "startswith",
+        "ends_with": "endswith",
+        "contains": "contains",
     }[comp.op]
-    return Q(**{f"{orm_path}{suffix}": value})
+    return _path_q(orm_path, suffix, value)
 
 
 def _execute_optional_match(
@@ -4061,7 +4766,7 @@ def _execute_optional_match(
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/c4283cd7b217 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/c698d3c040f1 (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -4093,7 +4798,7 @@ def _execute_optional_match(
           OPTIONAL MATCH (t)<-[:PG_OPTIONAL__grid_fixtures]-(g:grid_fixtures__node)
           RETURN t.entity_id AS target, COUNT(g) AS guards ORDER BY target
     """
-    from django.db.models import Count, F, Q
+    from django.db.models import Count, Q
 
     from tap_grid.registry import get_model_class
 
@@ -4151,6 +4856,20 @@ def _execute_optional_match(
             f"The OPTIONAL MATCH pattern must start from the MATCH variable '{v}', e.g. OPTIONAL MATCH ({v})-[:E]->(w)."
         )
 
+    # A name may repeat across the optional pattern only in the same role (the
+    # mandatory node `v` and the pattern's left node). The edge and the optional
+    # node bind into one dict below, so a node/edge clash would let one overwrite
+    # the other — refuse it through the same helper the chain path uses.
+    roles: dict[str, str] = {v: "node"}
+    for role_var, role in ((opt_edge.variable, "edge"), (w_node.variable, "node")):
+        if role_var is not None and roles.setdefault(role_var, role) != role:
+            raise _node_edge_name_clash(role_var)
+    if left_node.label and left_node.label != anchor_node.label:
+        raise SearchExecutionError(
+            f"The OPTIONAL MATCH anchor ({v}:{left_node.label}) repeats the MATCH variable with a different "
+            f"label than its MATCH '{anchor_node.label}'. Drop the label or make it match."
+        )
+
     try:
         model_cls = get_model_class(anchor_node.label)
     except KeyError:
@@ -4200,6 +4919,19 @@ def _execute_optional_match(
             inputs,
             _binding_path_resolver(w_binding),
             _label_declared_types(w_node.label) if w_node.label else None,
+        ).items():
+            opt_q &= Q(**{orm_path: value})
+    # An inline map on the repeated anchor `(t {k: v})-[...]` is a condition of
+    # the optional JOIN, not of the outer scan: a row of `t` that fails it stays
+    # in the result with COUNT 0 (Cypher semantics), so it joins `opt_q` and is
+    # NOT applied to `qs` the way the MATCH anchor's own map is. Dropping it was
+    # accept-and-drop (req-grid-traversal-lang-filters-1).
+    if left_node.inline_props:
+        for orm_path, value in _node_inline_prop_filters(
+            left_node,
+            inputs,
+            lambda fp: _typescan_orm_path(fp, model_cls),
+            lambda fp: _declared_data_types(model_cls, fp),
         ).items():
             opt_q &= Q(**{orm_path: value})
 
@@ -4255,7 +4987,7 @@ def _execute_optional_match(
                     "optional variable can only be COUNTed."
                 )
             internal = f"_om_col_{idx}"
-            group_annotations[internal] = F(_typescan_orm_path(fp, model_cls))
+            group_annotations[internal] = _path_ref(_typescan_orm_path(fp, model_cls))
             group_pairs.append((internal, _return_item_key(item)))
         elif isinstance(item, AggregateReturnItem):
             agg = item.aggregate

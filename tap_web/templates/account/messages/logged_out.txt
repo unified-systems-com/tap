@@ -1,0 +1,8 @@
+{% comment %}
+Intentionally empty — suppresses allauth's "You have signed out." flash. The login
+page does not render messages, so the one-shot message waited in the queue and
+showed on the landing page after the NEXT sign-in, a banner about an event the user
+had just undone. allauth's add_message renders this template, strips it, and skips
+the message when it is empty (account/adapter.py). Companion of logged_in.txt.
+See req-web-render-flash.
+{% endcomment %}

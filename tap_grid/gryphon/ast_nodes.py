@@ -300,6 +300,65 @@ class ParamNullTest:
 
 
 @dataclass(frozen=True)
+class NowRef:
+    """The query's clock: `now()`. Read once per execution and bound as a parameter."""
+
+
+@dataclass(frozen=True)
+class TemporalOffset:
+    """A date-time field shifted by whole hours: `t.data.opened_at + hours(p.data.window)`.
+
+    `base` is the date-time field; `sign` is `"+"` or `"-"`; `hours` is a lookup field
+    path (rooted at a `LOOKUP` variable), an unsigned integer literal, or a `ParamRef`.
+    """
+
+    base: FieldPath
+    sign: Literal["+", "-"]
+    hours: FieldPath | int | ParamRef
+
+
+@dataclass(frozen=True)
+class TemporalComparison:
+    """A temporal-offset predicate: `base +/- hours(x) <op> now() | $instant`.
+
+    A new `Predicate` leaf, not a `Comparison` operator: its shape is not
+    `field op value`, so every walker that tests for `Comparison` must decide what to do
+    with it (apply or reject, never fall through).
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-temporal-offset@7531c8606d14/25bec85d4292 (surface) — the temporal
+        offset predicate is declared on this node; its lowering is `_temporal_to_q`.
+
+    True when the base shifted by the offset is strictly before (`<`), at or before
+    (`<=`), after (`>`) or at or after (`>=`) the clock or the supplied instant. A null
+    base never satisfies the comparison and its `NOT` is true; a null offset, a null
+    instant and a lookup that does not select exactly one row are errors.
+
+    .. tap:capability:: Gryphon temporal offset comparison
+       :id: cap-grid-gryphon-temporal-offset
+       :status: implemented
+       :audience: external-user; agent; developer
+       :affordance: querying
+       :covered-by: pytest:tap_grid/tests/test_gryphon_temporal_offset.py
+       :limitations: WHERE only; whole hours only; single-hop patterns only (envelope, row projection, COUNT); the lookup key is a literal or $param; no arithmetic in RETURN or ORDER BY.
+
+       ``WHERE base + hours(x) < now()`` tests a date-time field shifted by a number of
+       hours (a literal, a ``$param`` or a field of one row selected by ``LOOKUP``)
+       against the current time or a supplied instant.
+
+       Example::
+
+          MATCH (f:grid_fixtures__leaf)-[:PG_LINKS__grid_fixtures]->(a:grid_fixtures__node)
+          LOOKUP p = (:grid_fixtures__node {kind: "policy-gold"})
+          WHERE a.data.observed_at + hours(p.data.severity_score) < now()
+          RETURN a.entity_id AS id
+    """
+
+    offset: TemporalOffset
+    op: Literal["<", "<=", ">", ">="]
+    operand: NowRef | ParamRef
+
+
+@dataclass(frozen=True)
 class AndPred:
     """Conjunction: both operands must be true."""
 
@@ -323,7 +382,15 @@ class NotPred:
 
 
 Predicate = (
-    Comparison | InComparison | IsNullComparison | ObservationComparison | ParamNullTest | AndPred | OrPred | NotPred
+    Comparison
+    | InComparison
+    | IsNullComparison
+    | ObservationComparison
+    | ParamNullTest
+    | TemporalComparison
+    | AndPred
+    | OrPred
+    | NotPred
 )
 
 
@@ -338,6 +405,20 @@ class MatchClause:
 
     path_var: str | None
     patterns: tuple[PathPattern, ...]
+
+
+@dataclass(frozen=True)
+class LookupClause:
+    """A LOOKUP clause: `LOOKUP p = (:label {k: literal | $param})`.
+
+    Names exactly one row of an unlinked node as a scalar source for a temporal offset.
+    It binds no row set, so it is not a second MATCH (the union ruling) and not
+    composition. `props` is never empty (the grammar requires at least one).
+    """
+
+    variable: str
+    label: str
+    props: dict[str, GryphonValue]
 
 
 @dataclass(frozen=True)
@@ -481,11 +562,12 @@ class GryphonAST:
     order_by: OrderByClause | None = None
     limit: LimitClause | None = None
     optional_match_clauses: tuple[OptionalMatchClause, ...] = ()
+    lookup_clauses: tuple[LookupClause, ...] = ()
 
     def required_params(self) -> frozenset[str]:
         """Return the set of $var names referenced anywhere in this AST.
 
-        TAP-IMPLEMENTS: req-grid-traversal-lang-params@c0bba69be7b8/e700411dfc3d (derivation) — the
+        TAP-IMPLEMENTS: req-grid-traversal-lang-params@c0bba69be7b8/3a5cf7cbfac9 (derivation) — the
         one derivation of which $var parameters a query requires.
 
         .. tap:capability:: Gryphon query parameters
@@ -508,6 +590,10 @@ class GryphonAST:
             _collect_params_from_match(mc, params)
         for omc in self.optional_match_clauses:
             _collect_params_from_patterns(omc.patterns, params)
+        for lc in self.lookup_clauses:
+            for v in lc.props.values():
+                if isinstance(v, ParamRef):
+                    params.add(v.name)
         for nec in self.not_exists_clauses:
             _collect_params_from_match(nec.match_clause, params)
             if nec.where_clause is not None:
@@ -548,6 +634,11 @@ def _collect_params_from_predicate(pred: Predicate | None, out: set[str]) -> Non
         # required-param collection (silent-drop footgun for any predicate
         # walker that doesn't know about a new leaf).
         pass
+    elif isinstance(pred, TemporalComparison):
+        if isinstance(pred.offset.hours, ParamRef):
+            out.add(pred.offset.hours.name)
+        if isinstance(pred.operand, ParamRef):
+            out.add(pred.operand.name)
     elif isinstance(pred, ParamNullTest):
         # The param a null-test names IS a required param: ABSENT stays an
         # error (req-grid-traversal-lang-param-null). Only an explicitly

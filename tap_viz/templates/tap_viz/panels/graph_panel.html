@@ -23,7 +23,8 @@
      class="tap-cy-static-grid relative w-full border border-slate-200 rounded-lg {% if graph_height == '100%' %}flex-1 min-h-0{% endif %}"
      style="height: {{ graph_height }};"
      data-placement="{{ graph_placement }}"
-     data-nesting="{{ graph_nesting_enabled|yesno:'true,false' }}">
+     data-nesting="{{ graph_nesting_enabled|yesno:'true,false' }}"{% if graph_zoom_settle %}
+     data-zoom-settle="{{ graph_zoom_settle }}"{% endif %}>
     <div id="tap-graph-{{ panel.entity_id }}" class="w-full h-full overflow-hidden rounded-lg"></div>
 </div>
 

@@ -12,6 +12,7 @@ clause: match_clause
       | where_clause
       | return_clause
       | not_exists_clause
+      | lookup_clause
       | order_by_clause
       | limit_clause
 
@@ -20,6 +21,15 @@ clause: match_clause
 // ---------------------------------------------------------------------------
 
 not_exists_clause: _NOT_KW _EXISTS_KW "{" match_clause where_clause? "}"
+
+// ---------------------------------------------------------------------------
+// LOOKUP (req-grid-traversal-lang-temporal-offset)
+// ---------------------------------------------------------------------------
+
+// A scalar source, NOT a row set: names exactly one row of an unlinked node by its
+// properties, so a WHERE temporal offset can read one field of it. It is not a second
+// MATCH and does not reopen the union ruling (shape-5) or composition (shape-7).
+lookup_clause: _LOOKUP_KW NAME "=" "(" ":" NAME inline_props ")"
 
 // ---------------------------------------------------------------------------
 // MATCH
@@ -89,6 +99,16 @@ comparison: field_path COMPARE_OP value
           | field_path _IS_KW _NOT_KW _NULL_KW     -> is_not_null
           | field_path _IS_KW _KNOWN_KW            -> is_known
           | field_path _IS_KW _UNKNOWN_KW          -> is_unknown
+          | temporal_offset COMPARE_OP temporal_operand  -> temporal_comparison
+
+// A date-time field shifted by whole hours, compared with now() or a supplied instant
+// (req-grid-traversal-lang-temporal-offset). The hours come from a lookup field, an
+// unsigned integer literal, or a $param; the sign is carried by + / -.
+temporal_offset: field_path "+" hours_term   -> offset_add
+               | field_path "-" hours_term   -> offset_sub
+hours_term: _HOURS_KW "(" (field_path | INT | param_ref) ")"
+temporal_operand: _NOW_KW "(" ")"   -> now_ref
+                | param_ref
 
 // Membership test: the field value must equal one of the listed values.
 // List elements may be literals or $param references; an empty list matches
@@ -116,6 +136,7 @@ return_clause: _RETURN_KW return_item ("," return_item)*
 return_item: aggregate_call _AS_KW NAME   -> aggregate_item
            | unsupported_aggregate (_AS_KW NAME)?  -> unsupported_item
            | field_path (_AS_KW NAME)?    -> field_item
+           | temporal_offset (_AS_KW NAME)?  -> arithmetic_item
 
 // Aggregate spellings Gryphon does not implement. They parse only so the transformer
 // can refuse them with an error that names the aggregate and the supported ones,
@@ -148,6 +169,7 @@ aggregate_call: _COUNT_KW "(" field_path ")"  -> count_call
 
 order_by_clause: _ORDER_KW _BY_KW order_item ("," order_item)*
 order_item: field_path order_dir?
+          | temporal_offset order_dir?  -> arithmetic_order_item
 order_dir: _ASC_KW  -> asc
          | _DESC_KW -> desc
 
@@ -196,6 +218,9 @@ _BY_KW:     /BY/i
 _ASC_KW:    /ASC/i
 _DESC_KW:   /DESC/i
 _LIMIT_KW:  /LIMIT/i
+_LOOKUP_KW: /LOOKUP/i
+_HOURS_KW:  /HOURS/i
+_NOW_KW:    /NOW/i
 
 // ---------------------------------------------------------------------------
 // Terminals

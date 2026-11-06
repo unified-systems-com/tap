@@ -373,6 +373,39 @@
           "type": "string",
           "pattern": "^/(?!/)[A-Za-z0-9._~/-]*$",
           "minLength": 1
+        },
+        "branding": {
+          "description": "The instance's presentation identity (req-boot-web-branding): a display name and an optional SVG glyph shipped in a plugin's static directory. Each value rides the boot-variable env ladder (TAP_BOOT_WEB__BRANDING__NAME / __GLYPH_PLUGIN / __GLYPH_PATH). Unlike the landing pair this block is cosmetic: an unusable glyph is a boot WARNING and the header renders the name as text.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "The instance's display name: the page-title suffix, the accessible name of the header mark, and the header text when there is no glyph. Replaces what TAP_PRODUCT_NAME carried; order is env, this value, TAP_PRODUCT_NAME, `TAP`.",
+              "type": "string",
+              "minLength": 1
+            },
+            "glyph": {
+              "description": "The SVG mark shown in the header in place of the name's text and used as the favicon. A pointer into a plugin, never a URL: `plugin` + `path` name a file under `<plugin>/static/<plugin>/`. The file supplies its own opaque background tile.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "plugin": {
+                  "description": "Slug of the plugin whose static directory ships the glyph (e.g. `rampart_20x`).",
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "path": {
+                  "description": "Path of the .svg file relative to that plugin's static directory (e.g. `icons/rampart-rook.svg`). No URL, absolute path, backslash or `..`.",
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*\\.svg$"
+                }
+              },
+              "required": [
+                "plugin",
+                "path"
+              ]
+            }
+          }
         }
       },
       "dependentRequired": {

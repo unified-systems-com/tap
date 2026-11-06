@@ -3,8 +3,9 @@
  * Owned by tap_web (web rendering is tap_web's job). Self-contained — these pages
  * must render with no grid context and without the Tailwind build (Tailwind's
  * content globs do not scan for these), and the login surface should not depend
- * on a possibly-stale compiled stylesheet. Colors match the app palette: canvas
- * #f4f5f7, slate-800 #1e293b header, slate text ramp, white card.
+ * on a possibly-stale compiled stylesheet. Colors are the shared palette tokens
+ * of theme.css (spec-web-theme.md), which every auth page links with theme-init.js,
+ * so these pages follow the viewer's light / dark / system choice like the app.
  *
  * The login page uses allauth's OWN standard template (we ship no login
  * override). allauth renders classless element HTML; the rules below style that
@@ -18,33 +19,35 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #f4f5f7;
-  color: #0f172a;
+  background: rgb(var(--tap-canvas));
+  color: rgb(var(--tap-slate-900));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 /* App-chrome header strip, echoing tap_web/base.html */
 .tap-auth-header {
-  background: #1e293b;
-  color: #fff;
+  background: rgb(var(--tap-header-bg));
+  border-bottom: 1px solid rgb(var(--tap-header-border));
+  color: rgb(var(--tap-header-fg));
   height: 2.5rem;
   display: flex;
   align-items: center;
   padding: 0 1.5rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
 }
+.tap-auth-header .tap-theme-switch { margin-left: auto; }
 .tap-auth-wordmark {
   font-weight: 700;
   font-size: 0.95rem;
   letter-spacing: 0.02em;
-  color: #fff;
+  color: rgb(var(--tap-header-fg));
   text-decoration: none;
 }
 .tap-auth-session-tag {
   margin-left: 0.6rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.7rem;
-  color: #fcd34d;
+  color: rgb(var(--tap-header-session));
 }
 
 .tap-auth-main {
@@ -58,8 +61,8 @@
 .tap-auth-card {
   width: 100%;
   max-width: 26rem;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: rgb(var(--tap-white));
+  border: 1px solid rgb(var(--tap-slate-200));
   border-radius: 0.75rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.07);
   padding: 2rem;
@@ -70,11 +73,11 @@
 .tap-auth-title {
   font-size: 1.4rem;
   font-weight: 700;
-  color: #0f172a;
+  color: rgb(var(--tap-slate-900));
   margin: 0 0 0.5rem;
 }
 .tap-auth-sub {
-  color: #64748b;
+  color: rgb(var(--tap-slate-500));
   line-height: 1.6;
   margin: 0 0 1.25rem;
   font-size: 0.95rem;
@@ -84,10 +87,10 @@
  * <session>.tap.localhost dev alias). Deliberately louder than .tap-auth-sub —
  * it names the only way forward. */
 .tap-auth-banner {
-  background: #fffbeb;
-  border: 1px solid #fcd34d;
+  background: rgb(var(--tap-amber-50));
+  border: 1px solid rgb(var(--tap-amber-300));
   border-radius: 0.5rem;
-  color: #92400e;
+  color: rgb(var(--tap-amber-800));
   line-height: 1.6;
   font-size: 0.9rem;
   padding: 0.75rem 1rem;
@@ -95,7 +98,7 @@
 }
 .tap-auth-who {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #334155;
+  color: rgb(var(--tap-slate-700));
 }
 
 /* ------------------------------------------------------------------------- */
@@ -118,7 +121,7 @@
   display: flex;
   align-items: center;
   text-align: center;
-  color: #94a3b8;
+  color: rgb(var(--tap-slate-400));
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -126,7 +129,7 @@
   margin: 1.4rem 0 1rem;
 }
 .tap-auth-card h2::before,
-.tap-auth-card h2::after { content: ""; flex: 1; border-bottom: 1px solid #e2e8f0; }
+.tap-auth-card h2::after { content: ""; flex: 1; border-bottom: 1px solid rgb(var(--tap-slate-200)); }
 .tap-auth-card h2::before { margin-right: 0.75rem; }
 .tap-auth-card h2::after { margin-left: 0.75rem; }
 
@@ -146,16 +149,16 @@
   justify-content: center;
   gap: 0.6rem;
   padding: 0.65rem 1rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid rgb(var(--tap-slate-300));
   border-radius: 0.5rem;
-  background: #fff;
-  color: #1e293b;
+  background: rgb(var(--tap-white));
+  color: rgb(var(--tap-slate-800));
   font-size: 0.95rem;
   font-weight: 600;
   text-decoration: none;
   transition: background 150ms ease, border-color 150ms ease;
 }
-.tap-auth-card ul li a:hover { background: #f8fafc; border-color: #94a3b8; }
+.tap-auth-card ul li a:hover { background: rgb(var(--tap-slate-50)); border-color: rgb(var(--tap-slate-400)); }
 /* Google "G" mark restored purely in CSS (the provider element renders no icon).
  * Every configured provider is google_oidc in this deployment. */
 .tap-auth-card ul li a::before {
@@ -176,7 +179,7 @@
   display: block;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #475569;
+  color: rgb(var(--tap-slate-600));
   margin-bottom: 0.3rem;
 }
 .tap-auth-card input[type="text"],
@@ -185,22 +188,23 @@
   width: 100%;
   box-sizing: border-box;
   padding: 0.55rem 0.75rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid rgb(var(--tap-slate-300));
   border-radius: 0.375rem;
   font-size: 0.9rem;
-  color: #0f172a;
+  background: rgb(var(--tap-white));
+  color: rgb(var(--tap-slate-900));
 }
 .tap-auth-card input:focus {
   outline: none;
-  border-color: #64748b;
-  box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.25);
+  border-color: rgb(var(--tap-slate-500));
+  box-shadow: 0 0 0 2px rgb(var(--tap-slate-500) / 0.25);
 }
 /* "Remember me" checkbox row — inline, not full-width */
 .tap-auth-card input[type="checkbox"] { width: auto; margin-right: 0.4rem; }
 .tap-auth-card input[type="checkbox"] + label,
-.tap-auth-card label[for$="remember"] { display: inline-block; font-weight: 400; color: #64748b; }
+.tap-auth-card label[for$="remember"] { display: inline-block; font-weight: 400; color: rgb(var(--tap-slate-500)); }
 /* Secondary links inside the form (e.g. "Forgot your password?") */
-.tap-auth-card form a { font-size: 0.8rem; color: #475569; text-decoration: none; }
+.tap-auth-card form a { font-size: 0.8rem; color: rgb(var(--tap-slate-600)); text-decoration: none; }
 .tap-auth-card form a:hover { text-decoration: underline; }
 
 /* Primary action — allauth renders the submit as <button type="submit"> */
@@ -210,14 +214,14 @@
   padding: 0.6rem 1rem;
   border: 0;
   border-radius: 0.5rem;
-  background: #1e293b;
-  color: #f1f5f9;
+  background: rgb(var(--tap-slate-800));
+  color: rgb(var(--tap-slate-100));
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
   transition: background 150ms ease;
 }
-.tap-auth-card button[type="submit"]:hover { background: #334155; }
+.tap-auth-card button[type="submit"]:hover { background: rgb(var(--tap-slate-700)); }
 
 /* Passkey action — a primary <button type="button"> driven by in-page WebAuthn JS
  * (enrollment + native login). Mirrors the allauth submit button's look; the JS
@@ -228,15 +232,15 @@
   padding: 0.6rem 1rem;
   border: 0;
   border-radius: 0.5rem;
-  background: #1e293b;
-  color: #f1f5f9;
+  background: rgb(var(--tap-slate-800));
+  color: rgb(var(--tap-slate-100));
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
   transition: background 150ms ease;
 }
-.tap-auth-btn:hover { background: #334155; }
-.tap-auth-btn:disabled { background: #94a3b8; cursor: default; }
+.tap-auth-btn:hover { background: rgb(var(--tap-slate-700)); }
+.tap-auth-btn:disabled { background: rgb(var(--tap-slate-400)); cursor: default; }
 
 /* ------------------------------------------------------------------------- */
 /* TAP-owned pages (no-access / login-denied) — our own views' templates.    */
@@ -248,25 +252,25 @@
   margin-top: 0.5rem;
   padding: 0.5rem 1.25rem;
   border-radius: 0.5rem;
-  background: #f1f5f9;
-  color: #334155;
+  background: rgb(var(--tap-slate-100));
+  color: rgb(var(--tap-slate-700));
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 500;
 }
-.tap-auth-link:hover { background: #e2e8f0; }
+.tap-auth-link:hover { background: rgb(var(--tap-slate-200)); }
 .tap-auth-reason {
   margin-top: 1.5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: rgb(var(--tap-slate-400));
 }
 
 /* Form / message errors (allauth messages + our denial pages) */
 .tap-auth-errors {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
+  background: rgb(var(--tap-red-50));
+  border: 1px solid rgb(var(--tap-red-200));
+  color: rgb(var(--tap-red-700));
   border-radius: 0.375rem;
   padding: 0.6rem 0.75rem;
   font-size: 0.85rem;

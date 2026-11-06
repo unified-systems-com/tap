@@ -30,7 +30,7 @@ first (`GRY-TEST-7` — a Gryphon wrong-answer is never normalized).
 
 The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
 
-- **Read the graph through Gryphon** (11): when it cannot answer, fix Gryphon so the next query can.
+- **Read the graph through Gryphon** (11): when it cannot answer, the user chooses: build the capability, or an `orm`/`module` Search; a defect is fixed on the spot.
 - **Treat specs as canon** (13): read the spec first and change it with the code.
 - **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
 

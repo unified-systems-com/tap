@@ -439,6 +439,10 @@ function initGraph(panelId) {
         if (colors.fill) data.fill_color = colors.fill;
         if (colors.border) data.border_color = colors.border;
         if (colors.label) data.label_color = colors.label;
+        // Box chrome hints (req-viz-system-display-hints-9): a numeric fill opacity (0 = transparent, the box is only
+        // its line) and a border width in px. Absent keys leave the renderer defaults.
+        if (typeof tapViz.fill_opacity === "number") data.fill_opacity = tapViz.fill_opacity;
+        if (typeof tapViz.border_width === "number") data.border_width = tapViz.border_width;
 
         // Label-position hint: valign/halign + inside/outside -> Cytoscape
         // text-valign, text-halign, text-margin-y (inside uses positive margin,
@@ -447,6 +451,15 @@ function initGraph(panelId) {
         if (label.valign && label.halign) {
             data.label_valign = label.valign;
             data.label_halign = label.halign;
+            // An outside label above or below the node is centred by the renderer (a left/right text-halign would
+            // push the text out beside the node). Its requested side is kept as `label_anchor` for runtime/chrome.js
+            // placeParentLabels, which stands the label's left or right end on the box edge
+            // (req-viz-system-display-hints-10).
+            if (label.position === "outside") {
+                data.label_position = "outside";
+                data.label_anchor = label.halign;
+                if (label.valign === "top" || label.valign === "bottom") data.label_halign = "center";
+            }
             var outsideMargin = 6;
             var sign = label.position === "outside" ? -1 : 1;
             if (label.valign === "top") data.label_margin_y = sign * outsideMargin;
@@ -482,9 +495,16 @@ function initGraph(panelId) {
         });
 
     const placement = container.dataset.placement || "cytoscape:cose";
+    // Opt-in settle mode (spec-viz-label-sizing § Settle Mode): present only when the panel config enables it.
+    var zoomSettleRaw = null;
+    if (container.dataset.zoomSettle) {
+        try { zoomSettleRaw = JSON.parse(container.dataset.zoomSettle); } catch (err) { console.warn("[TAP zoom-settle] bad config", err); }
+    }
     const cy = cytoscape({
         container: cyEl,
         elements: cyNodes.concat(cyEdges),
+        // A constructor-only Cytoscape option: motion frames draw from a bitmap (cheap, but soft while moving).
+        textureOnViewport: !!(zoomSettleRaw && zoomSettleRaw.texture_on_viewport === true),
         style: [
             {
                 // Base node style — solid colour, used when no icon resolves.
@@ -764,6 +784,25 @@ function initGraph(panelId) {
                 },
             },
             {
+                // Model-level box chrome (req-viz-system-display-hints-9): fill opacity and border width. After the
+                // palette rules so they win over the fill/border they set; `:parent` repeats them at the same
+                // specificity as the compound palette rule.
+                selector: "node[fill_opacity]",
+                style: {"background-opacity": "data(fill_opacity)"},
+            },
+            {
+                selector: ":parent[fill_opacity]",
+                style: {"background-opacity": "data(fill_opacity)"},
+            },
+            {
+                selector: "node[border_width]",
+                style: {"border-width": "data(border_width)"},
+            },
+            {
+                selector: ":parent[border_width]",
+                style: {"border-width": "data(border_width)"},
+            },
+            {
                 // Model-level label-position hint from DEFAULT_DISPLAY.tap_viz.label.
                 // Placed after tap-viewport-parent + badge-host rules so it
                 // overrides their baked-in text alignment.
@@ -889,6 +928,11 @@ function initGraph(panelId) {
         userPanningEnabled: true,
         boxSelectionEnabled: true,
     });
+    if (zoomSettleRaw) {
+        import("/static/tap_viz/js/runtime/zoom-settle.js")
+            .then(function (mod) { cy.scratch("_tapZoomSettleHandle", mod.initZoomSettle(cy, zoomSettleRaw)); })
+            .catch(function (err) { console.error("[TAP zoom-settle] init failed", err); });
+    }
 
     // Background grid is drawn by CSS on the container (see panel-graph.css
     // `.tap-cy-static-grid`). The cytoscape-grid-guide extension was

@@ -23,7 +23,7 @@
 .tap-palette-box {
   width: 100%;
   max-width: 640px;
-  background: #ffffff;
+  background: rgb(var(--tap-white));
   border-radius: 10px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
   overflow: hidden;
@@ -35,12 +35,12 @@
   border: 0;
   font-size: 1rem;
   background: transparent;
-  border-bottom: 1px solid #e2e8f0;
-  color: #0f172a;
+  border-bottom: 1px solid rgb(var(--tap-slate-200));
+  color: rgb(var(--tap-slate-900));
   box-sizing: border-box;
 }
 
-.tap-palette-input::placeholder { color: #94a3b8; }
+.tap-palette-input::placeholder { color: rgb(var(--tap-slate-400)); }
 
 .tap-palette-input:focus { outline: none; }
 
@@ -64,12 +64,12 @@
 }
 
 .tap-palette-result.is-selected {
-  background: #f1f5f9;
+  background: rgb(var(--tap-slate-100));
 }
 
 .tap-palette-result-name {
   font-weight: 500;
-  color: #0f172a;
+  color: rgb(var(--tap-slate-900));
   font-size: 0.95rem;
   flex: 0 1 auto;
   min-width: 0;
@@ -80,7 +80,7 @@
 
 .tap-palette-result-url {
   font-size: 0.8rem;
-  color: #64748b;
+  color: rgb(var(--tap-slate-500));
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   margin-left: auto;
   flex: 0 0 auto;
@@ -90,7 +90,7 @@
 .tap-palette-empty {
   padding: 1.25rem 1rem;
   text-align: center;
-  color: #64748b;
+  color: rgb(var(--tap-slate-500));
   font-size: 0.9rem;
   font-style: italic;
 }
@@ -102,7 +102,7 @@
   gap: 0.4em;
   background: transparent;
   border: 0;
-  color: rgb(203, 213, 225); /* slate-300 */
+  color: rgb(var(--tap-header-link));
   cursor: pointer;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
@@ -111,8 +111,8 @@
 }
 
 .tap-palette-affordance:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
+  color: rgb(var(--tap-header-fg));
+  background: rgb(var(--tap-header-wash) / 0.08);
 }
 
 .tap-palette-affordance svg {
@@ -123,7 +123,7 @@
 .tap-palette-affordance-kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.75rem;
-  opacity: 0.7;
+  color: rgb(var(--tap-header-dim));
 }
 
 /* ------------------------------------------------------------------------- */
@@ -144,7 +144,7 @@
   transition: background 150ms ease;
 }
 .tap-usermenu-trigger::-webkit-details-marker { display: none; }
-.tap-usermenu-trigger:hover { background: rgba(255, 255, 255, 0.08); }
+.tap-usermenu-trigger:hover { background: rgb(var(--tap-header-wash) / 0.08); }
 .tap-usermenu-avatar {
   display: inline-flex;
   align-items: center;
@@ -152,7 +152,7 @@
   width: 1.6rem;
   height: 1.6rem;
   border-radius: 9999px;
-  background: #475569;
+  background: rgb(var(--tap-header-avatar));
   color: #fff;
   font-size: 0.78rem;
   font-weight: 700;
@@ -161,7 +161,7 @@
 .tap-usermenu-caret {
   width: 0.85rem;
   height: 0.85rem;
-  color: rgb(203, 213, 225); /* slate-300 */
+  color: rgb(var(--tap-header-link));
   transition: transform 150ms ease;
 }
 .tap-usermenu[open] .tap-usermenu-caret { transform: rotate(180deg); }
@@ -171,8 +171,8 @@
   top: calc(100% + 0.5rem);
   right: 0;
   min-width: 13rem;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: rgb(var(--tap-white));
+  border: 1px solid rgb(var(--tap-slate-200));
   border-radius: 0.5rem;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.12), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
   padding: 0.4rem;
@@ -180,20 +180,20 @@
 }
 .tap-usermenu-id {
   padding: 0.5rem 0.6rem 0.6rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgb(var(--tap-slate-100));
   margin-bottom: 0.4rem;
 }
 .tap-usermenu-name {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #0f172a;
+  color: rgb(var(--tap-slate-900));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tap-usermenu-email {
   font-size: 0.75rem;
-  color: #64748b;
+  color: rgb(var(--tap-slate-500));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -206,12 +206,12 @@
   border: 0;
   border-radius: 0.375rem;
   background: transparent;
-  color: #b91c1c;
+  color: rgb(var(--tap-red-700));
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
 }
-.tap-usermenu-signout:hover { background: #fef2f2; }
+.tap-usermenu-signout:hover { background: rgb(var(--tap-red-50)); }
 
 
 /* ------------------------------------------------------------------------- */
@@ -229,18 +229,18 @@
   box-sizing: border-box;
 }
 .tap-flash {
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgb(var(--tap-slate-200));
   border-radius: 0.375rem;
   padding: 0.5rem 0.85rem;
   font-size: 0.85rem;
-  background: #f8fafc;
-  color: #334155;
+  background: rgb(var(--tap-slate-50));
+  color: rgb(var(--tap-slate-700));
 }
-.tap-flash--success { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+.tap-flash--success { background: rgb(var(--tap-green-50)); border-color: rgb(var(--tap-green-200)); color: rgb(var(--tap-green-700)); }
 .tap-flash--error,
-.tap-flash--danger  { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.tap-flash--warning { background: #fffbeb; border-color: #fde68a; color: #b45309; }
-.tap-flash--info    { background: #f1f5f9; border-color: #e2e8f0; color: #475569; }
+.tap-flash--danger  { background: rgb(var(--tap-red-50)); border-color: rgb(var(--tap-red-200)); color: rgb(var(--tap-red-700)); }
+.tap-flash--warning { background: rgb(var(--tap-amber-50)); border-color: rgb(var(--tap-amber-200)); color: rgb(var(--tap-amber-700)); }
+.tap-flash--info    { background: rgb(var(--tap-slate-100)); border-color: rgb(var(--tap-slate-200)); color: rgb(var(--tap-slate-600)); }
 
 /* Avatar image (provider photo) fills the circle; falls back to the initial. */
 .tap-usermenu-avatar { overflow: hidden; }
@@ -267,3 +267,14 @@
   cursor: pointer;
 }
 .tap-flash-close:hover { opacity: 1; }
+
+/* Theme choice inside the user menu (req-web-theme-toggle): a labelled row between the identity and Sign out. */
+.tap-usermenu-theme {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgb(var(--tap-slate-100));
+}
+.tap-usermenu-theme-label { font-size: 0.8rem; color: rgb(var(--tap-slate-600)); }

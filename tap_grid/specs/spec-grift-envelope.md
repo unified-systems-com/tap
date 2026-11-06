@@ -241,6 +241,7 @@ contexts can coexist.
 - The shape of `display.tap_viz.*` is governed by
   [`spec-viz-system.md` § Display Hints](../../tap_viz/specs/spec-viz-system.md#display-hints):
   `shape`, `colors {fill, border, label}`, `label {valign, halign, position}`,
+  `fill_opacity`, `border_width`,
   and (computed-not-from-model) `icon_url`, `url_id`.
 - The previously flattened layout — where the response had
   `display.colors` instead of `display.tap_viz.colors` — is corrected to

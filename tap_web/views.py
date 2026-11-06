@@ -23,8 +23,10 @@ from tap_web.page import (
     LandingResolution,
     PanelSlot,
     build_url_id,
+    column_band,
     get_page_by_slug,
     get_page_slots,
+    group_bands,
     iter_layout_rows,
     parse_panel_url_id,
     resolve_landing,
@@ -643,10 +645,10 @@ def _render_page(
 ) -> HttpResponse:
     """Render a Page using the page template.
 
-    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/f762e445c9c9 (derivation) — the one
+    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/7e71ee9bceca (derivation) — the one
         page-rendering pipeline, riding Django's own machinery end to end:
         layout processing, panel-type asset collection, template render.
-    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/f762e445c9c9 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/7e71ee9bceca (enforcement) —
         every page renders through Django's autoescaping template pipeline
         (render → page.html); no page content path bypasses it.
     """
@@ -677,10 +679,14 @@ def _render_page(
     layout = getattr(page, "layout", {}) or {}
     full_bleed = bool(layout.get("full_bleed", False))
     processed_columns = _process_layout(layout, panels_by_id, query_params, inputs_by_id, full_bleed=full_bleed)
+    bands = group_bands(processed_columns)
+    fill_viewport = any(band["has_fill"] for band in bands)
 
     context = {
         "page": page,
         "processed_columns": processed_columns,
+        "bands": bands,
+        "multi_band": len(bands) > 1,
         "css_assets": list(css),
         "js_assets": list(js),
         "query_params": query_params,
@@ -688,8 +694,15 @@ def _render_page(
         # max-width container so the page fills the viewport width. base.html
         # honors this; non-page views leave it unset and stay centered.
         "full_bleed": full_bleed,
+        # A `fill` row makes the page a viewport-height column (req-web-page-row-heights-3).
+        "fill_viewport": fill_viewport,
     }
     return render(request, "tap_web/page.html", context)
+
+
+# Column widths that are not already a CSS track: `compact` is a capped, shrinkable track that packs at the start
+# of the band (req-web-page-compact-width).
+COLUMN_TRACKS: dict[str, str] = {"compact": "minmax(0, 16rem)"}
 
 
 def _process_layout(
@@ -708,7 +721,12 @@ def _process_layout(
     (req-web-page-plink-10/-11).
     """
     processed: list[dict[str, Any]] = []
-    for col_key, col_data, rows in iter_layout_rows(layout):
+    layout_rows = iter_layout_rows(layout)
+    # Bands stack in normal flow, so the page has no definite height to divide: with
+    # more than one band an `Nfr` row falls back to intrinsic height exactly as it does
+    # off a full_bleed page (req-web-page-bands-5). A single band is unchanged.
+    multi_band = len({column_band(col_data) for _, col_data, _ in layout_rows}) > 1
+    for col_key, col_data, rows in layout_rows:
         processed_rows: list[dict[str, Any]] = []
         for row_key, row_data in rows:
             panel_id = row_data.get("panel-id", "")
@@ -731,14 +749,22 @@ def _process_layout(
                     # (req-web-page-row-heights, tap#416). The template reads this to
                     # fall back to intrinsic height instead. Derived here, once, rather
                     # than re-spelled in template conditions.
-                    "unbounded_fr": height.endswith("fr") and not full_bleed,
+                    "unbounded_fr": height.endswith("fr") and (multi_band or not full_bleed),
+                    # `fill` takes the viewport height left under the chrome and the other
+                    # bands. It is bounded on every page because the page itself becomes a
+                    # viewport-height flex column when any row asks for it
+                    # (req-web-page-row-heights-2/-3).
+                    "is_fill": height == "fill",
                 }
             )
 
         processed.append(
             {
                 "key": col_key,
+                "band": column_band(col_data),
                 "width": col_data.get("width", "1fr"),
+                # The CSS grid track for the width (req-web-page-compact-width-2).
+                "track": COLUMN_TRACKS.get(col_data.get("width", "1fr"), col_data.get("width", "1fr")),
                 "rows": processed_rows,
             }
         )

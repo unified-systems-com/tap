@@ -25,10 +25,12 @@ services:
   # PostgreSQL Database
   # ============================================================================
   db:
-    # Minimal Wolfi + PostgreSQL 16.14 + the self-built OpenSSL 3.0.9 FIPS provider
+    # Minimal Wolfi + PostgreSQL 18.6 + the self-built OpenSSL 3.0.9 FIPS provider
     # (req-cicd-base-image-lifecycle-3/-5/-6), replacing the outgoing postgres:16-alpine.
-    # A drop-in via postgresql-16-oci-entrypoint (same POSTGRES_* contract) at the exact same
-    # 16.14. TAP_FIPS selects the FIPS variant (default 1; TAP_FIPS=0 escape hatch), mirroring
+    # A drop-in via postgresql-18-oci-entrypoint (same POSTGRES_* contract). It moved from 16 to
+    # 18 on 2026-10-29: a `postgres_data` volume initialised by 16 will NOT start under 18 (the server
+    # says the data directory was initialised by version 16); recreate it, `scripts/dc down -v`.
+    # TAP_FIPS selects the FIPS variant (default 1; TAP_FIPS=0 escape hatch), mirroring
     # the web image. See docker/postgres/Dockerfile.
     # ⚠️ The cluster is initdb'd with --locale=C (baked in the image) to reproduce the outgoing
     # musl cluster's actual C sort order on glibc Wolfi and dodge glibc-upgrade index
@@ -143,6 +145,22 @@ services:
       interval: 5s      # Check every 5 seconds
       timeout: 5s       # Fail if check takes longer than 5 seconds
       retries: 5        # Give up after 5 failures
+
+    # Stop the database cleanly. The command above turns fsync, synchronous_commit and
+    # full_page_writes off, so an unclean stop can corrupt the cluster, and a normal host
+    # reboot or halt stops every container at once. Two defaults work against that:
+    #   - SIGTERM is Postgres's SMART shutdown: it waits for every open connection to close.
+    #     web holds connections and is stopped at the same moment, so db can sit waiting on it
+    #     until the grace period ends and Docker sends SIGKILL. SIGINT is the FAST shutdown:
+    #     it disconnects clients, checkpoints and exits 0.
+    #   - Docker's default grace period is 10s, which the checkpoint can exceed.
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+
+    # Restart only after a crash. Nothing here brings a stack back after a reboot or halt:
+    # a clean stop exits 0 and `on-failure` leaves an exit 0 alone, so a stack the operator
+    # stopped, or one the host stopped, stays stopped until `scripts/dc up -d`.
+    restart: on-failure
 
   # ============================================================================
   # Django Web Application

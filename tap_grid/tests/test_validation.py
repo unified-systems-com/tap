@@ -6,6 +6,7 @@ thing exercised on those models (no saves). save() integration tests monkeypatch
 FIELD_VALIDATION_SCHEMA onto the existing ConstrainedSource model.
 """
 
+import datetime
 from typing import ClassVar
 
 import pytest
@@ -338,6 +339,38 @@ class TestJsonSchemaValidation:
         with pytest.raises(ValidationError) as exc_info:
             instance.full_validate()
         assert "score" in exc_info.value.message_dict
+
+
+class _DateSchemaModel(_TestBaseModel):
+    """A date and a datetime column validated by string schemas, as compliance_core does."""
+
+    when = models.DateTimeField(null=True, blank=True)
+    day = models.DateField(null=True, blank=True)
+    FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, dict]] = {
+        "when": {"validation": "jsonschema", "schema": {"type": ["string", "null"], "format": "date-time"}},
+        "day": {"validation": "jsonschema", "schema": {"type": ["string", "null"], "format": "date"}},
+    }
+
+    class Meta(_TestBaseModel.Meta):
+        app_label = "tap_grid"
+        managed = False
+
+
+@pytest.mark.spec("req-grid-entity-validation-7")
+class TestDateValuesValidateAsStrings:
+    """ACID-7: a loaded or saved row holds date objects; they validate as their ISO strings (tap#1095)."""
+
+    def test_date_objects_pass_string_schema(self) -> None:
+        instance = _DateSchemaModel(when=datetime.datetime(2021, 12, 10, tzinfo=datetime.UTC), day=datetime.date(2021, 12, 10))
+        instance.full_validate()  # must not raise
+
+    def test_string_and_null_still_pass(self) -> None:
+        _DateSchemaModel(when="2021-12-10T00:00:00Z", day=None).full_validate()
+
+    def test_wrong_type_still_fails(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _DateSchemaModel(when=12345).full_validate()
+        assert "when" in exc_info.value.message_dict
 
 
 # ---------------------------------------------------------------------------

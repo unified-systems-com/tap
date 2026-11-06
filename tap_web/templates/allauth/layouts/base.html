@@ -14,6 +14,7 @@ styling (auth.css), matching tap_web/base.html. Pages override {% block content 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% if session_label %}[{{ session_label }}] {% endif %}{% block head_title %}{{ product_name|default:"TAP" }}{% endblock head_title %}</title>
     <link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">
+    {% include "tap_web/partials/theme_head.html" %}
     <link rel="stylesheet" href="{% static 'tap_web/css/auth.css' %}">
     {% block extra_head %}{% endblock extra_head %}
 </head>
@@ -21,6 +22,7 @@ styling (auth.css), matching tap_web/base.html. Pages override {% block content 
     <header class="tap-auth-header">
         <a class="tap-auth-wordmark" href="/">{{ product_name|default:"TAP" }}</a>
         {% if session_label %}<span class="tap-auth-session-tag">[ {{ session_label }} ]</span>{% endif %}
+        {% include "tap_web/partials/theme_switch.html" %}
     </header>
     <main class="tap-auth-main">
         <div class="tap-auth-card">

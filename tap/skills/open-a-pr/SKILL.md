@@ -1,6 +1,6 @@
 ---
 name: open-a-pr
-description: Open a pull request the way this repo requires — claim the issue, regenerate what is derived, run the LANE (not a subset), then let promote-to-main.sh open it and arm the watcher. Use before opening any PR in tap or a plugin repo, including from a subagent. The twin of close-out-pr, which takes over the moment the PR exists.
+description: Open a pull request the way this repo requires — claim the issue, regenerate what is derived, run the cheap checks CI would fail on (see run-tests), then let promote-to-main.sh open it and arm the watcher. Use before opening any PR in tap or a plugin repo, including from a subagent. The twin of close-out-pr, which takes over the moment the PR exists.
 allowed-tools: Read Grep Glob
 argument-hint: <issue-number>
 ---
@@ -40,7 +40,7 @@ branch worktree (which that skill names as arbitrary code execution). Both rules
 already written down. They were not reached for, because opening a PR had no procedure
 to reach for.
 
-The lesson is not "run more tests". It is that **a subset that passes is not the lane**,
+The lesson is not "run more tests". It is that **the checks CI will fail on must run before the push** (the cheap derived-artifact ones, see `run-tests`),
 and **a derived artifact is only in sync as of the last thing that changed it** — and
 that a boundary which depends on remembering is not a boundary.
 
@@ -84,16 +84,20 @@ it.
    `--resync <path>` re-stamps them, and re-stamping records that **you** checked the
    claim, it does not check it for you.
 
-4. **Run the LANE, not a subset.** This is the step that was skipped.
+4. **Run the cheap checks CI would fail on; leave the lane to the gate.** What `PR# 742 - tap`
+   was missing was not the lane but the derived-artifact checks, and those take seconds. The
+   targeted tests for what you touched, the **guard trio** (mypy ratchet, fragment sync, spec-map
+   sync) and `implements-tag --check` are what `run-tests` tells you to run; it also says what to
+   leave to the server `gate`, which decides the merge.
 
-       scripts/test --fast-relevant     # the promote's own local lane
-       scripts/test                     # FULL, the promote gate, ~9-10 min
+       scripts/dc exec -T web uv run pytest <the test files you touched> -q -n0
 
-   A green `tap_auth` says nothing about `tap/tests/test_requirement_dispositions.py`.
-   The lane is what CI runs; anything narrower is a guess about which guards your change
-   could possibly have touched, and that guess was wrong.
+   The promote then runs its own scoped, capped local lane after the PR is open
+   (`req-dev-validation-suite-tiers-6`/`-7`). Do not hand-run the full `scripts/test` first.
+   Read [`run-tests`](../run-tests/SKILL.md) before running anything heavy.
 
-   Run it in the container — never host Python, which is stale.
+   Run it in the container — never host Python, which is stale. Never wrap a lane in `timeout`: it
+   leaves stale `test_tap_gw*` databases behind and the next run errors in the thousands.
 
 5. **Prefer the promote to a hand-rolled `gh pr create`.**
 

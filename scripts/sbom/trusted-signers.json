@@ -12,6 +12,28 @@
       "transitional": true,
       "reason": "Revision 1 is signed by publish-images.yml, whose signer digest moves with every build. Remove this entry when publish-images.yml calls the reusable workflow, so one signer with one pinned digest signs every revision.",
       "added_by": "George, ruled in the rampart-pg-ci session on 2026-10-16 (Q7a)"
+    },
+    {
+      "_description": "The reusable vulnerability-evidence workflow, called by commit. The certificate's signer identity ends in the commit the caller pinned, not in a branch, and its Build Signer Digest is that same commit, so both are pinned here. Observed on the first real run (run 38955198175): subject alternative name .../sbom-vulnerability-evidence.yml@5736329d..., Build Signer Digest 5736329d..., Build Config URI the dispatch caller on refs/heads/main.",
+      "id": "tap-sbom-evidence-5736329d",
+      "repository": "unified-systems-com/tap",
+      "workflow_path": ".github/workflows/sbom-vulnerability-evidence.yml",
+      "ref": "5736329dff506c952b5567260dd82c51adab5d74",
+      "signer_digest": "5736329dff506c952b5567260dd82c51adab5d74",
+      "transitional": false,
+      "reason": "Signs every revision after the first. Each change to the workflow is a new commit and a new caller pin, so a new entry here; the old entry stays so earlier revisions keep verifying, and is removed only by a reviewed change.",
+      "added_by": "George approved the first real signed run in the rampart-pg-ci session on 2026-10-16; this entry records the identity it produced"
+    },
+    {
+      "_description": "The reusable vulnerability-evidence workflow at the commit that adds published date, title, description and record URLs to the vulnerability entries (revision 3 of tap-web). Called by commit like the previous entry, so the signer identity and the Build Signer Digest are that commit.",
+      "id": "tap-sbom-evidence-e9841198",
+      "repository": "unified-systems-com/tap",
+      "workflow_path": ".github/workflows/sbom-vulnerability-evidence.yml",
+      "ref": "e9841198ba7535f4eef79247dd5fb2520b6e1da9",
+      "signer_digest": "e9841198ba7535f4eef79247dd5fb2520b6e1da9",
+      "transitional": false,
+      "reason": "Signs revisions made by this version of the workflow. The previous version's entry stays so revisions it signed keep verifying.",
+      "added_by": "George approved SBOM revision 3 in the rampart-pg-ci session on 2026-10-19; the identity pattern was observed on run 38955198175"
     }
   ]
 }

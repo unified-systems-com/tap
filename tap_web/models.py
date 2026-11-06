@@ -18,7 +18,7 @@ from tap_web.validation import validate_page_layout, validate_page_slug
 class Page(BaseModel):
     """A routable web page that hosts one or more panels.
 
-    TAP-IMPLEMENTS: req-web-nav-page-discoverable@139d41543059/b6a209cdb469 (derivation) —
+    TAP-IMPLEMENTS: req-web-nav-page-discoverable@96cdf096feac/b6a209cdb469 (derivation) —
         the `discoverable` gate every browse-discovery surface (palette, chevron
         popovers, column view, nav index) filters on; direct visits stay open.
     TAP-IMPLEMENTS: req-web-nav-page-weight@c5d4e2ae150a/b6a209cdb469 (derivation) — the

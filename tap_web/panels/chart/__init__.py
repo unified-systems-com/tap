@@ -22,7 +22,7 @@ from tap_web.panels.chart.config import (
     DEFAULT_MAX_ROWS,
     validate_config,
 )
-from tap_web.panels.chart.transform import build_option, coerce_rows, sort_and_limit
+from tap_web.panels.chart.transform import build_option, coerce_rows, row_urls, sort_and_limit
 from tap_web.panels.search_rows import fetch_panel_rows
 
 if TYPE_CHECKING:
@@ -80,6 +80,14 @@ class ChartPanelType:
         rows, cut = sort_and_limit(rows, config)
         built = build_option(rows, config)
         columns, body = _table(rows)
+        # Keyboard and screen-reader route to a click-through: the hidden data table carries a real link per
+        # clickable row (the canvas itself is not focusable); `chart-panel.css` reveals it on focus.
+        urls = row_urls(rows, config) if not config.get("hierarchy") else []
+        link_rows = (
+            [{"cells": body[i], "url": urls[i], "label": body[i][0] if body[i] else ""} for i in range(len(body))]
+            if any(urls)
+            else []
+        )
         height = config["height"]
         color_map = config.get("color_map")
         if color_map and "field" not in color_map and config.get("series_by"):
@@ -95,6 +103,7 @@ class ChartPanelType:
                 "summary": f"{len(rows)} row{'s' if len(rows) != 1 else ''}",
                 "columns": columns,
                 "body": body,
+                "link_rows": link_rows,
             },
             "chart_notices": [*notices, *cut, *built.notices],
         }

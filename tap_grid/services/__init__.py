@@ -550,6 +550,7 @@ def replace_node(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    absent: Literal["reset", "keep"] = "reset",
 ) -> WriteResult:
     """Fully replace the user-writable fields of a domain object (PUT semantics).
 
@@ -567,6 +568,8 @@ def replace_node(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        absent: ``"reset"`` (default) resets payload-absent optional fields to their model default; ``"keep"``
+            leaves them alone and replaces present fields whole (req-grid-service-write-keepabsent).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -576,6 +579,7 @@ def replace_node(
         target=target,
         payload=payload,
         entity_expected_version=entity_expected_version,
+        absent=absent,
     )
     batch_result = write_batch(
         [op],
@@ -679,7 +683,7 @@ def reconcile(
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@c039b2233134/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@108027797f8f/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
@@ -836,6 +840,7 @@ def replace_edge(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    absent: Literal["reset", "keep"] = "reset",
 ) -> WriteResult:
     """Fully replace an Edge's properties (PUT semantics).
 
@@ -852,6 +857,8 @@ def replace_edge(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        absent: ``"reset"`` (default) resets payload-absent optional fields to their model default; ``"keep"``
+            leaves them alone and replaces present fields whole (req-grid-service-write-keepabsent).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -861,6 +868,7 @@ def replace_edge(
         target=target,
         payload=payload,
         entity_expected_version=entity_expected_version,
+        absent=absent,
     )
     batch_result = write_batch(
         [op],

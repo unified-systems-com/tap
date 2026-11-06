@@ -1,0 +1,5 @@
+{% load static %}
+{# Colour theme (spec-web-theme.md): the blocking init script sets the data-theme attribute on the root element before first paint. #}
+<script src="{% static 'tap_web/js/theme-init.js' %}"></script>
+<link rel="stylesheet" href="{% static 'tap_web/css/theme.css' %}">
+<script src="{% static 'tap_web/js/theme-toggle.js' %}" defer></script>

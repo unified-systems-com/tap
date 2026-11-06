@@ -52,6 +52,7 @@ Reviewers may push back on the bundle size (ECharts full build is ~1MB minified)
 | req-web-panels-chart-hierarchy | [Hierarchy](#hierarchy) | Implemented | `hierarchy`: rows with a path of fields become a tree for treemap / sunburst |
 | req-web-panels-chart-render | [Chart Rendering](#chart-rendering) | Implemented | Server-rendered frame with data in attributes; empty, error and notice states; hidden data table; labelled mount |
 | req-web-panels-chart-theme | [Drawing, Theme And Resize](#drawing-theme-and-resize) | Implemented | `chart-panel.js`: design tokens into an ECharts theme, `color_map`, `aria`, redraw on theme change and resize |
+| req-web-panels-chart-click | [Chart Click-Through](#chart-click-through) | Implemented | `click.row_url_template`: clicking a bar or scatter item navigates to a same-origin URL filled from that item's row; pointer cursor; a real link per row in the hidden table for the keyboard |
 | req-web-panels-chart-style | [Chart Styling](#chart-styling) | Implemented | Tokens with light and dark values, shared with the Stat Cards tones; frame, slot height, hidden table |
 
 ---
@@ -209,11 +210,12 @@ RID: `req-web-panels-chart-series-by`
 
 Status: `Implemented`
 
-A plain dataset cannot make one series per value of a field, which is what stacked and grouped bars and multi-line charts need. `series_by: {category, series, value, order?, fill?}` pivots the rows.
+A plain dataset cannot make one series per value of a field, which is what stacked and grouped bars and multi-line charts need. `series_by: {category, series, value, order?, fill?, overrides?}` pivots the rows.
 
 #### Implementation
 - `option.series` holds exactly one template series (bar or line). One series is made per distinct value of the `series` field, named by the value, copying the template (`stack`, `areaStyle`, ...), with `encode` set from the axes: the category field goes on the axis that is `category` or `time` and the value on the other (a horizontal bar has the category on `y`).
 - The dataset becomes wide: one entry per category with one dimension per series; `value` fields are summed when a pair repeats; a pair with no row is `fill` (default 0; `null` leaves a gap). `order` sets the drawing and stack order; unlisted values follow in first-seen order.
+- `overrides` is a mapping from a series value (the line's name) to a partial ECharts series object, deep-merged onto the template for that one series (objects merge key by key, anything else replaces), so one line can differ from the rest: the template carries the muted default and the override restores the emphasised line, e.g. `{"Overall": {"lineStyle": {"width": 6, "opacity": 1}, "z": 10}}`. An override may not set `name`, `type`, `encode`, `data` or `dataset` (the pivot owns them); it passes the same safety rules as `option`. A key matching no series is ignored.
 - Null and empty categories or series names are labelled with `null_text` / `blank_text`, not dropped. On a time axis the categories stay instants and are sorted. Rows with no numeric `value` are counted in a notice.
 
 #### Acceptance Criteria
@@ -225,6 +227,8 @@ A plain dataset cannot make one series per value of a field, which is what stack
 | req-web-panels-chart-series-by-3 | Orientation | Implemented | The category field goes on whichever axis is the category axis, so horizontal bars work. | |
 | req-web-panels-chart-series-by-4 | Time Axis | Implemented | On a time axis categories are kept as instants and sorted. | |
 | req-web-panels-chart-series-by-5 | Needs A Template | Implemented | `series_by` without exactly one bar or line series is rejected at validation. | |
+| req-web-panels-chart-series-by-6 | Per-Series Overrides | Implemented | `series_by.overrides[value]` is deep-merged onto the template for that series only; other series are unchanged and the template is not mutated. | |
+| req-web-panels-chart-series-by-7 | Overrides Are Safe Data | Implemented | An override that is not an object, sets `name`, `type`, `encode`, `data` or `dataset`, or breaks an option safety rule (code-like string, `{c}` formatter, external reference) is rejected; the schema entry carries a description. | |
 
 ### Hierarchy
 ----
@@ -284,10 +288,11 @@ Status: `Implemented`
 `tap_web/static/tap_web/js/chart-panel.js` draws every `[data-tap-chart]`. It names no field, panel or chart type and never evaluates anything from the option.
 
 #### Implementation
+- Data labels (`series.label`, and the pie, funnel, heatmap, treemap and sunburst defaults) are solid, outline-free text: the theme sets `textBorderWidth: 0` and the text colour for them, and a label the config declares has whatever it leaves unset filled the same way. ECharts' default text border outlined them on the dark frame. A config that sets `color` or `textBorderWidth` itself is left alone (`req-web-panels-chart-theme-5`).
 - Colours are read from the `--tap-chart-*` custom properties on the panel root into an ECharts theme (text, axis, grid, tooltip, series palette `accent-1..8`), so a chart follows the page's light or dark tokens.
 - `color_map` resolves tokens to colours and colours series named by a mapped value and, for bar, pie, scatter, funnel, treemap and sunburst series driven by `encode`, each data item by the row's `field` value (or its name); `series_by` defaults `field` to its `series` field. A series with its own `itemStyle.color` is left alone.
 - `aria` is switched on, with the server's label as its description (ECharts' generated text misreads dataset-encoded series).
-- The chart is redrawn when the viewer's colour scheme changes or `data-theme` / `class` on `<html>` change, and resized by a `ResizeObserver` on the mount and on window resize. It is initialised after an HTMX settle, and disposed once its element leaves the page.
+- The chart is redrawn when the viewer's colour scheme changes or `data-theme` / `class` on `<html>` change (the page-wide switch that sets `data-theme` is `spec-web-theme.md`), and resized by a `ResizeObserver` on the mount and on window resize. It is initialised after an HTMX settle, and disposed once its element leaves the page.
 - A failure (library missing, bad JSON) shows `This chart could not be drawn: ...` in the frame and sets `data-tap-chart-ready="error"`.
 - Proven in a real browser; the repo has no JS test runner. Test-side, the colour map travels as data (`req-web-panels-chart-theme-1`).
 
@@ -299,6 +304,39 @@ Status: `Implemented`
 | req-web-panels-chart-theme-2 | Tokens Not Literals | Implemented | Chart colours come from the design tokens, not from literals in the script or config. | Proven in a browser |
 | req-web-panels-chart-theme-3 | Follows Theme And Size | Implemented | The chart redraws on a colour-scheme change and resizes with its container. | Proven in a browser |
 | req-web-panels-chart-theme-4 | Visible Failure | Implemented | A drawing failure is shown in the frame, not only in the console. | Proven in a browser |
+| req-web-panels-chart-theme-5 | Solid Data Labels | Implemented | Data labels are solid filled text with no outline, in the theme's text colour, in light and dark, for every series type that draws them, unless the config's own `label` sets `color` or `textBorderWidth`. | ECharts' default text border outlined the numbers on the dark frame. Computed through the chart's own model in a real browser: `textBorderWidth` 0. |
+
+### Chart Click-Through
+----
+RID: `req-web-panels-chart-click`
+
+Status: `Implemented`
+
+A chart can navigate: clicking a bar or a scatter point opens a page chosen by that item's row. It is panel configuration, never per-page code.
+
+#### Implementation
+- Config `click: {"row_url_template": "/path?x={alias}"}`. The template is a same-origin path (`ROW_URL_TEMPLATE_PATTERN`, the rule of the Table panel's `row_url_template`, `req-web-stdpanel-table-rows-5`, one implementation in `tap_web/panels/row_url.py`); `{alias}` placeholders take the row's values, each URL-encoded as one component. A row whose placeholder has no value (absent, null, empty) has no link.
+- The server fills the URL: `build_option` puts it in the dataset row as `_url` (not a drawn dimension) and gives `bar` and `scatter` series `cursor: "pointer"` (a series' own `cursor` stays). `chart-panel.js` only navigates to the clicked item's `_url`, after re-checking that it is a same-origin path; a Ctrl or Cmd click opens a new tab. Other series types are not clickable.
+- With `series_by` the item is a category, so only the `category` field may be a placeholder. `click` with `hierarchy` is rejected (a tree item is not a row), as is `click` with no bar or scatter series.
+- Keyboard and assistive technology: the canvas is not focusable, so when any row has a URL the visually hidden data table gains a `Link` column with a real `<a href>` per clickable row (`Open <first column>`); the table is revealed in place while a link has focus.
+
+Example (a bar per component; the page the bar opens is the consumer's data):
+
+```json
+{"option": {"xAxis": {"type": "value"}, "yAxis": {"type": "category"},
+            "series": [{"type": "bar", "encode": {"x": "open", "y": "component"}}]},
+ "click": {"row_url_template": "/vulnerabilities/component?component_id={cid}"}}
+```
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-panels-chart-click-1 | Template Is A Same-Origin Path | Implemented | `click.row_url_template` must be a same-origin path (never `//host`, a scheme, whitespace or a backslash); the `click` object is strict and every entry is described. | The Table panel's pattern. |
+| req-web-panels-chart-click-2 | Rows Carry Their URL | Implemented | Each dataset row carries its `_url`, URL-encoded; a row with a missing value has none; an unvalidated unsafe template yields none; `_url` is not a dimension; with `series_by` each category has one. | |
+| req-web-panels-chart-click-3 | Bar And Scatter Only, Pointer Cursor | Implemented | Bar and scatter series get the pointer cursor (a series' own cursor stays); `click` needs one; it excludes `hierarchy`; with `series_by` only the category may be a placeholder. | Without `click` nothing is added. |
+| req-web-panels-chart-click-4 | Keyboard Route | Implemented | A click-through chart's hidden data table has a `Link` column with a real link per clickable row; without `click` there is none. | Proven in a real browser: Tab and Enter navigate. |
+| req-web-panels-chart-click-5 | Click Navigates | Implemented | A click on a bar or scatter item opens its `_url`; a click on empty space does nothing; Ctrl or Cmd opens a new tab. | Proven in a real browser: the resulting URL read after the click. |
 
 ### Chart Styling
 ----
@@ -322,7 +360,7 @@ Trace: `non-python` — tap_web/static/tap_web/css/panel-chart.css
 ## Out Of Scope
 
 - A typed in-page editor (`editor_view` is empty; the generic panel editor edits `config` as JSON).
-- Click-through from a chart element to a page.
+- Click-through from series other than bar and scatter, and from a hierarchy item.
 - Series types outside the closed list (`custom`, `map`, `lines`, `graph`).
 - Streaming or auto-refresh of the data.
 

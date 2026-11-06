@@ -27,7 +27,7 @@ Searches always return a graph-shaped result envelope. Even when a consumer is p
 | req-grid-search-module | [Module Search Mode](#module-search-mode) | Implemented | Code-backed searches resolve a registered module runner via `ScopedRegistry` |
 | req-grid-search-orm | [ORM Search Mode](#orm-search-mode) | Implemented | Declarative ORM DSL with one-hop traversal and deterministic ordering |
 | req-grid-search-results | [Search Results](#search-results) | Implemented | Searches always return the canonical 4-key graph envelope (`nodes`, `edges`, `info`, `warnings`) |
-| req-grid-search-canonical-read | [Canonical Read Interface — Break-Glass Discipline](#canonical-read-interface--break-glass-discipline) | Proposed | Gryphon/Search is the canonical graph read interface; raw-ORM graph reads and bespoke-module-as-Gryphon-substitute are break-glass; the urge to use them is a demand signal to extend Gryphon |
+| req-grid-search-canonical-read | [Canonical Read Interface — Choosing How a Search Is Built](#canonical-read-interface--choosing-how-a-search-is-built) | Approved for Development | Gryphon is the first choice; when it cannot express a Search the user chooses between building the capability and an `orm`/`module` Search; code lives only in a Search object |
 | req-grid-search-readonly.sec | [Search Read-Only Execution](#search-read-only-execution) | Implemented | Security requirement enforcing that searches cannot mutate TAP data |
 | req-grid-search-readonly-role.sec | [Search Read-Only Least-Privilege Role](#search-read-only-least-privilege-role) | Implemented | The read-only search connection authenticates as a dedicated DB role granted `SELECT` on only the searchable + spine tables; a defense-in-depth backstop so a resolver-guard miss fails closed at the database |
 | req-grid-search-authz.sec | [Search Authorization](#search-authorization) | Backlog | Deferred security requirement for search-specific authorization and access controls |
@@ -480,6 +480,7 @@ Keep the ORM DSL graph-native and small. If future requirements demand traversal
 | req-grid-search-orm-7 | Endpoint Filters Supported | Implemented | A hop may apply endpoint filters to the connected node set. | |
 | req-grid-search-orm-8 | Non-TAP Models Excluded | Implemented | ORM search definitions cannot target models outside TAP-managed `BaseModel` descendants. | |
 | req-grid-search-orm-9 | Deterministic Ordering | Implemented | ORM execution applies explicit or default deterministic ordering before pagination. | |
+| req-grid-search-orm-10 | Tombstones Never Returned | Implemented | ORM execution never returns a tombstoned entity: not as a node root, not as a hop endpoint, and not in `total_count`. Edge roots are already live through `Edge.objects`; node and endpoint queries start from `Entity.objects`, which is unfiltered, so they call `.live()` (`Issue# 1144 - tap`). | |
 
 #### Future
 Consider supporting boolean composition (`OR`, `NOT`, nested logical expressions`) once real searches demonstrate the need.
@@ -595,97 +596,73 @@ Security posture for searches must be designed before searches are exposed broad
 #### Future
 Define caller-context authorization, search object visibility rules, and execution-policy controls.
 
-### Canonical Read Interface — Break-Glass Discipline
-
+### Canonical Read Interface — Choosing How a Search Is Built
+----
 RID: `req-grid-search-canonical-read`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 Gryphon and the Search system (the first-class `module` and `orm` modes, all
 routed through the service layer over a read-only connection) are the
-**canonical** way to read TAP-managed graph data. This requirement does not
-deprecate or weaken any existing Search mode — `req-grid-search-module` and
-`req-grid-search-orm` remain first-class. It governs the *policy on what to
-reach for*, decided 2026-05-19 (George):
+**canonical** way to read TAP-managed graph data, and Gryphon is the **first
+choice** for building a Search. This requirement does not deprecate or weaken
+any existing Search mode — `req-grid-search-module` and `req-grid-search-orm`
+remain first-class. It governs the *policy on what to reach for*.
 
-- **Raw Django ORM querying of graph models** (`Entity`, `Edge`, `BaseModel`
-  subclasses) that bypasses the service layer / Search entirely, and
-- **authoring a new bespoke `module` search runner specifically as a
-  substitute for a capability Gryphon is missing**,
+**Ruled 2026-10-19 (George), replacing the 2026-05-19 break-glass ruling.**
+Gryphon matters, but not more than shipping functionality that helps users.
+When a Search needs something Gryphon cannot do today (a conditional count, a
+joined list, date arithmetic), the person asking is given the choice, and the
+choice is theirs, not the agent's:
 
-are **break-glass: a genuine last resort, never a go-to.** Both were
-reasonable *before Gryphon*. From here on, the *urge* to reach for either is
-to be re-interpreted as a **demand signal to build out whatever Gryphon is
-missing**, not a license to bypass it. The gap is the signal; route the energy
-upstream so the next caller inherits the capability instead of another
-divergent query path. (Structurally the same discipline as the future-seam
-rule: an impulse becomes evidence of demand to address at the canonical layer,
-not a shortcut.)
+1. **Start a Gryphon implementation** (`build-gryphon-capability`), so the next
+   caller inherits the capability; or
+2. **Build the Search with the `orm` mode or a `module` runner**, and ship now.
 
-**Carve-out — do not misapply.** Direct ORM remains legitimate, and is *not*
-break-glass, for: database migrations; intentional low-level / model-level
-tests; the service layer's own internals; and the Search `orm`-mode compiler
-which legitimately builds ORM queries *on behalf of* the canonical interface.
-Break-glass is specifically *application/plugin/collector code reading the
-graph by going around Gryphon/Search*.
+Either is legitimate. An agent MUST put the choice to the user and say what
+each costs; it MUST NOT pick the ORM or module path silently, and MUST NOT
+treat a missing Gryphon capability as a reason to stop the feature unasked.
+The ORM or module choice is recorded as a one-line reason beside the Search
+(its description) naming the Gryphon capability that was missing, so a later
+Gryphon release can retire the code.
 
-#### Enforcement (designed here; not yet built)
+**Where code is allowed.** The only place this choice permits code is a
+**Search object**: an `orm`-mode definition, or a `module` runner registered
+through `register_search_runner` and reached through the service layer. A
+module runner is written in the plugin that owns the data it reads, through a
+reviewed PR; an instance or project plugin stays data only (it may *reference*
+such a Search, never carry the runner). Nothing here relaxes the other rules:
+a Gryphon defect (a wrong result, a dropped clause, a crash) is still fixed on
+the spot, and is not a choice.
 
-The principle is in force now via `AGENTS.md` Core TAP Rules and agent
-memory; the code-level enforcement is specified here and Proposed because the
-two surfaces have very different shapes and one is a genuine mechanism fork:
+**Raw ORM reads that go around the service layer stay out of bounds.**
+`Entity.objects` / `Edge.objects` reads of graph models from application,
+plugin or collector code that bypass Search entirely are not a Search object and
+are not covered by this choice; they remain a defect to route through a Search.
+Direct ORM is also legitimate, as before, for database migrations,
+intentional low-level / model-level tests, the service layer's own internals,
+and the Search `orm`-mode compiler.
 
-- **Module-runner registration is a bounded chokepoint.**
-  `register_search_runner` (`tap_grid/registry.py`) is a single function. A
-  break-glass affordance there is concrete: registering a runner whose purpose
-  is to substitute for missing Gryphon capability must be a *deliberate,
-  greppable, logged acknowledgement* (an explicit opt-in argument /
-  break-glass marker + a loud one-time WARNING naming it break-glass and
-  pointing at "extend Gryphon"), not a frictionless default. Low blast
-  radius; implementable as a focused change.
-- **Raw-ORM-graph-read is diffuse — there is no runtime chokepoint, and a
-  runtime guard would be the wrong tool** (it would fight the carve-outs and
-  the service layer's own legitimate ORM use). The correct mechanism is
-  *static*: a lint rule or a CI gate that flags direct `.objects` / queryset
-  access to graph models from application/plugin/collector code outside the
-  named carve-outs, treating a hit as the demand signal. This carries a real
-  false-positive / carve-out surface, so the specific mechanism (custom `ruff`
-  rule vs. a CI grep gate vs. a single sanctioned `break_glass`-marked query
-  helper everything-else-is-banned-relative-to) is a deliberate decision to
-  settle before implementation rather than guess and sprawl.
+A module runner obeys the same read rules Gryphon applies: deleted nodes and
+edges excluded, the `db_alias` and `layer` arguments honoured, and the
+service layer's authorization and read-only connection.
 
-#### Recommended Next Step (on pickup — parked 2026-05-19, decision-ready)
-
-Parked deliberately, not abandoned: the principle is in force now via
-AGENTS.md/memory; only the mechanical catcher is unbuilt. When picked up, the
-recommended 2-track (no re-litigation needed unless the recommendation is
-rejected):
-
-1. **Module surface — bounded, do first.** Add a deliberate, greppable,
-   logged break-glass opt-in to `register_search_runner`
-   (`tap_grid/registry.py`; see also `tap_plugins/base.py` callers). Small,
-   single chokepoint, no mechanism fork.
-2. **ORM surface — CI baseline-ratchet gate.** Mirror the proven
-   `tap/tests/test_log_site_ids.py` scanner pattern: flag direct graph-model
-   `.objects`/queryset access in application/plugin/collector code outside the
-   already-enumerated carve-outs, baseline-ratcheted so existing violations
-   don't block but no new ones land, burn down over time. Reuses an existing
-   TAP enforcement idiom; least uninvited sprawl.
-
-The single sanctioned `break_glass`-marked helper (strongest greppability,
-most invasive now) stays available as a later upgrade if the ratchet proves
-insufficient. No work proceeds here without an explicit pickup decision.
+#### Status Details
+Supersedes the 2026-05-19 "break-glass" discipline. The two enforcement
+mechanisms that discipline planned (a logged opt-in on `register_search_runner`
+and a static raw-ORM lint) are withdrawn with it: the choice is recorded as a
+reason beside the Search, not enforced by a gate.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-search-canonical-read-1 | Gryphon/Search Is Canonical | Proposed | Reading TAP-managed graph data is done through Gryphon/Search via the service layer. First-class `module`/`orm` modes are unaffected. | Principle in force via AGENTS.md/memory now. |
-| req-grid-search-canonical-read-2 | ORM/Bespoke-Module Are Break-Glass | Proposed | Raw-ORM graph reads bypassing the service layer, and authoring a new bespoke module runner as a Gryphon substitute, are last-resort only. | Never a go-to. |
-| req-grid-search-canonical-read-3 | Urge Is A Demand Signal | Proposed | The impulse to reach for either is re-interpreted as a demand signal to extend Gryphon, not a license to bypass it. | The reframe is the point. |
-| req-grid-search-canonical-read-4 | Carve-Outs Preserved | Proposed | Migrations, low-level/model tests, service-layer internals, and the Search `orm`-mode compiler are explicitly not break-glass. | Prevents misapplication breaking sanctioned low-level access. |
-| req-grid-search-canonical-read-5 | Module Registration Break-Glass Affordance | Proposed | `register_search_runner` gains a deliberate, greppable, logged break-glass opt-in for Gryphon-substitute runners. | Bounded chokepoint; implementable focused. |
-| req-grid-search-canonical-read-6 | ORM Static Enforcement Mechanism | Proposed | Raw-ORM-graph-read enforcement is static (lint/CI gate honoring carve-outs), not a runtime guard. Specific mechanism is an open decision before build. | The genuine fork; honest false-positive surface. |
+| req-grid-search-canonical-read-1 | Gryphon Is The First Choice | Approved for Development | A Search is built with Gryphon unless Gryphon cannot express it; reading TAP-managed graph data goes through Search via the service layer. First-class `module`/`orm` modes are unaffected. | |
+| req-grid-search-canonical-read-2 | The User Chooses When Gryphon Cannot | Approved for Development | When Gryphon lacks a capability a Search needs, the person asking chooses between starting a Gryphon implementation and building the Search with `orm` mode or a `module` runner; an agent puts the choice to them and does not pick the ORM or module path silently. | Ruled 2026-10-19 (George). Replaces "break-glass". |
+| req-grid-search-canonical-read-3 | The Choice Is Recorded Beside The Search | Approved for Development | A Search built with `orm` mode or a `module` runner as a substitute names, in its description, the Gryphon capability that was missing. | One line; lets a later release retire the code. |
+| req-grid-search-canonical-read-4 | Code Lives Only In A Search Object | Approved for Development | The only code the choice permits is an `orm` definition or a `module` runner, written in the plugin that owns the data through a reviewed PR; instance and project plugins stay data only. A Gryphon defect is still fixed on the spot. | |
+| req-grid-search-canonical-read-5 | Runners Obey Gryphon's Read Rules | Approved for Development | A `module` runner excludes deleted nodes and edges, honours `db_alias` and `layer`, and runs through the service layer. | |
+| req-grid-search-canonical-read-6 | Raw Reads Around The Service Layer Stay Out Of Bounds | Approved for Development | Graph-model reads from application, plugin or collector code that bypass Search remain a defect; migrations, low-level tests, service-layer internals and the `orm`-mode compiler are exempt. | The old carve-outs, kept. |
 
 ## Status Vocabulary
 

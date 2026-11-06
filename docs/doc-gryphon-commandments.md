@@ -67,8 +67,10 @@ provides: |
 
 Not aspirations — the system as it stands (verify before relying on any specific line; GRY-PROC-2):
 
-- Gryphon is the **canonical read/query path** for TAP-managed graph data; raw ORM graph reads and
-  bespoke module runners are break-glass, not the normal answer to a missing construct.
+- Gryphon is the **canonical read/query path** and the first choice for building a Search. When it
+  cannot express one, the user chooses between building the capability and an `orm`-mode or `module`
+  Search (ruled 2026-10-19, `req-grid-search-canonical-read`); raw graph reads that go around Search
+  stay out of bounds.
 - Gryphon is **read-only**; all mutation is the typed service layer's / GRIFT's (GRY-ARCH-7).
 - The executor **compiles through the Django ORM first** (lowering ladder rung 1); higher rungs are
   deliberate escalations (GRY-ARCH-2).

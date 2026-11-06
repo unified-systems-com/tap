@@ -23,10 +23,13 @@ Read-only: no graph or layout mutation occurs in this panel.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
+
+import jsonschema
 
 from tap_web.utils import graph_script_ids
 
@@ -87,6 +90,133 @@ _NAV_RULES_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+# Settle mode (spec-viz-label-sizing § Settle Mode). One shape for the per-class dial: the exponent that sets how far
+# the element follows the zoom, and the band, as multiples of the element's own base size, that holds it.
+_ZOOM_CLASS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "exponent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": (
+                "How far this class follows the zoom: on-screen size is base * zoom^exponent. 1 is the renderer's own "
+                "geometric scaling, 0 is constant on-screen size. Omitted: the top-level `exponent`."
+            ),
+        },
+        "min_scale": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "description": "Floor of the on-screen size as a multiple of the element's base size (at most 1).",
+        },
+        "max_scale": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Ceiling of the on-screen size as a multiple of the element's base size (at least 1).",
+        },
+    },
+}
+
+ZOOM_SETTLE_SCHEMA: dict[str, Any] = {
+    "description": (
+        "Settle mode: keep fonts, borders, edge widths and icon cards a similar size on screen at any zoom. Nothing is "
+        "written while the viewer zooms; once the zoom has been still for `debounce_ms` the sizes are rewritten once "
+        "for the zoom reached. Off unless `enabled` is true."
+    ),
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["enabled"],
+    "properties": {
+        "enabled": {
+            "type": "boolean",
+            "description": "True turns settle mode on for this panel. Absent or false leaves the graph as it is.",
+        },
+        "debounce_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000,
+            "description": "Milliseconds the zoom must stay still before the sizes are rewritten. Default 150.",
+        },
+        "exponent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": (
+                "Default zoom exponent for every class: on-screen size is base * zoom^exponent, then clamped. 0 is "
+                "constant on screen, 1 is no policy. Default 0.3."
+            ),
+        },
+        "classes": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Per-class overrides of the exponent and the clamp band. An absent class takes the defaults.",
+            "properties": {
+                "font": {
+                    **_ZOOM_CLASS_SCHEMA,
+                    "description": "Node, parent and edge label font sizes. Default band 0.85 to 1.45 of base (12 to 20 px around 14 px).",
+                },
+                "border": {
+                    **_ZOOM_CLASS_SCHEMA,
+                    "description": "Node and parent border widths. Default band 0.6 to 1.7.",
+                },
+                "edge": {**_ZOOM_CLASS_SCHEMA, "description": "Edge line widths. Default band 0.6 to 1.7."},
+                "arrow": {**_ZOOM_CLASS_SCHEMA, "description": "Edge arrowhead scale. Default band 0.6 to 1.7."},
+                "icon": {
+                    **_ZOOM_CLASS_SCHEMA,
+                    "description": "Icon-node card width and height (icon nodes only). Default band 0.6 to 1.7.",
+                },
+            },
+        },
+        "texture_on_viewport": {
+            "type": "boolean",
+            "description": (
+                "Draw motion frames from a bitmap (Cytoscape textureOnViewport): 4-7 ms frames instead of 35-45 ms, but "
+                "soft while moving. Default false; needs a visual check before use."
+            ),
+        },
+    },
+}
+
+#: Panel.config of a Graph panel. Keys the panel reads; others pass through untouched.
+GRAPH_CONFIG_SCHEMA: dict[str, Any] = {
+    "description": "Config of a Graph panel. Only the keys named here are read; any other key is ignored.",
+    "type": "object",
+    "properties": {
+        "height": {
+            "type": "string",
+            "pattern": _ALLOWED_PANEL_HEIGHT.pattern,
+            "description": "Graph height: `100%` to fill the slot, or whole pixels such as `420px` (default).",
+        },
+        "hide_header": {"type": "boolean", "description": "When true, omit the panel's name heading."},
+        "nav_rules": {
+            **_NAV_RULES_SCHEMA,
+            "description": "Declarative node-click navigation: the first rule matching a node yields its URL.",
+        },
+        "zoom_settle": ZOOM_SETTLE_SCHEMA,
+    },
+}
+
+
+def _zoom_settle_attr(config: Any) -> str:
+    """The panel's `zoom_settle` config as a JSON string for the template, or "" when settle mode is off.
+
+    Settle mode is opt-in, so anything short of an enabled, schema-valid object yields "" and the graph renders
+    exactly as before; a malformed config is logged, not raised, because the view is a display enhancement.
+    """
+    raw = (config or {}).get("zoom_settle") if isinstance(config, dict) else None
+    if not isinstance(raw, dict) or raw.get("enabled") is not True:
+        return ""
+    try:
+        jsonschema.validate(instance=raw, schema=ZOOM_SETTLE_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        logger.warning("[c41e] Graph panel zoom_settle config ignored: %s", exc.message)
+        return ""
+    return json.dumps(raw, separators=(",", ":"))
 
 
 #: Placeholders in a nav `url_template`: a dotted path into the node envelope.
@@ -281,6 +411,7 @@ class GraphPanelType:
             "graph_placement": placement,
             "graph_nesting_enabled": nesting_enabled,
             "graph_height": _sanitize_panel_height((panel.config or {}).get("height")),
+            "graph_zoom_settle": _zoom_settle_attr(panel.config),
             "graph_error": None,
         }
 
@@ -339,6 +470,7 @@ class GraphPanelType:
             "graph_placement": "projection",
             "graph_nesting_enabled": False,
             "graph_height": _sanitize_panel_height((panel.config or {}).get("height")),
+            "graph_zoom_settle": _zoom_settle_attr(panel.config),
             "graph_error": None,
         }
 
@@ -459,5 +591,6 @@ def _error_ctx(message: str) -> dict[str, Any]:
         "graph_inputs": {},
         "graph_placement": "cytoscape:cose",
         "graph_height": _DEFAULT_PANEL_HEIGHT,
+        "graph_zoom_settle": "",
         "graph_error": message,
     }

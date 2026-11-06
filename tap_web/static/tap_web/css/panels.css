@@ -1,19 +1,19 @@
 /* TAP Panel — shared panel chrome styles */
 
 .tap-panel-edit-link {
-    color: #cbd5e1; /* slate-300 */
+    color: rgb(var(--tap-slate-300)); /* slate-300 */
     transition: color 0.15s;
     flex-shrink: 0;
     line-height: 1;
 }
 
 .tap-panel-edit-link:hover {
-    color: #475569; /* slate-600 */
+    color: rgb(var(--tap-slate-600)); /* slate-600 */
 }
 
 /* Fallback-resolution banner (req-web-panel-entity-resolution-template) —
    the shared partial tap_web/partials/fallback_banner.html renders this on
    every panel whose entity came from its fallback query. */
-.tap-fallback-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.5rem 0.85rem; font-size: 0.82rem; color: #1e40af; }
+.tap-fallback-banner { background: rgb(var(--tap-blue-50)); border: 1px solid rgb(var(--tap-blue-200)); border-radius: 8px; padding: 0.5rem 0.85rem; font-size: 0.82rem; color: rgb(var(--tap-blue-800)); }
 .tap-fallback-banner__id { font-family: ui-monospace, monospace; font-size: 0.78rem; }
 .tap-fallback-banner__hint { margin-left: 0.5rem; opacity: 0.8; }

@@ -9,8 +9,8 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.4rem 0.75rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: rgb(var(--tap-slate-50));
+  border: 1px solid rgb(var(--tap-slate-200));
   border-radius: 8px;
   font-size: 0.85rem;
 }
@@ -19,22 +19,22 @@
   flex: 0 0 auto;
   padding: 0.25rem 0.6rem;
   border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #0f172a;
+  border: 1px solid rgb(var(--tap-slate-300));
+  background: rgb(var(--tap-white));
+  color: rgb(var(--tap-slate-900));
   text-decoration: none;
   font-weight: 500;
   white-space: nowrap;
 }
 
 .tap-seqnav-btn:hover {
-  background: #f1f5f9;
+  background: rgb(var(--tap-slate-100));
 }
 
 .tap-seqnav-btn.is-disabled {
-  color: #cbd5e1;
-  border-color: #e2e8f0;
-  background: #f8fafc;
+  color: rgb(var(--tap-slate-300));
+  border-color: rgb(var(--tap-slate-200));
+  background: rgb(var(--tap-slate-50));
   cursor: default;
   pointer-events: none;
 }
@@ -45,7 +45,7 @@
   align-items: baseline;
   justify-content: center;
   gap: 0.5rem;
-  color: #475569;
+  color: rgb(var(--tap-slate-600));
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -53,7 +53,7 @@
 }
 
 .tap-seqnav-kind {
-  color: #0f172a;
+  color: rgb(var(--tap-slate-900));
   font-weight: 600;
 }
 
@@ -64,7 +64,7 @@
 .tap-seqnav-when {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgb(var(--tap-slate-500));
 }
 
 .tap-seqnav-latest {
@@ -72,8 +72,8 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #047857;
-  background: #d1fae5;
+  color: rgb(var(--tap-green-700));
+  background: rgb(var(--tap-green-100));
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
 }
@@ -81,8 +81,8 @@
 .tap-seqnav-empty {
   padding: 0.4rem 0.75rem;
   font-size: 0.85rem;
-  color: #94a3b8;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  color: rgb(var(--tap-slate-400));
+  background: rgb(var(--tap-slate-50));
+  border: 1px solid rgb(var(--tap-slate-200));
   border-radius: 8px;
 }

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# scripts/pytest-serial <pytest args...> — one pytest at a time per stack (tap#1092).
+#
+# Runs pytest inside this session's container under the stack's pytest lock, in its own process
+# group, so a second heavy run WAITS (and says who holds the lock) instead of overlapping, and
+# `scripts/test --stop` can kill it whole. Prefer this over a hand-typed `scripts/dc exec ... pytest`
+# for anything bigger than a couple of files, and from parallel subagents in one session.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+tty_args=()
+[[ -t 1 ]] || tty_args=(-T)
+exec scripts/dc exec "${tty_args[@]}" web sh -c \
+  'cd /app && exec uv run python -m tap.pytest_lock run -- "$@"' _ "$@"

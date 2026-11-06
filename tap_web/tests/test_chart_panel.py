@@ -147,6 +147,8 @@ class TestConfigSchema:
         for key in ("series_by", "hierarchy", "color_map", "sort"):
             for name, prop in CHART_CONFIG_SCHEMA["properties"][key]["properties"].items():
                 assert prop.get("description"), f"{key}.{name}"
+        overrides = CHART_CONFIG_SCHEMA["properties"]["series_by"]["properties"]["overrides"]
+        assert overrides["additionalProperties"]["description"]
 
     @pytest.mark.spec("req-web-panels-chart-config-4")
     def test_the_schema_names_no_domain_value(self):
@@ -459,6 +461,71 @@ class TestSeriesBy:
         built = build_option(rows, _cfg(series_by=self.SB))
         assert built.notices == ["1 row had no numeric `c` and is not drawn."]
 
+    LINE: dict[str, Any] = {
+        "xAxis": {"type": "time"},
+        "yAxis": {"type": "value"},
+        "series": [{"type": "line", "lineStyle": {"width": 1.5, "opacity": 0.5}, "endLabel": {"show": True}}],
+    }
+    ROWS: list[dict[str, Any]] = [
+        {"day": "2026-10-01T00:00:00Z", "tool": "a", "c": 1},
+        {"day": "2026-10-01T00:00:00Z", "tool": "Overall", "c": 2},
+    ]
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-6")
+    def test_an_override_is_deep_merged_onto_that_series_only(self):
+        sb: dict[str, Any] = {
+            "category": "day",
+            "series": "tool",
+            "value": "c",
+            "overrides": {"Overall": {"lineStyle": {"width": 6, "opacity": 1}, "z": 10}},
+        }
+        cfg = _cfg(series_by=sb, option=self.LINE)
+        by_name = {s["name"]: s for s in build_option(self.ROWS, cfg).option["series"]}
+        assert by_name["Overall"]["lineStyle"] == {"width": 6, "opacity": 1}
+        assert by_name["Overall"]["z"] == 10
+        assert by_name["Overall"]["endLabel"] == {"show": True}  # untouched template keys survive
+        assert by_name["a"]["lineStyle"] == {"width": 1.5, "opacity": 0.5} and "z" not in by_name["a"]
+        assert by_name["Overall"]["encode"] == {"x": "day", "y": "series_1"}
+        assert self.LINE["series"][0]["lineStyle"] == {"width": 1.5, "opacity": 0.5}  # template not mutated
+        assert sb["overrides"]["Overall"]["z"] == 10
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-6")
+    def test_an_override_for_an_absent_series_is_ignored(self):
+        sb = {"category": "day", "series": "tool", "value": "c", "overrides": {"Ghost": {"z": 3}}}
+        built = build_option(self.ROWS, _cfg(series_by=sb, option=self.LINE))
+        assert all("z" not in s for s in built.option["series"])
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-7")
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "thick",
+            {"name": "x"},
+            {"type": "bar"},
+            {"encode": {"y": "z"}},
+            {"data": [1]},
+            {"dataset": {}},
+            {"label": {"formatter": "{c}"}},
+            {"label": {"formatter": "<b>{b}</b>"}},
+            {"lineStyle": {"color": "url(http://x)"}},
+            {"x": "function () {}"},
+        ],
+    )
+    def test_unsafe_overrides_are_rejected(self, bad):
+        sb = {"category": "a", "series": "b", "value": "c", "overrides": {"Overall": bad}}
+        with pytest.raises(ValidationError):
+            validate_config({"option": {"series": [{"type": "line"}]}, "series_by": sb})
+
+    @pytest.mark.spec("req-web-panels-chart-series-by-7")
+    def test_a_safe_override_is_accepted(self):
+        sb = {
+            "category": "a",
+            "series": "b",
+            "value": "c",
+            "overrides": {"Overall": {"lineStyle": {"width": 6}, "z": 10, "endLabel": {"formatter": "{a}"}}},
+        }
+        validate_config({"option": {"series": [{"type": "line"}]}, "series_by": sb})
+
 
 class TestHierarchy:
     ROWS: list[dict[str, Any]] = [
@@ -656,6 +723,163 @@ class TestRender:
         html = _get(panel)
         colors = json.loads(unescape(re.search(r'data-tap-chart-colors="([^"]*)"', html).group(1)))  # type: ignore[union-attr]
         assert colors == {"map": {"alpha": "critical"}, "field": "source"}
+
+
+# ---------------------------------------------------------------------------
+# req-web-panels-chart-click
+# ---------------------------------------------------------------------------
+
+CLICK = {"row_url_template": "/components/{source}?from=chart"}
+
+
+class TestClickConfig:
+    @pytest.mark.spec("req-web-panels-chart-click-1")
+    def test_a_same_origin_template_validates(self):
+        validate_config({"option": CHART_OPTION, "click": CLICK})
+
+    @pytest.mark.spec("req-web-panels-chart-click-1")
+    @pytest.mark.parametrize(
+        "template", ["//evil.example/x", "https://evil.example/x", "javascript:alert(1)", "/a b", "/a\\b", "x", "/", ""]
+    )
+    def test_anything_but_a_same_origin_path_is_rejected(self, template):
+        with pytest.raises(ValidationError):
+            validate_config({"option": CHART_OPTION, "click": {"row_url_template": template}})
+
+    @pytest.mark.spec("req-web-panels-chart-click-1")
+    def test_the_click_object_is_strict_and_self_describing(self):
+        with pytest.raises(ValidationError):
+            validate_config({"option": CHART_OPTION, "click": {}})
+        with pytest.raises(ValidationError):
+            validate_config({"option": CHART_OPTION, "click": {**CLICK, "target": "_blank"}})
+        spec = CHART_CONFIG_SCHEMA["properties"]["click"]
+        assert spec["description"] and spec["properties"]["row_url_template"]["description"]
+
+    @pytest.mark.spec("req-web-panels-chart-click-3")
+    def test_click_needs_a_bar_or_scatter_series_and_excludes_hierarchy(self):
+        pie = {"series": [{"type": "pie"}]}
+        with pytest.raises(ValidationError, match="bar or scatter"):
+            validate_config({"option": pie, "click": CLICK})
+        validate_config({"option": {"series": [{"type": "scatter"}]}, "click": CLICK})
+        with pytest.raises(ValidationError, match="hierarchy"):
+            validate_config(
+                {
+                    "option": {"series": [{"type": "bar"}, {"type": "treemap"}]},
+                    "hierarchy": {"path": ["a"]},
+                    "click": CLICK,
+                }
+            )
+
+    @pytest.mark.spec("req-web-panels-chart-click-3")
+    def test_with_series_by_only_the_category_field_may_be_a_placeholder(self):
+        sb = {"category": "source", "series": "tool", "value": "n"}
+        validate_config({"option": BAR, "series_by": sb, "click": {"row_url_template": "/c/{source}"}})
+        with pytest.raises(ValidationError, match="category field"):
+            validate_config({"option": BAR, "series_by": sb, "click": {"row_url_template": "/c/{tool}"}})
+
+
+class TestClickOption:
+    ROWS: list[dict[str, Any]] = [{"source": "a b", "n": 2}, {"source": "c&d", "n": 1}, {"source": None, "n": 3}]
+
+    @pytest.mark.spec("req-web-panels-chart-click-2")
+    def test_each_dataset_row_carries_its_encoded_url_and_unfillable_rows_none(self):
+        option = build_option(self.ROWS, _cfg(option=CHART_OPTION, click=CLICK)).option
+        urls = [r.get("_url") for r in option["dataset"]["source"]]
+        assert urls == ["/components/a%20b?from=chart", "/components/c%26d?from=chart", None]
+        assert option["dataset"]["dimensions"] == ["source", "n"]  # _url is not a drawn dimension
+
+    @pytest.mark.spec("req-web-panels-chart-click-2")
+    def test_an_unsafe_template_that_skipped_validation_yields_no_urls(self):
+        option = build_option(
+            self.ROWS, _cfg(option=CHART_OPTION, click={"row_url_template": "//evil/{source}"})
+        ).option
+        assert all("_url" not in r for r in option["dataset"]["source"])
+        assert "cursor" not in option["series"][0]
+
+    @pytest.mark.spec("req-web-panels-chart-click-3")
+    def test_bar_and_scatter_series_get_the_pointer_cursor_and_others_do_not(self):
+        series = [
+            {"type": "bar", "encode": {"x": "source", "y": "n"}},
+            {"type": "scatter", "encode": {"x": "source", "y": "n"}},
+            {"type": "line", "encode": {"x": "source", "y": "n"}},
+            {"type": "bar", "cursor": "crosshair"},
+        ]
+        option = build_option(self.ROWS, _cfg(option={**BAR, "series": series}, click=CLICK)).option
+        assert [s.get("cursor") for s in option["series"]] == ["pointer", "pointer", None, "crosshair"]
+
+    @pytest.mark.spec("req-web-panels-chart-click-3")
+    def test_without_click_nothing_is_added(self):
+        option = build_option(self.ROWS, _cfg(option=CHART_OPTION)).option
+        assert all("_url" not in r for r in option["dataset"]["source"])
+        assert "cursor" not in option["series"][0]
+
+    @pytest.mark.spec("req-web-panels-chart-click-2")
+    def test_series_by_gives_each_category_one_url(self):
+        rows = [
+            {"source": "a", "tool": "x", "n": 1},
+            {"source": "a", "tool": "y", "n": 2},
+            {"source": "b", "tool": "x", "n": 3},
+        ]
+        cfg = _cfg(
+            option={**BAR, "series": [{"type": "bar"}]},
+            series_by={"category": "source", "series": "tool", "value": "n"},
+            click={"row_url_template": "/c/{source}"},
+        )
+        option = build_option(rows, cfg).option
+        assert [r["_url"] for r in option["dataset"]["source"]] == ["/c/a", "/c/b"]
+        assert all(s["cursor"] == "pointer" for s in option["series"])
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestClickRender:
+    @pytest.mark.spec("req-web-panels-chart-click-4")
+    def test_the_hidden_data_table_carries_a_real_link_per_clickable_row(self):
+        _seed({"alpha": 2, "beta": 1})
+        panel = _panel(
+            {
+                "option": CHART_OPTION,
+                "click": {"row_url_template": "/c/{source}"},
+                "sort": {"field": "source", "order": "asc"},
+            }
+        )
+        _bind(panel, _COUNT_BY_SOURCE)
+        html = _get(panel)
+        assert '<th scope="col">Link</th>' in html
+        assert re.findall(r'<a href="([^"]*)" data-tap-chart-link>Open (\w+)</a>', html) == [
+            ("/c/alpha", "alpha"),
+            ("/c/beta", "beta"),
+        ]
+        option = _option(html)
+        assert [r["_url"] for r in option["dataset"]["source"]] == ["/c/alpha", "/c/beta"]
+        assert option["series"][0]["cursor"] == "pointer"
+
+    @pytest.mark.spec("req-web-panels-chart-click-4")
+    def test_without_click_there_is_no_link_column(self):
+        _seed({"alpha": 1})
+        panel = _panel({"option": CHART_OPTION})
+        _bind(panel, _COUNT_BY_SOURCE)
+        html = _get(panel)
+        assert "data-tap-chart-link" not in html and ">Link<" not in html
+
+
+class TestLabelDefaults:
+    @pytest.mark.spec("req-web-panels-chart-theme-5")
+    def test_the_script_makes_data_labels_solid_by_default_for_every_labelled_series_type(self):
+        from pathlib import Path
+
+        script = (Path(__file__).resolve().parents[1] / "static/tap_web/js/chart-panel.js").read_text()
+        # the theme: one solid label default shared by the series types that draw data labels
+        assert "var solid = { label: { color: text, textBorderWidth: 0," in script
+        for key in (
+            "bar: solid",
+            "line: solid",
+            "scatter: solid",
+            "heatmap: { label: solid.label }",
+            "funnel: { label: solid.label",
+        ):
+            assert key in script, key
+        # and a config's own label object is filled for whatever it leaves unset, never overridden
+        assert "if (l.textBorderWidth === undefined) l.textBorderWidth = 0;" in script
+        assert 'if (l.color === undefined && key === "label") l.color = text;' in script
 
 
 @pytest.mark.django_db

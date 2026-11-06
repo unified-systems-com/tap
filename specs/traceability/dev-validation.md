@@ -4,9 +4,9 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 9 |
+| mapped | 10 |
 | excluded | 2 |
-| unbuilt | 4 |
+| unbuilt | 3 |
 | 0-ACID (payable) | 0 |
 
 ## Exclusions
@@ -31,3 +31,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-dev-validation-ratchet-harness` | Implemented | Verified | `<module>` | `req-dev-validation-ratchet-harness-5` |
 | `req-dev-validation-real-backend` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-smoke-gate` | Implemented | Implemented | `<module>` | — |
+| `req-dev-validation-suite-tiers` | Proposed | Tested | — | `req-dev-validation-suite-tiers-6`, `req-dev-validation-suite-tiers-7`, `req-dev-validation-suite-tiers-8` |

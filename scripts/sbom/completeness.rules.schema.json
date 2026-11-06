@@ -19,6 +19,20 @@
         "required": ["_description", "require"],
         "properties": {
           "_description": {"type": "string", "minLength": 1, "description": "Why this ecosystem requires these fields."},
+          "require_attributes": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Inventory attributes the grid reads (req-cicd-sbom-33-7). Each is satisfied by the attribute or by an explicit not-observed marker with a reason. A gap is reported at intake and makes the verdict thin when attributes are enforced, as at image generation.",
+            "items": {
+              "enum": ["licenses-or-declared-unknown", "architecture-or-declared-unknown"],
+              "description": "licenses-or-declared-unknown: the component has licenses, or tap:licenses:status is not-observed with tap:licenses:reason. architecture-or-declared-unknown: the same with tap:architecture."
+            }
+          },
+          "declared_unknown_limit": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many components of this ecosystem may declare a required attribute unknown before the verdict is thin (default 0)."
+          },
           "require": {
             "type": "array",
             "minItems": 1,

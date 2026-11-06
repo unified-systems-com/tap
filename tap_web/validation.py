@@ -92,6 +92,7 @@ _LAYOUT_SCHEMA: dict = {
                         "type": "string",
                         "enum": [
                             "auto",
+                            "compact",
                             "1fr",
                             "2fr",
                             "3fr",
@@ -105,6 +106,15 @@ _LAYOUT_SCHEMA: dict = {
                             "11fr",
                             "12fr",
                         ],
+                    },
+                    "band": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 1,
+                        "description": (
+                            "Horizontal band the column belongs to. Columns sharing a band "
+                            "render side by side in one grid; bands stack top to bottom."
+                        ),
                     },
                     "tags": {
                         "type": "object",
@@ -151,6 +161,7 @@ _LAYOUT_SCHEMA: dict = {
                                         "80vh",
                                         "90vh",
                                         "100vh",
+                                        "fill",
                                         "1fr",
                                         "2fr",
                                         "3fr",

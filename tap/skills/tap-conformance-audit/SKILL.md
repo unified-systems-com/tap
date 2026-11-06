@@ -347,18 +347,21 @@ org-to-org two-variable paths remained after `Issue# 360 - tap` (`$p IS NULL`) a
 reused-variable fix (`Issue# 780 - tap`) landed, and the plugin's `requires_tap` floor
 (v0.2.1) did not yet include those fixes.
 
-### 13. Raw ORM graph reads bypassing Gryphon without a recorded reason
+### 13. Raw ORM graph reads that go around Search
 
 **Looks like:** `Entity.objects…` / `Edge.objects…` reads of the graph in app or plugin
-code, with no comment naming why Gryphon could not serve it.
-`req-grid-search-canonical-read` makes these break-glass.
+code outside a Search. (An `orm`-mode or `module` Search is a sanctioned choice, ruled
+2026-10-19, `req-grid-search-canonical-read`; this finding is about reads that bypass
+Search entirely.)
 
 **Detect:** grep non-test, non-migration code for `Edge\.objects\.`, `Entity\.objects\.`
-and model-manager reads of grid types; read each for a stated break-glass reason and a
-linked Gryphon demand issue.
+and model-manager reads of grid types; a hit inside a registered `module` runner is fine
+if the Search's description names the missing Gryphon capability. Flag a module runner
+whose Search has no such reason, and any runner that does not exclude deleted nodes or
+honour `db_alias` and `layer`.
 
-**Fix:** a Gryphon query; or, if Gryphon cannot express it, a recorded break-glass reason
-beside the read and an issue asking Gryphon for the capability.
+**Fix:** a Search (Gryphon first; `orm` mode or a `module` runner if the user chose that),
+with the reason recorded in its description.
 
 **Example:** `PR# 785 - tap` `tap_web/navigation.py:107` reads `NESTS_UNDER` edges with
 `Edge.objects.filter(...)`.

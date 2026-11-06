@@ -49,11 +49,25 @@
     }
   }
 
-  function run(root) {
-    render(root, Date.now());
+  /**
+   * Mark each closed longtext value that already fits its line limit (data-fits), so it does not offer a
+   * "Show all" that would reveal nothing. Without this script every longtext offers the toggle: nothing is hidden.
+   */
+  function markFits(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    var boxes = scope.querySelectorAll("details.tap-statcard__longtext:not([open])");
+    for (var i = 0; i < boxes.length; i++) {
+      var text = boxes[i].querySelector(".tap-statcard__longtext-text");
+      if (text && text.clientHeight > 0 && text.scrollHeight <= text.clientHeight + 1) boxes[i].setAttribute("data-fits", "");
+    }
   }
 
-  window.TapStatCards = { formatAge: formatAge, render: run };
+  function run(root) {
+    render(root, Date.now());
+    markFits(root);
+  }
+
+  window.TapStatCards = { formatAge: formatAge, render: run, markFits: markFits };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () { run(document); });

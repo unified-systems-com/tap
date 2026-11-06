@@ -21,7 +21,7 @@
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Short stable name for logs and the SBOM node."},
           "repository": {"type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "owner/repo that holds the signing workflow file."},
           "workflow_path": {"type": "string", "pattern": "^\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml$", "description": "Path of the signing workflow file in that repository."},
-          "ref": {"type": "string", "pattern": "^refs/(heads|tags)/[A-Za-z0-9._/-]+$", "description": "The ref the certificate's signer identity names. Matched exactly."},
+          "ref": {"type": "string", "pattern": "^(refs/(heads|tags)/[A-Za-z0-9._/-]+|[0-9a-f]{40})$", "description": "The ref the certificate's signer identity names, matched exactly: a branch or tag ref, or a 40-hex commit when the signing workflow was called by commit (the certificate's signer identity then ends in that commit)."},
           "signer_digest": {
             "type": ["string", "null"],
             "pattern": "^[0-9a-f]{40}$",

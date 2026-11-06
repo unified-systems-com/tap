@@ -34,6 +34,7 @@ Each TAP deployment has a product name that appears in all user-facing UI surfac
 #### Implementation
 
 - `TAP_PRODUCT_NAME` is a string setting in `settings.py`, defaulting to `"TAP"`.
+- The displayed name resolves, highest first, from `TAP_BOOT_WEB__BRANDING__NAME`, the boot profile's `web.branding.name`, `TAP_PRODUCT_NAME`, then `TAP` (`req-boot-web-branding-7`, ruled by George 2026-10-20). A deployment that sets only `TAP_PRODUCT_NAME` and ships a profile name sees the profile name. The context processor reads this at request time.
 - A context processor `tap_web.context_processors.branding` injects `product_name` into every template context.
 - The context processor is registered in `settings.TEMPLATES[0]["OPTIONS"]["context_processors"]`.
 - Templates reference `{{ product_name }}` wherever the product name appears:

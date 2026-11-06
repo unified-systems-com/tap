@@ -189,7 +189,7 @@
       li.appendChild(name);
       li.appendChild(url);
 
-      li.addEventListener("click", () => navigate(page.url));
+      li.addEventListener("click", (e) => navigate(page.url, e));
       li.addEventListener("mouseenter", () => {
         selectedIndex = i;
         updateSelection();
@@ -224,12 +224,18 @@
       e.preventDefault();
     } else if (e.key === "Enter") {
       const page = currentResults[selectedIndex];
-      if (page) navigate(page.url);
+      if (page) navigate(page.url, e);
       e.preventDefault();
     }
   }
 
-  function navigate(url) {
+  // Cmd-click (macOS) or Ctrl-click (elsewhere), and Cmd/Ctrl+Enter, open the page in a new tab, the way a
+  // link does; a plain click or Enter navigates in place. The URL comes from the same-origin nav index.
+  function navigate(url, event) {
+    if (event && (event.metaKey || event.ctrlKey)) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
     window.location.href = url;
   }
 

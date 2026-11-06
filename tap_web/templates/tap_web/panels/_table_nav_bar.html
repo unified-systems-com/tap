@@ -11,6 +11,7 @@
         Showing {{ table_meta.showing }} of {{ table_meta.total_count }}
     </span>
 
+    {% if table_meta.page_size_options %}
     <label class="tap-table-nav__page-size flex items-center gap-1">
         <span>Rows:</span>
         <select class="tap-table-page-size-select rounded border border-slate-300 bg-white px-2 py-0.5 text-sm"
@@ -20,6 +21,7 @@
             {% endfor %}
         </select>
     </label>
+    {% endif %}
 
     {% if table_meta.has_prev or table_meta.has_next %}
     <div class="tap-table-nav__arrows flex items-center gap-2">

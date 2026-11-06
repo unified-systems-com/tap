@@ -17,6 +17,12 @@
 #                                               # only on session/<name> (not in origin/main).
 #                                               # Without this flag, despawn HARD-STOPS when
 #                                               # the branch has unpushed commits.
+#   scripts/despawn-session.sh <name> --skip-stack
+#                                               # remove the worktree even though the engine this
+#                                               # session lives on (its recorded Podman socket, or
+#                                               # an explicit DOCKER_HOST) is not answering. The
+#                                               # containers and volumes are LEFT RUNNING; the
+#                                               # cleanup command is printed.
 #   scripts/despawn-session.sh <name> --purge-image
 #                                               # also remove the tap-web/tap-db images
 #                                               # THIS session resolves to (its compose
@@ -44,6 +50,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 REGISTRY="$HOME/tap-sessions/.registry"
+# shellcheck source=lib/container-engine.sh
+source "$SCRIPT_DIR/lib/container-engine.sh"
 
 bold()   { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
 info()   { printf "    %s\n" "$1"; }
@@ -60,6 +68,7 @@ ASSUME_YES=0
 PURGE_IMAGE=0
 KEEP_IMAGES=0
 ABANDON_UNMERGED=0
+SKIP_STACK=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --purge-image)        PURGE_IMAGE=1; shift ;;
     --keep-images)        KEEP_IMAGES=1; shift ;;
     --abandon-unmerged)   ABANDON_UNMERGED=1; shift ;;
+    --skip-stack)         SKIP_STACK=1; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# *$/p' "$0" | sed 's/^# //; s/^#//'
       exit 0
@@ -101,6 +111,27 @@ fi
 # base. Default ~/tap-sessions preserves existing behaviour.
 WORKTREE="${WORKTREE_BASE:-$HOME/tap-sessions}/$SESSION_NAME"
 PROJECT="tap_${SESSION_NAME}"
+
+# The engine this session lives on (req-dev-multisession-container-engine): read from its own
+# .env.local while the worktree still exists, so a despawn from a fresh shell reaches the same
+# daemon the spawn used instead of finding nothing there and reporting success.
+tap_engine_select "$WORKTREE"
+
+# A recorded (sticky) or explicit engine that is not answering means the stack cannot be removed,
+# not that there is none. Carrying on would delete the worktree and report success while the
+# containers and volumes stay behind on that engine. Stop here unless the caller says so.
+if [[ "${TAP_ENGINE:-}" == "sticky" || "${TAP_ENGINE:-}" == "explicit" ]] && ! tap_engine_reachable; then
+  if [[ "$SKIP_STACK" -eq 1 ]]; then
+    warn "The engine for '$SESSION_NAME' (${DOCKER_HOST:-DOCKER_CONTEXT=${DOCKER_CONTEXT:-}}) is not answering; --skip-stack given, leaving its containers and volumes running."
+    warn "Remove them later with: DOCKER_HOST=${DOCKER_HOST:-<its socket>} docker compose -p $PROJECT down -v --remove-orphans"
+  else
+    err "The engine this session lives on is not answering: ${DOCKER_HOST:-DOCKER_CONTEXT=${DOCKER_CONTEXT:-}}"
+    err "Despawning now would remove the worktree and leave its containers and volumes running."
+    err "Start it (Podman on macOS: podman machine start) and re-run, or re-run with --skip-stack to"
+    err "remove the worktree anyway and clean the stack up yourself."
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Show the plan, get confirmation
@@ -257,11 +288,17 @@ fi
 # 1. Stop docker stack (preferring scripts/dc inside the worktree so .env.local
 #    is honored; fall back to the project name if dc is unavailable).
 # ---------------------------------------------------------------------------
-bold "Stopping docker stack"
-if [[ -d "$WORKTREE" && -x "$WORKTREE/scripts/dc" ]]; then
-  ( cd "$WORKTREE" && scripts/dc down -v --remove-orphans 2>&1 ) || warn "scripts/dc down returned non-zero (may already be down)"
+tap_engine_warn_other "$PROJECT"
+if [[ "$SKIP_STACK" -eq 1 ]]; then
+  bold "Skipping stack teardown (--skip-stack)"
+  info "  the engine was not answering; containers and volumes are left as they are"
 else
-  docker compose -p "$PROJECT" down -v --remove-orphans 2>&1 || warn "docker compose down returned non-zero (may already be down)"
+  bold "Stopping docker stack"
+  if [[ -d "$WORKTREE" && -x "$WORKTREE/scripts/dc" ]]; then
+    ( cd "$WORKTREE" && scripts/dc down -v --remove-orphans 2>&1 ) || warn "scripts/dc down returned non-zero (may already be down)"
+  else
+    docker compose -p "$PROJECT" down -v --remove-orphans 2>&1 || warn "docker compose down returned non-zero (may already be down)"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -269,24 +306,28 @@ fi
 #    valid .env.local to identify the project, named volumes/networks may
 #    still exist.
 # ---------------------------------------------------------------------------
-bold "Removing residual docker volumes and networks"
-volumes_to_rm="$(docker volume ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
-if [[ -n "$volumes_to_rm" ]]; then
-  echo "$volumes_to_rm" | while read -r v; do
-    info "  volume: $v"
-    docker volume rm "$v" >/dev/null 2>&1 || warn "    (failed)"
-  done
+if [[ "$SKIP_STACK" -eq 1 ]]; then
+  bold "Skipping residual volume and network cleanup (--skip-stack)"
 else
-  info "  no volumes"
-fi
-networks_to_rm="$(docker network ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
-if [[ -n "$networks_to_rm" ]]; then
-  echo "$networks_to_rm" | while read -r n; do
-    info "  network: $n"
-    docker network rm "$n" >/dev/null 2>&1 || warn "    (failed)"
-  done
-else
-  info "  no networks"
+  bold "Removing residual docker volumes and networks"
+  volumes_to_rm="$(docker volume ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
+  if [[ -n "$volumes_to_rm" ]]; then
+    echo "$volumes_to_rm" | while read -r v; do
+      info "  volume: $v"
+      docker volume rm "$v" >/dev/null 2>&1 || warn "    (failed)"
+    done
+  else
+    info "  no volumes"
+  fi
+  networks_to_rm="$(docker network ls --filter "name=${PROJECT}_" --format '{{.Name}}')"
+  if [[ -n "$networks_to_rm" ]]; then
+    echo "$networks_to_rm" | while read -r n; do
+      info "  network: $n"
+      docker network rm "$n" >/dev/null 2>&1 || warn "    (failed)"
+    done
+  else
+    info "  no networks"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -162,8 +162,6 @@ RID: `req-viz-nested-projection-container-size-from-children`
 
 Status: `Implemented`
 
-Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
-
 A container's outer bounding box is derived from its children's laid-out bbox plus padding.
 
 #### Implementation
@@ -183,6 +181,8 @@ V1 provides four natural layouts — `grid`, `align-distribute-vertical`, `tiere
 
 Per-container-type layout choice is supported via `innerLayouts: {entity_type: "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | {name, ...opts}}`, with a default `innerLayout` for the rest.
 
+A single container may carry its own choice. When the container node has the data key `_inner_layout` (a layout name string, or an object `{name, ...opts}`, stamped beforehand by the calling layout module from a fact on the graph), that spec wins over `innerLayouts[entity_type]` and `innerLayout`. This is how two containers of the same `entity_type` — a team that holds teams and a team that holds people — arrange their children differently, which a per-type map cannot express. A malformed value (not a string, not an object with a string `name`) is ignored, falling back to the per-type then the default choice, and a warning is returned. The key is cleared by the module that stamped it; the runtime only reads it.
+
 #### Development
 
 Expressing layout as "measure then place" keeps each natural layout testable in isolation — a pure function from child sizes to bbox + placements. The projection runtime only orchestrates traversal; layout algorithms don't have to know about padding, floors, or the outer size contract.
@@ -195,6 +195,7 @@ Expressing layout as "measure then place" keeps each natural layout testable in 
 | req-viz-nested-projection-container-size-from-children-2 | Layout Returns Placements | Implemented | Natural layout functions return per-child `{dx, dy}` offsets from the bbox center. | |
 | req-viz-nested-projection-container-size-from-children-3 | Per-Type Layout Choice | Implemented | Layout algorithm is selectable per container entity_type via `innerLayouts`. | |
 | req-viz-nested-projection-container-size-from-children-4 | Empty Container Falls To Floor | Implemented | A container with no visible children renders at its `baseSizes` entry. | |
+| req-viz-nested-projection-container-size-from-children-5 | Per-Container Layout Override | Implemented | A container node's `_inner_layout` data (name string or `{name, ...opts}`) takes precedence over `innerLayouts[entity_type]` and `innerLayout` for that container only; two containers of one entity_type may differ; a malformed value is ignored with a warning, never an exception. | Tested headless in `tap_viz/tests/js/nested_projection_runtime.mjs`. |
 
 #### Future
 
@@ -290,8 +291,6 @@ RID: `req-viz-nested-projection-natural-layouts`
 
 Status: `Implemented`
 
-Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
-
 The runtime ships five built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
 
 #### Implementation
@@ -370,6 +369,9 @@ Opts:
 | `sort` | string | `"label"` | `"label"` (alphabetical within a column), `"input"` (preserve input order), or `"order"` (by the caller-stamped integer `data._order`, ties by label — children without one sort last). |
 | `columnLayout` | string | `"stack"` | `"stack"` (one child per row, top-to-bottom) or `"flow"` (each column packed by `flow` into wrapping rows in the column's sorted order, so a stage with many children is a block rather than a tower). |
 | `flowAspect` | number | `0.9` | Target width ÷ height of a flowed column. |
+| `axis` | string | `"columns"` | `"columns"` (a stage is a column) or `"rows"` (a stage is a row — see below). |
+
+**`axis: "rows"`** transposes the layout: children with equal `_stage` form one horizontal row, rows are ordered by stage top-to-bottom (`direction: "ltr"`: stage 0 on top; `"rtl"`: stage 0 at the foot — the exact vertical mirror), and the children of a row stand side by side in the sorted order, `columnGap` apart. Every row is horizontally centred on the block, so a stage holding one child puts it alone, centred above or below the wider rows. `rowGap` is then the gap between rows, and `columnLayout` does not apply (a row is already a single line). Unranked children form a trailing row and raise the same `unranked_children` warning. The leader-above-a-row-of-teams shape is a stage-0 child over a stage-1 row: the leader is alone and centred, the teams stand in one row beneath it.
 
 Use when the container's children have a derived order along one axis — a pipeline's stages, a dependency graph's ranks. The originating case (tap#293) is github_core's machinery projection: jobs inside a workflow box by `DEPENDS_ON_JOB` depth, workflows inside a repository box by source → pipeline → output stage, both under one `flow: rtl | ltr` parameter.
 
@@ -405,6 +407,7 @@ Separating classification from placement lets authors add scene-specific layouts
 | req-viz-nested-projection-natural-layouts-5 | Flow Layout | Implemented | `flow` packs children into wrapping rows of variable-size cells at a target aspect ratio; no cell is wider than its own child. | Observed 2026-09-02 on `/git-serious`: the account box went from fit zoom 0.23 (grid) to a dense block that fills a 1400×1000 viewport (tap#292). |
 | req-viz-nested-projection-natural-layouts-6 | Ranked Layout | In Development | `ranked` places children in columns by integer `data._stage` (equal stages share a column, stacked vertically); `direction: "rtl"` mirrors `"ltr"` exactly; a child without an integer `_stage` lands in a trailing unranked column and an `unranked_children` warning is returned, never silently in column 0. | tap#293. No JS test runner exists in the repo (package.json is the vendor closure only); verification is observation on the machinery projection, as for `flow`. Fixture from the issue: `_stage ∈ {0,0,1,1,1,2}` → columns of 2/3/1. |
 | req-viz-nested-projection-natural-layouts-7 | Tier Row Alignment | Implemented | A `tiered-rows` tier declared `align: "start"` sits against the left edge of the layout's width; a tier with no `align`, or `"center"`, is centered as before. | |
+| req-viz-nested-projection-natural-layouts-8 | Ranked Rows Axis | Implemented | `ranked` with `axis: "rows"` places equal-`_stage` children in one horizontal row, rows stacked by stage and each row centred, so a single-child stage sits alone and centred above a wider row; `direction: "rtl"` mirrors vertically; unranked children form a trailing row with the `unranked_children` warning; layout is deterministic and never shrinks a child. | Tested headless in `tap_viz/tests/js/nested_projection_runtime.mjs`. |
 
 #### Future
 

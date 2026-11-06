@@ -39,7 +39,7 @@ def test_execute_gryphon_raw_binds_readonly_when_alias_omitted(monkeypatch):
     db_alias reaches the executor body on the read-only alias."""
     seen: dict[str, str] = {}
 
-    def _spy(query, inputs, *, db_alias, layer, scope):
+    def _spy(query, inputs, *, db_alias, layer, scope, clock):
         seen["db_alias"] = db_alias
         seen["scope"] = scope
         return {"nodes": [], "edges": []}

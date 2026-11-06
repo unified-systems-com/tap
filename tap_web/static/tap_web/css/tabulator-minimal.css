@@ -7,24 +7,65 @@
    table panel is the standing "flip all tables to minimalist" task. */
 .tabulator { border: none; background: transparent; font-size: 0.82rem; }
 .tabulator .tabulator-header,
-.tabulator .tabulator-header .tabulator-col { border: none; background: #fff; }
-.tabulator .tabulator-header { border-bottom: 1px solid #e2e8f0; }
+.tabulator .tabulator-header .tabulator-col { border: none; background: rgb(var(--tap-white)); }
+.tabulator .tabulator-header { border-bottom: 1px solid rgb(var(--tap-slate-200)); }
 .tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding: 0.3rem 0.5rem; }
-.tabulator .tabulator-col-title { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #64748b; }
+.tabulator .tabulator-col-title { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: rgb(var(--tap-slate-500)); }
 .tabulator .tabulator-tableholder .tabulator-table { background: transparent; }
 .tabulator .tabulator-row,
 .tabulator .tabulator-row.tabulator-row-odd,
-.tabulator .tabulator-row.tabulator-row-even { border: none; border-bottom: 1px solid #f1f5f9; background: #fff; }
-.tabulator .tabulator-row:hover { background: #f8fafc; }
-.tabulator .tabulator-cell { border: none; padding: 0.3rem 0.5rem; color: #0f172a; }
-.tabulator .tabulator-row.tabulator-group { background: #f1f5f9; border: none; border-bottom: 1px solid #e2e8f0; color: #334155; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.3rem 0.5rem; }
-.tabulator .tabulator-row.tabulator-group:hover { background: #e9eef5; }
-.tabulator .tabulator-col .tabulator-col-sorter { color: #cbd5e1; }
-/* A cell that navigates reads as content, not as a hyperlink: the text colour,
-   no underline, an underline on hover/focus so the affordance is discoverable
-   (tap#356; the `link` / `externalLink` formatters). */
-.tabulator .tap-cell-link { color: inherit; text-decoration: none; }
-.tabulator .tap-cell-link:hover, .tabulator .tap-cell-link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.tabulator .tabulator-row.tabulator-row-even { border: none; border-bottom: 1px solid rgb(var(--tap-slate-100)); background: rgb(var(--tap-white)); }
+.tabulator .tabulator-row:hover { background: rgb(var(--tap-slate-50)); }
+.tabulator .tabulator-cell { border: none; padding: 0.3rem 0.5rem; color: rgb(var(--tap-slate-900)); }
+.tabulator .tabulator-row.tabulator-group { background: rgb(var(--tap-slate-100)); border: none; border-bottom: 1px solid rgb(var(--tap-slate-200)); color: rgb(var(--tap-slate-700)); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.3rem 0.5rem; }
+.tabulator .tabulator-row.tabulator-group:hover { background: rgb(var(--tap-slate-200)); }
+.tabulator .tabulator-col .tabulator-col-sorter { color: rgb(var(--tap-slate-300)); }
+/* Link affordance (req-web-stdpanel-table-config-16, -17): a cell link is accent-coloured and always
+   underlined, with a visible keyboard focus ring, and a row that navigates through `row_url_template`
+   reads as clickable (pointer + hover wash). The colours are palette tokens (theme.css), so a row is drawn on the theme's surface in
+   either scheme: light, link 6.7:1, link hover 10:1, link on the row hover wash 5.6:1; the dark values are the
+   mirrored palette steps and are measured in a browser (spec-web-theme.md, req-web-theme-contrast). */
+.tabulator {
+  --tap-table-link: rgb(var(--tap-blue-700));
+  --tap-table-link-hover: rgb(var(--tap-blue-900));
+  --tap-table-link-focus: rgb(var(--tap-blue-700));
+  --tap-table-row-link-hover: rgb(var(--tap-table-stripe-hover));
+}
+.tabulator .tap-cell-link { color: var(--tap-table-link); text-decoration: underline; text-underline-offset: 2px; }
+.tabulator .tap-cell-link:hover { color: var(--tap-table-link-hover); text-decoration-thickness: 2px; }
+.tabulator .tap-cell-link:focus-visible { color: var(--tap-table-link-hover); outline: 2px solid var(--tap-table-link-focus); outline-offset: 2px; border-radius: 2px; }
+.tabulator .tabulator-row.tap-row--clickable { cursor: pointer; }
+.tabulator .tabulator-row.tap-row--clickable:hover { background: var(--tap-table-row-link-hover); }
 /* Grouped headers (columns[].columns): the group title sits above its leaves as a quiet caption. */
-.tabulator .tabulator-header .tabulator-col.tabulator-col-group .tabulator-col-group-cols { border-top: 1px solid #e2e8f0; }
-.tabulator .tabulator-header .tabulator-col.tabulator-col-group > .tabulator-col-content .tabulator-col-title { color: #64748b; font-weight: 600; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.tabulator .tabulator-header .tabulator-col.tabulator-col-group .tabulator-col-group-cols { border-top: 1px solid rgb(var(--tap-slate-200)); }
+.tabulator .tabulator-header .tabulator-col.tabulator-col-group > .tabulator-col-content .tabulator-col-title { color: rgb(var(--tap-slate-500)); font-weight: 600; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+/* The `linkList` formatter (req-web-stdpanel-table-linklist): one item per line, long names wrap rather than
+   being cut, so a cell of several links grows the row instead of hiding all but the first. */
+.tabulator .tabulator-cell .tap-linklist__item { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.tabulator .tabulator-cell .tap-linklist__more { font-size: 0.75rem; color: rgb(var(--tap-slate-500)); }
+/* Pop-overs (header_tooltip, a cell tooltip, any Tabulator popup): the library draws them on a literal white
+   with dark text, which is a flat white box in the dark theme. They take the surface, ink and rule of the theme
+   (req-web-stdpanel-table-config-24); the stock sortable-header hover grey (#ddd) is a second literal, so it
+   follows the palette too. */
+.tabulator-popup-container { background: rgb(var(--tap-white)); color: rgb(var(--tap-slate-900)); border: 1px solid rgb(var(--tap-slate-400)); box-shadow: 0 2px 8px rgb(var(--tap-black) / 0.25); }
+.tabulator-popup-container .tabulator-tooltip { color: rgb(var(--tap-slate-900)); }
+.tabulator .tabulator-header .tabulator-col.tabulator-sortable.tabulator-col-sorter-element:hover { background: rgb(var(--tap-slate-100)); }
+/* Cell alignment (req-web-stdpanel-table-config-25): a cell is a flex box (Tabulator's vertAlign: middle), so its
+   content is vertically centred and, with no `align` on the column, left-aligned. Plain text sits in a span that
+   shrinks to the cell and cuts a long value with an ellipsis, as the cell itself did before it was a flex box. */
+.tabulator .tabulator-cell .tap-cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wrapping text column (columns[].wrap, req-web-stdpanel-table-config-31): the span stops cutting and flows onto as
+   many lines as it needs, so the row grows; an unbroken word breaks rather than overflowing the cell. */
+.tabulator .tabulator-cell.tap-col-wrap .tap-cell-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+/* Plain links (formatter_params.style "plain", req-web-stdpanel-table-config-26): the link reads as the cell's own
+   text, with no underline and no hover highlight, but it is still an anchor: it stays clickable (the pointer cursor
+   is the browser's) and keeps the focus ring for a keyboard user. Placed after the link rules so equal specificity
+   resolves here. */
+.tabulator .tap-cell-link--plain,
+.tabulator .tap-cell-link--plain:hover,
+.tabulator .tap-cell-link--plain:focus-visible { color: inherit; text-decoration: none; }
+/* Striped rows (config `striped`, req-web-stdpanel-table-config-27): every even row on the stripe token, hover one
+   step further. A clickable row keeps its own hover wash; group bands are not rows to stripe. */
+.tabulator.tap-table--striped .tabulator-row.tabulator-row-even:not(.tabulator-group) { background: rgb(var(--tap-table-stripe)); }
+.tabulator.tap-table--striped .tabulator-row:not(.tabulator-group):hover { background: rgb(var(--tap-table-stripe-hover)); }
+.tabulator.tap-table--striped .tabulator-row.tap-row--clickable:not(.tabulator-group):hover { background: var(--tap-table-row-link-hover); }

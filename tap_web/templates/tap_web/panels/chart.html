@@ -16,8 +16,8 @@ chart-panel.js draws it. The hidden table carries the same rows for screen reade
         <div class="tap-chart__data">
         <table>
             <caption>{{ chart.aria_label }}</caption>
-            <thead><tr>{% for c in chart.columns %}<th scope="col">{{ c }}</th>{% endfor %}</tr></thead>
-            <tbody>{% for r in chart.body %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            <thead><tr>{% for c in chart.columns %}<th scope="col">{{ c }}</th>{% endfor %}{% if chart.link_rows %}<th scope="col">Link</th>{% endif %}</tr></thead>
+            <tbody>{% if chart.link_rows %}{% for r in chart.link_rows %}<tr>{% for v in r.cells %}<td>{{ v }}</td>{% endfor %}<td>{% if r.url %}<a href="{{ r.url }}" data-tap-chart-link>Open {{ r.label }}</a>{% endif %}</td></tr>{% endfor %}{% else %}{% for r in chart.body %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}{% endif %}</tbody>
         </table>
         </div>
         {% for n in chart_notices %}<p class="tap-chart__notice">{{ n }}</p>{% endfor %}

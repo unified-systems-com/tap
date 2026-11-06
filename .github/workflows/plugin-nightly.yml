@@ -181,6 +181,15 @@ jobs:
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
+          # A fork is not the plugin's owner: GitHub creates it with issues off, so listing them
+          # fails the job ("the repository has disabled issues") on every scheduled run of the
+          # Renovate bot's forks even when the nightly itself is green. The owner issue lives on
+          # the upstream repository, whose own nightly files it.
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq .fork)" = "true" ]; then
+            echo "::notice::${GITHUB_REPOSITORY} is a fork; the owner issue is the upstream repository's to file"
+            exit 0
+          fi
+
           # `gh issue list` reports the Actions bot as `app/github-actions` (the REST API spells
           # it `github-actions[bot]`). Author AND marker: see defect 3 above.
           listed="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit "$LIMIT" \

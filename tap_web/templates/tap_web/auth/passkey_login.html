@@ -12,12 +12,14 @@ assertion verifies. Self-contained, styled with the shared auth.css.
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign in — {{ product_name|default:"TAP" }}</title>
     <link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">
+    {% include "tap_web/partials/theme_head.html" %}
     <link rel="stylesheet" href="{% static 'tap_web/css/auth.css' %}">
 </head>
 <body class="tap-auth-body">
     <header class="tap-auth-header">
         <span class="tap-auth-wordmark">{{ product_name|default:"TAP" }}</span>
         {% if session_label %}<span class="tap-auth-session-tag">[ {{ session_label }} ]</span>{% endif %}
+        {% include "tap_web/partials/theme_switch.html" %}
     </header>
     <main class="tap-auth-main">
         <div class="tap-auth-card">

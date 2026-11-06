@@ -79,6 +79,31 @@ therefore does not document. macOS needs only Docker Desktop; a Linux desktop ne
   (it needs a PIN set; if the browser cannot see the key, install your distro's fido2
   udev rules) or the password fallback link, which is enabled on dev profiles.
 
+## Podman instead of Docker (tap#1133)
+
+Docker is used whenever it answers. If it does not and Podman is installed with its
+machine running, the scripts pick up Podman's Docker-compatible socket on their own
+(`req-dev-multisession-container-engine`). The Docker CLI is optional: with only Podman
+installed, the scripts put a `docker` → `podman` forwarder on PATH themselves. You do need a
+compose provider (`brew install docker-compose`, or `podman-compose`) for `podman compose`.
+
+- **macOS:** `podman machine init && podman machine start`, then run `scripts/lite-spawn.sh` as
+  usual. Tested rootless with the libkrun provider.
+- **How it is chosen:** a `DOCKER_HOST` or `DOCKER_CONTEXT` you already exported always wins;
+  otherwise Docker if it answers; otherwise Podman. A spawn that used Podman records
+  `DOCKER_HOST=unix://…` in the session's `.env.local`, so `scripts/dc` and
+  `scripts/despawn-session.sh` reach the same daemon from any shell, even once Docker is up.
+- **Mixed hosts:** if Docker Desktop and a Podman machine are both running, sessions go to
+  Docker unless you export `DOCKER_HOST` yourself. Despawn warns, with the removal command, if
+  the session's stack is on the engine it is not talking to.
+- **Machine stopped or recreated:** if a Podman session's recorded socket no longer answers,
+  `scripts/despawn-session.sh` stops before removing anything (start the machine and re-run).
+  `--skip-stack` removes the worktree anyway, leaves the containers and volumes running, and
+  prints the command that removes them.
+- **Not covered:** `podman-compose` as the provider (only `docker-compose` was exercised); Linux
+  rootless uid mapping and SELinux (`:z`/`:Z`) against the bind-mounted checkout were not
+  exercised.
+
 ## Working beside other sessions in one worktree — the traps (2026-09-02)
 
 Five sessions shared this worktree on 2026-09-02. Full record:

@@ -309,3 +309,76 @@ def test_the_summary_cannot_be_used_to_inject_markup(run):
     run.write("sbom.cdx.json", base)
     _code, _doc, err = run.go()
     assert [line for line in err.splitlines() if line.startswith("#")] == ["### SBOM merge: `changed`"]
+
+
+@pytest.mark.spec("req-cicd-sbom-18-14")
+def test_an_entry_carries_published_title_description_and_record_urls(run):
+    _code, doc, _err = run.go()
+    assert doc is not None
+    entry = _entry(doc, KEV_CVE)
+    assert entry["published"] == "2021-12-10T00:00:00.000Z"
+    assert entry["updated"].startswith("2025-")
+    assert entry["description"].startswith("Apache Log4j2 2.0-beta9 through 2.15.0")
+    assert _props(entry)["tap:title"].startswith("Apache Log4j2 JNDI features do not protect")
+    assert {"title": "CVE Record", "url": f"https://www.cve.org/CVERecord?id={KEV_CVE}"} in entry["advisories"]
+    assert {"title": "GitHub Advisory", "url": f"https://github.com/advisories/{KEV_GHSA}"} in entry["advisories"]
+    assert _props(entry)["tap:ghsa:status"] == "observed"
+
+
+@pytest.mark.spec("req-cicd-sbom-18-14")
+def test_the_scanners_own_description_wins_over_the_record_and_the_advisory(run):
+    grype = run.read("grype.json")
+    grype["matches"][0]["vulnerability"]["description"] = "the scanner's words"
+    run.write("grype.json", grype)
+    _code, doc, _err = run.go()
+    assert doc is not None
+    assert _entry(doc, KEV_CVE)["description"] == "the scanner's words"
+
+
+@pytest.mark.spec("req-cicd-sbom-18-14")
+@pytest.mark.spec("req-cicd-sbom-18-15")
+def test_a_ghsa_only_entry_is_filled_from_the_advisory(run):
+    grype = run.read("grype.json")
+    for match in grype["matches"]:
+        match["relatedVulnerabilities"] = []  # no CVE alias: only the GitHub advisory can describe it
+    run.write("grype.json", grype)
+    _code, doc, _err = run.go()
+    assert doc is not None
+    entry = _entry(doc, PLAIN_GHSA)
+    props = _props(entry)
+    assert entry["published"] == "2021-12-18T18:00:07Z"
+    assert entry["description"] and props["tap:title"].startswith(
+        "Apache Log4j2 vulnerable to Improper Input Validation"
+    )
+    assert entry["advisories"] == [{"title": "GitHub Advisory", "url": f"https://github.com/advisories/{PLAIN_GHSA}"}]
+    assert "tap:cve-record:status" not in props  # there is no CVE id to look up
+
+
+@pytest.mark.spec("req-cicd-sbom-18-15")
+def test_advisories_that_could_not_be_read_are_not_observed_and_the_record_still_fills_the_entry(run):
+    (run.dir / "ghsa.json").unlink()
+    _code, doc, _err = run.go()
+    assert doc is not None
+    assert _meta_props(doc)["tap:ghsa-advisories:status"] == "not-observed"
+    entry = _entry(doc, KEV_CVE)
+    assert _props(entry)["tap:ghsa:status"] == "not-observed"
+    assert entry["published"] == "2021-12-10T00:00:00.000Z"  # from the CVE record
+    assert all(a["title"] != "GitHub Advisory" for a in entry["advisories"])
+
+
+@pytest.mark.spec("req-cicd-sbom-18-16")
+@pytest.mark.spec("req-cicd-sbom-20-11")
+def test_a_touched_record_alone_does_not_publish_but_a_new_published_date_does(run):
+    _code, first, _err = run.go()
+    assert first is not None
+    run.write("sbom.cdx.json", first)
+    records = run.read("cve.json")
+    records[KEV_CVE]["cveMetadata"]["dateUpdated"] = "2026-10-19T00:00:00.000Z"
+    run.write("cve.json", records)
+    code, doc, _err = run.go()
+    assert code == 3 and doc is None  # `updated` moves without the facts moving
+    records[KEV_CVE]["cveMetadata"]["datePublished"] = "2021-12-11T00:00:00.000Z"
+    run.write("cve.json", records)
+    code, doc, _err = run.go()
+    assert code == 0 and doc is not None
+    assert _entry(doc, KEV_CVE)["published"] == "2021-12-11T00:00:00.000Z"

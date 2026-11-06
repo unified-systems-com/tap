@@ -291,3 +291,107 @@ def test_summary_text_from_the_document_cannot_inject_markup(doc, rules):
     assert headings == ["### SBOM completeness: `thin`"]
     assert "[click]" not in text
     assert "\n\n### SBOM completeness: `complete`" not in text
+
+
+def _with_attributes(doc: dict[str, Any]) -> dict[str, Any]:
+    """The fixture as image generation now writes it: every pypi component with a license and an architecture."""
+    done = copy.deepcopy(doc)
+    for component in done["components"]:
+        if component.get("purl", "").startswith("pkg:pypi/"):
+            component["licenses"] = [{"expression": "MIT"}]
+            component.setdefault("properties", []).append({"name": "tap:architecture", "value": "noarch"})
+    return done
+
+
+def _declare_unknown(component: dict[str, Any]) -> None:
+    props = component.setdefault("properties", [])
+    for field in ("licenses", "architecture"):
+        props += [
+            {"name": f"tap:{field}:status", "value": "not-observed"},
+            {"name": f"tap:{field}:reason", "value": "no matching wheel in the image's cache seed"},
+        ]
+
+
+@pytest.mark.spec("req-cicd-sbom-33-7")
+def test_missing_attributes_are_reported_at_intake_and_do_not_make_it_thin(doc, rules):
+    result = comp.check_completeness(doc, rules)  # a legacy revision: pypi components without license or architecture
+    assert result["verdict"] == "complete"
+    assert result["attribute_gaps"] == {"architecture": 2, "licenses": 2}
+    assert result["attributes_enforced"] is False
+    assert "reported and not enforced" in comp.summary_markdown(result)
+
+
+@pytest.mark.spec("req-cicd-sbom-33-7")
+@pytest.mark.spec("req-cicd-sbom-33-8")
+def test_enforced_missing_attributes_are_thin(doc, rules):
+    result = comp.check_completeness(doc, rules, enforce_attributes=True)
+    assert result["verdict"] == "thin"
+    assert result["counts"] == {"architecture": 2, "licenses": 2}
+
+
+@pytest.mark.spec("req-cicd-sbom-33-7")
+def test_a_document_with_the_attributes_is_complete_even_when_enforced(doc, rules):
+    result = comp.check_completeness(_with_attributes(doc), rules, enforce_attributes=True)
+    assert result["verdict"] == "complete" and result["attribute_gaps"] == {}
+
+
+@pytest.mark.spec("req-cicd-sbom-33-5")
+@pytest.mark.spec("req-cicd-sbom-33-7")
+def test_declared_unknown_counts_but_passes_within_the_limit(doc, rules):
+    document = _with_attributes(doc)
+    pypi = [c for c in document["components"] if c.get("purl", "").startswith("pkg:pypi/")]
+    pypi[0].pop("licenses")
+    pypi[0]["properties"] = [p for p in pypi[0]["properties"] if p["name"] != "tap:architecture"]
+    _declare_unknown(pypi[0])
+    result = comp.check_completeness(document, rules, enforce_attributes=True)
+    assert result["verdict"] == "complete"
+    assert result["declared_unknown"] == {"pypi": {"architecture": 1, "licenses": 1}}
+
+
+@pytest.mark.spec("req-cicd-sbom-33-8")
+def test_too_many_declared_unknowns_is_thin_so_a_vanished_seed_is_loud(doc, rules):
+    limited = copy.deepcopy(rules)
+    limited["ecosystems"]["pypi"]["declared_unknown_limit"] = 1
+    document = _with_attributes(doc)
+    for component in document["components"]:
+        if component.get("purl", "").startswith("pkg:pypi/"):
+            component.pop("licenses")
+            component["properties"] = [p for p in component["properties"] if p["name"] != "tap:architecture"]
+            _declare_unknown(component)
+    result = comp.check_completeness(document, limited, enforce_attributes=True)
+    assert result["verdict"] == "thin"
+    assert "declared-unknown-over-limit" in result["counts"]
+
+
+@pytest.mark.spec("req-cicd-sbom-33-5")
+def test_an_unknown_without_a_reason_is_a_gap_not_a_declaration(doc, rules):
+    document = _with_attributes(doc)
+    pypi = next(c for c in document["components"] if c.get("purl", "").startswith("pkg:pypi/"))
+    pypi.pop("licenses")
+    pypi["properties"].append({"name": "tap:licenses:status", "value": "not-observed"})  # no reason
+    result = comp.check_completeness(document, rules, enforce_attributes=True)
+    assert result["counts"] == {"licenses": 1}
+
+
+@pytest.mark.spec("req-cicd-sbom-32-12")
+def test_go_modules_need_a_purl_and_a_cpe(doc, rules):
+    document = copy.deepcopy(doc)
+    module = {
+        "type": "library",
+        "name": "golang.org/x/sys",
+        "version": "v0.1.0",
+        "purl": "pkg:golang/golang.org/x/sys@v0.1.0",
+        "cpe": "cpe:2.3:a:golang:sys:v0.1.0:*:*:*:*:*:*:*",
+    }
+    document["components"].append(module)
+    assert comp.check_completeness(document, rules)["verdict"] == "complete"
+    module.pop("cpe")
+    assert comp.check_completeness(document, rules)["counts"] == {"cpe": 1}
+
+
+@pytest.mark.spec("req-cicd-sbom-33-7")
+def test_the_enforce_flag_is_the_only_difference_on_the_command_line(monkeypatch, capsys, doc):
+    code, _out, err = _run_cli(monkeypatch, capsys, json.dumps(doc))
+    assert code == 0 and "reported and not enforced" in err
+    code, _out, err = _run_cli(monkeypatch, capsys, json.dumps(doc), "--enforce-attributes")
+    assert code == 1 and "`licenses`" in err

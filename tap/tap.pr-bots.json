@@ -23,10 +23,10 @@
       "note": "Our release-please GitHub App (release PRs)."
     },
     {
-      "login": "tap-renovate-remote",
-      "id": 334543231,
+      "login": "tap-renovate-runner",
+      "id": 347434375,
       "type": "User",
-      "verified": "2026-09-27",
+      "verified": "2026-10-29",
       "note": "The org-bots fork bot: a machine USER account with no role on any org repository. It runs Renovate and release-please from unified-systems-com/org-bots and opens every PR from its own fork, so no write credential to this repository exists. Its token is held only in org-bots' main-only `bots` environment."
     }
   ]

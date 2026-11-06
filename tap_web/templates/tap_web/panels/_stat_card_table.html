@@ -1,0 +1,4 @@
+{% comment %}
+Stat Cards table line (req-web-stdpanel-statcards-table): a borderless table, one <tr> per array element.
+Cell text goes through the shared cell include, so it is auto-escaped; there is no header row.
+{% endcomment %}<table class="tap-statcard__table"><tbody>{% for row in cell.rows %}<tr>{% for c in row %}{% if forloop.first %}<th scope="row" class="tap-statcard__td tap-statcard__td--{{ c.align }}{% if c.bold %} tap-statcard__td--bold{% endif %}">{% include "tap_web/panels/_stat_card_cell.html" with cell=c.cell %}</th>{% else %}<td class="tap-statcard__td tap-statcard__td--{{ c.align }}{% if c.bold %} tap-statcard__td--bold{% endif %}">{% include "tap_web/panels/_stat_card_cell.html" with cell=c.cell %}</td>{% endif %}{% endfor %}</tr>{% endfor %}</tbody></table>{% if cell.omitted %}<p class="tap-statcards__omitted">{{ cell.omitted }} more row{{ cell.omitted|pluralize }} not shown.</p>{% endif %}

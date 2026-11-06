@@ -155,8 +155,9 @@ The need for a breadcrumb that differs from the URL did emerge: an instance plug
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-web-nav-auto-parent-1 | URL Drives Hierarchy | Implemented | A page's breadcrumb path is the slash-separated decomposition of its URL. | `tap_web/navigation.py` `build_breadcrumb()`. |
-| req-web-nav-auto-parent-2 | Registered Pages Are Clickable | Implemented | Breadcrumb segments whose URL prefix matches a registered Page link to that Page and use its name. | One batched Page query resolves all prefixes. |
-| req-web-nav-auto-parent-3 | Unregistered Segments Render As Text | Implemented | Segments whose URL prefix has no registered Page render as unclickable plain text (raw slug, title-cased). | Also applies to `discoverable=False` Pages — see `req-web-nav-page-discoverable-3`. |
+| req-web-nav-auto-parent-2 | Discoverable Pages Are Clickable | Implemented | Breadcrumb segments whose URL prefix matches a registered Page use its name; when that Page is `discoverable` the segment links to it. | One batched Page query resolves all prefixes, hidden Pages included. |
+| req-web-nav-auto-parent-3 | Segments With No Page Render As Text | Implemented | Segments whose URL prefix has no Page at all (discoverable or not) render as unclickable plain text (raw slug, title-cased). | A `discoverable=False` Page is NOT in this case: it has a Page, so it shows the Page's name — see `req-web-nav-auto-parent-5` and `req-web-nav-page-discoverable-3`. |
+| req-web-nav-auto-parent-5 | Hidden Pages Show Their Name As Text | Implemented | A segment whose URL prefix has a Page with `discoverable=False` is labelled with the Page's `name` exactly (acronyms and casing preserved, never the title-cased slug) and renders as unclickable plain text. | `BreadcrumbSegment.is_registered` means a Page exists; `BreadcrumbSegment.is_link` means the segment is clickable (a Page exists AND it is discoverable). |
 | req-web-nav-auto-parent-4 | Home Is Stable | Implemented | The home segment `/` always renders as the product mark, always links to `/`, and never collapses under overflow truncation. | Template short-circuits on `is_home` before checking registration; overflow truncation preserves the first segment unconditionally. |
 
 #### Future
@@ -493,7 +494,7 @@ The complaint that produced this requirement: pages registered at slugs like `/s
 - The `Page.discoverable` field defaults to `True`. Most Pages are loadable as-is; the common case is automatic discoverability.
 - Pages whose URL requires a parameter (typically `<entity_id>`) set `discoverable=False` in their GRIFT bundle.
 - The nav-index endpoint filters `Page.objects.filter(discoverable=True)`.
-- The breadcrumb helper (`build_breadcrumb`) also filters `discoverable=True` when resolving registered Pages, so an ancestor Page whose URL requires a parameter renders as plain text in the breadcrumb of a deeper-URL page rather than as a clickable link to a broken-render URL. Direct visit to the parameterized URL with a valid parameter still renders normally.
+- The breadcrumb helper (`build_breadcrumb`) resolves every Page, hidden or not, so a segment is always labelled with the Page's `name`; `discoverable` decides only clickability. An ancestor Page whose URL requires a parameter shows its name as plain text in the breadcrumb of a deeper-URL page rather than as a clickable link to a broken-render URL. Direct visit to the parameterized URL with a valid parameter still renders normally.
 - The chevron popover, column-view, and palette tree all read from `/__nav-index.json`, so the single filter at the endpoint cascades to all four surfaces.
 
 #### Development
@@ -508,7 +509,7 @@ A future iteration may add **partial discoverability** — surfacing parameteriz
 | --- | --- | :---: | --- | --- |
 | req-web-nav-page-discoverable-1 | Default Discoverable | Implemented | `Page.discoverable` defaults to `True`; new Pages are surfaced unless they explicitly opt out. | Migration `0010_historicalpage_discoverable_page_discoverable`. |
 | req-web-nav-page-discoverable-2 | Nav-Index Filters | Implemented | `/__nav-index.json` returns only Pages with `discoverable=True`. | `nav_index_view` queryset filter. |
-| req-web-nav-page-discoverable-3 | Breadcrumb Treats Non-Discoverable As Unregistered | Implemented | When `build_breadcrumb` resolves an ancestor URL prefix to a Page with `discoverable=False`, the segment renders as plain text (the unregistered-prefix branch), not as a clickable link. | The Page still loads on direct visit; only the breadcrumb link is suppressed. |
+| req-web-nav-page-discoverable-3 | Breadcrumb Shows A Non-Discoverable Page's Name As Text | Implemented | When `build_breadcrumb` resolves a URL prefix to a Page with `discoverable=False`, the segment shows the Page's `name` as plain text, not as a clickable link. Discoverability gates browse surfaces and links only, never the label. | The Page still loads on direct visit; only the breadcrumb link is suppressed. |
 | req-web-nav-page-discoverable-4 | All Discovery Surfaces Honor The Gate | Implemented | Palette, chevron popovers, column view, and nav-index all respect `discoverable=False` because they share the nav-index data plane. | A future palette upgrade for partial discoverability (per `req-web-nav-command-palette-3`) may relax this for entities specifically. |
 
 #### Future

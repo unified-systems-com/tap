@@ -8,6 +8,7 @@ or from the documents):
                     CycloneDX output drops: req-cicd-sbom-18-7)
     kev.json        CISA's Known Exploited Vulnerabilities catalog, as fetched by the unsigned scan job
     cve.json        one object mapping CVE id to its CVE Program JSON 5 record, as fetched by the scan job
+    ghsa.json       one object mapping GHSA id to its GitHub advisory (REST `advisories` shape), as fetched by the scan job
     meta.json       scan time, the digest of the attestation the input was verified from, and fetch times
 
 Output: the next revision on stdout (the SAME serialNumber, `version` + 1, the components unchanged, one
@@ -106,6 +107,12 @@ def check_kev(source: Source) -> Source:
 def check_cve(source: Source) -> Source:
     if source.observed and not isinstance(source.data, dict):
         return Source(reason="cve.json is not an object")
+    return source
+
+
+def check_ghsa(source: Source) -> Source:
+    if source.observed and not isinstance(source.data, dict):
+        return Source(reason="ghsa.json is not an object")
     return source
 
 
@@ -256,7 +263,37 @@ def record_facts(record: dict[str, Any]) -> dict[str, Any]:
                 cwe_id = str(description.get("cweId") or "")
                 if cwe_id.startswith("CWE-") and cwe_id[4:].isdigit():
                     cwes.add(int(cwe_id[4:]))
-    return {"ratings": ratings, "cwes": cwes, "ssvc": ssvc}
+    containers = record.get("containers") or {}
+    cna: dict[str, Any] = containers["cna"] if isinstance(containers.get("cna"), dict) else {}
+    description = next(
+        (
+            str(d.get("value"))
+            for d in cna.get("descriptions") or []
+            if isinstance(d, dict) and str(d.get("lang", "")).lower().startswith("en") and d.get("value")
+        ),
+        None,
+    )
+    record_meta: dict[str, Any] = record.get("cveMetadata") or {}
+    return {
+        "ratings": ratings,
+        "cwes": cwes,
+        "ssvc": ssvc,
+        "published": record_meta.get("datePublished"),
+        "updated": record_meta.get("dateUpdated"),
+        "title": cna.get("title"),
+        "description": description,
+    }
+
+
+def ghsa_facts(advisory: dict[str, Any]) -> dict[str, Any]:
+    """Published and updated time, summary, description and page of a GitHub advisory (the REST `advisories` shape)."""
+    return {
+        "published": advisory.get("published_at"),
+        "updated": advisory.get("updated_at"),
+        "title": advisory.get("summary"),
+        "description": advisory.get("description"),
+        "url": advisory.get("html_url"),
+    }
 
 
 def _ssvc_options(ssvc: dict[str, Any]) -> dict[str, str]:
@@ -369,9 +406,14 @@ def _kev_facts(
 
 
 def build_entry(
-    builder: EntryBuilder, kev: Source, cve: Source, meta: dict[str, Any], grype_version: str
+    builder: EntryBuilder, kev: Source, cve: Source, ghsa: Source, meta: dict[str, Any], grype_version: str
 ) -> dict[str, Any]:
     ratings = dict(builder.ratings)
+    published: str | None = None
+    updated: str | None = None
+    title: str | None = None
+    described: str | None = None
+    advisories: list[dict[str, str]] = []
     cwes = set(builder.cwes)
     properties: list[dict[str, str]] = []
 
@@ -402,6 +444,13 @@ def build_entry(
             else:
                 record = cve.data[hit]
                 facts = record_facts(record)
+                published, updated, title, described = (
+                    facts["published"],
+                    facts["updated"],
+                    facts["title"],
+                    facts["description"],
+                )
+                advisories.append({"title": "CVE Record", "url": f"https://www.cve.org/CVERecord?id={hit}"})
                 for rating in facts["ratings"]:
                     ratings.setdefault(_rating_key(rating), rating)
                 cwes |= facts["cwes"]
@@ -433,6 +482,27 @@ def build_entry(
                         _prop("tap:ssvc:version", facts["ssvc"].get("version", "")),
                     ]
 
+    ghsa_ids = [i for i in [builder.canonical, *sorted(builder.aliases)] if i.startswith("GHSA-")]
+    if ghsa_ids:
+        if not ghsa.observed:
+            properties.append(_prop("tap:ghsa:status", "not-observed"))
+        else:
+            seen = [(i, ghsa.data.get(i)) for i in ghsa_ids if isinstance(ghsa.data.get(i), dict)]
+            if not seen:
+                properties.append(_prop("tap:ghsa:status", "not-observed"))
+            for ghsa_id, advisory in seen:
+                g = ghsa_facts(advisory)
+                published = published or g["published"]
+                updated = updated or g["updated"]
+                title = title or g["title"]
+                described = described or g["description"]
+                advisories.append(
+                    {"title": "GitHub Advisory", "url": g["url"] or f"https://github.com/advisories/{ghsa_id}"}
+                )
+            if seen:
+                properties.append(_prop("tap:ghsa:status", "observed"))
+    if title:
+        properties.append(_prop("tap:title", title))
     properties.append(_prop("tap:fix:state", builder.fix_state or "unknown"))
     if builder.fix_versions:
         properties.append(_prop("tap:fix:versions", ",".join(sorted(builder.fix_versions))))
@@ -447,8 +517,14 @@ def build_entry(
         "properties": properties,
         "tools": {"components": [{"type": "application", "name": "grype", "version": grype_version}]},
     }
-    if builder.description:
-        entry["description"] = builder.description
+    if builder.description or described:
+        entry["description"] = builder.description or described
+    if published:
+        entry["published"] = published
+    if updated:
+        entry["updated"] = updated
+    if advisories:
+        entry["advisories"] = advisories
     if builder.fix_versions:
         entry["recommendation"] = "Upgrade to " + ", ".join(sorted(builder.fix_versions))
     return entry
@@ -486,6 +562,7 @@ def merge(
     grype_digest: str,
     kev: Source,
     cve: Source,
+    ghsa: Source,
     meta: dict[str, Any],
 ) -> dict[str, Any]:
     """The next revision of `base`. Pure: all inputs are values, the clock is `meta["scan_time"]`."""
@@ -513,7 +590,9 @@ def merge(
 
     doc = copy.deepcopy(base)
     doc["version"] = base["version"] + 1  # the SAME serialNumber, carried from the verified input (req-cicd-sbom-20-3)
-    doc["vulnerabilities"] = [build_entry(builders[key], kev, cve, meta, grype_version) for key in sorted(builders)]
+    doc["vulnerabilities"] = [
+        build_entry(builders[key], kev, cve, ghsa, meta, grype_version) for key in sorted(builders)
+    ]
 
     metadata = doc.setdefault("metadata", {})
     metadata["timestamp"] = meta["scan_time"]
@@ -539,9 +618,19 @@ def merge(
             _prop("tap:cve-records:status", "not-observed"),
             _prop("tap:cve-records:reason", cve.reason or ""),
         ]
+    if ghsa.observed:
+        source_props += [
+            _prop("tap:ghsa-advisories:status", "observed"),
+            _prop("tap:source:ghsa-advisories:sha256", ghsa.digest or ""),
+        ]
+    else:
+        source_props += [
+            _prop("tap:ghsa-advisories:status", "not-observed"),
+            _prop("tap:ghsa-advisories:reason", ghsa.reason or ""),
+        ]
     _replace_properties(
         metadata,
-        ("tap:scan:", "tap:revision:", "tap:source:", "tap:kev:", "tap:cve-records:"),
+        ("tap:scan:", "tap:revision:", "tap:source:", "tap:kev:", "tap:cve-records:", "tap:ghsa-advisories:"),
         [
             _prop("tap:revision:previous-content-digest", f"sha256:{base_digest}"),
             _prop("tap:revision:input-attestation", meta.get("input_attestation_digest") or "not-observed"),
@@ -575,6 +664,7 @@ def facts(doc: dict[str, Any]) -> str | None:
     entries = []
     for entry in doc["vulnerabilities"]:
         normalized = copy.deepcopy(entry)
+        normalized.pop("updated", None)  # a record is touched often without its facts changing
         normalized["ratings"] = [
             r for r in normalized.get("ratings") or [] if (r.get("source") or {}).get("name") != "FIRST"
         ]
@@ -647,6 +737,7 @@ def main() -> int:
             grype_digest,
             check_kev(read_optional("kev.json")),
             check_cve(read_optional("cve.json")),
+            check_ghsa(read_optional("ghsa.json")),
             meta,
         )
     except (MergeError, KeyError, TypeError, AttributeError) as exc:

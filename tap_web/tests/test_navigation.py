@@ -212,12 +212,14 @@ class TestBreadcrumbRendering:
         assert 'data-tap-segment-url="/samsite"' in body
         assert 'data-tap-segment-url="/samsite/compliance"' in body
 
-    def test_tap_renders_at_home_even_without_root_page(self):
+    def test_tap_renders_at_home_even_without_root_page(self, monkeypatch):
         """req-web-nav-auto-parent-4 in template form: TAP renders + links to /
         on every deep page, even when no Page is registered at slug `/`.
         Regression for the bug where unregistered home fell through to an
         empty-label `<span>`.
         """
+        # The text mark: no profile glyph, whatever profile the host stack boots (req-web-chrome-branding-glyph-fallback).
+        monkeypatch.delenv("TAP_BOOT_PROFILE", raising=False)
         # Create a deep page with NO Page at `/` registered.
         _create_page("Samsite", "/samsite")
         _create_page("Samsite Compliance", "/samsite/compliance")
@@ -351,26 +353,58 @@ class TestNavWeightOrdering:
         assert urls == ["/alpha", "/bravo", "/charlie"]
 
 
+@pytest.mark.spec("req-web-nav-page-discoverable-3")
+@pytest.mark.spec("req-web-nav-auto-parent-5")
+@pytest.mark.spec("req-web-nav-auto-parent-3")
 @pytest.mark.django_db
 class TestDiscoverableGateInBreadcrumb:
-    """Non-discoverable Pages render as plain text in breadcrumbs."""
+    """Non-discoverable Pages show their name as plain text in breadcrumbs."""
 
-    def test_non_discoverable_intermediate_renders_unregistered(self):
-        """When a URL prefix matches a Page with discoverable=False, the
-        breadcrumb segment for that prefix renders as plain text (the
-        unregistered-prefix branch) — not as a clickable link to a page
-        that would render broken without a URL parameter.
+    def test_non_discoverable_intermediate_shows_name_as_text(self):
+        """A URL prefix matching a Page with discoverable=False shows the Page's
+        NAME (not the title-cased slug) as plain text — not a clickable link to
+        a page that would render broken without a URL parameter.
         """
         _create_page("Samsite", "/samsite")
         _create_page("Findings (parameterized)", "/samsite/finding", discoverable=False)
         segments = build_breadcrumb("/samsite/finding/abc-123")
-        # Home + samsite (registered) + finding (NOT registered per discoverable=False) + abc-123 (raw)
         assert segments[1].is_registered is True
+        assert segments[1].is_link is True
         assert segments[1].label == "Samsite"
-        assert segments[2].is_registered is False  # discoverable=False → treated as unregistered
-        assert segments[2].label == "Finding"  # title-cased slug, not the Page's name
+        assert segments[2].is_registered is True  # a Page exists...
+        assert segments[2].is_link is False  # ...but discoverable=False is not clickable
+        assert segments[2].label == "Findings (parameterized)"
         assert segments[3].is_registered is False
+        assert segments[3].is_link is False
         assert segments[3].is_current is True
+
+    def test_hidden_leaf_reads_exactly_as_its_name(self):
+        """The acronym survives: slug 'cve' must not render as 'Cve' (req-web-nav-auto-parent-5)."""
+        _create_page("Vulnerabilities", "/playground/vulnerabilities")
+        _create_page("CVE", "/playground/vulnerabilities/cve", discoverable=False)
+        segments = build_breadcrumb("/playground/vulnerabilities/cve")
+        assert segments[-1].label == "CVE"
+        assert segments[-1].is_current is True
+        assert segments[-1].is_link is False
+        assert segments[-2].label == "Vulnerabilities"
+        assert segments[-2].is_link is True
+
+    def test_header_renders_hidden_ancestor_name_as_text_not_link(self):
+        """Template: the hidden ancestor is a span carrying its name; the visible one stays an anchor."""
+        _create_page("Top", "/top")
+        _create_page("CVE", "/top/cve", discoverable=False)
+        _create_page("Leaf", "/top/cve/leaf")
+        body = _auth_client().get("/top/cve/leaf").content.decode()
+        assert 'data-tap-segment-url="/top/cve">CVE</span>' in body
+        assert '<a href="/top/cve"' not in body
+        assert '<a href="/top" class="tap-nav-link' in body
+
+    def test_discoverable_page_is_a_link_and_no_page_prefix_is_title_cased(self):
+        _create_page("Final Page", "/foo/bar/final-page")
+        segments = build_breadcrumb("/foo/bar/final-page/x")
+        assert segments[1].label == "Foo"
+        assert (segments[1].is_registered, segments[1].is_link) == (False, False)
+        assert (segments[3].is_registered, segments[3].is_link) == (True, True)
 
 
 @pytest.mark.django_db

@@ -15,7 +15,7 @@ argument-hint: <issue-number or defect description>
 
 The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
 
-- **Read the graph through Gryphon** (11): when it cannot answer, fix Gryphon so the next query can.
+- **Read the graph through Gryphon** (11): when it cannot answer, the user chooses: build the capability, or an `orm`/`module` Search; a defect is fixed on the spot.
 - **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
 
 

@@ -24,7 +24,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
 
-from tap_web.page import build_url_id, iter_layout_rows, slot_query_params
+from tap_web.page import build_url_id, column_band, group_bands, iter_layout_rows, slot_query_params
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +444,7 @@ def render_synthetic_page(
         processed_columns.append(
             {
                 "key": col_key,
+                "band": column_band(col_data),
                 "width": col_data.get("width", "1fr"),
                 "rows": processed_rows,
             }
@@ -452,6 +453,7 @@ def render_synthetic_page(
     context = {
         "page": page,
         "processed_columns": processed_columns,
+        "bands": group_bands(processed_columns),
         "css_assets": list(css),
         "js_assets": list(js),
     }

@@ -86,6 +86,9 @@ export function placeParentLabels(cy, opts = {}) {
 
     cy.batch(() => {
         cy.nodes("." + VIEWPORT_PARENT_CLASS).forEach((n) => {
+            // A model whose display hint puts the label outside the box (label.position "outside" with a top or
+            // bottom valign) keeps it there: the label stands above/below the edge, anchored left, centre or right.
+            if (_placeOutside(n)) return;
             const w = n.width();
             const h = n.height();
             const textW = measure(n.data("label") || "");
@@ -103,6 +106,32 @@ export function placeParentLabels(cy, opts = {}) {
             });
         });
     });
+}
+
+/**
+ * Stand a container's label outside its box, on the side its `label` display hint names, anchored by `label_anchor`
+ * ("left" puts the label's left end on the box's left edge, "right" the right end on the right edge, "center" is
+ * Cytoscape's own centring). Returns false, touching nothing, for a node whose hint is not an outside top/bottom label,
+ * so the inside placement above still applies to it (req-viz-system-display-hints-10).
+ */
+function _placeOutside(n) {
+    const valign = n.data("label_valign");
+    if (n.data("label_position") !== "outside" || (valign !== "top" && valign !== "bottom")) return false;
+    const anchor = n.data("label_anchor") || "center";
+    const w = n.width();
+    let mx = 0;
+    if (anchor === "left" || anchor === "right") {
+        const textW = _textMeasurer(`${n.style("font-weight")} ${n.style("font-size")} sans-serif`)(n.data("label") || "");
+        const slack = Math.max(0, w - textW) / 2;
+        mx = anchor === "left" ? -slack : slack;
+    }
+    n.style({
+        "text-valign": valign, "text-halign": "center",
+        "text-margin-x": mx,
+        "text-margin-y": Number(n.data("label_margin_y")) || (valign === "top" ? -6 : 6),
+        "text-wrap": "none", "text-max-width": `${w}px`,
+    });
+    return true;
 }
 
 function _textMeasurer(font) {

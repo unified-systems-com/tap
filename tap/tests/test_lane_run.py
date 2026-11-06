@@ -132,6 +132,119 @@ def test_plan_owns_each_plugin_dir_once(tmp_path: Path) -> None:
     assert [o.owner for o in owners2] == ["x_core", "s", "n_core"]
 
 
+@pytest.mark.spec("req-dev-validation-suite-tiers-6")
+def test_only_and_no_plugins_scope_the_plugin_suites(tmp_path: Path) -> None:
+    """`only` keeps just the named plugin suites; an empty set keeps none; the core walk is always there."""
+    root = tmp_path / "app"
+    dirs = {}
+    for slug in ("a_core", "b_core", "gryphon_playground"):
+        dirs[slug] = tmp_path / "venv" / slug / "tests"
+        dirs[slug].mkdir(parents=True)
+        (dirs[slug] / "test_it.py").write_text("def test_it():\n    assert True\n")
+    suites = [PluginSuite(slug, d, True) for slug, d in dirs.items()]
+    core, owners = build_plan(root, suites, exclude=set(), only={"gryphon_playground"})
+    assert core.paths[0] == str(root)
+    assert [o.owner for o in owners] == ["gryphon_playground"]
+    _, none_owners = build_plan(root, suites, exclude=set(), only=set())
+    assert none_owners == []
+    _, all_owners = build_plan(root, suites, exclude=set(), only=None)
+    assert [o.owner for o in all_owners] == ["a_core", "b_core", "gryphon_playground"]
+    _, minus = build_plan(root, suites, exclude={"gryphon_playground"}, only={"gryphon_playground", "a_core"})
+    assert [o.owner for o in minus] == ["a_core"]
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-6")
+def test_the_runner_cli_runs_only_the_named_suites_and_says_what_it_left_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
+        seen.append(paths)
+        return 0, "collected 1 items\n=== 1 passed in 0.1s ===\n"
+
+    monkeypatch.setenv("TAP_PYTEST_LOCK", str(tmp_path / "lock"))
+    monkeypatch.delenv("TAP_PYTEST_LOCK_HELD", raising=False)
+    corpus, other = tmp_path / "corpus", tmp_path / "other"
+    for d in (corpus, other):
+        d.mkdir()
+        (d / "test_x.py").write_text("")
+    monkeypatch.setattr(lane_run, "_run_pytest", fake_run)
+    monkeypatch.setattr(
+        lane_run,
+        "plugin_suites",
+        lambda: [PluginSuite("gryphon_playground", corpus, True), PluginSuite("other_core", other, True)],
+    )
+    monkeypatch.setattr(lane_run, "installed_plugin_slugs", lambda: ["gryphon_playground", "other_core"])
+    assert lane_run.main(["--root", str(tmp_path / "app"), "--only", "gryphon_playground", "--"]) == 0
+    assert seen == [[str(tmp_path / "app")], [str(corpus)]]
+    assert "NOT run on this lane" in capsys.readouterr().err
+    seen.clear()
+    assert lane_run.main(["--root", str(tmp_path / "app"), "--no-plugins", "--"]) == 0
+    assert seen == [[str(tmp_path / "app")]]
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-7")
+def test_the_promote_caps_its_lane_by_default() -> None:
+    """The promote exports TAP_TEST_JOBS=3 unless the caller set it; `scripts/test` reads it host-side
+    (asserted behaviourally in test_scripts_test_lane.py). The promote itself needs a live stack to run,
+    so its default is pinned at the one line that sets it."""
+    repo = Path(__file__).resolve().parents[2]
+    promote = (repo / "scripts" / "promote-to-main.sh").read_text(encoding="utf-8")
+    assert 'TAP_TEST_JOBS="${TAP_TEST_JOBS:-3}" scripts/test --fast-relevant' in promote
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-6")
+def test_an_only_slug_that_is_not_installed_is_refused_not_a_silent_green(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TAP_PYTEST_LOCK", str(tmp_path / "lock"))
+    monkeypatch.setattr(lane_run, "plugin_suites", lambda: [])
+    monkeypatch.setattr(lane_run, "installed_plugin_slugs", lambda: [])
+    assert lane_run.main(["--root", str(tmp_path), "--only", "gryphon_playground", "--"]) == 2
+    err = capsys.readouterr().err
+    assert "gryphon_playground" in err and "not installed" in err
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-7")
+def test_the_lane_holds_the_stack_lock_while_it_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from tap.pytest_lock import is_locked
+
+    lock = tmp_path / "lock"
+    monkeypatch.setenv("TAP_PYTEST_LOCK", str(lock))
+    monkeypatch.delenv("TAP_PYTEST_LOCK_HELD", raising=False)
+    seen: list[bool] = []
+
+    def fake_run(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
+        seen.append(is_locked(lock))
+        assert env.get("TAP_PYTEST_LOCK_HELD") == "1"  # children must not try to re-take it
+        return 0, "collected 1 items\n=== 1 passed in 0.1s ===\n"
+
+    monkeypatch.setattr(lane_run, "_run_pytest", fake_run)
+    monkeypatch.setattr(lane_run, "plugin_suites", lambda: [])
+    monkeypatch.setattr(lane_run, "installed_plugin_slugs", lambda: [])
+    assert lane_run.main(["--root", str(tmp_path), "--"]) == 0
+    assert seen == [True] and not is_locked(lock)
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-7")
+def test_the_lane_report_attributes_wait_run_and_load() -> None:
+    line = lane_run.timing_line(waited=612.4, ran=30.2)
+    assert "waited 612 s" in line and "ran 30 s" in line and "load average" in line and "CPUs" in line
+
+
+@pytest.mark.spec("req-dev-validation-suite-tiers-6")
+def test_a_lane_with_no_core_and_no_plugin_suite_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TAP_PYTEST_LOCK", str(tmp_path / "lock"))
+    monkeypatch.delenv("TAP_PYTEST_LOCK_HELD", raising=False)
+    monkeypatch.setattr(lane_run, "plugin_suites", lambda: [])
+    monkeypatch.setattr(lane_run, "installed_plugin_slugs", lambda: [])
+    assert lane_run.main(["--root", str(tmp_path), "--no-core", "--no-plugins", "--"]) == 2
+    assert "would run no tests" in capsys.readouterr().err
+
+
 def test_summary_renders_verdict(tmp_path: Path) -> None:
     r = OwnerResult(owner="core", paths=["/app"], collected=10, passed=10)
     text = render_summary([r], [], [], None)

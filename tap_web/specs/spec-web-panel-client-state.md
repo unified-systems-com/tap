@@ -332,7 +332,7 @@ This requirement formally documents the boundary between this spec (preferences)
 
 Examples of values that belong in **preferences** (this spec):
 - Preferred FedRAMP class (`fedramp.class`).
-- Preferred timezone, density, color theme.
+- Preferred timezone, density. (Colour theme is a browser-side choice, `spec-web-theme.md`; it is not stored here.)
 - Preferred dimension scope filter.
 
 Examples of values that belong in **session state** (future):

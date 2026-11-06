@@ -6,10 +6,14 @@
    the cy viewport — it's just a fixed backdrop pattern at the container
    level — so there's no sync window to get wrong. Spacing (40px) and
    color (slate-300) match the previous drawn grid for visual continuity. */
+/* THEME-INVARIANT (req-web-theme-graph-1): the canvas is one fixed light ground in every theme, because node
+   colours are data and lose fidelity against a dark one. Everything drawn inside it (labels, lines, toolbar,
+   scope boxes) keeps its light-mode colours; the panel chrome around it follows the theme. */
 .tap-cy-static-grid {
+    background-color: rgb(var(--tap-graph-bg));
     background-image:
-        linear-gradient(to right, #cbd5e1 1px, transparent 1px),
-        linear-gradient(to bottom, #cbd5e1 1px, transparent 1px);
+        linear-gradient(to right, rgb(var(--tap-graph-grid)) 1px, transparent 1px),
+        linear-gradient(to bottom, rgb(var(--tap-graph-grid)) 1px, transparent 1px);
     background-size: 40px 40px;
 }
 
@@ -93,15 +97,85 @@
     height: 100% !important;
 }
 
-/* Status badge info window — detail overlay opened on badge/host click. */
+/* Status badge info window — detail overlay opened on badge/host click.
+   Colours are tokens on the window root; dark values follow the viewer's scheme exactly as
+   stat-cards.css and panel-chart.css do (req-viz-info-window-columns-10). */
 .tap-info-window {
-    background: #ffffff;
-    border: 1px solid #d7dce3;
+    --tap-info-bg: #ffffff;
+    --tap-info-border: #d7dce3;
+    --tap-info-text: #1e293b;
+    --tap-info-head-bg: #f8fafc;
+    --tap-info-head-border: #e2e8f0;
+    --tap-info-muted: #64748b;
+    --tap-info-divider: #f1f5f9;
+    --tap-info-count: #475569;
+    --tap-info-faint: #94a3b8;
+    --tap-info-error: #b91c1c;
+    --tap-info-shadow: rgba(15, 23, 42, 0.12);
+    --tap-info-tone-good-bg: #dcfce7;
+    --tap-info-tone-good-fg: #166534;
+    --tap-info-tone-warn-bg: #fef3c7;
+    --tap-info-tone-warn-fg: #92400e;
+    --tap-info-tone-bad-bg: #fee2e2;
+    --tap-info-tone-bad-fg: #991b1b;
+    --tap-info-tone-muted-bg: #f3f4f6;
+    --tap-info-tone-muted-fg: #4b5563;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .tap-info-window {
+        --tap-info-bg: #1e293b;
+        --tap-info-border: #334155;
+        --tap-info-text: #f1f5f9;
+        --tap-info-head-bg: #0f172a;
+        --tap-info-head-border: #334155;
+        --tap-info-muted: #94a3b8;
+        --tap-info-divider: #334155;
+        --tap-info-count: #cbd5e1;
+        --tap-info-faint: #94a3b8;
+        --tap-info-error: #f87171;
+        --tap-info-shadow: rgba(0, 0, 0, 0.5);
+        --tap-info-tone-good-bg: #0f172a;
+        --tap-info-tone-good-fg: #4ade80;
+        --tap-info-tone-warn-bg: #0f172a;
+        --tap-info-tone-warn-fg: #fbbf24;
+        --tap-info-tone-bad-bg: #0f172a;
+        --tap-info-tone-bad-fg: #f87171;
+        --tap-info-tone-muted-bg: #0f172a;
+        --tap-info-tone-muted-fg: #94a3b8;
+    }
+}
+
+:root[data-theme="dark"] .tap-info-window {
+    --tap-info-bg: #1e293b;
+    --tap-info-border: #334155;
+    --tap-info-text: #f1f5f9;
+    --tap-info-head-bg: #0f172a;
+    --tap-info-head-border: #334155;
+    --tap-info-muted: #94a3b8;
+    --tap-info-divider: #334155;
+    --tap-info-count: #cbd5e1;
+    --tap-info-faint: #94a3b8;
+    --tap-info-error: #f87171;
+    --tap-info-shadow: rgba(0, 0, 0, 0.5);
+    --tap-info-tone-good-bg: #0f172a;
+    --tap-info-tone-good-fg: #4ade80;
+    --tap-info-tone-warn-bg: #0f172a;
+    --tap-info-tone-warn-fg: #fbbf24;
+    --tap-info-tone-bad-bg: #0f172a;
+    --tap-info-tone-bad-fg: #f87171;
+    --tap-info-tone-muted-bg: #0f172a;
+    --tap-info-tone-muted-fg: #94a3b8;
+}
+
+.tap-info-window {
+    background: var(--tap-info-bg);
+    border: 1px solid var(--tap-info-border);
     border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 2px 8px var(--tap-info-shadow);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
-    color: #1e293b;
+    color: var(--tap-info-text);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -113,8 +187,8 @@
     align-items: flex-start;
     justify-content: space-between;
     padding: 8px 10px;
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
+    background: var(--tap-info-head-bg);
+    border-bottom: 1px solid var(--tap-info-head-border);
     gap: 6px;
 }
 
@@ -134,7 +208,7 @@
 
 .tap-info-window__type {
     font-size: 11px;
-    color: #64748b;
+    color: var(--tap-info-muted);
     margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -145,7 +219,7 @@
     flex: 0 0 auto;
     border: none;
     background: transparent;
-    color: #64748b;
+    color: var(--tap-info-muted);
     font-size: 18px;
     line-height: 1;
     cursor: pointer;
@@ -154,8 +228,8 @@
 }
 
 .tap-info-window__close:hover {
-    color: #1e293b;
-    background: #e2e8f0;
+    color: var(--tap-info-text);
+    background: var(--tap-info-head-border);
 }
 
 .tap-info-window__body {
@@ -166,7 +240,7 @@
 
 .tap-info-window__section {
     padding: 6px 10px 8px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--tap-info-divider);
 }
 
 .tap-info-window__section:last-child {
@@ -180,7 +254,7 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #64748b;
+    color: var(--tap-info-muted);
     font-weight: 600;
     margin-bottom: 4px;
 }
@@ -198,7 +272,7 @@
 
 .tap-info-window__count {
     font-variant-numeric: tabular-nums;
-    color: #475569;
+    color: var(--tap-info-count);
 }
 
 .tap-info-window__table {
@@ -212,8 +286,9 @@
 }
 
 .tap-info-window__table td {
+    vertical-align: middle;
     padding: 4px 0;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--tap-info-divider);
     line-height: 1.35;
     word-break: break-word;
 }
@@ -231,19 +306,85 @@
     cursor: pointer;
 }
 .tap-info-window__row-link:hover {
-    color: #1e293b;
+    color: var(--tap-info-text);
+}
+
+/* Wide window (a multi-column table): sized to its content between the fixed 280px and a 560px cap,
+   never wider than the panel (req-viz-info-window-columns-9). */
+.tap-info-window--wide {
+    width: max-content;
+    min-width: 280px;
+    max-width: min(560px, 100%);
+    box-sizing: border-box;
+}
+
+/* Columns table (req-viz-info-window-columns-4): the header row is visible and stays pinned while
+   the window body scrolls. Cell padding keeps columns apart. */
+.tap-info-window__table--columns thead {
+    display: table-header-group;
+}
+
+.tap-info-window__table--columns th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--tap-info-bg);
+    color: var(--tap-info-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+    padding: 4px 8px 4px 0;
+    border-bottom: 1px solid var(--tap-info-head-border);
+}
+
+.tap-info-window__table--columns td {
+    padding: 4px 8px 4px 0;
+    vertical-align: middle;
+}
+
+.tap-info-window__table--columns th:last-child,
+.tap-info-window__table--columns td:last-child {
+    padding-right: 0;
+}
+
+.tap-info-window__table--columns th.tap-info-window__cell--right,
+.tap-info-window__table--columns td.tap-info-window__cell--right {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* tone_steps (req-viz-info-window-columns-16): a numeric cell as a toned badge, from the --tap-info-tone-* tokens
+   (the table panel's tone palette in light, the stat-card tone colours in dark). The tone is also the tooltip. */
+.tap-info-window__tone {
+    display: inline-block;
+    white-space: nowrap;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: var(--tap-info-tone-muted-bg);
+    color: var(--tap-info-tone-muted-fg);
+}
+.tap-info-window__tone--good { background: var(--tap-info-tone-good-bg); color: var(--tap-info-tone-good-fg); }
+.tap-info-window__tone--warn { background: var(--tap-info-tone-warn-bg); color: var(--tap-info-tone-warn-fg); }
+.tap-info-window__tone--bad { background: var(--tap-info-tone-bad-bg); color: var(--tap-info-tone-bad-fg); }
+.tap-info-window__tone .tap-info-window__row-link { color: inherit; }
+
+/* A column declared `nowrap: true` keeps its cell text on one line (req-viz-info-window-columns-11);
+   the window's min/max width rules still bound the table. */
+.tap-info-window__table--columns td.tap-info-window__cell--nowrap {
+    white-space: nowrap;
 }
 
 .tap-info-window__loading,
 .tap-info-window__error {
     padding: 4px 0;
     font-size: 12px;
-    color: #94a3b8;
+    color: var(--tap-info-faint);
     font-style: italic;
 }
 
 .tap-info-window__error {
-    color: #b91c1c;
+    color: var(--tap-info-error);
     font-style: normal;
 }
 

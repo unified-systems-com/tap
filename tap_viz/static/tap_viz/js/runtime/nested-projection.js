@@ -212,6 +212,7 @@ export function resolveNesting(cy, relationships) {
  *   (see chrome.js placeParentLabels).
  * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | "ranked" | {name, ...opts}.
  * @param {Object<string, string|Object>} [config.innerLayouts] - Per-parent-type overrides.
+ *   A container node's own `_inner_layout` data (name or {name, ...opts}) beats both this and innerLayout.
  * @param {boolean} [config.fit] - Fit viewport after projection.
  * @returns {Promise<{warnings: Array}>}
  */
@@ -297,7 +298,8 @@ export async function projectNested(cy, config) {
         if (parentNode.empty()) continue;
         const parentType = parentNode.data("entity_type") || "";
         const pad = _resolvePadding(parentNode, padding, paddings);   // {top, right, bottom, left}
-        const layoutFn = _resolveLayoutFn(parentNode, innerLayout, innerLayouts);
+        const override = _containerLayoutOverride(parentNode, warnings);
+        const layoutFn = _resolveLayoutFn(parentNode, innerLayout, innerLayouts, override);
 
         const childDescs = (childrenByParent[parentId] || [])
             .map((cid) => cy.getElementById(cid))
@@ -708,6 +710,9 @@ function _tieredRowsNatural(children, opts) {
  *               in the column's sorted order, so a stage with many
  *               children becomes a block instead of a tower)
  *   flowAspect: target width ÷ height of a flowed column (default 0.9)
+ *   axis:       "columns" (default) | "rows" — a stage is a horizontal row instead of a column; rows are
+ *               stacked by stage (rtl: stage 0 at the foot), each centred, children `columnGap` apart,
+ *               rows `rowGap` apart (req-viz-nested-projection-natural-layouts-8)
  *
  * Returns the standard {width, height, placements} plus `warnings`.
  */
@@ -716,6 +721,7 @@ function _rankedNatural(children, opts) {
     const columnGap = (opts && opts.columnGap != null) ? opts.columnGap : 40;
     const rowGap = (opts && opts.rowGap != null) ? opts.rowGap : 12;
     const sort = (opts && opts.sort) || "label";
+    const rowsAxis = !!(opts && opts.axis === "rows");
     const columnLayout = (opts && opts.columnLayout === "flow") ? "flow" : "stack";
     const flowAspect = (opts && opts.flowAspect != null) ? opts.flowAspect : 0.9;
     const warnings = [];
@@ -750,6 +756,33 @@ function _rankedNatural(children, opts) {
     } else if (sort === "order") {
         const orderOf = (c) => (Number.isInteger(c.node.data("_order")) ? c.node.data("_order") : Number.MAX_SAFE_INTEGER);
         columns.forEach((col) => col.sort((a, b) => (orderOf(a) - orderOf(b)) || byLabel(a, b)));
+    }
+
+    // axis "rows": each stage is a horizontal row, rows stacked top-to-bottom, every row centred on the block.
+    if (rowsAxis) {
+        const rowBlocks = columns.map((row) => {
+            const w = row.reduce((sum, c) => sum + c.width, 0) + columnGap * (row.length - 1);
+            const h = Math.max(...row.map((c) => c.height));
+            return {row, width: w, height: h};
+        });
+        const rwidth = Math.max(...rowBlocks.map((r) => r.width));
+        const rheight = rowBlocks.reduce((sum, r) => sum + r.height, 0) + rowGap * (rowBlocks.length - 1);
+        const seq = rowBlocks.map((_, i) => i);
+        if (direction === "rtl") seq.reverse();
+        const rplacements = [];
+        let y = -rheight / 2;
+        seq.forEach((i, k) => {
+            if (k > 0) y += rowGap;
+            const r = rowBlocks[i];
+            let x = -r.width / 2;
+            r.row.forEach((c, j) => {
+                if (j > 0) x += columnGap;
+                rplacements.push({node: c.node, dx: x + c.width / 2, dy: y + r.height / 2});
+                x += c.width;
+            });
+            y += r.height;
+        });
+        return {width: rwidth, height: rheight, placements: rplacements, warnings};
     }
 
     // Each column is either a vertical stack (one child per row) or a flow
@@ -861,12 +894,30 @@ function _resolvePadding(parentNode, defaultPadding, perTypePaddings) {
     return {top: side(spec.top), right: side(spec.right), bottom: side(spec.bottom), left: side(spec.left)};
 }
 
-function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts) {
+/**
+ * A container's own layout choice (req-viz-nested-projection-container-size-from-children-5): the node's
+ * `_inner_layout` data, a layout name or `{name, ...opts}`. Absent → null. Malformed → null plus a warning.
+ */
+function _containerLayoutOverride(parentNode, warnings) {
+    const raw = parentNode.data("_inner_layout");
+    if (raw === undefined || raw === null) return null;
+    if ((typeof raw === "string" && raw) || (typeof raw === "object" && !Array.isArray(raw) && typeof raw.name === "string" && raw.name)) {
+        return raw;
+    }
+    warnings.push({
+        category: "invalid_inner_layout",
+        message: `${parentNode.id()}: _inner_layout must be a layout name or {name, ...opts}; ignored`,
+    });
+    return null;
+}
+
+function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts, override) {
     let spec = defaultLayout;
     if (parentNode && perTypeLayouts) {
         const parentType = parentNode.data("entity_type") || "";
         if (perTypeLayouts[parentType]) spec = perTypeLayouts[parentType];
     }
+    if (override) spec = override;
     let name, opts;
     if (typeof spec === "string") {
         name = spec;

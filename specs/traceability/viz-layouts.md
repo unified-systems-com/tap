@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 3 |
+| mapped | 4 |
 | excluded | 7 |
 | unbuilt | 1 |
 | retired | 1 |
@@ -31,3 +31,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-viz-layout-artifact` | Implemented | Implemented | `Layout` | — |
 | `req-viz-layout-dual-mode` | Implemented | Implemented | `Layout` | — |
 | `req-viz-layout-node-fields` | Implemented | Tested | — | `req-viz-layout-node-fields-1`, `req-viz-layout-node-fields-2`, `req-viz-layout-node-fields-3` |
+| `req-viz-layout-scope-box` | Implemented | Tested | — | `req-viz-layout-scope-box-1`, `req-viz-layout-scope-box-2`, `req-viz-layout-scope-box-3`, `req-viz-layout-scope-box-4` |

@@ -211,6 +211,9 @@ def _default_batch_label(request: pytest.FixtureRequest) -> dict[str, str]:
     }
 
 
+_LOCK_STACK = pytest.StashKey[Any]()
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register the harness's own marker, so plugin repos running this harness need not."""
     config.addinivalue_line(
@@ -218,6 +221,33 @@ def pytest_configure(config: pytest.Config) -> None:
         "no_default_batch_label: run without the harness's default batch label, to exercise "
         "req-grid-service-batch-label-required itself",
     )
+    _take_stack_lock(config)
+
+
+def _take_stack_lock(config: pytest.Config) -> None:
+    """Hold the stack's pytest lock for this session unless an ancestor already holds it (tap#1092).
+
+    Two pytest sessions on one stack share one test database and corrupt each other (mass xdist
+    ERRORs), so a bare ``pytest`` waits behind a running lane exactly as ``pytest-serial`` does. Only
+    the controller takes it: an xdist worker is a child of a holder, and a run that only collects
+    runs nothing (``--fixtures`` and ``--help`` likewise). The lock is released in ``pytest_unconfigure``.
+    """
+    if hasattr(config, "workerinput") or config.option.collectonly or config.option.help or config.option.showfixtures:
+        return
+    from contextlib import ExitStack
+
+    from tap.pytest_lock import hold_pytest_lock
+
+    stack = ExitStack()
+    stack.enter_context(hold_pytest_lock("pytest"))
+    config.stash[_LOCK_STACK] = stack
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Release the stack lock taken in pytest_configure."""
+    stack = config.stash.get(_LOCK_STACK, None)
+    if stack is not None:
+        stack.close()
 
 
 @pytest.fixture(autouse=True)

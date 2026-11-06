@@ -28,8 +28,8 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess  # nosec B404 — one fixed argv (this interpreter + validated paths): the lane's own invocation, never a shell
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +40,7 @@ from tap.plugin_testing import (
     membership_omissions,
     plugin_suites,
 )
+from tap.pytest_lock import hold_pytest_lock, run_group
 
 # Alternations are anchored on a word boundary and share no prefix, so the engine never
 # retries one branch against another across the line (Sonar: super-linear backtracking).
@@ -173,12 +174,11 @@ def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tupl
     # path that exists, so nothing free-form can arrive here. The analyzers do not follow the
     # check across the call; the repo pairs both markers for exactly this case
     # (tap/git_invocation.py:55). argv[0] is this interpreter — an absolute path, not a name.
-    proc = subprocess.run(  # nosec B603  # nosemgrep  # NOSONAR (S8705)
-        [sys.executable, "-m", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
-    )  # noqa: S603 — this interpreter + a tail validated at the sink by _checked_args
-    out = proc.stdout + proc.stderr
+    # The child runs in its own process group (tap.pytest_lock.run_group), so a TERM to this process
+    # kills the pytest and every xdist worker it started instead of orphaning them (tap#1092).
+    rc, out = run_group([sys.executable, "-m", "pytest", *args], env, capture=True)
     sys.stdout.write(out)
-    return proc.returncode, out
+    return rc, out
 
 
 def run_owner(result: OwnerResult, extra: list[str], env: dict[str, str]) -> OwnerResult:
@@ -248,12 +248,27 @@ def render_summary(results: list[OwnerResult], omissions: list[str], reasons: li
     return "\n".join(lines) + "\n"
 
 
-def build_plan(root: Path, suites: list[PluginSuite], exclude: set[str]) -> tuple[OwnerResult, list[OwnerResult]]:
-    """The core walk (root minus every plugin dir under it) and one owner per plugin suite."""
+def timing_line(waited: float, ran: float) -> str:
+    """Attribute a slow lane: time queued behind another run, time running, and the stack's load."""
+    load, cpus = os.getloadavg()[0], os.cpu_count() or 1
+    return (
+        f"**Timing:** waited {waited:.0f} s for the stack's pytest lock; ran {ran:.0f} s; "
+        f"load average {load:.1f} on {cpus} CPUs."
+    )
+
+
+def build_plan(
+    root: Path, suites: list[PluginSuite], exclude: set[str], only: set[str] | None = None
+) -> tuple[OwnerResult, list[OwnerResult]]:
+    """The core walk (root minus every plugin dir under it) and one owner per plugin suite.
+
+    ``only`` narrows the plugin suites to the named slugs (``None`` = no narrowing, an empty set =
+    no plugin suite at all); ``exclude`` removes named slugs from whatever ``only`` leaves.
+    """
     core = OwnerResult(owner="core", paths=[str(root)])
     owners: list[OwnerResult] = []
     for st in suites:
-        if st.slug in exclude:
+        if st.slug in exclude or (only is not None and st.slug not in only):
             continue
         if st.tests_dir is None:
             owners.append(OwnerResult(owner=st.slug, paths=[], has_test_files=False, notes=["ships no tests/ dir"]))
@@ -286,6 +301,17 @@ def main(argv: list[str] | None = None) -> int:
         help="slug to leave out of this run (repeatable; e.g. the corpus on a fast lane)",
     )
     parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="run ONLY the named plugin suites (repeatable); every other plugin suite is left out",
+    )
+    parser.add_argument(
+        "--no-plugins",
+        action="store_true",
+        help="run no plugin suite at all (the core walk only); a plugin's suite belongs to its own repo's CI",
+    )
+    parser.add_argument(
         "--summary",
         type=Path,
         default=Path(os.environ["GITHUB_STEP_SUMMARY"]) if os.environ.get("GITHUB_STEP_SUMMARY") else None,
@@ -297,20 +323,53 @@ def main(argv: list[str] | None = None) -> int:
     env = dict(os.environ)
 
     suites = plugin_suites()
+    unknown = sorted(set(args.only) - {st.slug for st in suites})
+    if unknown:
+        sys.stderr.write(
+            f"--only names plugin suites that are not installed in this profile: {', '.join(unknown)} "
+            f"(installed: {', '.join(st.slug for st in suites) or 'none'}). Refusing to report a green lane "
+            "for a suite that never ran.\n"
+        )
+        return 2
     omissions = (
         membership_omissions(expected_plugin_slugs(args.record), installed_plugin_slugs()) if args.record else []
     )
-    core, owners = build_plan(args.root, suites, set(args.exclude))
+    only = set() if args.no_plugins else (set(args.only) if args.only else None)
+    core, owners = build_plan(args.root, suites, set(args.exclude), only)
+    if only is not None:
+        left_out = sorted(st.slug for st in suites if st.slug not in only)
+        sys.stderr.write(
+            "plugin suites NOT run on this lane (scoped, tap#1092): "
+            + (", ".join(left_out) or "none")
+            + " — each plugin's own CI owns its suite; the server gate is the authority.\n"
+        )
+    if args.no_core and not owners:
+        sys.stderr.write(
+            "--no-core with no plugin suite selected: the lane would run no tests and report green. "
+            "Name at least one installed suite (--only <slug>) or drop --no-core.\n"
+        )
+        return 2
     results: list[OwnerResult] = []
-    if not args.no_core:
-        results.append(run_owner(core, extra, env))
-    for owner in owners:
-        if owner.paths:
-            results.append(run_owner(owner, extra, env))
-        else:
-            results.append(owner)
+    load, cpus = os.getloadavg()[0], os.cpu_count() or 1
+    if load > cpus:
+        sys.stderr.write(
+            f"load average {load:.1f} exceeds {cpus} CPUs: each xdist worker builds its own test DB, which "
+            "dominates a small lane under load — consider fewer workers (TAP_TEST_JOBS) or a quieter moment.\n"
+        )
+    started = time.monotonic()
+    with hold_pytest_lock("tap.lane_run"):
+        ran_from = time.monotonic()
+        env = dict(os.environ)  # taken AFTER the lock so children inherit TAP_PYTEST_LOCK_HELD
+        if not args.no_core:
+            results.append(run_owner(core, extra, env))
+        for owner in owners:
+            if owner.paths:
+                results.append(run_owner(owner, extra, env))
+            else:
+                results.append(owner)
     reasons = judge(results, omissions, args.require)
     text = render_summary(results, omissions, reasons, args.record)
+    text += timing_line(waited=ran_from - started, ran=time.monotonic() - ran_from) + "\n"
     sys.stdout.write("\n" + text)
     if args.summary is not None:
         with args.summary.open("a", encoding="utf-8") as fh:

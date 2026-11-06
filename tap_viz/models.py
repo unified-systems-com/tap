@@ -1,6 +1,6 @@
 """tap_viz models — Viz layout, projection, elevation, and arrangement entities.
 
-TAP-IMPLEMENTS: req-viz-info-window-row-link@48330d75451b/1bc7bd6b719e (derivation) — the
+TAP-IMPLEMENTS: req-viz-info-window-row-link@48330d75451b/73fd5f34890d (derivation) — the
     `info_window.row_url_template` property on a projection's badge-set schema; the
     placeholder-fill and same-origin enforcement it authorizes live client-side in
     `tap_viz/static/tap_viz/js/runtime/info-window.js` (`_buildRowUrl`), which `ast`-based
@@ -375,6 +375,101 @@ _PROJECTION_DEFINITION_SCHEMA: dict = {
                                             "missing any referenced field renders as plain text, "
                                             "never a half-built URL."
                                         ),
+                                    },
+                                    "columns": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "maxItems": 8,
+                                        "description": (
+                                            "Table columns for this badge set's section, in display order "
+                                            "(req-viz-info-window-columns). Absent, the section shows the "
+                                            "single Name column. Rows keep the order the Search returned."
+                                        ),
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["field", "label"],
+                                            "additionalProperties": False,
+                                            "properties": {
+                                                "field": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "description": "Key of the Search row whose value fills this column's cells. A row without the key shows an empty cell.",
+                                                },
+                                                "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "description": "Header text for the column.",
+                                                },
+                                                "link": {
+                                                    "type": "boolean",
+                                                    "description": (
+                                                        "True makes this column's cell the row link when "
+                                                        "`row_url_template` resolves for the row. The first "
+                                                        "column marked true carries the link; when none is "
+                                                        "marked, the first column does."
+                                                    ),
+                                                },
+                                                "align": {
+                                                    "type": "string",
+                                                    "enum": ["left", "right"],
+                                                    "description": "Horizontal alignment of the header and cells. Default left.",
+                                                },
+                                                "format": {
+                                                    "type": "string",
+                                                    "enum": ["text", "number", "percent"],
+                                                    "description": (
+                                                        "`text` (default) shows the value as given; `number` shows a numeric value with "
+                                                        "one decimal place; `percent` shows a fraction from 0 to 1 as a percentage "
+                                                        "(0.0004 as 0.04%), with `decimals` places."
+                                                    ),
+                                                },
+                                                "decimals": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                    "maximum": 6,
+                                                    "description": "Decimal places of a `percent` value. Default 2.",
+                                                },
+                                                "tone_steps": {
+                                                    "type": "array",
+                                                    "minItems": 1,
+                                                    "maxItems": 8,
+                                                    "description": (
+                                                        "Colours a numeric cell by thresholds: the first step, highest `min` first, whose "
+                                                        "`min` is at or below the value gives the cell its tone, drawn as a badge with the "
+                                                        "tone name as its tooltip. A value below every step, or not a number, shows as plain text."
+                                                    ),
+                                                    "items": {
+                                                        "type": "object",
+                                                        "required": ["min", "tone"],
+                                                        "additionalProperties": False,
+                                                        "properties": {
+                                                            "min": {
+                                                                "type": "number",
+                                                                "description": "Lowest value this step covers.",
+                                                            },
+                                                            "tone": {
+                                                                "type": "string",
+                                                                "enum": ["good", "warn", "bad", "muted", "info"],
+                                                                "description": "Badge tone, from the table panel's tone palette (`info` is the muted grey).",
+                                                            },
+                                                        },
+                                                    },
+                                                },
+                                                "zero_tone": {
+                                                    "type": "string",
+                                                    "enum": ["good", "warn", "bad", "muted", "info"],
+                                                    "description": "With `tone_steps`, the tone of a value that is exactly zero, taken instead of any step.",
+                                                },
+                                                "nowrap": {
+                                                    "type": "boolean",
+                                                    "description": (
+                                                        "True keeps this column's cell text on one line (no wrapping), so the "
+                                                        "column takes its content width within the window's width limits. "
+                                                        "Default false: text wraps."
+                                                    ),
+                                                },
+                                            },
+                                        },
                                     },
                                 },
                             },

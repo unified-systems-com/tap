@@ -1,3 +1,13 @@
+const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+// { 50: "rgb(var(--tap-<name>-50) / <alpha-value>)", ... } for each palette name.
+function themed(names) {
+  const out = {};
+  for (const name of names) {
+    out[name] = Object.fromEntries(SHADES.map((s) => [s, `rgb(var(--tap-${name}-${s}) / <alpha-value>)`]));
+  }
+  return out;
+}
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   // Static globs — resolved by the tailwindcss CLI directly, no Python plugin
@@ -53,7 +63,14 @@ module.exports = {
         // slate text), so the page reads warm and the chrome cool. Still
         // lifts off pure white so white panels separate, and still lighter
         // than slate-100 (#f1f5f9, hover/selected) so those keep reading.
-        canvas: "#f1f0ec",
+        //
+        // Colour theme (spec-web-theme.md): the canvas and every palette below are read from CSS custom properties
+        // defined in tap_web/static/tap_web/css/theme.css, so one utility class (`bg-slate-50`, `text-red-700`)
+        // draws the light value in a light theme and the mirrored dark value in a dark one -- templates, and plugin
+        // templates, need no `dark:` variants. `white` and `black` stay literal (text on a solid fill); a white SURFACE
+        // is `bg-white`, which theme.css points at the surface token.
+        canvas: "rgb(var(--tap-canvas) / <alpha-value>)",
+        ...themed(["slate", "gray", "red", "green", "amber", "blue", "indigo", "orange", "yellow"]),
       },
     },
   },

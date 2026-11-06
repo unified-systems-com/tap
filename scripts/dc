@@ -75,7 +75,14 @@ if [[ "${1:-}" == "--selftest-user" ]]; then
 fi
 
 
+_DC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # before the cd: BASH_SOURCE may be relative
 cd "$(git rev-parse --show-toplevel)"
+
+# Same engine the session was spawned on (req-dev-multisession-container-engine): a Podman
+# session records its socket in .env.local, and every compose call must reach that daemon.
+# shellcheck source=lib/container-engine.sh
+source "$_DC_DIR/lib/container-engine.sh"
+TAP_ENGINE_QUIET=1 tap_engine_select .
 
 # The container user (tap#754). The web image runs unprivileged; the dev stack additionally
 # runs it as THIS host user, because the container writes into the `.:/app` bind mount (boot

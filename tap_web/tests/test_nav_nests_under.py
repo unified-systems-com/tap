@@ -42,10 +42,10 @@ def _page(name: str, slug: str, *, discoverable: bool = True, nav_weight: int = 
     return page
 
 
-def _discoverable_page_names() -> dict[str, str]:
-    """``{slug: name}`` for every discoverable page: what the breadcrumb may label."""
-    pages = cast("list[Page]", list(Page.objects.filter(discoverable=True)))
-    return {page.slug: page.name for page in pages}
+def _page_names() -> dict[str, tuple[str, bool]]:
+    """``{slug: (name, discoverable)}`` for every page: the label is always the name; discoverable gates the link."""
+    pages = cast("list[Page]", list(Page.objects.all()))
+    return {page.slug: (page.name, page.discoverable) for page in pages}
 
 
 def _nest(child: Page, parent: Page) -> Edge:
@@ -53,7 +53,7 @@ def _nest(child: Page, parent: Page) -> Edge:
     return create_edge(child.entity, parent.entity, "NESTS_UNDER")
 
 
-def _url_only_breadcrumb(url: str, page_map: dict[str, str]) -> list[BreadcrumbSegment]:
+def _url_only_breadcrumb(url: str, page_map: dict[str, tuple[str, bool]]) -> list[BreadcrumbSegment]:
     """The URL-derived breadcrumb as it was computed before NESTS_UNDER existed.
 
     A frozen reference for req-web-nav-explicit-parent-edge-8: with no edges, the
@@ -61,17 +61,22 @@ def _url_only_breadcrumb(url: str, page_map: dict[str, str]) -> list[BreadcrumbS
     """
     path = url.rstrip("/")
     if not path:
-        return [BreadcrumbSegment(label="", url="/", is_registered=True, is_current=True, is_home=True)]
+        return [BreadcrumbSegment(label="", url="/", is_registered=True, is_link=True, is_current=True, is_home=True)]
     parts = [p for p in path.split("/") if p]
     prefixes = ["/" + "/".join(parts[: i + 1]) for i in range(len(parts))]
-    segments = [BreadcrumbSegment(label="", url="/", is_registered="/" in page_map, is_current=False, is_home=True)]
+    segments = [
+        BreadcrumbSegment(
+            label="", url="/", is_registered="/" in page_map, is_link=True, is_current=False, is_home=True
+        )
+    ]
     for i, prefix in enumerate(prefixes):
-        name = page_map.get(prefix)
+        name, discoverable = page_map.get(prefix, ("", False))
         segments.append(
             BreadcrumbSegment(
                 label=name or parts[i].replace("-", " ").replace("_", " ").title(),
                 url=prefix,
                 is_registered=bool(name),
+                is_link=bool(name) and discoverable,
                 is_current=i == len(prefixes) - 1,
                 is_home=False,
             )
@@ -166,7 +171,7 @@ class TestBreadcrumb:
         assert response.request["QUERY_STRING"] == "cluster=prod"
         body = response.content.decode()
         assert 'data-tap-sibling-url="/highbar"' in body
-        assert '<a href="/highbar" class="text-slate-300 hover:text-white transition-colors" ' in body
+        assert '<a href="/highbar" class="tap-nav-link transition-colors" ' in body
         assert 'aria-current="page" data-tap-segment-url="/teleport">Teleport</span>' in body
 
     def test_edges_and_pages_are_two_queries_at_any_depth(self, vendor_pages, django_assert_num_queries):
@@ -295,12 +300,12 @@ class TestNoEdgesNoChange:
 
     def test_breadcrumb_matches_url_reference(self, vendor_pages):
         _page("Hidden", "/hidden", discoverable=False)
-        page_map = _discoverable_page_names()
+        page_map = _page_names()
         for url in self.URLS:
             assert build_breadcrumb(url) == _url_only_breadcrumb(url, page_map), url
 
     def test_nav_index_matches_url_reference(self, vendor_pages):
-        page_map = _discoverable_page_names()
+        page_map = _page_names()
         for entry in _auth_client().get("/__nav-index.json").json()["pages"]:
             expected = [{"label": s.label, "url": s.url} for s in _url_only_breadcrumb(entry["url"], page_map)]
             assert entry["breadcrumb"] == expected, entry["url"]

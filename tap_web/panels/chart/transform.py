@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from tap_web.panels.chart.config import HIERARCHICAL_TYPES, _series_list
+from tap_web.panels.row_url import fill_row_url
 
 DEFAULT_NULL_TEXT = "not observed"
 DEFAULT_BLANK_TEXT = "(empty)"
@@ -188,6 +189,39 @@ def set_label_interval(option: dict[str, Any], counts: dict[str, int]) -> None:
                 break
 
 
+CLICKABLE_TYPES: tuple[str, ...] = ("bar", "scatter")
+URL_KEY = "_url"
+
+
+def click_template(config: dict[str, Any]) -> str | None:
+    """The ``click.row_url_template`` of the config, or None."""
+    click = config.get("click")
+    return click.get("row_url_template") if isinstance(click, dict) else None
+
+
+def row_urls(rows: list[dict[str, Any]], config: dict[str, Any]) -> list[str | None]:
+    """Each row's click-through URL (``fill_row_url``: encoded values, same-origin only), None where there is none."""
+    template = click_template(config)
+    return [fill_row_url(template, row) for row in rows]
+
+
+def mark_clickable(option: dict[str, Any]) -> None:
+    """Give bar and scatter series the pointer cursor (a series' own ``cursor`` is kept)."""
+    for series in _series_list(option):
+        if series.get("type") in CLICKABLE_TYPES:
+            series.setdefault("cursor", "pointer")
+
+
+def deep_merge(base: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:
+    """``partial`` over ``base``: objects merge key by key, anything else replaces (``base`` is changed)."""
+    for key, value in partial.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            deep_merge(base[key], value)
+        else:
+            base[key] = copy.deepcopy(value)
+    return base
+
+
 def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, Any]) -> Built:
     """``series_by``: one series per distinct ``series`` value over a shared ``category`` axis."""
     spec = config["series_by"]
@@ -201,9 +235,14 @@ def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, 
     series_names: dict[str, int] = {}
     cells: dict[tuple[Any, str], float] = {}
     unusable = 0
+    cat_urls: dict[Any, str] = {}
+    click_tpl = click_template(config)
     for row in rows:
         cat = row.get(cat_f)
+        url = fill_row_url(click_tpl, {cat_f: cat})
         cat = cat if time_axis and cat is not None else _label(cat, config)
+        if url:
+            cat_urls.setdefault(cat, url)
         name = _label(row.get(ser_f), config)
         categories.setdefault(cat, len(categories))
         series_names.setdefault(name, len(series_names))
@@ -225,6 +264,8 @@ def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, 
     source = []
     for cat in cats:
         entry: dict[str, Any] = {cat_f: cat}
+        if cat in cat_urls:
+            entry[URL_KEY] = cat_urls[cat]
         for dim, name in zip(dims[1:], names, strict=True):
             entry[dim] = cells.get((cat, name), fill)
         source.append(entry)
@@ -236,15 +277,18 @@ def pivot(rows: list[dict[str, Any]], option: dict[str, Any], config: dict[str, 
     cat_axis, val_axis = ("y", "x") if category_on_y else ("x", "y")
     template = _series_list(option)[0]
     out = copy.deepcopy(option)
+    overrides = spec.get("overrides") or {}
     out["series"] = [
         {
-            **copy.deepcopy(template),
+            **deep_merge(copy.deepcopy(template), overrides.get(name, {})),
             "name": name,
             "encode": {**template.get("encode", {}), cat_axis: cat_f, val_axis: dim},
         }
         for dim, name in zip(dims[1:], names, strict=True)
     ]
     out["dataset"] = {"dimensions": dims, "source": source}
+    if cat_urls:
+        mark_clickable(out)
     set_label_interval(out, {cat_f: len(cats)})
     notices = []
     if unusable:
@@ -304,6 +348,10 @@ def build_option(rows: list[dict[str, Any]], config: dict[str, Any]) -> Built:
     dims: list[str] = []
     for row in rows:
         dims.extend(k for k in row if k not in dims)
-    option["dataset"] = {"dimensions": dims, "source": labelled}
+    urls = row_urls(rows, config)
+    source = [{**row, URL_KEY: url} if url else row for row, url in zip(labelled, urls, strict=True)]
+    option["dataset"] = {"dimensions": dims, "source": source}
+    if any(urls):
+        mark_clickable(option)
     set_label_interval(option, {f: len({r.get(f) for r in labelled}) for f in category_fields(option, config)})
     return Built(option)

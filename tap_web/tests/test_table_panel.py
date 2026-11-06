@@ -195,6 +195,72 @@ class TestTableConfigSchema:
     def test_tone_badge_is_a_known_formatter(self):
         _validate_table_config({"columns": [{"field": "data.state", "title": "State", "formatter": "toneBadge"}]})
 
+    @pytest.mark.spec("req-web-stdpanel-table-config-19")
+    def test_tone_threshold_takes_steps_and_a_zero_tone(self):
+        _validate_table_config(
+            {
+                "columns": [
+                    {
+                        "field": "cvss",
+                        "title": "CVSS",
+                        "formatter": "toneThreshold",
+                        "formatter_params": {
+                            "steps": [
+                                {"min": 7, "tone": "bad"},
+                                {"min": 4, "tone": "warn"},
+                                {"min": 0.0001, "tone": "info"},
+                            ],
+                            "zero_tone": "muted",
+                        },
+                    }
+                ]
+            }
+        )
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-20")
+    def test_percent_is_a_known_formatter(self):
+        _validate_table_config(
+            {
+                "columns": [
+                    {"field": "epss", "title": "EPSS", "formatter": "percent", "formatter_params": {"decimals": 2}}
+                ]
+            }
+        )
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-21")
+    def test_link_takes_a_value_href_template(self):
+        _validate_table_config(
+            {
+                "columns": [
+                    {
+                        "field": "cwe",
+                        "title": "CWE",
+                        "formatter": "link",
+                        "formatter_params": {
+                            "value_href_template": "https://cwe.mitre.org/data/definitions/{number}.html"
+                        },
+                    }
+                ]
+            }
+        )
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-19")
+    @pytest.mark.spec("req-web-stdpanel-table-config-20")
+    @pytest.mark.spec("req-web-stdpanel-table-config-21")
+    def test_the_shipped_script_has_the_formatters_and_reuses_the_tone_palette(self):
+        from pathlib import Path
+
+        import tap_web
+
+        js = (Path(tap_web.__file__).parent / "static" / "tap_web" / "js" / "panel-table.js").read_text(
+            encoding="utf-8"
+        )
+        for name in ("toneThreshold:", "percent:", "value_href_template", "_TONE_PALETTE[tone]"):
+            assert name in js, name
+        # toneBadge and toneThreshold share one palette, defined once.
+        assert js.count("var _TONE_PALETTE = {") == 1
+        assert js.count("_TONE_PALETTE[tone]") == 2
+
     def test_capitalized_is_a_known_formatter(self):
         _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "formatter": "capitalized"}]})
 
@@ -205,6 +271,20 @@ class TestTableConfigSchema:
     def test_align_rejects_anything_else(self):
         with pytest.raises(ValidationError):
             _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "align": "middle"}]})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    def test_wrap_is_a_described_boolean_column_option(self):
+        prop = TABLE_CONFIG_SCHEMA["$defs"]["column"]["properties"]["wrap"]
+        assert prop["type"] == "boolean"
+        assert prop["description"]
+        for value in (True, False):
+            _validate_table_config({"columns": [{"field": "data.members", "title": "Members", "wrap": value}]})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-31")
+    @pytest.mark.parametrize("bad", ["yes", 1, None])
+    def test_wrap_rejects_a_non_boolean(self, bad):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"columns": [{"field": "data.members", "title": "Members", "wrap": bad}]})
 
     @pytest.mark.spec("req-web-stdpanel-table-config-10")
     def test_initial_sort_accepts_ordered_keys_with_a_direction(self):
@@ -1089,6 +1169,110 @@ class TestProjectionRows:
         assert len(_embedded(content, panel)) == 2
         assert "Showing 2 of 4" in content
 
+    @pytest.mark.spec("req-web-stdpanel-table-config-13")
+    def test_a_row_field_that_is_a_list_of_structured_items_reaches_the_payload_whole(self):
+        """Projection rows are plain dicts: a list of {id, name} items survives the search, the paging and
+        the JSON embed, so the `linkList` formatter receives the items, not a joined string."""
+        from tap_grid.services import create_node
+
+        items = [{"id": "c-1", "name": "alpha"}, {"id": "c-2", "name": "beta & co"}]
+        for name, listed in (("with-items", items), ("empty-list", [])):
+            result = create_node(
+                "grid_fixtures__node",
+                {"name": name, "tags": {"items": listed}},
+                batch_name="list field test",
+                batch_description="Seeds a node whose JSON field carries a list of items.",
+            )
+            assert result.success, result.errors
+        columns = [
+            {"field": "name", "title": "Name"},
+            {
+                "field": "comps",
+                "title": "Components",
+                "formatter": "linkList",
+                "formatter_params": {"href_template": "/c?component_id={id}", "label_field": "name"},
+            },
+        ]
+        panel = _create_table_panel(config={"default_page_size": 25, "columns": columns})
+        query = ["MATCH (a:grid_fixtures__node)", "RETURN a.name AS name, a.data.tags.items AS comps"]
+        _link_search(panel, self._gryphon_search(query))
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+        rows = {r["name"]: r["comps"] for r in _embedded(content, panel)}
+        assert rows == {"with-items": items, "empty-list": []}
+        assert _embedded_columns(content, panel) == columns
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-12")
+    @pytest.mark.spec("req-web-stdpanel-table-config-14")
+    @pytest.mark.spec("req-web-stdpanel-table-config-15")
+    def test_link_list_is_a_declared_formatter_with_its_script_branches(self):
+        from pathlib import Path
+
+        assert "linkList" in TABLE_CONFIG_SCHEMA["$defs"]["column"]["properties"]["formatter"]["enum"]
+        _validate_table_config({"columns": [{"field": "c", "title": "C", "formatter": "linkList"}]})
+        script = (Path(__file__).resolve().parents[1] / "static/tap_web/js/panel-table.js").read_text()
+        assert "linkList: function (cell, params)" in script  # the formatter
+        assert 'spec.formatter === "linkList"' in script  # its sorter
+        assert "_filterText(v, filterParams[filterFields[i]])" in script  # the quick filter reads labels
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-22")
+    def test_a_column_names_its_value_by_exactly_one_of_field_or_field_path(self):
+        _validate_table_config({"columns": [{"field_path": ["dimensions", "dataclass.customer"], "title": "C"}]})
+        _validate_table_config({"columns": [{"field": "dimensions.dataclass.customer", "title": "C"}]})
+        _validate_table_config(
+            {"columns": [{"title": "G", "columns": [{"field_path": ["a", "b.c"], "title": "X", "empty_text": "-"}]}]}
+        )
+        for bad in (
+            {"title": "C"},
+            {"field": "a", "field_path": ["a"], "title": "C"},
+            {"field_path": [], "title": "C"},
+            {"field_path": [""], "title": "C"},
+            {"field_path": "a.b", "title": "C"},
+            {"field_path": [1], "title": "C"},
+        ):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"columns": [bad]})
+        props = TABLE_CONFIG_SCHEMA["$defs"]["column"]["properties"]
+        assert props["field_path"]["description"] and props["empty_text"]["description"]
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-23")
+    def test_empty_text_is_a_bounded_non_empty_string(self):
+        _validate_table_config({"columns": [{"field": "a", "title": "A", "empty_text": "x" * 80}]})
+        for bad in ("", "x" * 81, 3, None):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"columns": [{"field": "a", "title": "A", "empty_text": bad}]})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-22")
+    @pytest.mark.spec("req-web-stdpanel-table-config-23")
+    def test_the_shipped_script_resolves_field_paths_and_wraps_empty_text(self):
+        from pathlib import Path
+
+        script = (Path(__file__).resolve().parents[1] / "static/tap_web/js/panel-table.js").read_text()
+        for needle in (
+            "function resolveFieldPaths(specs, rows)",
+            "customColumns = resolveFieldPaths(customColumns, rows);",
+            "function _getSegments(obj, segments)",
+            "if (spec.empty_text) {",
+            "var emptyText = _escapeHtml(spec.empty_text);",
+        ):
+            assert needle in script, needle
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-22")
+    @pytest.mark.spec("req-web-stdpanel-table-config-23")
+    def test_js_columns(self):
+        """Run the node test of the column builders when node exists (the browser logic itself)."""
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed here; tap_web/tests/js/table_columns.test.mjs did not run")
+        js_test = Path(__file__).resolve().parent / "js" / "table_columns.test.mjs"
+        result = subprocess.run(  # noqa: S603  # nosec B603  # nosemgrep - fixed argv, repo-owned test file
+            [node, "--test", str(js_test)], capture_output=True, text=True, check=False, timeout=120
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
     @pytest.mark.spec("req-web-stdpanel-table-rows-5")
     def test_row_url_template_fills_encoded_values_and_voids_missing_ones(self):
         from tap_web.panels.table_panel import _with_row_urls
@@ -1175,3 +1359,111 @@ class TestProjectionRows:
         assert _embedded(content, panel) == []
         assert "data-tap-table-mode" not in content
         assert "Showing 0 of 0" in content
+
+
+@pytest.mark.django_db
+class TestStripedConfig:
+    """`striped` is an opt-in boolean that puts the stripe class on the mount (req-web-stdpanel-table-config-27)."""
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-27")
+    def test_striped_is_a_described_boolean(self):
+        prop = TABLE_CONFIG_SCHEMA["properties"]["striped"]
+        assert prop["type"] == "boolean" and prop["description"]
+        _validate_table_config({"striped": True})
+        for bad in ("yes", 1, None):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"striped": bad})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-27")
+    @pytest.mark.parametrize(("config", "expected"), [({"striped": True}, True), ({"striped": False}, False), ({}, False)])
+    def test_the_mount_carries_the_stripe_class_only_when_asked(self, config, expected):
+        panel = _create_table_panel(config=config)
+        _link_search(panel, _create_search())  # type: ignore[no-untyped-call]
+        fake_envelope: dict[str, Any] = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
+        with patch("tap_grid.search.execute_search", return_value=fake_envelope):
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
+        assert (b"tap-table--striped" in response.content) is expected
+
+
+@pytest.mark.django_db
+class TestRowsSelectorAndEmptyText:
+    """`show_all_rows` and table-level `empty_text` (req-web-stdpanel-table-config-29, -30)."""
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-29")
+    def test_show_all_rows_is_a_described_boolean(self):
+        prop = TABLE_CONFIG_SCHEMA["properties"]["show_all_rows"]
+        assert prop["type"] == "boolean" and prop["description"]
+        _validate_table_config({"show_all_rows": False})
+        for bad in ("no", 0, None):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"show_all_rows": bad})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-29")
+    def test_the_all_entry_is_kept_by_default_and_dropped_on_request(self):
+        from tap_web.panels.table_panel import _build_page_size_options
+
+        assert [o["label"] for o in _build_page_size_options(217, 100)][-1] == "All (217)"
+        dropped = _build_page_size_options(217, 100, show_all=False)
+        assert [o["value"] for o in dropped] == [25, 50, 100, 200]
+        assert [o["value"] for o in dropped if o["selected"]] == [100]
+        assert _build_page_size_options(10, 100, show_all=False) == []
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-29")
+    @pytest.mark.parametrize(("config", "has_all"), [({"show_all_rows": False}, False), ({"show_all_rows": True}, True), ({}, True)])
+    def test_the_rendered_selector_follows_the_option(self, config, has_all):
+        panel = _create_table_panel(config=config)
+        _link_search(panel, _create_search())  # type: ignore[no-untyped-call]
+        envelope: dict[str, Any] = {"nodes": [], "edges": [], "info": {"total_count": 217}, "warnings": {}}
+        with patch("tap_grid.search.execute_search", return_value=envelope):
+            content = make_admin_client(username="table-admin").get(_panel_url(panel) + "?page_size=0").content.decode()
+        assert ("All (217)" in content) is has_all
+        assert 'value="25"' in content
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-30")
+    def test_table_empty_text_is_a_described_bounded_string(self):
+        prop = TABLE_CONFIG_SCHEMA["properties"]["empty_text"]
+        assert prop["type"] == "string" and prop["description"]
+        _validate_table_config({"empty_text": "No component carries a CWE-506 vulnerability."})
+        for bad in ("", "x" * 201, 5):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"empty_text": bad})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-30")
+    @pytest.mark.parametrize(("config", "expected"), [({"empty_text": 'Nothing <b>here</b> "yet"'}, True), ({}, False)])
+    def test_the_mount_carries_the_escaped_empty_text_only_when_set(self, config, expected):
+        panel = _create_table_panel(config=config)
+        _link_search(panel, _create_search())  # type: ignore[no-untyped-call]
+        envelope: dict[str, Any] = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
+        with patch("tap_grid.search.execute_search", return_value=envelope):
+            content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+        assert ("data-tap-table-empty-text" in content) is expected
+        if expected:
+            assert 'data-tap-table-empty-text="Nothing &lt;b&gt;here&lt;/b&gt; &quot;yet&quot;"' in content
+
+
+class TestFieldPathsColumn:
+    """`field_paths` + `joiner`: several values in one cell (req-web-stdpanel-table-config-28)."""
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-28")
+    def test_field_paths_is_a_third_way_to_name_the_value(self):
+        paths = [["dimensions", "dataclass.customer"], ["dimensions", "dataclass.infra"]]
+        _validate_table_config({"columns": [{"field_paths": paths, "title": "Data", "joiner": " / ", "empty_text": "-"}]})
+        _validate_table_config({"columns": [{"title": "G", "columns": [{"field_paths": paths, "title": "D"}]}]})
+        for bad in (
+            {"title": "C", "field": "a", "field_paths": paths},
+            {"title": "C", "field_path": ["a"], "field_paths": paths},
+            {"title": "C", "field_paths": []},
+            {"title": "C", "field_paths": [[]]},
+            {"title": "C", "field_paths": [[""]]},
+            {"title": "C", "field_paths": ["a.b"]},
+            {"title": "C", "field_paths": paths, "joiner": 3},
+            {"title": "C", "field_paths": paths, "joiner": "x" * 21},
+            {"title": "C", "field": "a", "joiner": ", "},  # a joiner needs field_paths
+        ):
+            with pytest.raises(ValidationError):
+                _validate_table_config({"columns": [bad]})
+
+    @pytest.mark.spec("req-web-stdpanel-table-config-28")
+    def test_the_new_keys_are_described(self):
+        props = TABLE_CONFIG_SCHEMA["$defs"]["column"]["properties"]
+        assert props["field_paths"]["description"] and props["joiner"]["description"]

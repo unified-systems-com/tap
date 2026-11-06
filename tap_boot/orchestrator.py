@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/ef212cb4ff86 (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/60523a358f38 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/ef212cb4ff86 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/60523a358f38 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -344,8 +344,20 @@ def _phase_web(profile: BootProfile | None, say: Echo, rec: NullBootRecord) -> N
     never the process's own settings — so `manage.py boot --profile X` verifies X.
     Both values land in the boot record with provenance (req-boot-web-section-4).
     """
-    from tap_web.boot import landing_from_section
+    from tap_web.boot import branding_from_section, landing_from_section
+    from tap_web.branding import verify_glyph
     from tap_web.page import resolve_landing
+
+    # Branding is cosmetic, so unlike the landing pair below it can only WARN (req-boot-web-branding-6):
+    # an unusable glyph is logged and the header renders the text name; the boot carries on.
+    section = profile.web if profile is not None else None
+    branding = branding_from_section(section)
+    for field in ("name", "glyph_plugin", "glyph_path"):
+        if branding[field] is not None:
+            rec.record_variable("web", f"branding__{field}", branding[field], branding["source"][field])
+    _glyph_ok, glyph_message = verify_glyph(section)
+    if glyph_message:
+        say(glyph_message)
 
     config = landing_from_section(profile.web if profile is not None else None)
     if config is not None:

@@ -2,7 +2,7 @@
 #
 # A reusable workflow cannot be started by hand, and `workflow_dispatch` only works from a workflow file on the default
 # branch, so this is the smallest caller: it passes an image path and a digest to the reusable workflow, pinned to
-# the commit that holds it (PR# 1060 - tap, merge commit 5736329d). Pinning by commit is what makes the signer's
+# the commit that holds it (e9841198: adds published, title, description and record URLs to the entries). Pinning by commit is what makes the signer's
 # Build Signer Digest a fixed value that the trust list can pin (req-cicd-sbom-22-3).
 #
 # `attest` defaults to false: a dry run signs and publishes nothing. Set it true only to publish a signed revision.
@@ -37,7 +37,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    uses: unified-systems-com/tap/.github/workflows/sbom-vulnerability-evidence.yml@5736329dff506c952b5567260dd82c51adab5d74
+    uses: unified-systems-com/tap/.github/workflows/sbom-vulnerability-evidence.yml@e9841198ba7535f4eef79247dd5fb2520b6e1da9
     with:
       image: ${{ inputs.image }}
       digest: ${{ inputs.digest }}

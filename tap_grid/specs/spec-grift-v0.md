@@ -859,7 +859,7 @@ RID: `req-grift-node`
 
 Status: `Implemented`
 
-Each node object is a full serialized TAP node.
+Each node object is a serialized TAP node. An exporter writes every field; a sender that can assert only some of a node's fields may omit the rest, and an importer routing to an existing entity then leaves the omitted fields alone (`req-grid-import-grift-ordering-8`).
 
 ### Node Shape
 

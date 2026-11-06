@@ -20,6 +20,16 @@
 (function () {
   "use strict";
 
+  // Every cell is vertically centred and, unless its column says otherwise, left-aligned
+  // (req-web-stdpanel-table-config-25): Tabulator's own `vertAlign: "middle"` makes the cell a flex box, which
+  // is also why a `hozAlign` has to be spelled out (it becomes the flex justification).
+  function _centred(col) {
+    if (col.columns) { col.columns.forEach(_centred); return col; }
+    if (!col.vertAlign) col.vertAlign = "middle";
+    if (!col.hozAlign) col.hozAlign = "left";
+    return col;
+  }
+
   // Columns for common_metadata mode (req-web-stdpanel-table-columns).
   // Node data uses the GRIFT envelope shape (spec-grift-envelope):
   // spine fields flat at top; per-model fields in `data`; render hints in `display.tap_viz`.
@@ -104,9 +114,83 @@
     return _safeStr(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  // Plain cell text, escaped, in a shrinkable span: a vertically centred cell is a flex box, where the cell's own
+  // text-overflow cannot cut a long value with an ellipsis, so the span carries it (tabulator-minimal.css).
+  // An empty value stays empty.
+  function _textCell(v) {
+    var text = _escapeHtml(v);
+    return text ? '<span class="tap-cell-text">' + text + '</span>' : "";
+  }
+
+  // The class list of a link the table draws. formatter_params.style "plain" (req-web-stdpanel-table-config-26)
+  // adds the modifier that drops the underline and the link colour: the text reads as the cell's own, and the
+  // anchor stays clickable with its keyboard focus ring.
+  function _linkClass(params) {
+    return params && params.style === "plain" ? "tap-cell-link tap-cell-link--plain" : "tap-cell-link";
+  }
+
   function _capitalize(v) {
     v = _safeStr(v);
     return v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
+  }
+
+  // The tone pill palette (background, text) shared by the badge formatters. `info` and `neutral` are
+  // aliases of `muted`: no tone invents a colour of its own.
+  var _TONE_PALETTE = {
+    good:  ["rgb(var(--tap-green-100))", "rgb(var(--tap-green-800))"],
+    bad:   ["rgb(var(--tap-red-100))", "rgb(var(--tap-red-800))"],
+    warn:  ["rgb(var(--tap-amber-100))", "rgb(var(--tap-amber-800))"],
+    muted: ["rgb(var(--tap-gray-100))", "rgb(var(--tap-gray-600))"],
+  };
+  _TONE_PALETTE.info = _TONE_PALETTE.muted;
+  _TONE_PALETTE.neutral = _TONE_PALETTE.muted;
+
+  function _tonePill(palette, text, title) {
+    return '<span' + (title ? ' title="' + _escapeHtml(title) + '"' : '') + ' style="background:' + palette[0] + ';color:' + palette[1] + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
+  }
+
+  // A number from a cell value, or null: a blank, a boolean or text is not a number (Number("") is 0, so
+  // it is screened out first).
+  function _finiteNumber(v) {
+    if (typeof v === "number") return isFinite(v) ? v : null;
+    if (typeof v !== "string" || !v.trim()) return null;
+    var n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+
+  // A fraction 0..1 as a percentage ("0.0004" -> "0.04%"), or null when the value is not such a fraction.
+  function _percentText(v, decimals) {
+    var n = _finiteNumber(v);
+    if (n === null || n < 0 || n > 1) return null;
+    var d = (typeof decimals === "number" && decimals >= 0 && decimals <= 6) ? Math.floor(decimals) : 2;
+    return (Math.round(n * Math.pow(10, d + 2)) / Math.pow(10, d)).toFixed(d) + "%";
+  }
+
+  // The tone for a number from `steps` ([{min, tone}], tried highest min first: the first whose min <= n),
+  // or `zero_tone` when n is exactly zero. Null when nothing matches.
+  function _thresholdTone(n, steps, zeroTone) {
+    if (n === 0 && zeroTone) return zeroTone;
+    var ordered = (Array.isArray(steps) ? steps : []).filter(function (st) {
+      return st && typeof st.min === "number" && typeof st.tone === "string";
+    }).sort(function (a, b) { return b.min - a.min; });
+    for (var i = 0; i < ordered.length; i++) {
+      if (n >= ordered[i].min) return ordered[i].tone;
+    }
+    return null;
+  }
+
+  // An identifier link: {value} is the cell text (URI-encoded) and {number} the first run of digits in it
+  // (79 for "CWE-79"). Empty when the template names anything else or {number} has no digits to fill it.
+  function _fillValueTemplate(template, value) {
+    var digits = /\d+/.exec(value);
+    var bad = false;
+    var out = _safeStr(template).replace(/\{([A-Za-z_]+)\}/g, function (_m, name) {
+      if (name === "value") return encodeURIComponent(value);
+      if (name === "number" && digits) return digits[0];
+      bad = true;
+      return "";
+    });
+    return bad ? "" : out;
   }
 
   // Resolve a dotted field path ("data.attributes.public") against a row object.
@@ -121,6 +205,84 @@
     return cur;
   }
 
+
+  // Resolve an explicit path given as an ARRAY of segments (["dimensions", "dataclass.customer"]) against
+  // a row. Unlike the dotted form above, a segment is one key whatever characters it holds, so a key that
+  // itself contains a dot is reachable (req-web-stdpanel-table-config-22).
+  function _getSegments(obj, segments) {
+    var cur = obj;
+    for (var i = 0; i < segments.length; i++) {
+      if (cur == null || typeof cur !== "object") return undefined;
+      // Own keys only: a path segment can never reach the prototype chain (__proto__, constructor).
+      if (!Object.prototype.hasOwnProperty.call(cur, segments[i])) return undefined;
+      cur = Object.getOwnPropertyDescriptor(cur, segments[i]).value;
+    }
+    return cur;
+  }
+
+  // The text a `field_paths` column shows: the scalar values found at each path of the row, in the order
+  // declared, the empty ones (null, missing, blank text) skipped, joined with `joiner` (default ", "). A list or
+  // an object at a path is not a scalar and is skipped as well. Null when nothing is left, so the column's
+  // `empty_text` (or the formatter's own empty rendering) applies (req-web-stdpanel-table-config-28).
+  function _joinPaths(row, paths, joiner) {
+    var parts = [];
+    paths.forEach(function (segments) {
+      var v = _getSegments(row, segments);
+      if (v == null || typeof v === "object") return;
+      var text = String(v);
+      if (text.trim() !== "") parts.push(text);
+    });
+    return parts.length ? parts.join(joiner == null ? ", " : String(joiner)) : null;
+  }
+
+  // A column that declares `field_path` reads its value from the row at that path; one that declares
+  // `field_paths` (several paths, joined into one cell) reads the joined text. Tabulator splits a column's
+  // `field` on dots, so the value is copied onto each row under a synthetic dot-free key and the column (and the
+  // quick filter, sorter and every formatter) reads that key. Walks groups one level deep.
+  // Returns the specs with `field` set; `rows` gain the synthetic keys. Specs are copied, not mutated.
+  function resolveFieldPaths(specs, rows) {
+    var counter = 0;
+    function walk(list) {
+      return list.map(function (spec) {
+        var multi = Array.isArray(spec.field_paths) && spec.field_paths.length > 0;
+        var single = Array.isArray(spec.field_path) && spec.field_path.length > 0;
+        if (spec.columns && !spec.field && !single && !multi) {
+          return Object.assign({}, spec, { columns: walk(spec.columns) });
+        }
+        if (!single && !multi) return spec;
+        var flat = multi ? [].concat.apply([], spec.field_paths) : spec.field_path;
+        var key = "_fp" + (counter++) + "_" + flat.join("_").replace(/[^A-Za-z0-9_]/g, "_");
+        rows.forEach(function (row) {
+          if (!row || typeof row !== "object") return;
+          row[key] = multi ? _joinPaths(row, spec.field_paths, spec.joiner) : _getSegments(row, spec.field_path);
+        });
+        return Object.assign({}, spec, { field: key });
+      });
+    }
+    return walk(specs);
+  }
+
+  // The items of a list-of-structured-items cell, as {item, object, label}; items with no label are
+  // dropped (nothing to show), a non-list value is no items. label_field defaults to "name".
+  function _linkListItems(value, params) {
+    if (!Array.isArray(value)) return [];
+    var labelField = (params && params.label_field) || "name";
+    var out = [];
+    value.forEach(function (item) {
+      var isObj = item !== null && typeof item === "object" && !Array.isArray(item);
+      var label = _safeStr(isObj ? _getPath(item, labelField) : item);
+      if (label) out.push({ item: item, object: isObj, label: label });
+    });
+    return out;
+  }
+  // The text a cell value is searched by (quick filter): a list of items searches by its labels, so
+  // "[object Object]" never matches; any other value is its text.
+  function _filterText(value, params) {
+    if (Array.isArray(value)) {
+      return _linkListItems(value, params).map(function (it) { return it.label; }).join(" ");
+    }
+    return _safeStr(value);
+  }
 
   // A href is safe when it is absolute http(s) or a same-origin path. "//host"
   // (protocol-relative) and every other scheme are rejected, so a hostile
@@ -144,12 +306,14 @@
   // Fill "{data.x}" placeholders from a row. Each value is URI-encoded per
   // segment ("/" survives, so a branch like docs/foo keeps its slashes); an
   // empty value voids the whole link (returns ""), never a half-built URL.
-  function _fillTemplate(template, row) {
+  // `oneComponent` encodes "/" too (a value that is one query value or path segment, never a path).
+  function _fillTemplate(template, row, oneComponent) {
     var missing = false;
     var out = _safeStr(template).replace(/\{([A-Za-z0-9_.]+)\}/g, function (_m, p) {
       var v = _safeStr(_getPath(row, p));
       if (!v) { missing = true; return ""; }
-      return encodeURIComponent(v).replace(/%2F/gi, "/");
+      var enc = encodeURIComponent(v);
+      return oneComponent ? enc : enc.replace(/%2F/gi, "/");
     });
     return missing ? "" : out;
   }
@@ -215,11 +379,11 @@
   }
 
   var FORMATTERS = {
-    plaintext: function (cell) { return _escapeHtml(cell.getValue()); },
+    plaintext: function (cell) { return _textCell(cell.getValue()); },
     // The value with its first letter upper-cased and nothing else touched
     // ("stand-up" → "Stand-up"): a vocabulary word read as a label, for
     // closed-set fields whose canonical spelling is lower-case.
-    capitalized: function (cell) { return _escapeHtml(_capitalize(cell.getValue())); },
+    capitalized: function (cell) { return _textCell(_capitalize(cell.getValue())); },
     datetime: function (cell) {
       // Local timestamp with zone disclosure, via the shared localtime helper
       // (spec-web-time-display, req-web-time-single-helper). The incoming value
@@ -231,9 +395,9 @@
     },
     tickCross: function (cell) {
       var v = cell.getValue();
-      if (v === true || v === "true") return '<span style="color:#16a34a;font-weight:600">✓</span>';
-      if (v === false || v === "false") return '<span style="color:#dc2626;font-weight:600">✕</span>';
-      return '<span style="color:#9ca3af">–</span>';
+      if (v === true || v === "true") return '<span style="color:rgb(var(--tap-green-600));font-weight:600">✓</span>';
+      if (v === false || v === "false") return '<span style="color:rgb(var(--tap-red-600));font-weight:600">✕</span>';
+      return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
     },
     ellipsisSuffix: function (cell) {
       var v = _safeStr(cell.getValue());
@@ -250,8 +414,8 @@
     },
     passFailBadge: function (cell) {
       var v = _safeStr(cell.getValue()).toLowerCase();
-      if (v === "pass") return '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">PASS</span>';
-      if (v === "fail") return '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">FAIL</span>';
+      if (v === "pass") return '<span style="background:rgb(var(--tap-green-100));color:rgb(var(--tap-green-800));padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">PASS</span>';
+      if (v === "fail") return '<span style="background:rgb(var(--tap-red-100));color:rgb(var(--tap-red-800));padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">FAIL</span>';
       return _escapeHtml(cell.getValue());
     },
     conclusionBadge: function (cell) {
@@ -261,13 +425,13 @@
       // grey pill for the rest, and a dash for absent — an empty cell must read
       // as "not observed", never as quietly fine.
       var v = _safeStr(cell.getValue()).toLowerCase();
-      if (!v) return '<span style="color:#9ca3af">–</span>';
+      if (!v) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       var pill = function (bg, fg, text) {
         return '<span style="background:' + bg + ';color:' + fg + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
       };
-      if (v === "success") return pill("#dcfce7", "#166534", "SUCCESS");
-      if (v === "failure" || v === "timed_out" || v === "startup_failure") return pill("#fee2e2", "#991b1b", v.toUpperCase().replace(/_/g, " "));
-      return pill("#f3f4f6", "#4b5563", _escapeHtml(v.toUpperCase().replace(/_/g, " ")));
+      if (v === "success") return pill("rgb(var(--tap-green-100))", "rgb(var(--tap-green-800))", "SUCCESS");
+      if (v === "failure" || v === "timed_out" || v === "startup_failure") return pill("rgb(var(--tap-red-100))", "rgb(var(--tap-red-800))", v.toUpperCase().replace(/_/g, " "));
+      return pill("rgb(var(--tap-gray-100))", "rgb(var(--tap-gray-600))", _escapeHtml(v.toUpperCase().replace(/_/g, " ")));
     },
     toneBadge: function (cell, params) {
       // A closed-set value as a coloured pill: params.tones maps value → good |
@@ -277,24 +441,44 @@
       // dash, never quietly fine (tap#356).
       params = params || {};
       var raw = _safeStr(cell.getValue());
-      if (!raw) return '<span style="color:#9ca3af">–</span>';
+      if (!raw) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       var tone = (params.tones || {})[raw];
       var label = ((params.labels || {})[raw]) || raw;
       // params.capitalize upper-cases the label's first letter (a label from
       // params.labels is shown as written).
       if (params.capitalize && !(params.labels || {})[raw]) label = _capitalize(label);
       var text = _escapeHtml(label);
-      var palette = {
-        good:  ["#dcfce7", "#166534"],
-        bad:   ["#fee2e2", "#991b1b"],
-        warn:  ["#fef3c7", "#92400e"],
-        muted: ["#f3f4f6", "#4b5563"],
-      };
-      var p = palette[tone];
+      var p = _TONE_PALETTE[tone];
       if (!p) return text;
-      return '<span style="background:' + p[0] + ';color:' + p[1] + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
+      return _tonePill(p, text);
     },
-    externalLink: function (cell) {
+    toneThreshold: function (cell, params) {
+      // A NUMBER as a toned pill chosen by thresholds (CVSS, a score): params.steps is [{min, tone}], tried
+      // highest min first, the first whose min <= the value wins; params.zero_tone is the tone of exactly 0;
+      // tones are the toneBadge palette (good | bad | warn | muted; info and neutral are the muted grey).
+      // A number below every step renders as plain text; params.decimals fixes the places shown. An empty
+      // value is a dash and a non-number is shown as written -- never a quiet blank.
+      params = params || {};
+      var raw = cell.getValue();
+      if (raw === null || raw === undefined || raw === "") return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
+      var n = _finiteNumber(raw);
+      if (n === null) return _escapeHtml(raw);
+      var shown = (typeof params.decimals === "number" && params.decimals >= 0 && params.decimals <= 6)
+        ? n.toFixed(Math.floor(params.decimals)) : _safeStr(raw);
+      var tone = _thresholdTone(n, params.steps, params.zero_tone);
+      var p = tone ? _TONE_PALETTE[tone] : null;
+      if (!p) return _escapeHtml(shown);
+      return _tonePill(p, _escapeHtml(shown), tone);
+    },
+    percent: function (cell, params) {
+      // A fraction 0..1 as a percentage (0.0004 -> "0.04%"); params.decimals (0..6, default 2). A value that
+      // is not such a fraction is shown as written, an empty one as a dash.
+      var raw = cell.getValue();
+      if (raw === null || raw === undefined || raw === "") return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
+      var text = _percentText(raw, (params || {}).decimals);
+      return text === null ? _escapeHtml(raw) : '<span title="' + _escapeHtml(raw) + '">' + text + '</span>';
+    },
+    externalLink: function (cell, params) {
       // A URL rendered as an anchor that opens in a new tab. Only http(s)
       // values become links; anything else renders as escaped text so a
       // hostile value never becomes a javascript: href. Quiet by design: a
@@ -304,7 +488,7 @@
       if (!/^https?:\/\//i.test(v)) return _escapeHtml(v);
       var label = v.replace(/^https?:\/\//i, "");
       if (label.length > 48) label = label.slice(0, 47) + "…";
-      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" class="tap-cell-link" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
+      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" class="' + _linkClass(params) + '" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
     },
     link: function (cell, params) {
       // The cell's own value as the link text; the href comes from another
@@ -315,9 +499,14 @@
       var row = cell.getRow().getData();
       var text = params.text ? _safeStr(params.text) : _safeStr(cell.getValue());
       var href = params.href_field ? _safeStr(_getPath(row, params.href_field)) : _fillTemplate(params.href_template, row);
+      // value_href_template builds the href from the cell's own value (an identifier such as CWE-79):
+      // {value} and {number}. It applies when no href_field / href_template is set.
+      if (params.value_href_template && !params.href_field && !params.href_template) {
+        href = _fillValueTemplate(params.value_href_template, _safeStr(cell.getValue()));
+      }
       if (!text || !_safeHref(href)) return _escapeHtml(text);
       var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
-      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="tap-cell-link" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
+      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="' + _linkClass(params) + '" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
     },
     elapsed: function (cell, params) {
       // Wall-clock between two ISO timestamps on the row (params.start /
@@ -325,7 +514,7 @@
       // inverted → a dash, never "0s". The ratio to the row's group baseline
       // is its own column: baselineRatio / baselineN.
       var sec = _elapsedSeconds(cell.getRow().getData(), params);
-      if (sec == null) return '<span style="color:#9ca3af">–</span>';
+      if (sec == null) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       return '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
     },
     baselineRatio: function (cell, params) {
@@ -336,26 +525,26 @@
       var row = cell.getRow().getData();
       var sec = _elapsedSeconds(row, params);
       var base = _baselineFor(cell, params);
-      if (sec == null || !base) return '<span style="color:#9ca3af">–</span>';
+      if (sec == null || !base) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       if (base.median == null) {
-        return '<span style="color:#9ca3af" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">–</span>';
+        return '<span style="color:rgb(var(--tap-gray-400))" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">–</span>';
       }
       var b = params.baseline; var ratio = sec / (base.median || 1);
       var flagRatio = b.flag_ratio || 1.5, madK = b.mad_k || 3;
       var slow = ratio >= flagRatio && sec > base.median + madK * base.mad;
       var fast = ratio <= 1 / flagRatio && sec < base.median - madK * base.mad;
       var title = 'median ' + _humanDuration(Math.round(base.median)) + ' over ' + base.n + ' comparable run(s); spread ±' + _humanDuration(Math.round(base.mad));
-      if (slow) return '<span style="color:#b91c1c;font-weight:600" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
-      if (fast) return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
-      return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
+      if (slow) return '<span style="color:rgb(var(--tap-red-700));font-weight:600" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
+      if (fast) return '<span style="color:rgb(var(--tap-gray-500))" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
+      return '<span style="color:rgb(var(--tap-gray-500))" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
     },
     baselineN: function (cell, params) {
       // The sample size behind baselineRatio — how many comparable rows are
       // loaded for this row's group. Sorts numerically.
       var base = _baselineFor(cell, params);
-      if (!base) return '<span style="color:#9ca3af">–</span>';
+      if (!base) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       var thin = base.median == null;
-      return '<span style="color:' + (thin ? '#9ca3af' : '#374151') + '" title="' + (thin ? 'below the ' + base.min_n + ' needed for a baseline' : 'comparable runs loaded') + '">' + base.n + '</span>';
+      return '<span style="color:' + (thin ? 'rgb(var(--tap-gray-400))' : 'rgb(var(--tap-gray-700))') + '" title="' + (thin ? 'below the ' + base.min_n + ' needed for a baseline' : 'comparable runs loaded') + '">' + base.n + '</span>';
     },
     sparkline: function (cell, params) {
       // The row's group (params.group_by) as a strip: one bar per loaded row,
@@ -382,7 +571,7 @@
       }
       var g = (params.group_by || []).map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
       var series = groups.byGroup[g] || [];
-      if (!series.length) return '<span style="color:#9ca3af">–</span>';
+      if (!series.length) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
       var W = params.width || 120, H = params.height || 24, pad = 3;
       // Axis: the group's own first→last run (params.axis "group", default) or
       // the whole table's window (params.axis "table"). A table-wide axis is
@@ -401,12 +590,12 @@
         var x = pad + ((e.x - xmin) / span) * (W - 2 * pad);
         var h = Math.max(2, Math.round((e.sec / maxSec) * (H - 2 * pad)));
         var isMe = e.id === row.entity_id;
-        var fill = bad.indexOf(e.status) >= 0 ? "#d03b3b" : (isMe ? "#1f2328" : "#9ca3af");
+        var fill = bad.indexOf(e.status) >= 0 ? "rgb(var(--tap-red-600))" : (isMe ? "rgb(var(--tap-gray-900))" : "rgb(var(--tap-gray-400))");
         var w = isMe ? 3 : 2;
-        return '<rect x="' + (x - w / 2).toFixed(1) + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="1" fill="' + fill + '"><title>' + _escapeHtml(_humanDuration(e.sec) + " · " + e.status + " · " + new Date(e.x).toLocaleString()) + '</title></rect>';
+        return '<rect x="' + (x - w / 2).toFixed(1) + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="1" style="fill:' + fill + '"><title>' + _escapeHtml(_humanDuration(e.sec) + " · " + e.status + " · " + new Date(e.x).toLocaleString()) + '</title></rect>';
       }).join("");
       var my = H - pad - Math.max(2, Math.round((med / maxSec) * (H - 2 * pad)));
-      var hair = '<line x1="' + pad + '" y1="' + my + '" x2="' + (W - pad) + '" y2="' + my + '" stroke="#6b7280" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>';
+      var hair = '<line x1="' + pad + '" y1="' + my + '" x2="' + (W - pad) + '" y2="' + my + '"  style="stroke:rgb(var(--tap-gray-500))" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>';
       var msPerDay = 24 * 60 * 60 * 1000;
       var days = Math.round(span / msPerDay);
       var label = series.length + " run(s) over " + (days < 1 ? "one day" : days + " days") + (params.axis === "table" ? " (shared axis)" : "") + "; median " + _humanDuration(Math.round(med)) + "; this run " + _humanDuration(_elapsedSeconds(row, params) || 0);
@@ -429,6 +618,29 @@
       var img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(label) + '" title="' + _escapeHtml(label) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
       return params.show_text ? img + ' <span>' + _escapeHtml(v) + '</span>' : img;
     },
+    entityType: function (cell, params) {
+      // An entity-type slug as the type's own icon and/or display name (req-web-stdpanel-table-config-32).
+      // params.types is filled by the SERVER from the entity-type catalog ({slug: {name, icon}}), so the page
+      // carries no map and the image address never comes from row data; it is still only drawn when it is a
+      // same-origin path. params.show is icon | name | both (default); params.tone colours the name pill
+      // (default muted). A type with no icon draws no image; a type with no published name, or one the
+      // catalog does not know, shows its slug humanised ("aws_core__aws_s3_bucket" -> "Aws S3 Bucket").
+      params = params || {};
+      var v = _safeStr(cell.getValue());
+      if (!v) return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
+      var types = params.types || {};
+      var meta = Object.prototype.hasOwnProperty.call(types, v) ? (types[v] || {}) : {};
+      var name = _safeStr(meta.name) || v.split("__").pop().split("_").filter(Boolean).map(_capitalize).join(" ") || v;
+      var src = _safeStr(meta.icon);
+      var show = params.show === "icon" || params.show === "name" ? params.show : "both";
+      var img = "";
+      if (show !== "name" && src && src.charAt(0) === "/" && src.charAt(1) !== "/") {
+        img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(name) + '" title="' + _escapeHtml(name) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
+      }
+      if (show === "icon") return img || _escapeHtml(name);
+      var pill = _tonePill(_TONE_PALETTE[params.tone] || _TONE_PALETTE.muted, _escapeHtml(name));
+      return img ? img + " " + pill : pill;
+    },
     tailSegment: function (cell, params) {
       // The last path segment of a slash-joined value ("owner/repo" → "repo"),
       // full value in the title. For a single-account instance the owner is
@@ -441,18 +653,43 @@
     painBadge: function (cell) {
       var v = _safeStr(cell.getValue());
       var colors = {
-        N1: ["#dbeafe", "#1e40af"], N2: ["#dcfce7", "#166534"],
-        N3: ["#fef3c7", "#92400e"], N4: ["#fed7aa", "#9a3412"],
-        N5: ["#fecaca", "#991b1b"],
+        N1: ["rgb(var(--tap-blue-100))", "rgb(var(--tap-blue-800))"], N2: ["rgb(var(--tap-green-100))", "rgb(var(--tap-green-800))"],
+        N3: ["rgb(var(--tap-amber-100))", "rgb(var(--tap-amber-800))"], N4: ["rgb(var(--tap-orange-200))", "rgb(var(--tap-orange-800))"],
+        N5: ["rgb(var(--tap-red-200))", "rgb(var(--tap-red-800))"],
       };
       var pair = colors[v];
       if (!pair) return v;
       return '<span style="background:' + pair[0] + ';color:' + pair[1] +
         ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + v + '</span>';
     },
+    linkList: function (cell, params) {
+      // A row field that is a LIST of structured items ({id, name}, ...): each item is its own link on
+      // its own line. params.href_template fills from the ITEM (`{id}` placeholders, each URL-encoded as one
+      // component; the `link` formatter's same-origin/http(s) rule); params.label_field (default "name") is the
+      // link text; params.external:false keeps links in-tab (the default opens a new tab, as `link`).
+      // An item whose placeholder is empty, or whose href is unsafe, renders as plain text; a bare string
+      // item is text. An empty or absent list is the dash. params.max_items shows the first N and
+      // "+N more" (the rest in its title).
+      params = params || {};
+      var items = _linkListItems(cell.getValue(), params);
+      if (!items.length) return '<span class="tap-cell-null" style="color:rgb(var(--tap-gray-500))">—</span>';
+      var max = params.max_items > 0 ? params.max_items : items.length;
+      var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
+      var out = items.slice(0, max).map(function (it) {
+        var href = it.object ? _fillTemplate(params.href_template, it.item, true) : "";
+        if (!href || !_safeHref(href)) return '<div class="tap-linklist__item">' + _escapeHtml(it.label) + '</div>';
+        return '<div class="tap-linklist__item"><a href="' + _escapeHtml(href) + '"' + target +
+          ' class="' + _linkClass(params) + '" title="' + _escapeHtml(href) + '">' + _escapeHtml(it.label) + '</a></div>';
+      });
+      if (items.length > max) {
+        var rest = items.slice(max).map(function (it) { return it.label; }).join(", ");
+        out.push('<div class="tap-linklist__more" title="' + _escapeHtml(rest) + '">+' + (items.length - max) + ' more</div>');
+      }
+      return '<div class="tap-linklist">' + out.join("") + '</div>';
+    },
     arrayCount: function (cell) {
       var v = cell.getValue();
-      if (!Array.isArray(v) || v.length === 0) return '<span style="color:#9ca3af">—</span>';
+      if (!Array.isArray(v) || v.length === 0) return '<span style="color:rgb(var(--tap-gray-500))">—</span>';
       return String(v.length);
     },
     // Like tickCross but a "no" is rendered as a neutral dash rather than a red
@@ -460,20 +697,22 @@
     // component simply not being public).
     tickDash: function (cell) {
       var v = cell.getValue();
-      if (v === true || v === "true") return '<span style="color:#16a34a;font-weight:600">✓</span>';
-      return '<span style="color:#9ca3af">–</span>';
+      if (v === true || v === "true") return '<span style="color:rgb(var(--tap-green-600));font-weight:600">✓</span>';
+      return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
     },
     // Compact FIPS-199-style impact level: low → L, moderate → M, high → H,
     // anything else (not-applicable, n/a, blank) → a neutral dash. Color-coded
     // by severity so the C/I/A columns read at a glance.
     ciaLevel: function (cell) {
       var v = _safeStr(cell.getValue()).toLowerCase().trim();
-      var map = { low: ["L", "#16a34a"], moderate: ["M", "#d97706"], high: ["H", "#dc2626"] };
+      var map = { low: ["L", "rgb(var(--tap-green-600))"], moderate: ["M", "rgb(var(--tap-amber-600))"], high: ["H", "rgb(var(--tap-red-600))"] };
       var hit = map[v];
       if (hit) return '<span style="color:' + hit[1] + ';font-weight:700">' + hit[0] + '</span>';
-      return '<span style="color:#9ca3af">–</span>';
+      return '<span style="color:rgb(var(--tap-gray-500))">–</span>';
     },
   };
+
+  COMMON_METADATA_COLUMNS.forEach(_centred);
 
   // Per-entity-type detail URLs override the generic /object/<type>/.../ route
   // when a custom page exists (Path B parameterized pages). Coupling lives in
@@ -514,6 +753,9 @@
       // `align` places the cell and its heading together, so a value sits
       // under its title (the one-row identity table reads label-over-value).
       if (spec.align) { col.hozAlign = spec.align; col.headerHozAlign = spec.align; }
+      // `wrap` lets a long text value flow onto several lines and the row grow, instead of an ellipsis
+      // (req-web-stdpanel-table-config-31); the class is the whole mechanism (tabulator-minimal.css).
+      if (spec.wrap === true) col.cssClass = "tap-col-wrap";
       if (spec.width != null) col.width = spec.width;
       if (spec.widthGrow != null) col.widthGrow = spec.widthGrow;
       if (spec.minWidth != null) col.minWidth = spec.minWidth;
@@ -522,6 +764,18 @@
         col.formatter = fmt;
         // Declarative per-column parameters (config.columns[].formatter_params)
         // reach the formatter as Tabulator's formatterParams.
+        col.formatterParams = spec.formatter_params || {};
+      }
+      if (spec.empty_text) {
+        // A null, missing or empty-string value shows this text, plain and escaped, with every formatter
+        // (req-web-stdpanel-table-config-23); any other value goes to the column's own formatter.
+        var inner = col.formatter;
+        var emptyText = _escapeHtml(spec.empty_text);
+        col.formatter = function (cell, params, onRendered) {
+          var v = cell.getValue();
+          if (v == null || v === "") return emptyText;
+          return inner ? inner.call(this, cell, params, onRendered) : _escapeHtml(v);
+        };
         col.formatterParams = spec.formatter_params || {};
       }
       if (spec.formatter === "baselineRatio" || spec.formatter === "baselineN") {
@@ -546,6 +800,16 @@
           return (x == null ? -1 : x) - (y == null ? -1 : y);
         };
       }
+      if (spec.formatter === "linkList") {
+        // A list column sorts by its first label (case-insensitive), then by item count; an empty list last.
+        var lp = spec.formatter_params || {};
+        col.sorter = function (a, b) {
+          var x = _linkListItems(a, lp), y = _linkListItems(b, lp);
+          if (!x.length || !y.length) return (x.length ? 0 : 1) - (y.length ? 0 : 1);
+          var xl = x[0].label.toLowerCase(), yl = y[0].label.toLowerCase();
+          return xl < yl ? -1 : xl > yl ? 1 : x.length - y.length;
+        };
+      }
       if (spec.sorter === "severityRank") {
         // Severity words compare by rank (critical first when descending), not alphabetically.
         col.sorter = function (a, b) { return _severityRank(a) - _severityRank(b); };
@@ -553,7 +817,7 @@
       if (spec.tooltip === "full_value") {
         col.tooltip = function (e, cell) { return _safeStr(cell.getValue()); };
       }
-      return col;
+      return _centred(col);
     });
   }
 
@@ -587,6 +851,8 @@
       },
     },
   ];
+
+  EDGE_COLUMNS.forEach(_centred);
 
   /**
    * Mount a single Table Panel.
@@ -629,6 +895,7 @@
     var mode = mountEl.getAttribute("data-tap-table-mode") || "node";
     var columns;
     if (customColumns && customColumns.length > 0) {
+      customColumns = resolveFieldPaths(customColumns, rows);
       columns = buildCustomColumns(customColumns);
     } else {
       columns = mode === "edge" ? EDGE_COLUMNS : COMMON_METADATA_COLUMNS;
@@ -656,6 +923,10 @@
       pagination: false, // Server handles pagination; disable Tabulator's own.
       placeholder: "No results.",
     };
+    // config.empty_text (req-web-stdpanel-table-config-30): the table's own words for "no rows".
+    // Tabulator reads a string placeholder as HTML, so the configured text is escaped.
+    var emptyText = mountEl.getAttribute("data-tap-table-empty-text");
+    if (emptyText) tableOptions.placeholder = _escapeHtml(emptyText);
     // config.refresh_seconds: re-fetch this panel's fragment on a timer via
     // the enclosing page slot's hx-get (htmx:afterSettle remounts the table),
     // with a countdown pill and a pause toggle so the reader knows the table is
@@ -697,7 +968,7 @@
       tableOptions.groupBy = classify;
       tableOptions.groupHeader = function (value, count) {
         return _safeStr(value) +
-          ' <span style="color:#6b7280;font-weight:400;margin-left:8px">(' + count + ')</span>';
+          ' <span style="color:rgb(var(--tap-gray-500));font-weight:400;margin-left:8px">(' + count + ')</span>';
       };
     }
 
@@ -738,7 +1009,7 @@
         // same-origin paths navigate (the link formatter's rule).
         if (!url || !_safeHref(url)) return;
         var el = row.getElement();
-        el.style.cursor = "pointer";
+        el.classList.add("tap-row--clickable");
         el.addEventListener("click", function (ev) {
           // An in-cell link's click is the link's, not the row's.
           if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
@@ -774,13 +1045,18 @@
       var filterFields = (customColumns && customColumns.length > 0)
         ? customColumns.map(function (c) { return c.field; })
         : ["name", "entity_type"];
+      // A list column is searched by its item labels, using that column's own label_field.
+      var filterParams = {};
+      (customColumns || []).forEach(function (c) {
+        if (c.field) filterParams[c.field] = c.formatter_params;
+      });
       var applyFilter = function () {
         var term = filterInput.value.trim().toLowerCase();
         if (!term) { table.clearFilter(); return; }
         table.setFilter(function (data) {
           for (var i = 0; i < filterFields.length; i++) {
             var v = _getPath(data, filterFields[i]);
-            if (v != null && String(v).toLowerCase().indexOf(term) !== -1) return true;
+            if (v != null && _filterText(v, filterParams[filterFields[i]]).toLowerCase().indexOf(term) !== -1) return true;
           }
           return false;
         });
@@ -790,6 +1066,13 @@
       // recreated the table but left a typed term in the input).
       if (filterInput.value) applyFilter();
     }
+  }
+
+  // Test seam: a test harness sets window.__TAP_TABLE_TEST__ = {} before loading this file and gets the pure
+  // column builders back (tap_web/tests/js/table_columns.test.mjs). Nothing is exposed otherwise.
+  if (typeof window !== "undefined" && window.__TAP_TABLE_TEST__) {
+    window.__TAP_TABLE_TEST__.buildCustomColumns = buildCustomColumns;
+    window.__TAP_TABLE_TEST__.resolveFieldPaths = resolveFieldPaths;
   }
 
   /**
@@ -816,11 +1099,11 @@
     var btn = document.createElement("button");
     btn.type = "button"; btn.className = "tap-table-refresh-btn";
     btn.setAttribute("aria-label", "Refresh now"); btn.title = "Refresh now";
-    btn.style.cssText = "border:1px solid #cbd5e1;border-radius:4px 0 0 4px;background:#fff;padding:1px 7px;line-height:1.4;font-size:13px;cursor:pointer";
+    btn.style.cssText = "border:1px solid rgb(var(--tap-slate-300));border-radius:4px 0 0 4px;background:rgb(var(--tap-white));padding:1px 7px;line-height:1.4;font-size:13px;cursor:pointer";
     btn.textContent = "↻";
     var sel = document.createElement("select");
     sel.setAttribute("aria-label", "Auto-refresh interval"); sel.title = "Auto-refresh interval";
-    sel.style.cssText = "border:1px solid #cbd5e1;border-left:0;border-radius:0 4px 4px 0;background:#fff;padding:1px 4px;font-size:12px;color:#475569;cursor:pointer";
+    sel.style.cssText = "border:1px solid rgb(var(--tap-slate-300));border-left:0;border-radius:0 4px 4px 0;background:rgb(var(--tap-white));padding:1px 4px;font-size:12px;color:rgb(var(--tap-slate-600));cursor:pointer";
     choices.forEach(function (s) { var o = document.createElement("option"); o.value = String(s); o.textContent = label(s); if (s === interval) o.selected = true; sel.appendChild(o); });
     ui.textContent = ""; ui.appendChild(btn); ui.appendChild(sel);
     ui.setAttribute("title", "Auto-refresh: this table re-fetches itself at the selected interval. ↻ refreshes now.");

@@ -7,7 +7,9 @@
     {# The CSRF token for scripts (tap#773): read this, never the cookie, whose name is per stack. #}
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% if session_label %}[{{ session_label }}] {% endif %}{% block title %}{{ product_name }}{% endblock %}</title>
-    <link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">
+    {% if brand_glyph_static %}<link rel="icon" type="image/svg+xml" href="{% static brand_glyph_static %}">{% else %}<link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">{% endif %}
+    {# Colour theme (spec-web-theme.md): sets the data-theme attribute on the root element before first paint, so it comes before any stylesheet. #}
+    {% include "tap_web/partials/theme_head.html" %}
     <link rel="stylesheet" href="{% static 'tap_web/css/tailwind.css' %}">
     <link rel="stylesheet" href="{% static 'tap_web/css/panels.css' %}">
     <link rel="stylesheet" href="{% static 'tap_web/css/palette.css' %}">
@@ -24,11 +26,11 @@
 {# pages use a growable body (min-h-full) so the document scrolls and the sticky #}
 {# header pins for the full page height. min-height is NOT a definite height —    #}
 {# using it for full_bleed collapses the cytoscape canvas to 0.                   #}
-<body class="{% if full_bleed %}h-full{% else %}min-h-full{% endif %} flex flex-col">
+<body class="{% if full_bleed or fill_viewport %}h-full{% else %}min-h-full{% endif %} flex flex-col">
     {# Chrome per spec-web-navigation: product mark + breadcrumb + session tag #}
     {# + (palette affordance, Phase 4) + (mini-graph slot, backlog). The         #}
     {# `block header_title` injection is gone — the breadcrumb auto-derives.    #}
-    <nav class="bg-slate-800 text-white sticky top-0 z-50 shadow-md" aria-label="Breadcrumb">
+    <nav class="tap-nav sticky top-0 z-50 shadow-md" aria-label="Breadcrumb">
         {# Header is full-width app chrome (GitHub/Linear-style) — always edge-to-edge, just gutters, independent of the body's full_bleed mode. #}
         <div class="px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-10">
@@ -51,25 +53,27 @@
                                 {# a `Page` is registered at `/`. Only its current-vs-link state  #}
                                 {# varies based on whether it IS the current page (URL == `/`).   #}
                                 {% if seg.is_current %}
-                                    <span class="text-white font-bold" aria-current="page" data-tap-segment-url="/">{{ product_name }}</span>
+                                    <span class="tap-nav-current font-bold" aria-current="page" data-tap-segment-url="/">{% if brand_glyph %}{{ brand_glyph }}{% else %}{{ product_name }}{% endif %}</span>
                                 {% else %}
-                                    <a href="/" class="text-slate-300 hover:text-white transition-colors font-bold" data-tap-segment-url="/">{{ product_name }}</a>
+                                    <a href="/" class="tap-nav-link transition-colors font-bold" data-tap-segment-url="/">{% if brand_glyph %}{{ brand_glyph }}{% else %}{{ product_name }}{% endif %}</a>
                                 {% endif %}
                             {% elif seg.is_current %}
                                 {# Current page — non-link, aria-current="page", slightly bolder #}
-                                <span class="text-white font-medium" aria-current="page" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</span>
-                            {% elif seg.is_registered %}
-                                {# Registered Page parent — clickable link in the dim color #}
-                                <a href="{{ seg.url }}" class="text-slate-300 hover:text-white transition-colors" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</a>
+                                <span class="tap-nav-current font-medium" aria-current="page" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</span>
+                            {% elif seg.is_link %}
+                                {# Discoverable Page parent — clickable link in the dim color #}
+                                <a href="{{ seg.url }}" class="tap-nav-link transition-colors" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</a>
                             {% else %}
-                                {# Unregistered URL prefix — plain text, unclickable #}
-                                <span class="text-slate-400" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</span>
+                                {# No Page, or a non-discoverable Page (its name as label) — plain text, unclickable #}
+                                <span class="tap-nav-dim" data-tap-segment-url="{{ seg.url }}">{{ seg.label }}</span>
                             {% endif %}
                         </li>
                     {% endfor %}
                 </ol>
                 <div class="flex items-center" style="gap: 0.75rem;">
-                    {% if session_label %}<span class="text-xs font-mono text-amber-300" title="Multi-session dev label — see spec-dev-multisession.md">[ {{ session_label }} ]</span>{% endif %}
+                    {% if session_label %}<span class="tap-nav-session text-xs font-mono" title="Multi-session dev label — see spec-dev-multisession.md">[ {{ session_label }} ]</span>{% endif %}
+                    {# Light / Dark / System (req-web-theme-toggle) lives in the user menu below; a signed-out page has no menu, so it shows inline. #}
+                    {% if not request.user.is_authenticated %}{% include "tap_web/partials/theme_switch.html" %}{% endif %}
                     {# Palette affordance (req-web-nav-command-palette-2). Cmd-K or click. #}
                     <button type="button"
                             data-tap-palette-affordance
@@ -102,6 +106,10 @@
                                     <div class="tap-usermenu-name">{{ display_name }}</div>
                                     {% if request.user.get_full_name and request.user.email %}<div class="tap-usermenu-email">{{ request.user.email }}</div>{% endif %}
                                 </div>
+                                <div class="tap-usermenu-theme">
+                                    <span class="tap-usermenu-theme-label" id="tap-theme-label">Theme</span>
+                                    {% include "tap_web/partials/theme_switch.html" %}
+                                </div>
                                 <form method="post" action="{% url 'account_logout' %}" class="tap-usermenu-form">
                                     {% csrf_token %}
                                     <button type="submit" class="tap-usermenu-signout">Sign out</button>
@@ -130,16 +138,17 @@
         </div>
     {% endif %}
 
+    {# A page with a `fill` row (fill_viewport) is a viewport-height column too, but keeps the centered max-width (req-web-page-row-heights-3). #}
     {# full_bleed pages fill the viewport with internal panel scroll (flex-1 + min-h-0); #}
     {# normal stacked pages use natural document flow so the body grows with content and #}
     {# the window scrolls — which keeps the sticky header pinned for the full page height #}
     {# (a flex-1/min-h-0 main would shrink to one viewport and detach the sticky nav).    #}
-    <main class="flex flex-col{% if full_bleed %} flex-1 min-h-0{% endif %}">
+    <main class="flex flex-col{% if full_bleed or fill_viewport %} flex-1 min-h-0{% endif %}">
         {# full_bleed (per-page, from layout.full_bleed) drops the centered max-width so graph/dashboard pages fill the viewport; padding gutters stay. #}
         {# Standard pages fill the viewport width up to a cap, then center: laptops fill #}
         {# edge-to-edge, very wide monitors get hemmed in to a readable measure. The cap #}
         {# is screen-independent — it bounds the content, the viewport drives the rest. #}
-        <div class="py-6 px-4 sm:px-6 lg:px-8 w-full flex flex-col{% if full_bleed %} flex-1 min-h-0{% else %} max-w-[1700px] mx-auto{% endif %}">
+        <div class="py-6 px-4 sm:px-6 lg:px-8 w-full flex flex-col{% if full_bleed or fill_viewport %} flex-1 min-h-0{% endif %}{% if not full_bleed %} max-w-[1700px] mx-auto{% endif %}">
             {% block content %}{% endblock %}
         </div>
     </main>

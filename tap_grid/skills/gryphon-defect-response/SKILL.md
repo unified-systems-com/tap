@@ -21,7 +21,7 @@ edge to be routed around; it is the read path lying, and every caller inherits t
 
 The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
 
-- **Read the graph through Gryphon** (11): when it cannot answer, fix Gryphon so the next query can.
+- **Read the graph through Gryphon** (11): when it cannot answer, the user chooses: build the capability, or an `orm`/`module` Search; a defect is fixed on the spot.
 - **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
 
 
@@ -70,7 +70,7 @@ Then route — and the two roads are NOT symmetric:
 | What you hit | What you may do |
 | --- | --- |
 | A DEFECT — a wrong answer, a dropped clause, a crash | **Fix it. No permission needed.** Spawn an agent and track it to ground via [`gryphon-fix-bug`](../gryphon-fix-bug/SKILL.md). |
-| A MISSING CAPABILITY — the construct does not exist and callers are inventing workarounds | **STOP. Tell the user. Do not build it.** |
+| A MISSING CAPABILITY — the construct does not exist and callers are inventing workarounds | **STOP. Tell the user, and let them choose** (ruled 2026-10-19): start a Gryphon implementation ([`build-gryphon-capability`](../build-gryphon-capability/SKILL.md)), or build that Search with `orm` mode or a `module` runner and ship now. Do not build it, and do not pick the ORM or module path, unasked. |
 
 **This asymmetry is a ruling, not a preference (George, 2026-09-23).**
 
@@ -93,7 +93,10 @@ The same split decides what to do when you cannot proceed:
 
 - **Blocked because a feature is missing** — that is fine. **Stop and check with the user.** You
   have found a real gap and the decision about filling it is not yours. Say what you needed, what
-  you tried, and what the workaround would cost; then wait.
+  you tried, and what each way forward costs (a Gryphon implementation, or an `orm`/`module`
+  Search that ships now; code is allowed only in a Search object, in the plugin that owns the
+  data); then wait for them to choose. If they choose the ORM or module path, name the missing
+  Gryphon capability in the Search's description.
 - **Blocked because you hit a bug** — that is NOT fine, and stopping is not the answer. Spawn an
   agent and track it to ground. A defect standing between you and your work is a defect standing
   between everyone and theirs.
@@ -183,4 +186,4 @@ hypothesis.
 - `docs/doc-gryphon-commandments.md` — the law both repair and build cycles answer to.
 - `docs/misc/doc-dev-gryphon-wishlist.md` — Known Issues, and the wishlist organised by
   demand-shape.
-- `AGENTS.md` — Gryphon is the canonical read path; raw ORM querying is break-glass.
+- `AGENTS.md` — Gryphon is the canonical read path and first choice; when it cannot serve a Search the user chooses between building the capability and an `orm`/`module` Search.

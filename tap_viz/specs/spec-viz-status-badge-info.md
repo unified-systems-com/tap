@@ -17,7 +17,7 @@ Click semantics are part of this story. TAP Viz previously navigated to the obje
 | 3. | Non-Intrusive | The window is a small overlay that does not hijack the graph, obscure navigation chrome, or block the panel. |
 | 4. | Dismissable | Close via X button, ESC key, or click-outside. Any of the three must restore the graph to its pre-click interaction state. |
 | 5. | Framework-Free | The window is a plain HTML overlay positioned from Cytoscape coordinates. No popper, floating-ui, or other library. |
-| 6. | Evolvable | The v0 surface shows only a name column. Columns, row actions, and pan-zoom-to-instance are explicit future extensions with reserved config shape. |
+| 6. | Evolvable | The default surface shows a name column; `info_window.columns` turns it into a table. Row actions and pan-zoom-to-instance are explicit future extensions with reserved config shape. |
 
 ## Requirement Status
 
@@ -25,11 +25,12 @@ Click semantics are part of this story. TAP Viz previously navigated to the obje
 | --- | --- | :---: | --- |
 | req-viz-info-window-trigger | [Trigger Surface](#trigger-surface) | Implemented | Single click on badge or badged host opens the window |
 | req-viz-info-window-config | [Info Window Configuration](#info-window-configuration) | Implemented | Per-badge-set `info_window` block referencing a Search |
-| req-viz-info-window-contents | [Window Contents](#window-contents) | Implemented | Sections per badge set, name column only in v0 |
+| req-viz-info-window-contents | [Window Contents](#window-contents) | Implemented | Sections per badge set, Name column unless `columns` is configured |
 | req-viz-info-window-rendering | [Window Rendering](#window-rendering) | Implemented | Plain HTML overlay, positioned from host screen coords |
 | req-viz-info-window-dismissal | [Dismissal](#dismissal) | Implemented | X button, ESC key, and click-outside all dismiss |
 | req-viz-info-window-lifecycle | [Data Lifecycle](#data-lifecycle) | Implemented | Fetch on open, loading/empty/error states, no caching in v0 |
 | req-viz-info-window-row-link | [Row Links](#row-links) | Implemented | Optional `row_url_template` per badge set, same-origin, placeholder-filled from the row |
+| req-viz-info-window-columns | [Columns](#columns) | Implemented | Optional `info_window.columns`: a real table with header row, per-column label, link, alignment and number format |
 | req-viz-info-window-pan-zoom | [Pan-Zoom to Instance](#pan-zoom-to-instance) | Backlog | Zoom to host on open, restore on close — deferred past v0 |
 
 ## Requirements
@@ -71,7 +72,7 @@ Info window data binding is declared per badge set inside the projection's `stat
 #### Implementation
 
 - A badge set may include an optional `info_window` object. When present, the window shows a section for that badge set. When absent, the set contributes no section.
-- `info_window.search_id` (required when `info_window` is present) is the UUID of a TAP Search entity. The search must return rows that include `entity_id` and `name` fields. Additional fields are ignored in v0.
+- `info_window.search_id` (required when `info_window` is present) is the UUID of a TAP Search entity. The search must return rows that include `entity_id` and `name` fields. Additional fields are ignored unless `info_window.columns` names them (see [Columns](#columns)).
 - `info_window.inputs` (optional, default `{}`) is a static JSON object passed verbatim as the search's `inputs` parameter at fetch time.
 - Rows are grouped client-side by `entity_id`. When the info window opens for host `H`, only rows where `entity_id === H` are displayed in that section.
 - The search is run on each window-open, not cached. Refresh behavior is defined under [Data Lifecycle](#data-lifecycle).
@@ -84,7 +85,6 @@ Info window data binding is declared per badge set inside the projection's `stat
 
 #### Future
 
-- A column config (e.g. `info_window.columns: [{field, label}]`) will drive which row fields render beyond name. v0 hardcodes name.
 - An input-templating mechanism (e.g. `inputs: {host_entity_id: "{{host.entity_id}}"}`) would let the search filter server-side by host rather than returning rows for every host and filtering client-side. v0 prefers the simpler always-full-dataset approach since the count search already returns one row per host.
 - A `detail` variant that does not require a matching badge population could support "info-on-click without a count badge", but that's outside v0 scope.
 
@@ -101,19 +101,76 @@ The info window displays sections grouped by badge set, each listing the rows th
 - The window header shows the host's display name (from `node.data("name")`) and a small entity type label.
 - Each badge set with an `info_window` config that returned at least one row for this host becomes one section.
 - A section has a colored indicator (matching `badge_set.color`), the badge set name as a label, and a count (number of rows for this host in this set).
-- Section body is a table with one column: `Name`, populated from the row's `name` field. Rows are listed in the order returned by the search.
+- Section body is a table. By default it has one column, `Name`, populated from the row's `name` field; with `info_window.columns` it has the configured columns (see [Columns](#columns)). Rows are listed in the order returned by the search.
 - A section with zero rows for this host is omitted (not shown as "0 findings"). If every section would be empty, the window is not opened at all (silent no-op) — this only happens if the count went stale and the click came in between refreshes.
 - A badge set without an `info_window` block contributes no section, even when the host has an active badge for that set.
 
 #### Development
 
 - Keeping the section-empty case silent avoids showing a window with "nothing to show" as the result of a click. If the click target truly has no info content, the click does nothing.
-- The v0 name-only column keeps the surface testable and cheap. Expanding to richer columns is a config change later, not a rewrite.
+- The name-only default keeps the surface testable and cheap, and keeps every existing badge set rendering exactly as before. Richer columns are a config change (see [Columns](#columns)), not a rewrite.
 
 #### Future
 
 - Pagination or virtualization for high-row-count sections.
 - A "view all" link that drops the user into the full search result grid.
+
+### Columns
+----
+RID: `req-viz-info-window-columns`
+
+Status: `Implemented`
+
+A badge set's `info_window` may declare `columns`, turning the section body from the single Name column into a table of chosen row fields (for example ID, CVSS and Title), driven entirely by configuration.
+
+#### Implementation
+
+- `info_window.columns` (optional) is a list of 1 to 8 column objects, in display order. Each has `field` (required, the row key whose value fills the cell) and `label` (required, the header text), and optionally `link` (boolean), `align` (`left` or `right`, default `left`), `format` (`text`, the default, `number` or `percent`), `decimals`, `tone_steps`, `zero_tone` and `nowrap` (boolean, default false). No other key is accepted, and every key carries a description in the schema.
+- Absent `columns`, the section renders exactly as before: one `Name` column with no visible header.
+- With `columns`, the section is a real `<table>` with a header row of the labels. The header stays pinned at the top of the window body while the body scrolls.
+- A cell shows the row's value for `field`. A missing, null or empty value is an empty cell, never the text `undefined`. All cell and header text is HTML-escaped.
+- The row link uses [Row Links](#row-links) unchanged, including its all-or-nothing placeholder rule, and is placed on the first column marked `link: true`, or on the first column when none is marked. The legacy `finding_id` fallback does not apply to a configured table.
+- `format: number` shows a numeric value with one decimal place (a CVSS score of `9` shows `9.0`). A value that is not a number is shown as given.
+- `format: percent` shows a fraction from 0 to 1 as a percentage (`0.0004` shows `0.04%`) with `decimals` places (0 to 6, default 2). A value outside 0 to 1, or not a number, is shown as given.
+- `tone_steps` (1 to 8 `{min, tone}` entries, tone one of `good`, `warn`, `bad`, `muted`, `info`) colours a numeric cell by thresholds: the first step, highest `min` first, whose `min` is at or below the value gives the tone, and `zero_tone` is the tone of exactly zero, taken instead of any step. The value is drawn as a badge (class `tap-info-window__tone--<tone>`, the tone name as its tooltip). A value below every step, or not a number, is plain text. The badge colours are `--tap-info-tone-*` tokens with light values (the table panel's tone palette) and dark values (the stat-card tone colours); `info` is the muted grey, so no tone adds a colour.
+- `nowrap: true` renders that column's body cells with the `tap-info-window__cell--nowrap` class (CSS `white-space: nowrap`), so a value such as `CVE-2026-84782` stays on one line and the column takes its content width. Absent or false, the cell is unchanged. The window's 280px minimum and 560px cap still apply.
+- Rows keep the order the Search returned.
+- Width: a window containing a multi-column table is as wide as its content needs, at least 280px and at most 560px (and never wider than the panel); a window of single-column sections stays 280px. Height still caps at 60% of the panel, with internal scroll.
+- Colours come from theme tokens (`--tap-info-*`) on the window, with light and dark values that follow the viewer's scheme as the stat-card and chart panels do.
+
+#### Development
+
+- A fixed cap rather than a configurable width keeps the config small; 560px fits ID, score and a wrapped title while leaving a typical graph panel visible. Long text wraps rather than widening the window further.
+- The `finding_id` fallback is left out of the columns path on purpose: it is a tracked defect (`tap#996`) awaiting removal, and a new feature should not extend it.
+- The `columns` shape mirrors the `{field, label}` column declaration the table panel already uses, so a plugin author who knows one recognizes the other.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-info-window-columns-1 | Schema Accepted | Implemented | `info_window.columns` validates with 1 to 8 entries of `{field, label}` plus optional `link`, `align` and `format`. | `tap_viz/tests/test_models.py::TestInfoWindowColumnsSchema`. |
+| req-viz-info-window-columns-2 | Schema Rejected | Implemented | The schema rejects an empty list, more than 8 entries, an entry missing `field` or `label`, an empty `field` or `label`, an `align` or `format` outside the enum, and any unrecognized key on a column. | `tap_viz/tests/test_models.py::TestInfoWindowColumnsSchema`. |
+| req-viz-info-window-columns-3 | Absent Means Legacy | Implemented | Without `columns` the section renders the single Name column with no visible header, as before. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-4 | Header Row | Implemented | With `columns` the section is a `<table>` whose header row shows each label, and the header is sticky while the window body scrolls. | `tap_viz/tests/js/info_window_columns.test.mjs`, `tap_viz/tests/test_info_window_columns.py`. |
+| req-viz-info-window-columns-5 | Missing Field Cell | Implemented | A row lacking a column's field, or holding null or an empty string, renders an empty cell, never `undefined`. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-6 | Link Cell | Implemented | The row link lands on the first `link: true` column, else the first column, only when `row_url_template` resolves for the row; otherwise no cell is a link. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-7 | Number Format | Implemented | `format: number` renders a numeric value with one decimal place; a non-numeric value renders as given. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-8 | Escaping | Implemented | Header labels and cell values are HTML-escaped. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-9 | Width | Implemented | A window with a multi-column table is content-sized between 280px and 560px and never wider than the panel; single-column windows stay 280px. | `tap_viz/tests/test_info_window_columns.py`. |
+| req-viz-info-window-columns-11 | Nowrap Schema | Implemented | `nowrap` is an optional boolean on a column, described in the schema; a non-boolean value is rejected and unknown keys still are. | `tap_viz/tests/test_models.py::TestInfoWindowColumnsSchema`. |
+| req-viz-info-window-columns-12 | Nowrap Cell Class | Implemented | A column with `nowrap: true` renders its body cells with the `tap-info-window__cell--nowrap` class and no other column's cells carry it; absent or false output is byte-identical to before. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-13 | Nowrap Style | Implemented | The nowrap class sets `white-space: nowrap` from the stylesheet (no inline style), and the window's 280px to 560px width rules are unchanged. | `tap_viz/tests/test_info_window_columns.py`. |
+| req-viz-info-window-columns-10 | Theme Tokens | Implemented | The info window's colours are `--tap-info-*` tokens with light and dark values; the window rules carry no colour literal outside the token definitions. | `tap_viz/tests/test_info_window_columns.py`. |
+| req-viz-info-window-columns-14 | Percent Schema | Implemented | `format` accepts `percent` and a column accepts `decimals` 0 to 6; a value outside either is rejected. | `tap_viz/tests/test_models.py::TestInfoWindowColumnsSchema`. |
+| req-viz-info-window-columns-15 | Percent Format | Implemented | `format: percent` renders `0.0004` as `0.04%` with `decimals` places (default 2), and a value outside 0..1 or a non-number as given. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-16 | Tone Steps Schema | Implemented | A column accepts `tone_steps` (1 to 8 `{min, tone}`, closed tone vocabulary) and `zero_tone`; an empty list, an unknown tone or a stray key is rejected. | `tap_viz/tests/test_models.py::TestInfoWindowColumnsSchema`. |
+| req-viz-info-window-columns-17 | Tone Steps Cell | Implemented | A numeric cell is wrapped in a `tap-info-window__tone--<tone>` badge chosen by the first step (highest `min` first) at or below the value, or `zero_tone` for zero; below every step or non-numeric it stays plain. | `tap_viz/tests/js/info_window_columns.test.mjs`. |
+| req-viz-info-window-columns-18 | Tone Tokens | Implemented | The tone badge colours are `--tap-info-tone-*` tokens defined for light, prefers-dark and forced dark; no colour literal sits outside the token blocks. | `tap_viz/tests/test_info_window_columns.py`. |
+
+#### Future
+
+- Per-column width hints or truncation, if a real table needs them.
+- Click-to-sort on a column header.
 
 ### Row Links
 ----
@@ -159,7 +216,7 @@ The info window is a plain HTML overlay inside the viz panel, positioned relativ
 
 - The window is a single `<div>` appended to the panel container (not a cytoscape node). It is created on open and removed on close — not a persistent hidden element.
 - Positioning: anchor the window's upper-left corner to the host's upper-right rendered position plus a small offset, clamped to the panel viewport so the window stays fully visible.
-- Width is fixed (e.g. 280px for v0). Height grows with content up to a max-height (e.g. 60% of panel height), with internal scroll past that.
+- Width is fixed at 280px, except that a window with a multi-column table sizes to its content between 280px and 560px, never wider than the panel (see [Columns](#columns)). Height grows with content up to a max-height (e.g. 60% of panel height), with internal scroll past that.
 - The window does not follow the node on pan/zoom. If the user pans or zooms while the window is open, the window stays at its open-time position. This keeps rendering simple and avoids thrash on every Cytoscape frame.
 - z-index places the window above the Cytoscape canvas but below any global modal overlay.
 - Styling lives in `tap_viz/static/tap_viz/css/` and uses a CSS class namespace (e.g. `tap-viz-info-window`). No inline style tokens beyond coordinate positioning.

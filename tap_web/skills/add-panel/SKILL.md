@@ -44,7 +44,7 @@ Before writing any code, agree on:
 3. **Plugin home for the type.** Generic panel types should live in `tap_web` so any plugin can use them. Domain-specific panel types live in the domain plugin (e.g. KSI Compliance Panel lives in `fedramp_20x_ksi`). Confirm before creating the directory.
 4. **Plugin home for the instance.** Per the finding-strip instance-config requirement (genericom plugin repo's spec): the **consuming** plugin owns the instance, not the panel-type plugin. The Genericom landing's Finding Strip instance lives in the genericom plugin, not `fedramp_20x_ksi`.
 5. **Slug, label, view path.** The panel type's `slug` (snake_case, e.g. `finding_strip`), `label` ("Finding Strip"), `view` template path (`<plugin>/panels/<slug>.html`).
-6. **Data shape.** Where does the panel get its data? gryphon (preferred — see [`feedback_prefer_gryphon.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_prefer_gryphon.md)), Search entity, ORM (last resort, requires discussion). For data-loading questions or gryphon limitations, see [`feedback_gryphon_in_development.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_gryphon_in_development.md) — **flag missing gryphon features to the user before falling back**.
+6. **Data shape.** Where does the panel get its data? a Search built with Gryphon (the first choice), or, where Gryphon cannot express it, an `orm`-mode or `module` Search that the user has chosen over building the Gryphon capability (`req-grid-search-canonical-read`). For data-loading questions or gryphon limitations, see [`feedback_gryphon_in_development.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_gryphon_in_development.md) — **flag missing gryphon features to the user before falling back**.
 7. **Configuration surface.** What does an instance configure? List every key that lives in `panel.config` (e.g. `tiles`, `column_mode`, `hide_header`, `entity_id_param`, etc.) and whether each is required or optional.
 8. **Static assets.** CSS file, JS file (if any). Server-rendered panels often need no JS.
 9. **Editor view.** Is in-page editing in scope for v0? Usually no; declare `editor_view = ""`.
@@ -339,10 +339,13 @@ real one (git-serious's status wall, `tap_plugin/git_serious/grift/landing.grift
 - **Everything declarative lives in `columns[]`.** `formatter` + `formatter_params` (`link` with
   `href_field` / `href_template` / `text`; `elapsed` with `start` / `end` / `require_field`;
   `baselineRatio` / `baselineN` with `baseline.group_by` / `where` / `min_n`; `sparkline` with
-  `group_by` / `x` / `href_template`; `iconMap` with `icons` / `labels`; `tailSegment`;
+  `group_by` / `x` / `href_template`; `iconMap` with `icons` / `labels`; `entityType` with `show` / `tone` (an entity-type column's icon and display name, resolved from the type's published `ENTITY_ICON` / `ENTITY_NAME` — never hand-write an `iconMap` / `toneBadge` map keyed by entity type); `tailSegment`;
   `conclusionBadge`), `header_tooltip` for the heading's pop-over, `width` / `widthGrow`, `headerSort`.
   Panel-level: `height` (px, Tabulator-owned scroll with a sticky header), `refresh_seconds` (↻ button
   + interval selector — never a countdown the reader can watch), `quick_filter`.
+  `show_all_rows: false` drops the `All` entry from the Rows selector (a long table stays paged);
+  table-level `empty_text` replaces the generic "No results." when there are no rows.
+  A column's `wrap: true` wraps its long text onto several lines (the row grows) instead of an ellipsis.
 - **Split what sorts.** A derived number a reader would sort by (a ratio, a sample size) is its own
   column; a decoration (▲) never carries the only copy of a number.
 - **The third state names its window.** A table whose rows mean "not observed" states, in its panel
@@ -482,7 +485,7 @@ Use Playwright to screenshot any new panel — per [`feedback_playwright_verify.
 - **An unfiltered edge search on a graph panel.** `"filters": {}` with "the panel filters by node-set" in the name is not a design — it ships every edge on the grid so the browser can throw 99% away, and it gets worse with every collection tick. Name the edge types the scene draws (tap#402).
 - **Missing empty state in the template.** Empty data lists must render an empty-state element with helpful text, not an empty container.
 - **Skipping the spec.** Per CLAUDE.md feedback, new components must be driven by a spec. If none exists, draft one before coding (Step 2).
-- **Using ORM in the panel without flagging it.** Per [`feedback_prefer_gryphon.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_prefer_gryphon.md) and [`feedback_gryphon_in_development.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_gryphon_in_development.md): if gryphon falls down, **flag it to the user before falling back to ORM**.
+- **Reading the graph in the panel code.** A panel gets its data from a Search. If Gryphon falls short, **put the choice to the user** (build the Gryphon capability, or an `orm`/`module` Search) and do not query the graph from the panel itself.
 
 ## Quick Reference: Anatomy Of A Panel
 

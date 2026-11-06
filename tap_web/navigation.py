@@ -39,10 +39,20 @@ class BreadcrumbSegment:
     """URL prefix this segment links to. Always starts with `/`."""
 
     is_registered: bool
-    """True iff a `Page` exists at this URL prefix.
+    """True iff a `Page` exists at this URL prefix, discoverable or not.
 
-    Registered segments render as clickable links using the Page's `name`.
-    Unregistered segments render as plain text using a title-cased slug.
+    Registered segments are labelled with the Page's `name`. Unregistered
+    segments (no Page at all) are labelled with a title-cased slug.
+    """
+
+    is_link: bool
+    """True iff the segment renders as a clickable link.
+
+    A registered Page is clickable only when it is `discoverable`: a hidden
+    (``discoverable=False``) Page shows its name as plain text, because
+    discoverability gates browse surfaces and its URL may need a parameter
+    to render (req-web-nav-page-discoverable-3). Unregistered segments are
+    never links.
     """
 
     is_current: bool
@@ -161,14 +171,15 @@ def effective_path(url: str, explicit_parents: Mapping[str, str]) -> list[str]:
 def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None) -> list[BreadcrumbSegment]:
     """Decompose a URL into breadcrumb segments.
 
-    TAP-IMPLEMENTS: req-web-nav-auto-parent@230e975dfd7b/7d1e8b146258 (derivation) — the
+    TAP-IMPLEMENTS: req-web-nav-auto-parent@a3d0e5f1af4d/3d2b233e6cdd (derivation) — the
         URL hierarchy is the default hierarchy: every level without an explicit
         NESTS_UNDER parent takes the URL minus its trailing slice.
 
     For each level of the page's effective path (see :func:`effective_path`),
     looks up a registered `Page` by its `slug`. If a Page exists at that level,
-    the segment uses the Page's `name` and links to its URL. If not, the
-    segment renders the level's last slug title-cased as plain text.
+    the segment uses the Page's `name`, and links to its URL only if the Page is
+    `discoverable` (a hidden Page shows its name as plain text). If no Page
+    exists, the segment renders the level's last slug title-cased as plain text.
 
     The home segment `/` is always present and marked `is_home=True`. The
     last segment is marked `is_current=True` and is always ``url`` itself.
@@ -195,6 +206,7 @@ def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None
                 label="",
                 url="/",
                 is_registered=True,
+                is_link=True,
                 is_current=True,
                 is_home=True,
             )
@@ -219,20 +231,23 @@ def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None
     prefixes = effective_path(path, explicit_parents if can_read and explicit_parents else {})
 
     # One batched query for every prefix, including the home page (slug "/").
-    # Filter `discoverable=True` so parameterized pages (e.g. /samsite/finding,
-    # which requires an entity_id) render as plain text in the breadcrumb
-    # rather than as broken links — same gate used by nav-index, palette,
-    # chevron popovers, and column-view per req-web-nav-page-discoverable.
+    # Load every Page, hidden or not: the label is always the Page's name. The
+    # `discoverable` flag only decides clickability, so parameterized pages
+    # (e.g. /samsite/finding, which requires an entity_id) render their name as
+    # plain text rather than as broken links — the same flag that gates
+    # nav-index, palette, chevron popovers and column-view
+    # (req-web-nav-page-discoverable-3).
+    page_map: dict[str, tuple[str, bool]] = {}
     if can_read:
-        page_map = {p.slug: p.name for p in Page.objects.filter(slug__in=["/", *prefixes], discoverable=True)}
-    else:
-        page_map = {}
+        rows = Page.objects.filter(slug__in=["/", *prefixes]).values_list("slug", "name", "discoverable")  # type: ignore[misc]
+        page_map = {slug: (name, discoverable) for slug, name, discoverable in rows}
 
     segments: list[BreadcrumbSegment] = [
         BreadcrumbSegment(
             label="",
             url="/",
             is_registered="/" in page_map,
+            is_link=True,
             is_current=False,
             is_home=True,
         )
@@ -240,13 +255,15 @@ def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None
 
     for i, prefix in enumerate(prefixes):
         is_current = i == len(prefixes) - 1
-        page_name = page_map.get(prefix)
-        if page_name:
+        page = page_map.get(prefix)
+        if page:
+            page_name, discoverable = page
             segments.append(
                 BreadcrumbSegment(
                     label=page_name,
                     url=prefix,
                     is_registered=True,
+                    is_link=discoverable,
                     is_current=is_current,
                     is_home=False,
                 )
@@ -258,6 +275,7 @@ def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None
                     label=label,
                     url=prefix,
                     is_registered=False,
+                    is_link=False,
                     is_current=is_current,
                     is_home=False,
                 )

@@ -36,6 +36,7 @@ Layouts are Cytoscape-oriented. Cytoscape remains the graph runtime that layout 
 | req-viz-layout-module-contract | [Module Contract](#module-contract) | Implemented | Layout modules export a standard async execute entrypoint |
 | req-viz-layout-runtime-context | [Runtime Context](#runtime-context) | Implemented | Layouts receive a locked-in minimal runtime context; `trigger_node` is an optional hint, not a core operand |
 | req-viz-layout-node-fields | [Node Model Fields](#node-model-fields) | Implemented | Every graph node carries its typed model fields as `node.data("fields")`, the envelope's data lane, so layouts read facts instead of labels |
+| req-viz-layout-scope-box | [Scope Box Overlay](#scope-box-overlay) | Implemented | `applyScopeBoxes` draws a titled box over a node group; it never re-enters its own measurement and draws nothing while the graph element is hidden |
 | req-viz-layout-capabilities | [Layout Capabilities](#layout-capabilities) | Implemented | Layouts may fetch, mutate, nest, and position the Cytoscape graph; assert scene invariants on entry |
 | req-viz-layout-execution | [Execution Model](#execution-model) | Implemented | Layouts execute serially under a host but failures do not block later layouts |
 | req-viz-layout-runtime-modules | [Runtime Modules](#runtime-modules) | Implemented | Shared TAP Viz runtime utilities live in `tap_viz/static/tap_viz/js/runtime/` and are imported directly |
@@ -377,6 +378,35 @@ The data lane was already in the page: every graph panel's node script carries t
 | req-viz-layout-node-fields-2 | Nothing beyond the lane | Implemented | A model field outside `FIELD_CRUD_SCHEMA` and the universal `BaseModel` fields is absent from the node's envelope, so it can never reach `fields`. | Withholding lives in the data lane, not here. |
 | req-viz-layout-node-fields-3 | Fields reach the Cytoscape node | Implemented | `panel-graph.js` sets `fields` on every envelope-built node to the envelope's `data` lane, or `{}` when there is none. | Trace: `non-python` — tap_viz/static/tap_viz/js/panel-graph.js; verified in a browser. |
 | req-viz-layout-node-fields-4 | Layouts read fields, not labels | Implemented | A layout that needs a typed fact reads it from `node.data("fields")`; matching a label to recover a fact the model already carries is a finding. | Guidance; the conformance audit checks it. |
+
+
+### Scope Box Overlay
+----
+RID: `req-viz-layout-scope-box`
+
+Status: `Implemented`
+
+A scope box is a titled rectangle drawn behind a group of nodes that belong together but share no compound parent: the cross-cutting container layer. `applyScopeBoxes(cy, boxes)` in `tap_viz/static/tap_viz/js/runtime/layout-scope-boxes.js` draws each box as a non-interactive HTML overlay sized to the bounding box of its members (a `selector` or a `filter`), re-sized whenever a node moves, a compound's bounds change, a layout stops, or the view pans or zooms. `alignDistribute*` draws its `label` box through it ([spec-viz-align-distribute.md](spec-viz-align-distribute.md)).
+
+#### Implementation
+
+The box measures its members on every `position` and `bounds` event of any node. Two things make that measuring unsafe, and the helper guards both so a layout does not have to:
+
+- **Re-entrancy.** Reading a member's bounding box can itself dirty Cytoscape's bbox cache and emit `bounds` on the same member again, which re-enters the measuring until the stack overflows (`RangeError: Maximum call stack size exceeded`). This is the class `badge-nodes.js` (tap#289) and `stack.js` (tap#304) already guard. A measuring pass that is running is not started again; the pass already running reads the settled bounds.
+- **A hidden graph element.** While the owner has hidden the cytoscape element (`visibility: hidden`, as the projection reveal does, or `display: none`) the boxes are neither measured nor drawn. The first `render` after the element is shown draws them. A layout therefore calls the helper at any point of its run and never waits for the reveal.
+
+#### Development
+
+A layout that drew a labelled box over members of a compound while the projection was still revealing the scene (the graph element hidden) overflowed the stack, and worked around it by deferring the call until the element was shown, which is the same defect pushed into the caller. The fix lives in the helper, where every caller gets it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-layout-scope-box-1 | Re-entrant bounds do not recurse | Implemented | A member whose bounding-box read emits `bounds` on itself again does not re-enter the box's measuring; moving a member under such a read completes without a stack overflow. | `tap_viz/tests/js/scope_box_runtime.mjs` (needs Node and the vendored cytoscape). |
+| req-viz-layout-scope-box-2 | A hidden graph element is not measured or drawn | Implemented | While the cytoscape element is `visibility: hidden` or `display: none`, no member is measured and every box is `display: none`, however the nodes move. | Same harness. |
+| req-viz-layout-scope-box-3 | Shown, the next render draws | Implemented | After the element is shown, the first cytoscape `render` measures the members and draws the box at their bounds plus its padding. | Same harness. |
+| req-viz-layout-scope-box-4 | Guards are shipped in the helper | Implemented | `layout-scope-boxes.js` carries both guards in the one `syncBoxes` path every event routes through, so a caller needs no wait or flag of its own. | Source check that runs where Node does not; the behaviour is -1 to -3. |
 
 
 ### Layout Capabilities

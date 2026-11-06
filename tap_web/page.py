@@ -140,13 +140,37 @@ def _layout_key_number(key: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def column_band(col_data: Mapping[str, Any] | None) -> int:
+    """The band a column belongs to: its integer ``band``, default 1 (req-web-page-bands-1)."""
+    band = (col_data or {}).get("band", 1)
+    return band if isinstance(band, int) and not isinstance(band, bool) and band >= 1 else 1
+
+
+def group_bands(columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group processed columns (already band-ordered) into ``[{"band": n, "columns": [...]}]``.
+
+    Each band renders as its own grid; bands stack top to bottom (req-web-page-bands-2).
+    A band holding a ``fill`` row carries ``has_fill`` so the template can let it take the
+    remaining viewport height (req-web-page-row-heights-4).
+    """
+    bands: list[dict[str, Any]] = []
+    for col in columns:
+        if not bands or bands[-1]["band"] != col["band"]:
+            bands.append({"band": col["band"], "columns": [], "has_fill": False})
+        bands[-1]["columns"].append(col)
+        if any(row.get("is_fill") for row in col.get("rows", [])):
+            bands[-1]["has_fill"] = True
+    return bands
+
+
 def iter_layout_rows(
     layout: Mapping[str, Any] | None,
 ) -> list[tuple[str, dict[str, Any], list[tuple[str, dict[str, Any]]]]]:
     """Return the layout's columns and rows in their declared numeric order.
 
     The one reading of ``layout.columns.*.rows.*`` (``col-N`` / ``row-N`` keys sort by
-    N) shared by the persisted and the synthetic page renderers.
+    N) shared by the persisted and the synthetic page renderers. Columns sort by their
+    ``band`` first (default 1), then by N within a band (req-web-page-bands-3).
 
     Args:
         layout: The page's layout JSON.
@@ -155,7 +179,7 @@ def iter_layout_rows(
         ``[(col_key, col_data, [(row_key, row_data), ...]), ...]``.
     """
     columns_raw = (layout or {}).get("columns", {}) or {}
-    columns = sorted(columns_raw.items(), key=lambda kv: _layout_key_number(kv[0]))
+    columns = sorted(columns_raw.items(), key=lambda kv: (column_band(kv[1]), _layout_key_number(kv[0])))
     out: list[tuple[str, dict[str, Any], list[tuple[str, dict[str, Any]]]]] = []
     for col_key, col_data in columns:
         rows_raw = (col_data or {}).get("rows", {}) or {}

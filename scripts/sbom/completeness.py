@@ -194,8 +194,42 @@ def _component_gaps(component: dict[str, Any], required: list[str]) -> list[str]
     return gaps
 
 
-def check_completeness(doc: dict[str, Any], rules: dict[str, Any]) -> dict[str, Any]:
+def _declared_unknown(component: dict[str, Any], field: str) -> bool:
+    """True when the component says, with a reason, that it could not observe `field` (req-cicd-sbom-33-5)."""
+    return _property(component, f"tap:{field}:status") == "not-observed" and bool(
+        _property(component, f"tap:{field}:reason")
+    )
+
+
+def _attribute_gaps(component: dict[str, Any], required: list[str]) -> tuple[list[str], list[str]]:
+    """(gap classes, declared-unknown fields) of one component for the attribute rules of its ecosystem."""
+    gaps: list[str] = []
+    declared: list[str] = []
+    for requirement in required:
+        if requirement == "licenses-or-declared-unknown":
+            if component.get("licenses"):
+                continue
+            (declared if _declared_unknown(component, "licenses") else gaps).append(
+                "licenses-declared-unknown" if _declared_unknown(component, "licenses") else "licenses"
+            )
+        elif requirement == "architecture-or-declared-unknown":
+            if _property(component, "tap:architecture"):
+                continue
+            (declared if _declared_unknown(component, "architecture") else gaps).append(
+                "architecture-declared-unknown" if _declared_unknown(component, "architecture") else "architecture"
+            )
+    return gaps, declared
+
+
+def check_completeness(
+    doc: dict[str, Any], rules: dict[str, Any], *, enforce_attributes: bool = False
+) -> dict[str, Any]:
     """Check a CycloneDX document against the rules; return the verdict and its evidence.
+
+    Two tiers. `require` are the MATCHING fields a scanner needs; a gap there is always `thin`. `require_attributes` are
+    the inventory attributes the grid reads (license, architecture): a gap is reported in `attribute_gaps`, and makes
+    the verdict `thin` only when `enforce_attributes` is set, which image generation does (req-cicd-sbom-33-7, -33-8)
+    and a rescan of an older published revision does not.
 
     Pure function: no I/O. The result carries `verdict`, `components`, `counts` (gap class to number of
     components), `examples` (gap class to up to MAX_EXAMPLES labels) and `candidates` (components carrying
@@ -209,6 +243,8 @@ def check_completeness(doc: dict[str, Any], rules: dict[str, Any]) -> dict[str, 
     raw = doc.get("components")
     components = _walk_components([] if raw is None else raw)
     gaps: dict[str, list[str]] = {}
+    attribute_gaps: dict[str, list[str]] = {}
+    declared_unknown: dict[str, dict[str, list[str]]] = {}
 
     def add(gap_class: str, label: str) -> None:
         gaps.setdefault(gap_class, []).append(label)
@@ -236,6 +272,24 @@ def check_completeness(doc: dict[str, Any], rules: dict[str, Any]) -> dict[str, 
             continue
         for gap_class in _component_gaps(component, ecosystems[ecosystem]["require"]):
             add(gap_class, _label(component))
+        missing, declared = _attribute_gaps(component, ecosystems[ecosystem].get("require_attributes", []))
+        for gap_class in missing:
+            attribute_gaps.setdefault(gap_class, []).append(_label(component))
+        for field in declared:
+            declared_unknown.setdefault(ecosystem, {}).setdefault(field.removesuffix("-declared-unknown"), []).append(
+                _label(component)
+            )
+
+    for ecosystem, fields in declared_unknown.items():
+        limit = ecosystems[ecosystem].get("declared_unknown_limit", 0)
+        for field, labels in fields.items():
+            if len(labels) > limit:
+                attribute_gaps.setdefault("declared-unknown-over-limit", []).append(
+                    f"{ecosystem}: {field} unknown on {len(labels)} components, limit {limit}"
+                )
+    if enforce_attributes:
+        for gap_class, labels in attribute_gaps.items():
+            gaps.setdefault(gap_class, []).extend(labels)
 
     candidates = sum(1 for c in components if _property(c, "syft:cpe23"))
     return {
@@ -244,6 +298,15 @@ def check_completeness(doc: dict[str, Any], rules: dict[str, Any]) -> dict[str, 
         "counts": {gap_class: len(labels) for gap_class, labels in sorted(gaps.items())},
         "examples": {gap_class: labels[:MAX_EXAMPLES] for gap_class, labels in sorted(gaps.items())},
         "candidates": candidates,
+        "attributes_enforced": enforce_attributes,
+        "attribute_gaps": {gap_class: len(labels) for gap_class, labels in sorted(attribute_gaps.items())},
+        "attribute_examples": {
+            gap_class: labels[:MAX_EXAMPLES] for gap_class, labels in sorted(attribute_gaps.items())
+        },
+        "declared_unknown": {
+            ecosystem: {field: len(labels) for field, labels in sorted(fields.items())}
+            for ecosystem, fields in sorted(declared_unknown.items())
+        },
     }
 
 
@@ -267,6 +330,15 @@ def annotate(doc: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
             {"name": f"{PROPERTY_PREFIX}:examples", "value": json.dumps(result["examples"], sort_keys=True)},
             {"name": f"{PROPERTY_PREFIX}:candidates", "value": str(result["candidates"])},
             {"name": f"{PROPERTY_PREFIX}:components", "value": str(result["components"])},
+            {"name": f"{PROPERTY_PREFIX}:attributes", "value": json.dumps(result["attribute_gaps"], sort_keys=True)},
+            {
+                "name": f"{PROPERTY_PREFIX}:attributes-enforced",
+                "value": "true" if result["attributes_enforced"] else "false",
+            },
+            {
+                "name": f"{PROPERTY_PREFIX}:declared-unknown",
+                "value": json.dumps(result["declared_unknown"], sort_keys=True),
+            },
         ]
     added.append({"name": f"{PROPERTY_PREFIX}:coverage", "value": COVERAGE})
     metadata["properties"] = kept + added
@@ -285,6 +357,16 @@ def summary_markdown(result: dict[str, Any]) -> str:
         for gap_class, count in result["counts"].items():
             examples = "; ".join(_cell(label) for label in result["examples"][gap_class])
             lines.append(f"| `{gap_class}` | {count} | {examples} |")
+    if result["attribute_gaps"] and not result["attributes_enforced"]:
+        notes = "; ".join(f"{_cell(k)}: {v}" for k, v in result["attribute_gaps"].items())
+        lines += ["", f"Attribute gaps, reported and not enforced at intake: {notes}."]
+    if result["declared_unknown"]:
+        declared = "; ".join(
+            f"{_cell(eco)} {_cell(field)}: {n}"
+            for eco, fields in result["declared_unknown"].items()
+            for field, n in fields.items()
+        )
+        lines += ["", f"Declared unknown (with a reason): {declared}."]
     lines += ["", COVERAGE]
     return "\n".join(lines) + "\n"
 
@@ -302,6 +384,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write the document with the tap:completeness properties to stdout",
     )
+    parser.add_argument(
+        "--enforce-attributes",
+        action="store_true",
+        help="make a missing license or architecture (not declared unknown) a thin verdict, as image generation does",
+    )
     args = parser.parse_args(argv)
 
     doc: dict[str, Any] | None = None
@@ -310,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(loaded, dict):
             raise ValueError("top level is not an object")
         doc = loaded
-        result = check_completeness(doc, load_rules())
+        result = check_completeness(doc, load_rules(), enforce_attributes=args.enforce_attributes)
     except (OSError, ValueError, RulesError, MalformedDocument, KeyError, TypeError, AttributeError) as exc:
         result = {"verdict": "not-observable", "reason": f"{type(exc).__name__}: {exc}"}
 

@@ -203,7 +203,10 @@ class TestInfoWindowRowLinkSchema:
 
     def test_row_url_template_accepted(self):
         d = _minimal_v1_definition_with_badge_set(
-            {"search_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde", "row_url_template": "/zizmor/finding?finding_id={finding_id}"}
+            {
+                "search_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde",
+                "row_url_template": "/zizmor/finding?finding_id={finding_id}",
+            }
         )
         jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
 
@@ -220,3 +223,143 @@ class TestInfoWindowRowLinkSchema:
         )
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
+
+
+_SEARCH_ID = "01a0debd-da2e-7547-8165-4d5cfe1b8bde"
+
+
+def _columns_definition(columns: Any) -> dict[str, Any]:
+    return _minimal_v1_definition_with_badge_set({"search_id": _SEARCH_ID, "columns": columns})
+
+
+class TestInfoWindowColumnsSchema:
+    """`info_window.columns` on a projection's badge-set (req-viz-info-window-columns)."""
+
+    @pytest.mark.spec("req-viz-info-window-columns-1")
+    def test_columns_accepted(self):
+        d = _columns_definition(
+            [
+                {"field": "id", "label": "ID", "link": True},
+                {"field": "cvss", "label": "CVSS", "align": "right", "format": "number"},
+                {"field": "title", "label": "Title", "align": "left", "format": "text"},
+            ]
+        )
+        jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
+
+    @pytest.mark.spec("req-viz-info-window-columns-1")
+    def test_columns_minimal_and_maximum_length_accepted(self):
+        jsonschema.validate(_columns_definition([{"field": "a", "label": "A"}]), _PROJECTION_DEFINITION_SCHEMA)
+        eight = [{"field": f"f{i}", "label": f"F{i}"} for i in range(8)]
+        jsonschema.validate(_columns_definition(eight), _PROJECTION_DEFINITION_SCHEMA)
+
+    @pytest.mark.spec("req-viz-info-window-columns-1")
+    def test_columns_may_sit_beside_row_url_template(self):
+        d = _minimal_v1_definition_with_badge_set(
+            {
+                "search_id": _SEARCH_ID,
+                "row_url_template": "/finding?entity_id={finding_id}",
+                "columns": [{"field": "id", "label": "ID", "link": True}],
+            }
+        )
+        jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
+
+    @pytest.mark.spec("req-viz-info-window-columns-14")
+    def test_percent_format_and_decimals(self):
+        for decimals in (0, 2, 6):
+            jsonschema.validate(
+                _columns_definition([{"field": "p", "label": "P", "format": "percent", "decimals": decimals}]),
+                _PROJECTION_DEFINITION_SCHEMA,
+            )
+        for bad in ({"decimals": 7}, {"decimals": -1}, {"decimals": 1.5}):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(
+                    _columns_definition([{"field": "p", "label": "P", "format": "percent", **bad}]),
+                    _PROJECTION_DEFINITION_SCHEMA,
+                )
+
+    @pytest.mark.spec("req-viz-info-window-columns-16")
+    def test_tone_steps_and_zero_tone(self):
+        steps = [{"min": 7, "tone": "bad"}, {"min": 4, "tone": "warn"}, {"min": 0.0001, "tone": "info"}]
+        jsonschema.validate(
+            _columns_definition(
+                [{"field": "c", "label": "C", "format": "number", "tone_steps": steps, "zero_tone": "muted"}]
+            ),
+            _PROJECTION_DEFINITION_SCHEMA,
+        )
+
+    @pytest.mark.spec("req-viz-info-window-columns-16")
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"tone_steps": []},
+            {"tone_steps": [{"min": 1, "tone": "purple"}]},
+            {"tone_steps": [{"tone": "bad"}]},
+            {"tone_steps": [{"min": "7", "tone": "bad"}]},
+            {"tone_steps": [{"min": 1, "tone": "bad", "extra": 1}]},
+            {"zero_tone": "purple"},
+        ],
+    )
+    def test_bad_tone_steps_are_rejected(self, bad):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(
+                _columns_definition([{"field": "c", "label": "C", **bad}]), _PROJECTION_DEFINITION_SCHEMA
+            )
+
+    @pytest.mark.spec("req-viz-info-window-columns-11")
+    def test_nowrap_accepted_true_and_false(self):
+        for value in (True, False):
+            jsonschema.validate(
+                _columns_definition([{"field": "id", "label": "ID", "nowrap": value}]),
+                _PROJECTION_DEFINITION_SCHEMA,
+            )
+
+    @pytest.mark.spec("req-viz-info-window-columns-2")
+    @pytest.mark.parametrize(
+        "columns",
+        [
+            [],
+            [{"field": f"f{i}", "label": f"F{i}"} for i in range(9)],
+            [{"label": "ID"}],
+            [{"field": "id"}],
+            [{"field": "", "label": "ID"}],
+            [{"field": "id", "label": ""}],
+            [{"field": "id", "label": "ID", "align": "center"}],
+            [{"field": "id", "label": "ID", "format": "currency"}],
+            [{"field": "id", "label": "ID", "link": "yes"}],
+            [{"field": "id", "label": "ID", "width": 80}],
+            [{"field": "id", "label": "ID", "nowrap": "yes"}],
+            "id",
+            [["id", "ID"]],
+        ],
+    )
+    def test_columns_rejected(self, columns):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(_columns_definition(columns), _PROJECTION_DEFINITION_SCHEMA)
+
+    @pytest.mark.spec("req-viz-info-window-columns-2")
+    def test_every_columns_schema_key_is_described(self):
+        """Every key of the columns shape carries a description (JSON structures require descriptions)."""
+        found = _find_schema_node(_PROJECTION_DEFINITION_SCHEMA, "columns")
+        assert found is not None
+        assert found.get("description")
+        for key, node in found["items"]["properties"].items():
+            assert node.get("description"), f"columns item key {key!r} has no description"
+
+
+def _find_schema_node(node: Any, key: str) -> dict[str, Any] | None:
+    """Depth-first search for the `properties[key]` node whose parent also declares `search_id`."""
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict) and "search_id" in props and key in props:
+            found: dict[str, Any] = props[key]
+            return found
+        for v in node.values():
+            hit = _find_schema_node(v, key)
+            if hit is not None:
+                return hit
+    elif isinstance(node, list):
+        for v in node:
+            hit = _find_schema_node(v, key)
+            if hit is not None:
+                return hit
+    return None

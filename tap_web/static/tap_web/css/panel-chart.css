@@ -129,3 +129,18 @@
   border: 0;
 }
 .tap-chart__data table { border-collapse: collapse; }
+
+/* A click-through chart lists a real link per clickable row in the data table (the canvas is not focusable).
+   Visually hidden until a link inside takes keyboard focus, then shown in place so the reader sees where Tab is. */
+.tap-chart__data:focus-within {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0.5rem 0 0;
+  overflow: auto;
+  clip: auto;
+  max-height: 14rem;
+  font-size: 0.85rem;
+  color: var(--tap-chart-text);
+}
+.tap-chart__data a:focus-visible { outline: 2px solid var(--tap-chart-accent-1); outline-offset: 2px; }

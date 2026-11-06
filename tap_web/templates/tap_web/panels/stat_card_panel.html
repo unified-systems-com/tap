@@ -12,20 +12,42 @@ browser (localtime.js / stat-cards.js) and read the exact ISO value without JS.
     {% else %}
     <ul class="tap-statcards" aria-label="{{ panel.name }}">
         {% for card in cards %}
-        <li class="tap-statcard tap-statcard--{{ card.tone }}" data-tap-tone="{{ card.tone }}">
+        <li class="tap-statcard tap-statcard--{{ card.tone }}{% if card.layout == "figure_right" %} tap-statcard--figure-right{% endif %}{% if card.title_bold %} tap-statcard--title-bold{% endif %}{% if card.tone_text %} tap-statcard--tone-text{% endif %}" data-tap-tone="{{ card.tone }}"{% if card.zero %} data-tap-zero="true"{% endif %}>
+            {% if card.layout == "figure_right" %}
+            <div class="tap-statcard__head">
+                {% if card.title %}<h3 class="tap-statcard__title">{% include "tap_web/panels/_stat_card_cell.html" with cell=card.title %}</h3>{% endif %}
+                <p class="tap-statcard__value">{% include "tap_web/panels/_stat_card_cell.html" with cell=card.value %}</p>
+                {% if card.header_line %}<div class="tap-statcard__headline">{% include "tap_web/panels/_stat_card_cell.html" with cell=card.header_line.cell %}</div>{% endif %}
+                {% if card.unit and card.value.kind != "state" %}<span class="tap-statcard__unit">{{ card.unit }}</span>{% endif %}
+            </div>
+            {% else %}
             {% if card.title %}<h3 class="tap-statcard__title">{% include "tap_web/panels/_stat_card_cell.html" with cell=card.title %}</h3>{% endif %}
             <p class="tap-statcard__value">{% include "tap_web/panels/_stat_card_cell.html" with cell=card.value %}{% if card.unit and card.value.kind != "state" %} <span class="tap-statcard__unit">{{ card.unit }}</span>{% endif %}</p>
+            {% endif %}
             {% if card.tone_label %}<p class="tap-statcard__tone"><span class="tap-statcard__tone-mark" aria-hidden="true"></span>{{ card.tone_label }}</p>{% endif %}
-            {% if card.lines %}
+            {% for group in card.line_groups %}
+            {% if group.labelled %}
             <dl class="tap-statcard__lines">
-                {% for line in card.lines %}
-                <div class="tap-statcard__line">
+                {% for line in group.lines %}
+                <div class="tap-statcard__line{% if line.cell.kind == "table" %} tap-statcard__line--table{% endif %}">
                     <dt>{{ line.label }}</dt>
                     <dd>{% include "tap_web/panels/_stat_card_cell.html" with cell=line.cell %}</dd>
                 </div>
                 {% endfor %}
             </dl>
+            {% elif group.captioned %}
+            {% for line in group.lines %}
+            <div class="tap-statcard__captioned">
+                <p class="tap-statcard__caption">{{ line.label }}</p>
+                <div class="tap-statcard__text">{% include "tap_web/panels/_stat_card_cell.html" with cell=line.cell %}</div>
+            </div>
+            {% endfor %}
+            {% else %}
+            {% for line in group.lines %}
+            <div class="tap-statcard__text">{% include "tap_web/panels/_stat_card_cell.html" with cell=line.cell %}</div>
+            {% endfor %}
             {% endif %}
+            {% endfor %}
         </li>
         {% endfor %}
     </ul>

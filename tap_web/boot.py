@@ -16,6 +16,7 @@ Contract: ``tap_web/specs/spec-web-page.md`` ``req-web-page-landing``.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -85,3 +86,88 @@ def landing_from_section(section: dict[str, Any] | None) -> dict[str, Any] | Non
 def landing_for_settings(profile_id: str) -> dict[str, Any] | None:
     """``TAP_WEB_LANDING`` for ``tap/settings.py``: the resolved pair with provenance, or None."""
     return landing_from_section(read_web_section(profile_id) or None)
+
+
+# --- Web branding (req-boot-web-branding) -------------------------------------------------
+#
+# The profile's ``web.branding`` block — ``{"name": ..., "glyph": {"plugin": ..., "path": ...}}`` —
+# rides the same env > profile ladder as the landing pair. The ladder keys one flat name per
+# value, so the nested block is flattened to the double-underscore spelling the env mapping
+# already uses: ``TAP_BOOT_WEB__BRANDING__NAME`` / ``__GLYPH_PLUGIN`` / ``__GLYPH_PATH``.
+
+KEY_BRAND_NAME = "branding__name"
+KEY_BRAND_GLYPH_PLUGIN = "branding__glyph_plugin"
+KEY_BRAND_GLYPH_PATH = "branding__glyph_path"
+
+_PLUGIN_SLUG = re.compile(r"[a-z][a-z0-9_]*")
+# One relative path of safe segments ending in .svg. A segment may not start with a dot, which
+# excludes ``..`` and hidden files; the character class excludes backslash, colon (URL scheme,
+# drive letter) and whitespace.
+_GLYPH_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*\.svg")
+
+
+def glyph_pointer_problem(plugin: str, path: str) -> str | None:
+    """Why ``plugin`` + ``path`` is not an acceptable glyph pointer, or None when it is.
+
+    A glyph is a plugin slug plus a path relative to that plugin's static directory; never a URL,
+    an absolute path or a path containing ``..`` (req-boot-web-branding-3).
+    """
+    if not _PLUGIN_SLUG.fullmatch(plugin):
+        return f"glyph plugin {plugin!r} is not a plugin slug"
+    if not _GLYPH_PATH.fullmatch(path):
+        return f"glyph path {path!r} is not a relative .svg path (no URL, absolute path or '..')"
+    return None
+
+
+def _flatten_branding(section: dict[str, Any] | None) -> dict[str, Any] | None:
+    block = (section or {}).get("branding")
+    if not isinstance(block, dict):
+        return None
+    flat: dict[str, Any] = {}
+    if "name" in block:
+        flat[KEY_BRAND_NAME] = block["name"]
+    glyph = block.get("glyph")
+    if isinstance(glyph, dict):
+        if "plugin" in glyph:
+            flat[KEY_BRAND_GLYPH_PLUGIN] = glyph["plugin"]
+        if "path" in glyph:
+            flat[KEY_BRAND_GLYPH_PATH] = glyph["path"]
+    return flat
+
+
+def branding_from_section(section: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve ``web.branding`` through the env > profile ladder.
+
+    TAP-IMPLEMENTS: req-boot-web-branding@fb07fc9cf72f/15121e641706 (derivation) — the one place the
+        profile's ``web.branding`` block becomes effective values with provenance; the header (at
+        request time) and the boot's web phase both call it. The three ``TAP_BOOT_WEB__BRANDING__*``
+        variables win over the profile; the empty string counts as absent (resolve_var).
+
+    Returns ``{"name", "glyph_plugin", "glyph_path", "source": {<key>: env|profile|default}}``; an
+    absent value is None. Never raises: a non-string value is dropped (the schema is the strict guard).
+    """
+    flat = _flatten_branding(section)
+    out: dict[str, Any] = {"source": {}}
+    for field, key in (
+        ("name", KEY_BRAND_NAME),
+        ("glyph_plugin", KEY_BRAND_GLYPH_PLUGIN),
+        ("glyph_path", KEY_BRAND_GLYPH_PATH),
+    ):
+        resolved = resolve_var(SECTION, key, profile_section=flat, default=None)
+        value = resolved.value
+        if isinstance(value, str):
+            value = value.strip() or None
+        else:
+            value = None
+        out[field] = value
+        out["source"][field] = resolved.source if value is not None else "default"
+    return out
+
+
+def branding_for_profile(profile_id: str) -> dict[str, Any]:
+    """Resolved branding for ``boot/<profile_id>.boot.json`` plus the environment; settings-free.
+
+    The reader needs no Django and returns the defaults (all None), with a warning logged by
+    ``read_web_section``, on a bad file (req-boot-web-branding-5).
+    """
+    return branding_from_section(read_web_section(profile_id) or None)

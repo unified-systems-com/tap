@@ -23,15 +23,14 @@ Config schema:
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
 
 import jsonschema  # type: ignore[import-untyped]
 from django import forms
 from django.core.exceptions import ValidationError
 
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
+from tap_web.panels.row_url import ROW_URL_TEMPLATE_PATTERN, fill_row_url, is_same_origin_template
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -55,6 +54,24 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
             "type": "integer",
             "minimum": 1,
             "maximum": 500,
+        },
+        # The Rows selector ends with an "All (N)" entry by default. False drops
+        # it, so a table that must stay paged (a long list) cannot be asked for
+        # every row at once (req-web-stdpanel-table-config-29).
+        "show_all_rows": {
+            "description": (
+                "Whether the Rows (page size) selector offers an `All` entry. Default true. False omits it: the "
+                "table stays paged, and a stored or requested `All` falls back to `default_page_size`."
+            ),
+            "type": "boolean",
+        },
+        # Shown in place of Tabulator's generic "No results." when the table has no rows
+        # (req-web-stdpanel-table-config-30). Plain text, escaped.
+        "empty_text": {
+            "description": "Plain text shown when the table has no rows, in place of the generic `No results.`.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
         },
         # When true, render a quick-filter search box top-right of the table that
         # live-filters the loaded rows client-side (matches across all columns).
@@ -88,7 +105,16 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # a backslash as `/` when it parses a URL, so `/<TAB>/host` becomes `//host`.
         # `(?![\s\S])` is a true end of string (`$` also matches before a final
         # newline), in both Python's and ECMAScript's regex dialects.
-        "row_url_template": {"type": "string", "minLength": 2, "pattern": r"^/(?![/\\])[^\\\x00-\x20\x7f]*(?![\s\S])"},
+        "row_url_template": {"type": "string", "minLength": 2, "pattern": ROW_URL_TEMPLATE_PATTERN},
+        # Alternating row background (a stripe on every even row), from the theme's
+        # `--tap-table-stripe` tokens: light and dark values, text contrast-checked.
+        "striped": {
+            "description": (
+                "When true, every even row gets a subtle alternating background (the `--tap-table-stripe` theme "
+                "tokens, readable in light and dark). Default false: uniform rows."
+            ),
+            "type": "boolean",
+        },
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -157,9 +183,54 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         "column": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["field", "title"],
+            "required": ["title"],
+            # Exactly one way to name the value: `field` (dotted path), `field_path` (explicit segments) or
+            # `field_paths` (several explicit paths joined into one cell). `joiner` only goes with `field_paths`.
+            "oneOf": [{"required": ["field"]}, {"required": ["field_path"]}, {"required": ["field_paths"]}],
+            "dependentRequired": {"joiner": ["field_paths"]},
             "properties": {
                 "field": {"type": "string", "minLength": 1},
+                # An explicit path as an ARRAY of segments, for a key that itself contains a dot:
+                # ["dimensions", "dataclass.customer"] reads row.dimensions["dataclass.customer"]. Each
+                # segment is one key, never split. Use `field` instead for an ordinary dotted path.
+                "field_path": {
+                    "description": (
+                        "The value's location as an array of path segments, each one key even if it contains a "
+                        "dot (['dimensions', 'dataclass.customer']). Use instead of `field`, never with it."
+                    ),
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                # Several values in ONE cell: each item is a path as an array of segments (the `field_path`
+                # reading, own keys only), the non-empty values are joined with `joiner`, in the order given.
+                "field_paths": {
+                    "description": (
+                        "Several values in one cell: an array of paths, each an array of segments exactly as "
+                        "`field_path` (each one key even if it contains a dot, own keys only). The non-empty "
+                        "scalar values are joined with `joiner` in the order given; null, missing, blank text, "
+                        "lists and objects are skipped; when nothing is left the cell shows `empty_text`. Use "
+                        "instead of `field` and `field_path`, never with them."
+                    ),
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                },
+                "joiner": {
+                    "description": "The text between the values of a `field_paths` column. Default ', '.",
+                    "type": "string",
+                    "maxLength": 20,
+                },
+                # Text shown (plain, escaped) when the cell's value is null, missing or an empty string,
+                # with any formatter. Absent: the formatter's own rendering of an empty value.
+                "empty_text": {
+                    "description": (
+                        "Plain text shown in place of a null, missing or empty-string value, with any formatter."
+                    ),
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                },
                 "title": {"type": "string"},
                 "width": {"type": "integer", "minimum": 20, "maximum": 800},
                 "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -176,25 +247,61 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                         "passFailBadge",
                         "conclusionBadge",
                         "toneBadge",
+                        "toneThreshold",
+                        "percent",
                         "capitalized",
                         "externalLink",
                         "link",
                         "elapsed",
                         "iconMap",
+                        "entityType",
                         "baselineRatio",
                         "baselineN",
                         "sparkline",
                         "tailSegment",
                         "painBadge",
                         "arrayCount",
+                        "linkList",
                     ],
                 },
                 # Per-formatter parameters, handed to the JS formatter as
                 # Tabulator formatterParams. Free-form by design: each
                 # formatter documents its own keys in the spec (link:
-                # href_field | href_template, external; elapsed: start, end;
-                # iconMap: icons, labels, show_text).
-                "formatter_params": {"type": "object"},
+                # href_field | href_template | value_href_template, external;
+                # elapsed: start, end; iconMap: icons, labels, show_text;
+                # entityType: show, tone (types is server-owned);
+                # toneThreshold: steps, zero_tone, decimals; percent: decimals).
+                "formatter_params": {
+                    "description": (
+                        "Per-formatter parameters, handed to the formatter; each formatter documents its keys in "
+                        "the spec. `style` applies to every link formatter (link, externalLink, linkList)."
+                    ),
+                    "type": "object",
+                    "properties": {
+                        "style": {
+                            "description": (
+                                "Link appearance. `default` (absent): accent colour, underlined, highlighted on "
+                                "hover. `plain`: the cell's own text colour, no underline, no hover highlight; "
+                                "still clickable, with the keyboard focus ring."
+                            ),
+                            "type": "string",
+                            "enum": ["default", "plain"],
+                        },
+                        # entityType (req-web-stdpanel-table-config-32): what to show and in which tone. `types`
+                        # is filled by the server from the entity-type catalog, so an author cannot supply it.
+                        "show": {
+                            "description": "entityType only: the type's glyph, its name as a pill, or both.",
+                            "type": "string",
+                            "enum": ["icon", "name", "both"],
+                        },
+                        "tone": {
+                            "description": "entityType only: the name pill's colour. Default muted.",
+                            "type": "string",
+                            "enum": ["good", "bad", "warn", "muted"],
+                        },
+                        "types": False,
+                    },
+                },
                 # A named sorter for the column. `severityRank` orders severity words
                 # (critical, high, medium, low and the like) by rank, not alphabetically.
                 "sorter": {"type": "string", "enum": ["severityRank"]},
@@ -203,10 +310,27 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                 # pop-over on hover. Plain text.
                 "header_tooltip": {"type": "string", "maxLength": 600},
                 "headerSort": {"type": "boolean"},
+                # Wrap a long text value onto several lines (the row grows) instead of an ellipsis
+                # (req-web-stdpanel-table-config-31).
+                "wrap": {
+                    "description": (
+                        "true wraps a long text value onto several lines and lets the row grow to fit it, instead of "
+                        "cutting it with an ellipsis. Default false."
+                    ),
+                    "type": "boolean",
+                },
                 # Horizontal alignment of the cell AND its heading, so a value
                 # sits under its title (a one-row identity table reads as
-                # label-over-value). Default is Tabulator's left.
-                "align": {"type": "string", "enum": ["left", "center", "right"]},
+                # label-over-value). Default left; cells are always vertically
+                # centred (req-web-stdpanel-table-config-25).
+                "align": {
+                    "description": (
+                        "Horizontal alignment of the cell and its heading together, so a value sits under its "
+                        "title. Default left. Every cell is vertically centred whatever this says."
+                    ),
+                    "type": "string",
+                    "enum": ["left", "center", "right"],
+                },
             },
         },
     },
@@ -247,6 +371,74 @@ def _validate_table_config(config: dict[str, Any]) -> None:
         jsonschema.validate(instance=config, schema=TABLE_CONFIG_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"config": [exc.message]}) from exc
+
+
+def _column_value(row: Any, spec: dict[str, Any]) -> Any:
+    """Read a column's value from a row: ``field`` (dotted) or ``field_path`` (one key per segment)."""
+    segments = spec.get("field_path") or str(spec.get("field") or "").split(".")
+    cur = row
+    for segment in segments:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(segment)
+    return cur
+
+
+def _entity_type_catalog(slugs: set[str]) -> dict[str, dict[str, str]]:
+    """Display metadata for entity-type slugs, from the catalog the plugin loader writes.
+
+    Returns ``{slug: {"name": str, "icon": str}}`` for every slug the catalog knows. ``name`` is empty when the
+    model published no ``ENTITY_NAME`` (the loader then stores the slug itself), ``icon`` is empty when the type
+    published no ``ENTITY_ICON`` or its file is missing. A slug the catalog does not know is simply absent.
+    The icon address is the registry's own static URL (``resolve_icon_url``), never a row value.
+    """
+    from tap_grid.icon import resolve_icon_url
+    from tap_grid.models import EntityType
+
+    if not slugs:
+        return {}
+    return {
+        et.slug: {
+            "name": "" if et.name == et.slug else et.name,
+            "icon": resolve_icon_url(et) or "",
+        }
+        for et in EntityType.objects.filter(slug__in=slugs)
+    }
+
+
+def _with_entity_types(columns: list[dict[str, Any]] | None, rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Fill ``formatter_params.types`` on every ``entityType`` column from the entity-type catalog.
+
+    The columns are copied, never mutated: ``columns`` is the panel's stored config. One catalog query covers
+    every such column of the page of rows.
+    """
+    if not columns:
+        return columns
+
+    def leaves(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for spec in specs:
+            out.extend(leaves(spec["columns"]) if "columns" in spec else [spec])
+        return out
+
+    wanted = [spec for spec in leaves(columns) if spec.get("formatter") == "entityType"]
+    if not wanted:
+        return columns
+    slugs_by_column: dict[int, set[str]] = {}
+    for spec in wanted:
+        values = (_column_value(row, spec) for row in rows)
+        slugs_by_column[id(spec)] = {value for value in values if isinstance(value, str) and value}
+    catalog = _entity_type_catalog(set().union(*slugs_by_column.values()))
+
+    def fill(spec: dict[str, Any]) -> dict[str, Any]:
+        if "columns" in spec:
+            return {**spec, "columns": [fill(child) for child in spec["columns"]]}
+        if spec.get("formatter") != "entityType":
+            return spec
+        types = {slug: catalog[slug] for slug in slugs_by_column[id(spec)] if slug in catalog}
+        return {**spec, "formatter_params": {**(spec.get("formatter_params") or {}), "types": types}}
+
+    return [fill(spec) for spec in columns]
 
 
 class TablePanelEditForm(forms.Form):
@@ -342,7 +534,8 @@ class TablePanelType:
 
         # page_size=0 means "show all" (passed by the JS selector).
         raw_ps = request.GET.get("page_size")
-        if raw_ps is not None and raw_ps == "0":
+        show_all = config.get("show_all_rows", True)
+        if raw_ps is not None and raw_ps == "0" and show_all:
             page_size = 0  # sentinel: no limit
         else:
             page_size = _safe_int(raw_ps, default_ps)
@@ -398,7 +591,7 @@ class TablePanelType:
             total_count = result.get("info", {}).get("total_count", len(nodes))
 
         showing = len(nodes)
-        page_size_options = _build_page_size_options(total_count, page_size)
+        page_size_options = _build_page_size_options(total_count, page_size, show_all=show_all)
 
         meta: dict[str, Any] = {
             "total_count": total_count,
@@ -417,8 +610,10 @@ class TablePanelType:
             "table_mode": table_mode,
             "table_meta": meta,
             "table_search": search,
-            "table_columns": custom_columns,
+            "table_columns": _with_entity_types(custom_columns, nodes),
             "table_height": config.get("height"),
+            "table_striped": bool(config.get("striped")),
+            "table_empty_text": config.get("empty_text"),
             "table_refresh_seconds": config.get("refresh_seconds"),
             "table_group_by": group_by,
             "table_initial_sort": config.get("initial_sort"),
@@ -571,45 +766,40 @@ def _alias_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"field": alias, "title": alias, "headerSort": True} for alias in rows[0]] if rows else []
 
 
-_PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_]+)\}")
-
-
 def _with_row_urls(rows: list[dict[str, Any]], template: str | None) -> list[dict[str, Any]]:
     """Set each projection row's ``_url`` from ``row_url_template``, and from nothing else.
 
     ``_url`` is the key the client's raw mode navigates by, so in projection
     mode only the panel's own template may set it: a search that RETURNs
     ``… AS _url`` has that alias dropped, on every row, template or not.
-    Each ``{alias}`` placeholder takes the row's value, URL-encoded as one
-    path segment or query value (nothing it contains can change the URL's
-    shape). A placeholder whose value is absent or empty leaves the row with
-    no link — a half-built URL is worse than none. Rows are copied, never
-    mutated: the envelope belongs to the search layer.
+    The fill and the same-origin rule are the shared ``fill_row_url``
+    (``tap_web.panels.row_url``, also the Chart panel's ``click``): a
+    placeholder whose value is absent or empty leaves the row with no link.
+    Rows are copied, never mutated: the envelope belongs to the search layer.
     """
     # The schema is enforced only by the editor's save; a grift-seeded config
     # reaches here unvalidated, so the same-origin rule is applied again at use.
-    if template and not re.search(TABLE_CONFIG_SCHEMA["properties"]["row_url_template"]["pattern"], template):
+    if template and not is_same_origin_template(template):
         logger.warning("[5b1e] Table panel row_url_template is not a same-origin path; rows get no link.")
         template = None
-    aliases = _PLACEHOLDER.findall(template) if template else []
     out: list[dict[str, Any]] = []
     for row in rows:
         row = {k: v for k, v in row.items() if k != "_url"}
-        values = {alias: row.get(alias) for alias in aliases}
-        if template and all(v is not None and v != "" for v in values.values()):
-            url = template
-            for alias, value in values.items():
-                url = url.replace("{" + alias + "}", quote(str(value), safe=""))
+        url = fill_row_url(template, row)
+        if url is not None:
             row["_url"] = url
         out.append(row)
     return out
 
 
-def _build_page_size_options(total_count: int, current_page_size: int) -> list[dict[str, Any]]:
+def _build_page_size_options(
+    total_count: int, current_page_size: int, *, show_all: bool = True
+) -> list[dict[str, Any]]:
     """Build dynamic page-size selector options based on total row count.
 
     Only includes step values that are less than total_count.
-    Always appends an "All" option (value=0) representing the full set.
+    Appends an "All" option (value=0) representing the full set unless ``show_all`` is false
+    (``show_all_rows: false``; req-web-stdpanel-table-config-29).
     """
     options: list[dict[str, Any]] = []
     for step in _PAGE_SIZE_STEPS:
@@ -617,8 +807,9 @@ def _build_page_size_options(total_count: int, current_page_size: int) -> list[d
             options.append({"value": step, "label": str(step), "selected": current_page_size == step})
 
     # "All" option — selected when page_size is 0 or >= total_count.
-    all_selected = current_page_size == 0 or current_page_size >= total_count
-    options.append({"value": 0, "label": f"All ({total_count})", "selected": all_selected})
+    if show_all:
+        all_selected = current_page_size == 0 or current_page_size >= total_count
+        options.append({"value": 0, "label": f"All ({total_count})", "selected": all_selected})
 
     # If current_page_size doesn't match any option, mark the closest as selected
     # (this handles the initial load when localStorage hasn't been set yet).

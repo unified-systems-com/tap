@@ -4,6 +4,7 @@ TAP Core Models — Entity, Edge, EntityType, BaseModel, User, Batch, BatchEvent
 Design philosophy: See DESIGN.md in this directory.
 """
 
+import datetime
 import hashlib
 import inspect
 import uuid
@@ -1053,6 +1054,10 @@ class BaseModel(models.Model):
 
             if validation == "jsonschema":
                 try:
+                    # A loaded or saved row holds dates as date/datetime objects, which JSON Schema
+                    # (strings only) cannot check: validate the ISO text the payload carried.
+                    if isinstance(field_value, datetime.date):
+                        field_value = field_value.isoformat()
                     jsonschema.validate(instance=field_value, schema=entry["schema"])
                 except jsonschema.ValidationError as exc:
                     errors.setdefault(field_name, []).append(exc.message)

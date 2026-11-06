@@ -25,10 +25,12 @@ from tap_grid.gryphon.ast_nodes import (
     IsNullComparison,
     KeyStep,
     LimitClause,
+    LookupClause,
     MatchClause,
     NodePattern,
     NotExistsClause,
     NotPred,
+    NowRef,
     ObservationComparison,
     OptionalMatchClause,
     OrderByClause,
@@ -39,6 +41,8 @@ from tap_grid.gryphon.ast_nodes import (
     PathPattern,
     ReturnClause,
     ReturnItem,
+    TemporalComparison,
+    TemporalOffset,
     WhereClause,
     WildcardStep,
 )
@@ -55,6 +59,14 @@ _PARSER = Lark(
     parser="earley",
     ambiguity="resolve",
     propagate_positions=False,
+)
+
+
+_TEMPORAL_OPS = ("<", "<=", ">", ">=")
+
+_ARITHMETIC_REFUSAL = (
+    "Arithmetic in {where} is not supported: a date-time offset is available only as a WHERE comparison, "
+    "e.g. WHERE t.data.opened_at + hours(12) < now()."
 )
 
 
@@ -113,6 +125,7 @@ class _ASTTransformer(Transformer):
         not_exists_clauses = [c for c in clauses if isinstance(c, NotExistsClause)]
         order_by_clauses = [c for c in clauses if isinstance(c, OrderByClause)]
         limit_clauses = [c for c in clauses if isinstance(c, LimitClause)]
+        lookup_clauses = [c for c in clauses if isinstance(c, LookupClause)]
 
         if not match_clauses:
             raise GryphonParseError("At least one MATCH clause is required.")
@@ -134,7 +147,7 @@ class _ASTTransformer(Transformer):
         where = where_clauses[0] if where_clauses else None
         ret = return_clauses[0] if return_clauses else ReturnClause(items=None)
 
-        return GryphonAST(
+        ast = GryphonAST(
             match_clauses=tuple(match_clauses),
             where_clause=where,
             return_clause=ret,
@@ -142,7 +155,10 @@ class _ASTTransformer(Transformer):
             order_by=order_by_clauses[0] if order_by_clauses else None,
             limit=limit_clauses[0] if limit_clauses else None,
             optional_match_clauses=tuple(optional_match_clauses),
+            lookup_clauses=tuple(lookup_clauses),
         )
+        _validate_lookups(ast)
+        return ast
 
     def clause(self, inner: Any) -> Any:
         return inner
@@ -265,7 +281,17 @@ class _ASTTransformer(Transformer):
         return int(lo), int(hi)
 
     def inline_props(self, *pairs: Any) -> dict[str, Any]:
-        return dict(pairs)
+        # Preserve apply-or-reject before map reduction and AST param discovery:
+        # dict(pairs) alone would erase the first predicate (and its $param).
+        props: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in props:
+                raise GryphonParseError(
+                    f"Duplicate inline property key {key!r}. Each key must appear once; "
+                    "use explicit WHERE predicates joined with AND for repeated constraints."
+                )
+            props[key] = value
+        return props
 
     def prop_pair(self, name: Token, value: Any) -> tuple[str, Any]:
         return str(name), value
@@ -329,6 +355,44 @@ class _ASTTransformer(Transformer):
 
     def value_list(self, *values: Any) -> tuple[Any, ...]:
         return values
+
+    # -- LOOKUP / temporal offset (req-grid-traversal-lang-temporal-offset) --
+
+    def lookup_clause(self, variable: Token, label: Token, props: dict[str, Any]) -> LookupClause:
+        # _LOOKUP_KW is discarded; the two NAME children are the variable then the label.
+        return LookupClause(variable=str(variable), label=str(label), props=props)
+
+    def offset_add(self, base: FieldPath, hours: Any) -> TemporalOffset:
+        return TemporalOffset(base=base, sign="+", hours=hours)
+
+    def offset_sub(self, base: FieldPath, hours: Any) -> TemporalOffset:
+        return TemporalOffset(base=base, sign="-", hours=hours)
+
+    def hours_term(self, arg: Any) -> Any:
+        # _HOURS_KW is discarded; the child is a FieldPath, an INT token or a ParamRef.
+        if isinstance(arg, Token):
+            return int(arg)
+        return arg
+
+    def now_ref(self) -> NowRef:
+        return NowRef()
+
+    def temporal_operand(self, inner: Any) -> Any:
+        return inner
+
+    def temporal_comparison(self, offset: TemporalOffset, op: Token, operand: Any) -> TemporalComparison:
+        if str(op) not in _TEMPORAL_OPS:
+            raise GryphonParseError(
+                f"'{op}' is not supported on a temporal offset comparison: equality on a computed instant is "
+                f"not offered. Use one of {', '.join(_TEMPORAL_OPS)}."
+            )
+        return TemporalComparison(offset=offset, op=str(op), operand=operand)  # type: ignore[arg-type]
+
+    def arithmetic_item(self, *_parts: Any) -> Any:
+        raise GryphonParseError(_ARITHMETIC_REFUSAL.format(where="RETURN"))
+
+    def arithmetic_order_item(self, *_parts: Any) -> Any:
+        raise GryphonParseError(_ARITHMETIC_REFUSAL.format(where="ORDER BY"))
 
     # -- Field paths --
 
@@ -492,6 +556,109 @@ class _ASTTransformer(Transformer):
 
 
 _TRANSFORMER = _ASTTransformer()
+
+
+# ---------------------------------------------------------------------------
+# LOOKUP scope validation (req-grid-traversal-lang-temporal-offset, GRY-SEM-6)
+# ---------------------------------------------------------------------------
+
+
+def _predicate_leaves(pred: Any) -> Any:
+    """Yield every leaf of a predicate tree (AND / OR / NOT are not leaves)."""
+    if isinstance(pred, (AndPred, OrPred)):
+        yield from _predicate_leaves(pred.left)
+        yield from _predicate_leaves(pred.right)
+    elif isinstance(pred, NotPred):
+        yield from _predicate_leaves(pred.operand)
+    elif pred is not None:
+        yield pred
+
+
+def _match_variables(ast: GryphonAST) -> set[str]:
+    """Every variable a MATCH, OPTIONAL MATCH or NOT EXISTS block binds."""
+    names: set[str] = set()
+    pattern_groups: list[tuple[PathPattern, ...]] = [mc.patterns for mc in ast.match_clauses]
+    pattern_groups += [omc.patterns for omc in ast.optional_match_clauses]
+    pattern_groups += [nec.match_clause.patterns for nec in ast.not_exists_clauses]
+    for mc in (*ast.match_clauses, *(nec.match_clause for nec in ast.not_exists_clauses)):
+        if mc.path_var:
+            names.add(mc.path_var)
+    for patterns in pattern_groups:
+        for pattern in patterns:
+            # An unnamed labelled node binds its label as the variable (the executor's `v = variable or label`).
+            names.update(bound for n in pattern.nodes if (bound := n.variable or n.label))
+            names.update(e.variable for e in pattern.edges if e.variable)
+    return names
+
+
+def _validate_lookups(ast: GryphonAST) -> None:
+    """Refuse every LOOKUP misuse that is decidable from the parsed text alone.
+
+    A lookup variable is a scalar source, in scope ONLY as the root of an ``hours(...)``
+    argument in a WHERE temporal offset. Everywhere else it is refused naming the
+    variable, because a silent fall-through would read as a join the language does not
+    have. Checks that need the schema or the supplied inputs (types, row count, a use
+    that folds away at parameter resolution) live in the executor.
+    """
+    lookups = ast.lookup_clauses
+    leaves = list(_predicate_leaves(ast.where_clause.predicate if ast.where_clause else None))
+    for nec in ast.not_exists_clauses:
+        if nec.where_clause is not None:
+            leaves.extend(_predicate_leaves(nec.where_clause.predicate))
+    temporal = [leaf for leaf in leaves if isinstance(leaf, TemporalComparison)]
+
+    names = [lc.variable for lc in lookups]
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            raise GryphonParseError(f"LOOKUP variable '{name}' is declared more than once.")
+        seen.add(name)
+    clash = seen & _match_variables(ast)
+    if clash:
+        raise GryphonParseError(
+            f"LOOKUP variable '{sorted(clash)[0]}' is also bound by a MATCH. A lookup variable is a scalar "
+            "source and must have its own name."
+        )
+
+    def refuse(name: str, where: str) -> None:
+        raise GryphonParseError(
+            f"LOOKUP variable '{name}' cannot be used in {where}. It is in scope only inside "
+            "hours(...) in a WHERE temporal comparison, e.g. WHERE t.data.opened_at + hours("
+            f"{name}.data.<field>) < now()."
+        )
+
+    for leaf in leaves:
+        if isinstance(leaf, TemporalComparison):
+            if leaf.offset.base.variable in seen:
+                refuse(leaf.offset.base.variable, "the base of a temporal offset")
+            hours = leaf.offset.hours
+            if isinstance(hours, FieldPath) and hours.variable not in seen:
+                raise GryphonParseError(
+                    f"hours({hours.variable}...) must read a field of a LOOKUP variable; "
+                    f"'{hours.variable}' is not one. Declare it with LOOKUP {hours.variable} = (:label {{key: value}})."
+                )
+        elif hasattr(leaf, "field_path") and leaf.field_path.variable in seen:
+            refuse(leaf.field_path.variable, "a WHERE comparison")
+    for item in ast.return_clause.items or ():
+        path = item.path if isinstance(item, ReturnItem) else item.aggregate.argument
+        if path.variable in seen:
+            refuse(path.variable, "RETURN")
+    if ast.order_by is not None:
+        for order_item in ast.order_by.items:
+            if order_item.path.variable in seen:
+                refuse(order_item.path.variable, "ORDER BY")
+
+    used = {
+        leaf.offset.hours.variable
+        for leaf in temporal
+        if isinstance(leaf, TemporalComparison) and isinstance(leaf.offset.hours, FieldPath)
+    }
+    for lc in lookups:
+        if lc.variable not in used:
+            raise GryphonParseError(
+                f"LOOKUP variable '{lc.variable}' is declared but no temporal comparison reads it "
+                f"(hours({lc.variable}.data.<field>)). An unused LOOKUP would silently select nothing."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ from typing import Any
 import jsonschema
 from django.core.exceptions import ValidationError
 
+from tap_web.panels.row_url import ROW_URL_TEMPLATE_SCHEMA, is_same_origin_template, placeholders
+
 # Fixed value -> colour vocabulary. The names are design tokens; the colours live in panel-chart.css as
 # ``--tap-chart-<token>`` with light and dark values, so a chart reuses the site palette and follows the theme.
 COLOR_TOKENS: tuple[str, ...] = (
@@ -44,7 +46,9 @@ SERIES_TYPES: tuple[str, ...] = (
     "radar",
 )
 HIERARCHICAL_TYPES: tuple[str, ...] = ("treemap", "sunburst")
+CLICKABLE: tuple[str, ...] = ("bar", "scatter")
 PIVOTABLE_TYPES: tuple[str, ...] = ("bar", "line")
+PIVOT_OWNED: frozenset[str] = frozenset({"name", "type", "encode", "data", "dataset"})
 
 FIELD_TYPES: tuple[str, ...] = ("number", "time", "category")
 DEFAULT_HEIGHT = 320
@@ -94,6 +98,19 @@ CHART_CONFIG_SCHEMA: dict[str, Any] = {
                     "type": ["number", "null"],
                     "description": "Value for a category with no row for a series. Default 0; null leaves a gap.",
                 },
+                "overrides": {
+                    "type": "object",
+                    "maxProperties": 50,
+                    "description": (
+                        "Per-series changes: series value (the line's name) -> a partial ECharts series object "
+                        "deep-merged onto the template for that series only. `name`, `type`, `encode`, `data` and "
+                        "`dataset` cannot be set."
+                    ),
+                    "additionalProperties": {
+                        "type": "object",
+                        "description": "Partial series options for one series value, e.g. lineStyle, z, endLabel.",
+                    },
+                },
             },
         },
         "hierarchy": {
@@ -116,6 +133,26 @@ CHART_CONFIG_SCHEMA: dict[str, Any] = {
                     **_FIELD,
                     "description": "Row field sizing each leaf; each row counts 1 when absent. Duplicates are summed.",
                 },
+            },
+        },
+        "click": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["row_url_template"],
+            "description": (
+                "Click-through for bar and scatter series: clicking a data item navigates to the URL filled "
+                "from that item's row. Items whose row lacks a placeholder value are not clickable."
+            ),
+            "properties": {
+                "row_url_template": {
+                    **ROW_URL_TEMPLATE_SCHEMA,
+                    "description": (
+                        "A same-origin path (never `//host`) whose `{alias}` placeholders take the row's values, "
+                        "each URL-encoded as one component, e.g. `/vulnerabilities/component?cid={cid}`. The same "
+                        "rule and fill as the Table panel's `row_url_template`. With `series_by`, only the "
+                        "`category` field may be a placeholder."
+                    ),
+                }
             },
         },
         "color_map": {
@@ -318,15 +355,36 @@ def validate_config(config: dict[str, Any]) -> None:
     kinds = [s.get("type") for s in series]
     if config.get("series_by") and config.get("hierarchy"):
         errors.append("series_by and hierarchy cannot be combined")
+    overrides = (config.get("series_by") or {}).get("overrides") or {}
+    for value, partial in overrides.items():
+        for key in sorted(PIVOT_OWNED & partial.keys()):
+            errors.append(f"series_by.overrides.{value}.{key}: `{key}` is set by the pivot and cannot be overridden")
+        _walk(partial, f"series_by.overrides.{value}", 0, errors)
     if config.get("series_by"):
         if len(series) != 1 or kinds[0] not in PIVOTABLE_TYPES:
             errors.append("series_by needs exactly one template series, of type bar or line, in option.series")
     if any(isinstance(s.get("encode"), dict) for s in series) or config.get("series_by"):
-        for where, text in _formatters(option):
+        for where, text in [*_formatters(option), *_formatters(overrides, "series_by.overrides")]:
             if _BARE_VALUE.search(text):
                 errors.append(
                     f"{where}: `{{c}}` is the whole row when a series reads the dataset through `encode` "
                     "(it prints [object Object]); name the field instead: `{@field}`"
+                )
+    click = config.get("click")
+    if click:
+        template = click["row_url_template"]
+        if not is_same_origin_template(template):
+            errors.append("click.row_url_template must be a same-origin path")
+        if config.get("hierarchy"):
+            errors.append("click cannot be combined with hierarchy (tree items are not rows)")
+        if not any(k in CLICKABLE for k in kinds):
+            errors.append(f"click needs a {' or '.join(CLICKABLE)} series in option.series")
+        if config.get("series_by"):
+            extra = [a for a in placeholders(template) if a != config["series_by"]["category"]]
+            if extra:
+                errors.append(
+                    "click.row_url_template with series_by may only use the category field "
+                    f"`{config['series_by']['category']}` (found {', '.join('{' + a + '}' for a in extra)})"
                 )
     if config.get("hierarchy") and not any(k in HIERARCHICAL_TYPES for k in kinds):
         errors.append("hierarchy needs a treemap or sunburst series in option.series")

@@ -80,6 +80,7 @@ For the plugin-refactor additions (pre-boot stage, install section, snapshot, va
 | req-boot-preboot | [Pre-Boot Stage](#pre-boot-stage) | Implemented | **Plugin-refactor MVP (`tap/preboot.py`).** Settings-free entrypoint stage (install plugins → snapshot) before `migrate`; `tap_boot` owns the contract, the `tap/` wrapper executes it. Validated with the one package-mode plugin (`genericom`); `manage.py boot` stays at spawn-time (not relocated into the entrypoint) — deliberate, to avoid collector re-fire on every restart |
 | req-boot-install-section | [Install Section](#install-section) | Implemented | **Plugin-refactor MVP.** Profile `install` section (desired plugin set), separate from `population`; static coherence guard in pre-boot. During the transition, build-baked plugins coexist (a `BUILD_BAKED_PLUGIN_SLUGS` transition set, kept honest against `INSTALLED_APPS` by test); the runtime availability half already exists via `resolve_tap_plugin` (`req-boot-population-4`). Full samsite package-mode migration is the follow-on |
 | req-boot-web-section | [Web Section](#web-section) | Implemented | **Ruled + built 2026-09-08 (tap#340).** Profile top-level `web` section owned by `tap_web` (as `auth` is by `tap_auth`); v0 carries one operator decision as a verified pair — `landing_entity_id` (identity) + `landing_slug` (asserted check) — read settings-free at import time and verified fail-closed after population. No grid node: the `LandingPage` type is dropped by the same ruling. Contract in `spec-web-page.md` `req-web-page-landing`; this row is the composition point |
+| req-boot-web-branding | [Web Branding](#web-branding) | Implemented | `web.branding` in the profile names the instance (`name`) and points at an SVG glyph shipped in a plugin's static directory (`glyph.plugin` + `glyph.path`); env wins over profile; a missing or unusable glyph falls back to the text name with a warning, never an abort |
 | req-boot-minimal-baseline | [Minimal Core Baseline](#minimal-core-baseline) | Implemented | **Baseline flip + lean-boot gate landed 2026-07-03.** `core` (zero plugins) is the product baseline; `core_dev` (core + `grid_fixtures`) is the default a plain spawn / the entrypoint boots; `base` was renamed → `test_all` (the test/gate union, since retired with tap#638; CI boots `core_ci`). Replaces `base = install-everything`, which does not scale and becomes unwritable once plugins live in their own repos. `core` is kept **honestly** bootable in isolation by the **lean-boot independence gate** (`scripts/gate-lean`, `req-dev-validation-lean-boot`): a fresh, lean-installed stack that catches core→plugin-dep import leakage (the `requests`/`jwt` class) the full-venv cold-boot gate cannot |
 | req-boot-snapshot | [Pre-Migrate Snapshot](#pre-migrate-snapshot) | Implemented | **Plugin-refactor MVP.** `pg_dump -Fc` full snapshot before `migrate`, switch defaults true, verify via `pg_restore --list`; restore is a human action; callable `tap/` primitive; dev disables via env (spawn writes it into `.env.local`). Volume-snapshot upgrade path still deferred |
 | req-boot-search-role | [Search Read-Only Role Provisioning](#search-read-only-role-provisioning) | Implemented | **Post-migrate.** Idempotent boot step provisions the dedicated `search_readonly` DB role, grants it `SELECT` on only the searchable + spine tables (grant set derived from the model layer via `tap_grid/grid_tables.py`), and pins its resource GUCs (`statement_timeout`/`lock_timeout`/`temp_file_limit`/`work_mem`); realizes `req-grid-search-readonly-role.sec` + `req-grid-traversal-exec-resource-bounds.sec` |
@@ -269,6 +270,56 @@ grid node and no fallback). This requirement is the composition point:
 | req-boot-web-section-3 | Env Overrides Profile | Implemented | `TAP_BOOT_WEB__LANDING_ENTITY_ID` / `TAP_BOOT_WEB__LANDING_SLUG` set in the environment win over the profile values with provenance `env`; the empty string counts as absent. | `req-boot-variable-resolution`. |
 | req-boot-web-section-4 | Verified After Population, Fail Closed | Implemented | A profile whose pair is malformed, names no live page, or asserts a slug the live page does not have aborts the boot after population with a message naming the configured and live values; an undeclared pair logs and continues; the pair is in the boot record with provenance. | |
 | req-boot-web-section-5 | Shipped Records Decide | Implemented | Every shipped profile that boots a product landing page names the pair (git_serious's record); profiles that ship no landing page (core, core_dev, core_ci, soak) declare none and are documented as placeholder-rooted. | Pairs with `req-web-page-landing-15`. |
+
+### Web Branding
+----
+RID: `req-boot-web-branding`
+
+Status: `Implemented`
+
+The profile's `web` section also carries the instance's presentation identity: a display **name** and an optional **glyph**, an SVG mark shipped in a plugin's static directory that the header shows in place of the name's text. The first use is the RAMPART product, whose glyph is a rampart.
+
+```json
+"web": {
+  "branding": {
+    "name": "RAMPART",
+    "glyph": { "plugin": "rampart_20x", "path": "glyphs/rampart.svg" }
+  }
+}
+```
+
+#### Implementation
+
+- `web.branding.name` is the instance's display name: the `<title>` suffix, the accessible name of the header mark, and the text shown when there is no glyph. It replaces what `TAP_PRODUCT_NAME` carried.
+- `web.branding.glyph` is optional and names the file by `plugin` (the plugin slug whose static directory ships it) and `path` (relative to that plugin's static directory, which is `<app>/static/<plugin>/`, the namespaced folder every plugin already ships its assets under; the file is served at `/static/<plugin>/<path>`). A glyph is never a URL, an absolute path or a path containing `..`: a pointer into a plugin, not a way to reach anywhere else.
+- The schema (`tap_boot/schemas/boot.schema.json`) declares the block, each field described, no unknown keys, and `glyph.plugin` and `glyph.path` required together.
+- Each of `name`, `glyph.plugin`, `glyph.path` is a boot variable on the usual ladder (`req-boot-variable-resolution`): environment over profile over default, empty string counts as absent. Env keys: `TAP_BOOT_WEB__BRANDING__NAME`, `TAP_BOOT_WEB__BRANDING__GLYPH_PLUGIN`, `TAP_BOOT_WEB__BRANDING__GLYPH_PATH`. Provenance is recorded in the boot record.
+- Read settings-free by `tap_web/boot.py`, the same reader as the landing pair, and tolerant of a bad file. The header does not fold it into settings: `tap_web/branding.py` re-resolves it per request (cached on the profile's and glyph's mtimes and the three env values), so a profile edit shows on the next page load with no restart.
+- **Verify, fail soft.** After population, boot checks that the glyph resolves to an existing `.svg` file in that plugin's static directory and passes the safety check in `req-web-chrome-branding-glyph`. A missing plugin, missing file, wrong type or unsafe content is a **warning** naming the plugin and path, and the instance renders its text name. This is the opposite of the landing pair on purpose: a wrong landing page sends users to the wrong place, while a missing logo is cosmetic and must not block a boot.
+
+#### Development
+
+The name moves into the profile so that a product's identity is written down in the record that defines the product, beside its plugins, rather than in an environment variable set per container. The env var stays as the override because containers are configured that way.
+
+**Name precedence (ruled by George 2026-10-20, relayed by rampart-pg):** `TAP_BOOT_WEB__BRANDING__NAME`, then the profile, then the existing `TAP_PRODUCT_NAME` environment variable, then `TAP`. A deployment that sets only `TAP_PRODUCT_NAME` and ships a profile name will now see the profile name; record the order in `spec-tap-settings.md`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-boot-web-branding-1 | Schema Documents The Block | Implemented | `boot.schema.json` declares `web.branding` with `name` and `glyph` (`plugin`, `path`), each described, no unknown keys, `glyph.plugin` and `glyph.path` required together. | |
+| req-boot-web-branding-2 | Name In The Profile | Implemented | `web.branding.name` sets the instance's display name; with no glyph it is the text shown in the header. | |
+| req-boot-web-branding-3 | Glyph Is A Plugin Pointer | Implemented | `glyph` is a plugin slug plus a path relative to that plugin's static directory; URLs, absolute paths and `..` are rejected at schema or load time. | |
+| req-boot-web-branding-4 | Env Overrides Profile | Implemented | The three `TAP_BOOT_WEB__BRANDING__*` variables win over the profile values with provenance `env`; the empty string counts as absent. | `req-boot-variable-resolution`. |
+| req-boot-web-branding-5 | Settings-Free Reader | Implemented | `tap_web/boot.py` reads the block with no Django import and returns an empty result, with a warning, on a bad file. | Same boundary as the landing pair. |
+| req-boot-web-branding-6 | Unusable Glyph Warns, Never Aborts | Implemented | A glyph whose plugin or file is missing, is not `.svg`, or fails the safety check logs a warning naming plugin and path, and the instance renders the text name and default favicon. The boot completes. | Fail-soft by ruling (George, 2026-10-20); contrast `req-boot-web-section-4`. |
+| req-boot-web-branding-7 | Name Precedence Recorded | Implemented | The name resolves in the order `TAP_BOOT_WEB__BRANDING__NAME`, profile `web.branding.name`, `TAP_PRODUCT_NAME`, `TAP`, and that order is written in `spec-tap-settings.md`. | Ruled 2026-10-20. |
+| req-boot-web-branding-8 | Shipped Record Declares It | Proposed | The RAMPART profile declares its name and rampart glyph; profiles with no product identity declare none. | Asset supplied by George. |
+
+#### Future
+
+A named brand object bundling name, glyph, favicon and visual tokens (`req-web-chrome-branding-5`) would supersede this block.
+
 
 ### Minimal Core Baseline
 ----

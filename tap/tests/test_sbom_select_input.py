@@ -78,7 +78,11 @@ def test_plan_prints_the_validated_list_as_tab_separated_lines(capsys):
     assert sel.main(["plan"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines == [
-        "tap-publish-images-transitional\tunified-systems-com/tap\t.github/workflows/publish-images.yml\trefs/heads/main\t-"
+        "tap-publish-images-transitional\tunified-systems-com/tap\t.github/workflows/publish-images.yml\trefs/heads/main\t-",
+        "tap-sbom-evidence-5736329d\tunified-systems-com/tap\t.github/workflows/sbom-vulnerability-evidence.yml\t"
+        "5736329dff506c952b5567260dd82c51adab5d74\t5736329dff506c952b5567260dd82c51adab5d74",
+        "tap-sbom-evidence-e9841198\tunified-systems-com/tap\t.github/workflows/sbom-vulnerability-evidence.yml\t"
+        "e9841198ba7535f4eef79247dd5fb2520b6e1da9\te9841198ba7535f4eef79247dd5fb2520b6e1da9",
     ]
 
 
@@ -122,8 +126,13 @@ def test_no_verified_attestation_is_a_failure_never_an_empty_pass():
 @pytest.mark.spec("req-cicd-sbom-22-7")
 def test_the_committed_trust_list_validates_and_has_one_transitional_entry():
     signers = sel.load_signers()
-    assert [s["id"] for s in signers] == ["tap-publish-images-transitional"]
+    assert [s["id"] for s in signers] == [
+        "tap-publish-images-transitional",
+        "tap-sbom-evidence-5736329d",
+        "tap-sbom-evidence-e9841198",
+    ]
     assert signers[0]["signer_digest"] is None and signers[0]["transitional"] is True
+    assert signers[1]["signer_digest"] == signers[1]["ref"] == "5736329dff506c952b5567260dd82c51adab5d74"
 
 
 def _write_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]) -> None:

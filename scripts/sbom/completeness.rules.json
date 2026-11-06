@@ -4,27 +4,60 @@
   "ecosystems": {
     "apk": {
       "_description": "Alpine/Wolfi packages. Grype matches apk packages on the purl with its distro and arch qualifiers and on the CPE; the upstream qualifier names the source package and is required only when the origin package differs from the component name (54 of 54 on the real document).",
-      "require": ["purl", "cpe", "origin-package", "purl-qualifier:arch", "purl-qualifier:distro", "purl-qualifier:upstream-when-origin-differs"]
+      "require": [
+        "purl",
+        "cpe",
+        "origin-package",
+        "purl-qualifier:arch",
+        "purl-qualifier:distro",
+        "purl-qualifier:upstream-when-origin-differs"
+      ]
     },
     "pypi": {
-      "_description": "Python packages from the locked closure.",
-      "require": ["purl", "cpe"]
+      "_description": "Python packages from the locked closure. License and architecture are read from the wheels in the image's cache seed (req-cicd-sbom-33); a component with no matching wheel declares them unknown with a reason, at most 5 per document (3 of 71 on the real image: colorama, tzdata, tap).",
+      "require": [
+        "purl",
+        "cpe"
+      ],
+      "require_attributes": [
+        "licenses-or-declared-unknown",
+        "architecture-or-declared-unknown"
+      ],
+      "declared_unknown_limit": 5
     },
     "npm": {
       "_description": "Vendored JavaScript libraries.",
-      "require": ["purl", "cpe"]
+      "require": [
+        "purl",
+        "cpe"
+      ]
     },
     "generic": {
       "_description": "Components no package manager installed (the self-built OpenSSL FIPS provider): a purl and a CPE, because the CPE is the only identifier a scanner can match them by.",
-      "require": ["purl", "cpe"]
+      "require": [
+        "purl",
+        "cpe"
+      ]
     },
     "github": {
       "_description": "Released binaries identified by their GitHub repository (uv, uvx). No CPE exists for them; the purl is what a matcher reads.",
-      "require": ["purl"]
+      "require": [
+        "purl"
+      ]
+    },
+    "golang": {
+      "_description": "Go modules and the standard library recorded from binaries (the gosu binary in the tap-db image). Syft gives each a purl and a CPE; found by running the check on the real tap-db SBOM, where four such components were otherwise unruled.",
+      "require": [
+        "purl",
+        "cpe"
+      ]
     }
   },
   "operating_system": {
     "_description": "Exactly one operating-system component, with a name and a version. The grid reads it; its worth to Grype is not demonstrated (the ablation gave 50 matches with and without it).",
-    "require": ["name", "version"]
+    "require": [
+      "name",
+      "version"
+    ]
   }
 }

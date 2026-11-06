@@ -199,6 +199,8 @@ This requirement formalizes the smallest useful set of viz-specific model-owned 
   - `shape`
   - `colors` — a nested object with `fill`, `border`, and `label` hex color strings
   - `label` — a nested object positioning the node's text label: `valign` (`top` / `center` / `bottom`), `halign` (`left` / `center` / `right`), `position` (`outside` / `inside`)
+  - `fill_opacity` — a number from 0 (transparent: the box is only its line) to 1, the node's background opacity
+  - `border_width` — a number, the node's border width in pixels
   - `label_size`
 - Icon selection does not live in viz display hints in v1.
 - Icons are resolved through the canonical grid icon contract and icon service.
@@ -216,6 +218,8 @@ This lets a server, interface, or port model carry stable default node shape, co
 | req-viz-system-display-hints-2 | Color Hint Is Model-Level | Implemented | `DEFAULT_DISPLAY["tap_viz"]["colors"]` is a nested object with `fill`, `border`, and `label` hex color strings. Graph panel reads each value per node and applies them as the Cytoscape `background-color`, `border-color`, and text `color` respectively. Hints remain optional — nodes without `colors` fall back to default renderer styling. | |
 | req-viz-system-display-hints-3 | Label Size Hint Is Model-Level | Proposed | `DEFAULT_DISPLAY["tap_viz"]["label_size"]` may provide the default label-size tier for viz rendering. | |
 | req-viz-system-display-hints-8 | Label Position Hint Is Model-Level | Implemented | `DEFAULT_DISPLAY["tap_viz"]["label"]` is a nested object with `valign` (`top`/`center`/`bottom`), `halign` (`left`/`center`/`right`), and `position` (`outside`/`inside`). Graph panel reads these and applies them as Cytoscape `text-valign`, `text-halign`, and a computed `text-margin-y` (negative for outside-top, positive for inside-top, inverted for bottom). | |
+| req-viz-system-display-hints-9 | Box Chrome Hints Are Model-Level | Implemented | `DEFAULT_DISPLAY["tap_viz"]["fill_opacity"]` (a number, 0 to 1) and `["border_width"]` (a number, px) are read per node by the graph panel and applied as the Cytoscape `background-opacity` and `border-width`, on leaf and compound nodes alike, after the palette rules so they win over the fill and border those set. A node without them keeps the renderer defaults. | `panel-graph.js`; backward compatible, both keys are optional. |
+| req-viz-system-display-hints-10 | Outside Label Anchors To A Side | Implemented | When `label.position` is `outside` and `label.valign` is `top` or `bottom`, the graph panel centres the label on the edge and records the requested `halign` as the node's `label_anchor`; a layout that calls `placeParentLabels` (`runtime/chrome.js`) then stands the label outside that edge, its left end on the box's left edge for `left`, its right end on the right edge for `right`, centred for `center`. A node with no outside hint keeps the inside placement. A graph with no such layout shows the label centred on the edge. | `panel-graph.js`, `runtime/chrome.js`; behaviour in `tap_viz/tests/js/outside_label_runtime.mjs`. |
 | req-viz-system-display-hints-4 | Viz Hints Are Namespaced | Implemented | Viz hints live under the `tap_viz` key in `DEFAULT_DISPLAY`. | |
 | req-viz-system-display-hints-5 | Icons Reuse Grid Contract | Implemented | `_enrich_nodes_with_icons` uses `resolve_icon_url(EntityType)` from `tap_grid.icon_service`. | |
 | req-viz-system-display-hints-6 | Layout Overrides Allowed | Backlog | Deferred; layout-level shape, color, or label-size override wiring not yet implemented. | |
