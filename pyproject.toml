@@ -105,6 +105,11 @@ dependencies = [
     # gzip-vs-brotli on 660K of JS+CSS does not justify adding a native dependency to the
     # crypto-BOM conversation (req-tap-serving-server-crypto-2).
     "whitenoise>=6.11,<7",
+    # HTML panel (tap_web/specs/spec-web-panels-html.md): cleans untrusted markup against a closed allowlist.
+    # nh3 = the Python bindings for Rust `ammonia` (html5ever parser): one wheel, no dependencies, and no cryptography,
+    # TLS or network code, so it adds nothing to the cryptographic boundary. Bounded below its next 0.x line because a
+    # sanitizer's behaviour IS its security: a new line arrives as its own deliberate Renovate PR. Approved by George, 2026-11-06.
+    "nh3>=0.3.7,<0.4",
 ]
 
 # -----------------------------------------------------------------------------
