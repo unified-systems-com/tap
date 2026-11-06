@@ -23,7 +23,7 @@ The panel is **tap_web-owned** so any plugin can use it without shipping a sanit
 | 3. | Fails Closed | A fault, a missing library or an over-limit document shows a message and no content, never the raw markup |
 | 4. | Two Independent Checks | A maintained sanitizer cleans; the standard library's parser reads the output and must find nothing outside the policy |
 | 5. | Data, Not Code | A panel is a Panel node, a config and optionally a Search; no per-panel Python or JavaScript |
-| 6. | Themed, Contained | Colours come from tokens with light and dark values; the content is contained to its box; no inline style or script is needed |
+| 6. | Themed, Contained | Colours come from the theme's palette tokens, so light and dark are free; the content is contained to its box; no inline style or script is needed |
 
 ## Requirements
 
@@ -32,7 +32,7 @@ The panel is **tap_web-owned** so any plugin can use it without shipping a sanit
 | req-web-panels-html-panel-type | [HTML Panel Type](#html-panel-type) | In Development | `HtmlPanelType` registered under slug `html`; described config schema |
 | req-web-panels-html-clean | [The Cleaner](#the-cleaner) | In Development | Closed feature vocabulary, per-panel narrowing, nh3 plus a second independent check, limits |
 | req-web-panels-html-render | [Rendering](#rendering) | In Development | Cleaned every render, fails closed, one trusted step, the same from both sources |
-| req-web-panels-html-style | [Styling](#styling) | In Development | Tokens with light and dark values, scoped under the panel root, contained, print block |
+| req-web-panels-html-style | [Styling](#styling) | In Development | Palette tokens only (no colour literal, no dark block), scoped under the panel root, contained, print block |
 | req-web-panels-html-dependency | [The Dependency](#the-dependency) | In Development | `nh3` in `pyproject`; the sanitizer decision recorded |
 
 ---
@@ -147,13 +147,13 @@ RID: `req-web-panels-html-style`
 
 Status: `In Development`
 
-`panel-html.css` scopes every rule under `.tap-panel--html`, defines its tokens on the panel root with light values and dark values that follow the viewer's scheme exactly as `stat-cards.css` does, sets the typography for the allowed tags and the ten classes, contains its content (`overflow` clipped, `contain: content`), reflows its two-column class in a narrow panel, and has a print block.
+`panel-html.css` scopes every rule under `.tap-panel--html`, takes every colour from the palette tokens in `theme.css` (`rgb(var(--tap-slate-800))` and the like), which the theme redefines for dark, so it has no colour literal and no dark block of its own (`req-web-theme-surfaces-1`); it sets the typography for the allowed tags and the ten classes, contains its content (`overflow` clipped, `contain: content`), reflows its two-column class in a narrow panel, and has a print block.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-style-1 | Scoped, Themed, Printable | In Development | Every selector in the stylesheet is under `.tap-panel--html`, its colours come from `--tap-html-*` tokens that have a dark redefinition, and it has a print block. | |
+| req-web-panels-html-style-1 | Scoped, Themed, Printable | In Development | Every selector in the stylesheet is under `.tap-panel--html`, it holds no hex or `rgb()` colour literal and draws its colours from the palette tokens, and it has a print block. | |
 
 ### The Dependency
 ----

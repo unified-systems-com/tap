@@ -1,42 +1,19 @@
-/* HTML panel (req-web-panels-html-style). Every rule is scoped under .tap-panel--html. Tokens are defined on the panel root;
-   dark values follow the viewer's scheme exactly as stat-cards.css does. No inline style and no script are needed,
-   so the panel works under a policy that forbids unsafe-inline. */
+/* HTML panel (req-web-panels-html-style). Every rule is scoped under .tap-panel--html. Every colour is a palette token from
+   theme.css, which the theme redefines for dark, so no dark block is needed here and no colour literal appears
+   (req-web-theme-surfaces-1). No inline style and no script are needed, so the panel works under a policy that forbids
+   unsafe-inline. */
 
 .tap-panel--html {
-  --tap-html-ink: #0f172a;
-  --tap-html-body: #334155;
-  --tap-html-muted: #64748b;
-  --tap-html-rule: #e2e8f0;
-  --tap-html-tint: #f8fafc;
-  --tap-html-accent: #2563eb;
-  --tap-html-accent-ink: #1d4ed8;
-  --tap-html-warn: #b45309;
+  --tap-html-ink: rgb(var(--tap-slate-800));
+  --tap-html-body: rgb(var(--tap-slate-700));
+  --tap-html-muted: rgb(var(--tap-slate-600));
+  --tap-html-rule: rgb(var(--tap-slate-200));
+  --tap-html-tint: rgb(var(--tap-slate-50));
+  --tap-html-accent: rgb(var(--tap-blue-600));
+  --tap-html-accent-ink: rgb(var(--tap-blue-700));
+  --tap-html-warn: rgb(var(--tap-amber-700));
   container-type: inline-size;
   color: var(--tap-html-body);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .tap-panel--html {
-    --tap-html-ink: #f1f5f9;
-    --tap-html-body: #cbd5e1;
-    --tap-html-muted: #94a3b8;
-    --tap-html-rule: #334155;
-    --tap-html-tint: #1e293b;
-    --tap-html-accent: #60a5fa;
-    --tap-html-accent-ink: #93c5fd;
-    --tap-html-warn: #fbbf24;
-  }
-}
-
-:root[data-theme="dark"] .tap-panel--html {
-  --tap-html-ink: #f1f5f9;
-  --tap-html-body: #cbd5e1;
-  --tap-html-muted: #94a3b8;
-  --tap-html-rule: #334155;
-  --tap-html-tint: #1e293b;
-  --tap-html-accent: #60a5fa;
-  --tap-html-accent-ink: #93c5fd;
-  --tap-html-warn: #fbbf24;
 }
 
 .tap-panel--html .tap-html-empty { color: var(--tap-html-muted); font-style: italic; margin: 0.6rem 0 0; }

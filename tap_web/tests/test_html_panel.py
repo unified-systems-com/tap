@@ -118,13 +118,13 @@ def test_needs_no_script_or_inline_style() -> None:
 
 
 @pytest.mark.spec("req-web-panels-html-style-1")
-def test_stylesheet_is_scoped_has_dark_values_and_a_print_block() -> None:
+def test_stylesheet_is_scoped_uses_palette_tokens_and_has_a_print_block() -> None:
     css = CSS.read_text(encoding="utf-8")
-    assert "var(--tap-html-" in css
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d", css) and "rgb(var(--tap-" in css
     rules = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     selectors = [s.strip() for block in re.findall(r"([^{}]+)\{", rules) for s in block.split(",")]
     assert all(".tap-panel--html" in s or s.startswith("@") or not s for s in selectors), [s for s in selectors if ".tap-panel--html" not in s]
-    assert "@media print" in css and "prefers-color-scheme: dark" in css and 'data-theme="dark"' in css
+    assert "@media print" in css
 
 
 @pytest.mark.spec("req-web-panels-html-clean-11")
