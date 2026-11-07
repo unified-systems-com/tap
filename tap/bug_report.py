@@ -52,7 +52,7 @@ _JSON_FENCE = "```json"
 _FENCE = "```"
 
 #: The fixed words of the tripwire's pass message (req-dev-bugreport-tripwire-3): never "safe".
-TRIPWIRE_PASS = "no match against your instance's values"
+TRIPWIRE_PASS = "no match against your instance's values"  # nosec B105 - a fixed message, not a credential
 
 #: Deny-list values shorter than this match too much ordinary text to be a tripwire.
 MIN_DENY_LENGTH = 4
@@ -703,7 +703,7 @@ def _local_deny(args: argparse.Namespace) -> list[tuple[str, str]]:
         from django.conf import settings
 
         hostnames += [h for h in settings.ALLOWED_HOSTS if h and h not in ("*", "localhost", "127.0.0.1")]
-    except Exception:  # noqa: BLE001 - settings are optional here; the deny list just has fewer entries
+    except Exception:  # noqa: BLE001  # nosec B110 - settings are optional here; the deny list just has fewer entries
         pass
     user = args.host_user or _login_name()
     return build_deny_list(record, hostnames=hostnames, local_user=user, home_path=args.host_home)
@@ -766,6 +766,8 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912 
     if cmd == "render":
         answers = json.loads(resolve_in_work_dir(args.answers).read_text(encoding="utf-8"))
         out = resolve_in_work_dir(args.out)
+        if not os.path.realpath(out).startswith(os.path.realpath(Path.cwd() / WORK_DIR_NAME) + os.sep):
+            raise BugReportError(f"{args.out} is outside {WORK_DIR_NAME}/; reports live only there")
         out.write_text(render_report(fill_descriptions(answers)), encoding="utf-8")
         print(f"wrote {out.name}")
         return 0
