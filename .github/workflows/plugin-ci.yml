@@ -197,7 +197,7 @@ jobs:
       # uv's version comes from core's `[tool.uv] required-version`. The workspace root is the
       # plugin's checkout, where setup-uv finds no pyproject and falls back to `latest`, which
       # took uv 0.13.0's new Python 3.15 default overnight (tap#1008).
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: _tooling/pyproject.toml
 
@@ -359,7 +359,7 @@ jobs:
           path: _tooling
 
       # uv's version from core's `required-version`, as in the tooling job above (tap#1008).
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: _tooling/pyproject.toml
 
@@ -1142,7 +1142,7 @@ jobs:
 
       - name: Upload SARIF to code scanning
         if: steps.report.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           sarif_file: trivy-plugin-closure.sarif
           category: tap-plugin-closure

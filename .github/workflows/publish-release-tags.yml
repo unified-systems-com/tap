@@ -203,7 +203,7 @@ jobs:
           name: trivy-release-${{ matrix.image }}
       - name: Upload SARIF to code scanning
         if: steps.report.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           sarif_file: trivy-release-${{ matrix.image }}.sarif
           category: trivy-release-${{ matrix.image }}
@@ -235,7 +235,7 @@ jobs:
           persist-credentials: false
       # guard-allow: req-cicd-runner-least-privilege — the registry login IS this
       # job's write path (manifest retag); nothing else third-party shares the job.
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
