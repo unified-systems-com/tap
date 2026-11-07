@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
-          "rev": "v0.3.1",
-          "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"
+          "rev": "v0.3.2",
+          "commit": "5dd91568360a0f26a7ce24a8be185aee336753a2"
         },
         "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the Gridkin corpus references by string. Migrated so the corpus has real types to query. No GRIFT seed, no cross-plugin deps. Listed before gryphon_playground, which depends_on it. Pulled at boot from its own PUBLIC repo \u2014 a public git source declares no `credential` (req-tap-plugin-arch-source-secret-5); the pinned rev is the `rev` field above \u2014 deliberately not restated here, because a prose copy of a pin goes stale the moment the pin is bumped."
       },
@@ -21,8 +21,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/gryphon-playground-tap",
-          "rev": "v0.6.2",
-          "commit": "9fee574b4ae406c3316350d6103f5bdb4355bc53"
+          "rev": "v0.6.3",
+          "commit": "b83427dff05f0b8835c35a81047bb2eb875eebb1"
         },
         "note": "Self-reference (app-of-apps, req-boot-bootstrap-stage0-3). Same install as the playground record; the flavor difference is in intended behavior (fuzz soak), reserved above. Pulled at boot from its own PUBLIC repo \u2014 a public git source declares no `credential` (req-tap-plugin-arch-source-secret-5); the pinned rev is the `rev` field above \u2014 deliberately not restated here, because a prose copy of a pin goes stale the moment the pin is bumped."
       }
