@@ -681,6 +681,18 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
+def _login_name() -> str | None:
+    """The login name, or None when the process's uid has no name.
+
+    A container or CI runner can run as a uid with no passwd entry and no USER/LOGNAME, where
+    getpass.getuser() raises. A missing name only means the deny list has one fewer entry.
+    """
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):
+        return None
+
+
 def _local_deny(args: argparse.Namespace) -> list[tuple[str, str]]:
     import os
 
@@ -693,7 +705,7 @@ def _local_deny(args: argparse.Namespace) -> list[tuple[str, str]]:
         hostnames += [h for h in settings.ALLOWED_HOSTS if h and h not in ("*", "localhost", "127.0.0.1")]
     except Exception:  # noqa: BLE001 - settings are optional here; the deny list just has fewer entries
         pass
-    user = args.host_user or getpass.getuser()
+    user = args.host_user or _login_name()
     return build_deny_list(record, hostnames=hostnames, local_user=user, home_path=args.host_home)
 
 

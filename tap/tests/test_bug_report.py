@@ -1257,3 +1257,17 @@ def test_a_changed_image_after_consent_stops_the_send_before_gh_is_called(shots_
     result = run_send(shots_env)
     assert result.returncode != 0 and "changed after consent" in result.stderr
     assert calls(shots_env["env"]) == [], "gh must not be called at all"
+
+
+def test_a_uid_with_no_login_name_leaves_the_deny_list_one_entry_shorter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI runs as a uid with no passwd entry, where getpass.getuser() raises; the tripwire must still run."""
+
+    def no_name() -> str:
+        raise KeyError("getpwuid(): uid not found: 1001")
+
+    monkeypatch.setattr(br.getpass, "getuser", no_name)
+    assert br._login_name() is None
+    monkeypatch.setattr(br.getpass, "getuser", lambda: (_ for _ in ()).throw(OSError("No username set")))
+    assert br._login_name() is None
+    monkeypatch.setattr(br.getpass, "getuser", lambda: "someone")
+    assert br._login_name() == "someone"
