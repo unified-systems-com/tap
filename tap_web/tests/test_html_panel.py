@@ -1,4 +1,4 @@
-"""The html panel type (`req-web-panels-html`).
+"""The html panel type (`req-web-panels-html-panel-type`).
 
 Pure tests: the context is built without a database and the template is rendered with a standalone Django ``Engine`` over the
 plugin's own templates (autoescape on, as the project's engine)."""
@@ -154,3 +154,16 @@ def test_panel_features_narrow_the_rendered_output() -> None:
     assert "<h2>" in out and "<table" not in out and "cell" in out
     out = render({"html": '<img src="/static/a.png"><a href="https://ok.example/">x</a>', "features": ["images"]})
     assert "<img" in out and "<a " not in out
+
+
+@pytest.mark.spec("req-web-panels-html-dependency-1")
+def test_the_dependency_is_recorded_and_locked() -> None:
+    import tomllib
+
+    repo = WEB.parent
+    project = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    nh3 = [d for d in project["project"]["dependencies"] if d.replace(" ", "").startswith("nh3")]
+    assert nh3 == ["nh3>=0.3.7,<0.4"], nh3
+    lock = tomllib.loads((repo / "uv.lock").read_text(encoding="utf-8"))
+    locked = [p for p in lock["package"] if p["name"] == "nh3"]
+    assert len(locked) == 1 and tuple(int(x) for x in locked[0]["version"].split(".")) >= (0, 3, 7)

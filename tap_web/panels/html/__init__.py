@@ -1,4 +1,4 @@
-"""HTML Panel — tap_web-owned panel that shows untrusted markup after cleaning it (`req-web-panels-html`).
+"""HTML Panel — tap_web-owned panel that shows untrusted markup after cleaning it (`req-web-panels-html-panel-type`).
 
 The markup comes from ``Panel.config["html"]`` or from one field of a row of the Search the panel is bound to, and is untrusted
 either way. It is cleaned on every render by ``sanitize`` against a policy built from the panel's config (a closed vocabulary of

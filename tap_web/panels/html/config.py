@@ -1,4 +1,4 @@
-"""Config schema of the HTML panel (`req-web-panels-html-config`): where the markup comes from and how far it may use the vocabulary."""
+"""Config schema of the HTML panel (`req-web-panels-html-panel-type`): where the markup comes from and how far it may use the vocabulary."""
 
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ A page sometimes wants rich text that no other panel sets well: a styled explana
 
 The markup is untrusted wherever it came from. A node field a collector filled from a scanner, a Search row, and a config string that anyone with edit access to the panel can change are all attacker-influenced, and the panel treats all three the same: where the markup came from earns it no trust. The panel shows it with the look of the site and the guarantee that it cannot run script, load anything from elsewhere, send anything anywhere or change how the rest of the page looks.
 
-The panel is **tap_web-owned** so any plugin can use it without shipping a sanitizer of its own. It was built first in `stackarmor-vdr-tap` (`req-stackarmor-vdr-panel-html`, requested by George 2026-10-27, "meant for the core" 2026-10-30) and moved here unchanged except for its slug, its stylesheet prefix and its class names.
+The panel is **tap_web-owned** so any plugin can use it without shipping a sanitizer of its own. It was built first in `stackarmor-vdr-tap` (its HTML Panel requirement, requested by George 2026-10-27, "meant for the core" 2026-10-30) and moved here unchanged except for its slug, its stylesheet prefix and its class names.
 
 ### Cross-References
 
