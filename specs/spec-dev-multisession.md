@@ -22,6 +22,7 @@ The Playwright MCP server is stateless per call and remains shared across sessio
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-dev-multisession-compose-parameterized | [Parameterized Compose Stack](#parameterized-compose-stack) | Implemented | Phase 1 |
+| req-dev-multisession-bind-loopback | [Published Ports Bind Loopback By Default](#published-ports-bind-loopback-by-default) | Proposed | A stack listens on 127.0.0.1 unless a per-stack setting says otherwise (tap#1158) |
 | req-dev-multisession-env-cascade | [Env File Cascade](#env-file-cascade) | Implemented | Phase 1 |
 | req-dev-multisession-port-registry | [Per-Machine Session Registry](#per-machine-session-registry) | Implemented | Phase 1 |
 | req-dev-multisession-browser-disambiguation | [Browser Disambiguation](#browser-disambiguation) | Implemented | Phase 1 |
@@ -55,6 +56,7 @@ Trace: `non-python` — docker-compose.yml
 - `COMPOSE_PROJECT_NAME` — namespace for containers, networks, volumes (Compose reads this natively).
 - `WEB_PORT` — host port mapped to Django container `8000`. Default `8000`.
 - `POSTGRES_PORT` — host port mapped to Postgres container `5432`. Default `5432`.
+- `TAP_BIND` / `WEB_BIND` / `POSTGRES_BIND` — host address each published port listens on; default `127.0.0.1`. Specified in `req-dev-multisession-bind-loopback`.
 - `TAP_GRID_ID` — installation identity. Default the current hardcoded UUID; spawn script (Phase 2) generates a new one per session.
 - `TAP_PRODUCT_NAME` — product name shown in the UI title bar, header, and `<title>` element. Default `"TAP"`. Set per-session in `.env.local` (e.g. `RAMPART`) for branded demo instances; the value is read by `tap_web/context_processors.py` and exposed to every template as `{{ product_name }}`.
 
@@ -80,6 +82,29 @@ If we add Redis, mailcatcher, or other host-exposed services, follow the same pa
 | req-dev-multisession-compose-parameterized-5 | Dependency sync at entrypoint | Proposed | `uv sync` runs from `docker/entrypoint.sh`, not the Dockerfile, so the install lands in the container venv and uv cache named volumes rather than in image layers. | |
 | req-dev-multisession-compose-parameterized-6 | Container venv is a named volume | Proposed | The web service mounts `venv:/app/.venv` so container-side `uv sync` never writes the host worktree's `.venv` directory. | Prevents host/container virtualenv path and binary-wheel collisions. |
 | req-dev-multisession-compose-parameterized-7 | Host Python uses a separate env | Proposed | Documentation and scripts treat `/app/.venv` as container-owned; any host-side Python workflow uses a distinct env path such as `.venv-host`. | Avoids two OSes mutating one virtualenv. |
+
+### Published Ports Bind Loopback By Default
+
+RID: `req-dev-multisession-bind-loopback`
+
+Status: `Proposed`
+
+`docker-compose.yml` used to publish the web and Postgres ports with no host address, so Docker listened on every network interface: a dev stack was reachable from other machines while its database password is a literal in this public repository (tap#1158). Every published port now names its host address, and unless a stack is told otherwise that address is loopback.
+
+Variables (all optional, set per stack in `.env.local`; the checked-in `.env` documents them and sets none):
+
+- `TAP_BIND` — host address of every published port. Default `127.0.0.1`.
+- `WEB_BIND` — host address of the web port only. Default `TAP_BIND`.
+- `POSTGRES_BIND` — host address of the Postgres port only. Default `TAP_BIND`.
+
+An empty value counts as unset. The address is always written into the port mapping, so a Docker daemon-wide default binding neither decides nor blocks it. Existing stacks need a recreate (`scripts/dc up -d`) to pick the change up. Other compose files in the repository (`docker-compose.ci.yml`, `docker-compose.codespaces.yml`, `docker-compose.build.yml`) publish no ports; the test below covers any that later do.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-multisession-bind-loopback-1 | Loopback by default | Proposed | Every published port in a compose file in the repository names a host address, and with no `TAP_BIND`, `WEB_BIND` or `POSTGRES_BIND` set that address is `127.0.0.1` (or `::1`). A port that omits the address, or defaults to `0.0.0.0`, fails a test. | The test finds compose files anywhere in the repository. |
+| req-dev-multisession-bind-loopback-2 | Chosen per stack and per port | Proposed | `TAP_BIND` sets the host address of every published port; `WEB_BIND` or `POSTGRES_BIND` sets that port only and wins over `TAP_BIND`; an empty value falls back to loopback. | |
 
 ### Env File Cascade
 ----
