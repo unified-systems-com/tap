@@ -95,7 +95,7 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
     "required": ["<key>"],
     "additionalProperties": false,
     "properties": {
-      "<key>": {"type": "string", "enum": ["<v1>", "<v2>"]}
+      "<key>": {"type": "string", "enum": ["<v1>", "<v2>"], "description": "<What this property means about the relationship, in the domain.>"}
     }
   },
   "default_dimensions": {
@@ -106,6 +106,7 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
 
 ### Field rules (per `edge-definition.schema.json`)
 
+- **Every `property_schema` property carries a `description`** saying what it means about the relationship in the domain (`req-grid-node-field-description`): what each enum value stands for, not that it is a string and not how it is stored. The meaning is written here only; the plugin spec does not restate it.
 - `slug`, `name`, `description` are required and must be non-empty.
 - `slug` **must** equal both the filename (minus `.edge.json`) and the manifest key.
 - `sources` and `targets` are arrays of entity-type slugs; omit either to allow wildcard at that end.
@@ -253,6 +254,7 @@ Once green:
 
 ## Common Mistakes (do not commit any of these)
 
+- **A `property_schema` property with no `description`, or one that only restates its type.** A property's meaning is written once, in the schema (`req-grid-node-field-description`). Missing is a defect in the new edge type; "A string" is the same defect.
 - **Slug case mismatch.** The edge slug, filename, and manifest key must match exactly. `Has_Evidence` ≠ `HAS_EVIDENCE`.
 - **`additionalProperties: true` (or omitted) on `property_schema`.** Default to `false`. Silent property growth makes the edge type's contract unstable.
 - **Bare generic or philosophical edge slugs.** Bare verbs (`USES`, `RUNS`, `HAS`, `ROUTES`, `STORES`, `PULLS`) need the object noun (`ROUTES_TRAFFIC`, `WRITES_LOGS`, `PULLS_IMAGE`). Philosophical names (`PROTECTS`, `BACKED_BY`, `DEPENDS_ON`) describe a role, not a mechanism — name the action. Never use `_TO` (forward is unmarked); use `_FROM` only for a genuine data-backwards edge, never as a plain direction marker.

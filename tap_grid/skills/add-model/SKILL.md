@@ -112,7 +112,10 @@ class <Model>(BaseModel):
 
     # FIELD_CRUD_SCHEMA: what the API accepts on create/update.
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, Any]] = {
-        "name": {"type": "string", "minLength": 1},
+        # Every entry carries a `description`: what the field MEANS in the domain
+        # (req-grid-node-field-description). Not its type, which the schema states,
+        # and not how it is stored.
+        "name": {"type": "string", "minLength": 1, "description": "<What this thing is called by the system it was observed in, not a label TAP invents.>"},
         # ...
     }
 
@@ -144,6 +147,7 @@ class <Model>(BaseModel):
 
 ### Field gotchas
 
+- **Every `FIELD_CRUD_SCHEMA` entry needs a `description`** saying what the field means in the domain (`req-grid-node-field-description`). It is published with the type, so an external reader, a schema-driven tool or an AI helper learns the meaning without your plugin's spec. Say what a value stands for and, where it matters, what it does not (a `retention_days` of `0` means "keep nothing", not "unset"). Do not restate the type (`"A string"`), the storage (`"Stored as a varchar"`) or the field name (`"The name"`). The meaning lives here and only here: the plugin spec says what the type is for and how it relates to others, and does not repeat what each field means.
 - **Reserved names**: `instance_type` is reserved by django-simple-history. Other Django/HistoricalRecords reserved names: `history`, `history_user`, `history_date`, `history_change_reason`, `history_type`. Avoid them.
 - **Nullable fields**: prefer `blank=True, default=""` for strings, `null=True` for nullable foreign keys / numbers. The dual schema must reflect nullability; see `spec-grid-entity.md` § "Nullable field handling."
 - **Indexes**: add `db_index=True` on fields you'll filter by; Django creates the index in the migration automatically.
@@ -250,6 +254,7 @@ Once green:
 
 ## Common Mistakes (do not commit any of these)
 
+- **A `FIELD_CRUD_SCHEMA` entry with no `description`, or one that only restates the type or the storage.** A field's meaning is written once, in its schema (`req-grid-node-field-description`). A missing or empty description is a defect in the new type; "A string" is the same defect.
 - **Skipping the spec.** Per CLAUDE.md feedback, new components must be driven by a spec. If none exists, draft one before coding.
 - **Using direct ORM writes in tests** for service-layer behavior. Use the service layer; reserve ORM-only tests for explicitly model-level behavior.
 - **Forgetting `Meta(BaseModel.Meta)`.** Without it, you'll lose the inherited `abstract = False` / db conventions.
