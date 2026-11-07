@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _safe(cleaned: str) -> Any:
     """The one place markup is marked safe: the output of ``sanitize.clean``, and nothing else."""
-    return mark_safe(cleaned)  # noqa: S308
+    return mark_safe(cleaned)  # noqa: S308  # nosec B308 B703 - the one trusted step (req-web-panels-html-render-3): only sanitize.clean's output
 
 
 def html_context(config: dict[str, Any], rows: list[dict[str, Any]] | None) -> dict[str, Any]:
