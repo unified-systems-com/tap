@@ -29,11 +29,11 @@ The panel is **tap_web-owned** so any plugin can use it without shipping a sanit
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-web-panels-html-panel-type | [HTML Panel Type](#html-panel-type) | In Development | `HtmlPanelType` registered under slug `html`; described config schema |
-| req-web-panels-html-clean | [The Cleaner](#the-cleaner) | In Development | Closed feature vocabulary, per-panel narrowing, nh3 plus a second independent check, limits |
-| req-web-panels-html-render | [Rendering](#rendering) | In Development | Cleaned every render, fails closed, one trusted step, the same from both sources |
-| req-web-panels-html-style | [Styling](#styling) | In Development | Palette tokens only (no colour literal, no dark block), scoped under the panel root, contained, print block |
-| req-web-panels-html-dependency | [The Dependency](#the-dependency) | In Development | `nh3` in `pyproject`; the sanitizer decision recorded |
+| req-web-panels-html-panel-type | [HTML Panel Type](#html-panel-type) | Implemented | `HtmlPanelType` registered under slug `html`; described config schema |
+| req-web-panels-html-clean | [The Cleaner](#the-cleaner) | Implemented | Closed feature vocabulary, per-panel narrowing, nh3 plus a second independent check, limits |
+| req-web-panels-html-render | [Rendering](#rendering) | Implemented | Cleaned every render, fails closed, one trusted step, the same from both sources |
+| req-web-panels-html-style | [Styling](#styling) | Implemented | Palette tokens only (no colour literal, no dark block), scoped under the panel root, contained, print block |
+| req-web-panels-html-dependency | [The Dependency](#the-dependency) | Implemented | `nh3` in `pyproject`; the sanitizer decision recorded |
 
 ---
 
@@ -41,7 +41,7 @@ The panel is **tap_web-owned** so any plugin can use it without shipping a sanit
 ----
 RID: `req-web-panels-html-panel-type`
 
-Status: `In Development`
+Status: `Implemented`
 
 `HtmlPanelType` (slug `html`, view `tap_web/panels/html.html`, css `tap_web/css/panel-html.css`, no JavaScript) is registered in `tap_web/apps.py` `ready()`. The config names exactly one source:
 
@@ -56,13 +56,13 @@ Reading is the Search's. The panel adds no access of its own; what a viewer sees
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-panel-type-1 | Registered With A Described Config | In Development | The panel type is registered under `html`; its config schema describes every property, requires exactly one of `html` and `field`, refuses unknown keys, and bounds `html` to the size ceiling. | As `req-web-panels-chart-config`. |
+| req-web-panels-html-panel-type-1 | Registered With A Described Config | Implemented | The panel type is registered under `html`; its config schema describes every property, requires exactly one of `html` and `field`, refuses unknown keys, and bounds `html` to the size ceiling. | As `req-web-panels-chart-config`. |
 
 ### The Cleaner
 ----
 RID: `req-web-panels-html-clean`
 
-Status: `In Development`
+Status: `Implemented`
 
 `tap_web/panels/html/sanitize.py` holds the cleaning. The file imports nothing from Django and nothing from any plugin. `clean(html, policy)` returns the cleaned markup, the number of start tags it removed and the element count and depth, or raises `HtmlRefused` (an over-limit document, or output that failed the second check) or `CleanerUnavailable` (the library cannot be imported).
 
@@ -107,23 +107,23 @@ The ten classes are `tap-html-lead`, `tap-html-muted`, `tap-html-callout`, `tap-
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-clean-1 | Allowlist Only | In Development | Every tag in the output is in the tag allowlist and every attribute is allowed on its tag; the test parses the output with a second, independent parser and walks every element. | A check that does not trust the cleaner it checks. |
-| req-web-panels-html-clean-2 | Script Cannot Run | In Development | The OWASP filter-evasion vectors, event-handler, `javascript:`, `data:` and `vbscript:` URL vectors, and SVG and MathML vectors leave no `script` element, no `on*` attribute and no URL with a scheme outside `http`, `https` and `mailto`. | The corpus is a test fixture with its source named in the test. |
-| req-web-panels-html-clean-3 | Mutation Vectors | In Development | Known mutation-XSS payloads (nested `noscript`, `style` and `select`, namespace confusion, `<math>` and `<svg>` breakouts) clean to the same output when the output is cleaned again. | Idempotence: `clean(clean(x)) == clean(x)`. |
-| req-web-panels-html-clean-4 | Nothing Is Fetched | In Development | No output element has a `src` or `href` that points off this site except an `a` `href` to `http`, `https` or `mailto`; there is no `style`, `link`, `iframe`, `object`, `embed`, `form`, `meta` or `base`, and no `ping`. | Beacons and exfiltration. |
-| req-web-panels-html-clean-5 | Links Are Safe | In Development | Every `a` in the output has `rel="noopener noreferrer nofollow"` and no `target`. | |
-| req-web-panels-html-clean-6 | No Names | In Development | No output element has `id`, `name` or `form`. | DOM clobbering. |
-| req-web-panels-html-clean-7 | Classes Are The Panel's | In Development | Only the ten listed classes survive, and a class outside them is removed without removing its element. | |
-| req-web-panels-html-clean-8 | Limits Refuse | In Development | A document over the byte, element or depth limit raises `HtmlRefused`. | A depth bomb must not reach the browser or exhaust the parser. |
-| req-web-panels-html-clean-9 | The Second Check Stops The Library | In Development | When the library's output contains anything outside the policy, the document is refused instead of shown. | A test replaces the library's result with markup that breaks the policy. |
-| req-web-panels-html-clean-10 | The Allowlist Is The One In This Spec | In Development | The configured vocabulary equals the Features table above, feature by feature, and every class named there exists, so a library default or a code edit cannot widen the allowlist without this spec changing with it. | The 2026 `ammonia` advisories are all in features this vocabulary does not hold. |
-| req-web-panels-html-clean-11 | Features Narrow Per Panel | In Development | A panel's `features`, `classes`, `link_schemes`, `link_hosts` and `image_prefixes` narrow what is allowed: a feature that is off has its tags stripped and its text kept, images are off unless asked for, and a name outside the vocabulary or a value past a ceiling makes the config invalid. | The vocabulary is the ceiling; no config can reach a forbidden tag. |
+| req-web-panels-html-clean-1 | Allowlist Only | Implemented | Every tag in the output is in the tag allowlist and every attribute is allowed on its tag; the test parses the output with a second, independent parser and walks every element. | A check that does not trust the cleaner it checks. |
+| req-web-panels-html-clean-2 | Script Cannot Run | Implemented | The OWASP filter-evasion vectors, event-handler, `javascript:`, `data:` and `vbscript:` URL vectors, and SVG and MathML vectors leave no `script` element, no `on*` attribute and no URL with a scheme outside `http`, `https` and `mailto`. | The corpus is a test fixture with its source named in the test. |
+| req-web-panels-html-clean-3 | Mutation Vectors | Implemented | Known mutation-XSS payloads (nested `noscript`, `style` and `select`, namespace confusion, `<math>` and `<svg>` breakouts) clean to the same output when the output is cleaned again. | Idempotence: `clean(clean(x)) == clean(x)`. |
+| req-web-panels-html-clean-4 | Nothing Is Fetched | Implemented | No output element has a `src` or `href` that points off this site except an `a` `href` to `http`, `https` or `mailto`; there is no `style`, `link`, `iframe`, `object`, `embed`, `form`, `meta` or `base`, and no `ping`. | Beacons and exfiltration. |
+| req-web-panels-html-clean-5 | Links Are Safe | Implemented | Every `a` in the output has `rel="noopener noreferrer nofollow"` and no `target`. | |
+| req-web-panels-html-clean-6 | No Names | Implemented | No output element has `id`, `name` or `form`. | DOM clobbering. |
+| req-web-panels-html-clean-7 | Classes Are The Panel's | Implemented | Only the ten listed classes survive, and a class outside them is removed without removing its element. | |
+| req-web-panels-html-clean-8 | Limits Refuse | Implemented | A document over the byte, element or depth limit raises `HtmlRefused`. | A depth bomb must not reach the browser or exhaust the parser. |
+| req-web-panels-html-clean-9 | The Second Check Stops The Library | Implemented | When the library's output contains anything outside the policy, the document is refused instead of shown. | A test replaces the library's result with markup that breaks the policy. |
+| req-web-panels-html-clean-10 | The Allowlist Is The One In This Spec | Implemented | The configured vocabulary equals the Features table above, feature by feature, and every class named there exists, so a library default or a code edit cannot widen the allowlist without this spec changing with it. | The 2026 `ammonia` advisories are all in features this vocabulary does not hold. |
+| req-web-panels-html-clean-11 | Features Narrow Per Panel | Implemented | A panel's `features`, `classes`, `link_schemes`, `link_hosts` and `image_prefixes` narrow what is allowed: a feature that is off has its tags stripped and its text kept, images are off unless asked for, and a name outside the vocabulary or a value past a ceiling makes the config invalid. | The vocabulary is the ceiling; no config can reach a forbidden tag. |
 
 ### Rendering
 ----
 RID: `req-web-panels-html-render`
 
-Status: `In Development`
+Status: `Implemented`
 
 - **Cleaned every render.** The panel cleans the markup each time it renders and stores nothing cleaned.
 - **The one trusted step.** The cleaned string is marked safe in exactly one place, `_safe` in `tap_web/panels/html/__init__.py`; the template prints that one variable and every other variable with Django's autoescaping.
@@ -134,18 +134,18 @@ Status: `In Development`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-render-1 | Cleaned Every Render | In Development | The panel cleans the markup each time it renders and stores nothing cleaned; a fixture whose cleaner is changed between two renders shows the second cleaner's output. | The config schema has no field to hold a cleaned copy. |
-| req-web-panels-html-render-2 | Fails Closed | In Development | When the cleaner raises, the library cannot be imported or a document is over a limit, the panel renders a visible message and no content, and neither the raw markup nor an escaped copy of it appears. | |
-| req-web-panels-html-render-3 | One Trusted Step | In Development | The panel's package contains exactly one `mark_safe`, in its context builder, applied to the cleaner's output; the template uses no `safe` filter and no `autoescape off`. | A grep test. |
-| req-web-panels-html-render-4 | The Same From Both Sources | In Development | The same markup given as the `html` config string and as the `field` of a bound Search's row yields identical output. | The source earns no trust. |
-| req-web-panels-html-render-5 | Failures Of The Search | In Development | A Search that fails, or a row or field that is missing or not text, renders a visible message and raises nothing. | As `req-web-panels-chart-render`. |
-| req-web-panels-html-render-6 | Needs No Script Or Inline Style | In Development | The template holds no `script` element and no `style` attribute or element, and neither does the rendered output of the vectors. | |
+| req-web-panels-html-render-1 | Cleaned Every Render | Implemented | The panel cleans the markup each time it renders and stores nothing cleaned; a fixture whose cleaner is changed between two renders shows the second cleaner's output. | The config schema has no field to hold a cleaned copy. |
+| req-web-panels-html-render-2 | Fails Closed | Implemented | When the cleaner raises, the library cannot be imported or a document is over a limit, the panel renders a visible message and no content, and neither the raw markup nor an escaped copy of it appears. | |
+| req-web-panels-html-render-3 | One Trusted Step | Implemented | The panel's package contains exactly one `mark_safe`, in its context builder, applied to the cleaner's output; the template uses no `safe` filter and no `autoescape off`. | A grep test. |
+| req-web-panels-html-render-4 | The Same From Both Sources | Implemented | The same markup given as the `html` config string and as the `field` of a bound Search's row yields identical output. | The source earns no trust. |
+| req-web-panels-html-render-5 | Failures Of The Search | Implemented | A Search that fails, or a row or field that is missing or not text, renders a visible message and raises nothing. | As `req-web-panels-chart-render`. |
+| req-web-panels-html-render-6 | Needs No Script Or Inline Style | Implemented | The template holds no `script` element and no `style` attribute or element, and neither does the rendered output of the vectors. | |
 
 ### Styling
 ----
 RID: `req-web-panels-html-style`
 
-Status: `In Development`
+Status: `Implemented`
 
 `panel-html.css` scopes every rule under `.tap-panel--html`, takes every colour from the palette tokens in `theme.css` (`rgb(var(--tap-slate-800))` and the like), which the theme redefines for dark, so it has no colour literal and no dark block of its own (`req-web-theme-surfaces-1`); it sets the typography for the allowed tags and the ten classes, contains its content (`overflow` clipped, `contain: content`), reflows its two-column class in a narrow panel, and has a print block.
 
@@ -153,13 +153,13 @@ Status: `In Development`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-style-1 | Scoped, Themed, Printable | In Development | Every selector in the stylesheet is under `.tap-panel--html`, it holds no hex or `rgb()` colour literal and draws its colours from the palette tokens, and it has a print block. | |
+| req-web-panels-html-style-1 | Scoped, Themed, Printable | Implemented | Every selector in the stylesheet is under `.tap-panel--html`, it holds no hex or `rgb()` colour literal and draws its colours from the palette tokens, and it has a print block. | |
 
 ### The Dependency
 ----
 RID: `req-web-panels-html-dependency`
 
-Status: `In Development`
+Status: `Implemented`
 
 The sanitizer is a library, not code written here: `nh3`, the Python bindings for Rust's `ammonia` (built on the `html5ever` HTML5 parser). It is a direct dependency of the root project, bounded `>=0.3.7,<0.4`: a sanitizer's behaviour is its security, so a new 0.x line arrives as its own deliberate Renovate PR. Approved by George, 2026-10-29 for the plugin and 2026-11-06 for the core ("nh3 is fine in core").
 
@@ -188,7 +188,7 @@ Two findings shape how it is used, not whether. First, the 2026 `ammonia` adviso
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panels-html-dependency-1 | The Dependency Is Recorded | In Development | `nh3` is a direct dependency in `pyproject.toml` with a lower bound of 0.3.7 and an upper bound below the next 0.x line, `uv.lock` carries it, and this section is kept current. | |
+| req-web-panels-html-dependency-1 | The Dependency Is Recorded | Implemented | `nh3` is a direct dependency in `pyproject.toml` with a lower bound of 0.3.7 and an upper bound below the next 0.x line, `uv.lock` carries it, and this section is kept current. | |
 
 ### Non-Goals
 

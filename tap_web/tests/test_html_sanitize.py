@@ -10,8 +10,10 @@ import re
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 import pytest
+
 from tap_web.panels.html import sanitize as h
 
 SPEC = Path(__file__).resolve().parents[1] / "specs" / "spec-web-panels-html.md"
@@ -23,63 +25,63 @@ VECTORS = [
     "<img src=x onerror=alert(1)>",
     "<img src=javascript:alert(1)>",
     "<IMG SRC=&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;alert(1)>",
-    "<img src=\"jav&#x09;ascript:alert(1)\">",
-    "<a href=\"javascript:alert(1)\">x</a>",
-    "<a href=\" javascript:alert(1)\">x</a>",
-    "<a href=\"java\nscript:alert(1)\">x</a>",
-    "<a href=\"JaVaScRiPt:alert(1)\">x</a>",
-    "<a href=\"vbscript:msgbox(1)\">x</a>",
-    "<a href=\"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==\">x</a>",
-    "<a href=\"//evil.example/x\">x</a>",
-    "<a href=\"\\\\evil.example\\x\">x</a>",
-    "<a href=\"https://user:pass@evil.example/\">x</a>",
+    '<img src="jav&#x09;ascript:alert(1)">',
+    '<a href="javascript:alert(1)">x</a>',
+    '<a href=" javascript:alert(1)">x</a>',
+    '<a href="java\nscript:alert(1)">x</a>',
+    '<a href="JaVaScRiPt:alert(1)">x</a>',
+    '<a href="vbscript:msgbox(1)">x</a>',
+    '<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">x</a>',
+    '<a href="//evil.example/x">x</a>',
+    '<a href="\\\\evil.example\\x">x</a>',
+    '<a href="https://user:pass@evil.example/">x</a>',
     "<body onload=alert(1)>",
     "<svg onload=alert(1)>",
     "<svg><script>alert(1)</script></svg>",
     "<svg><animate onbegin=alert(1) attributeName=x dur=1s>",
     "<svg><a><animate attributeName=href values=javascript:alert(1) /><text>x</text></a></svg>",
-    "<math><mi xlink:href=\"javascript:alert(1)\">x</mi></math>",
-    "<math><annotation-xml encoding=\"text/html\"><img src=x onerror=alert(1)></annotation-xml></math>",
+    '<math><mi xlink:href="javascript:alert(1)">x</mi></math>',
+    '<math><annotation-xml encoding="text/html"><img src=x onerror=alert(1)></annotation-xml></math>',
     "<iframe src=javascript:alert(1)></iframe>",
-    "<iframe srcdoc=\"<script>alert(1)</script>\"></iframe>",
+    '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
     "<object data=javascript:alert(1)></object>",
     "<embed src=javascript:alert(1)>",
     "<form action=https://evil.example><input name=x><button>go</button></form>",
     "<input autofocus onfocus=alert(1)>",
-    "<meta http-equiv=refresh content=\"0;url=https://evil.example\">",
+    '<meta http-equiv=refresh content="0;url=https://evil.example">',
     "<base href=https://evil.example/>",
     "<link rel=stylesheet href=https://evil.example/x.css>",
     "<style>@import 'https://evil.example/x.css'; body{display:none}</style>",
-    "<div style=\"position:fixed;inset:0;background:url(https://evil.example/x)\">x</div>",
-    "<p style=\"background-image:url(javascript:alert(1))\">x</p>",
+    '<div style="position:fixed;inset:0;background:url(https://evil.example/x)">x</div>',
+    '<p style="background-image:url(javascript:alert(1))">x</p>',
     "<video><source onerror=alert(1)></video>",
     "<audio src=x onerror=alert(1)>",
     "<details open ontoggle=alert(1)>x</details>",
     "<marquee onstart=alert(1)>x</marquee>",
-    "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\"></noscript>",
+    '<noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>',
     "<style><style/><img src=x onerror=alert(1)>",
     "<select><template><style></select><img src=x onerror=alert(1)>",
     "<textarea><img src=x onerror=alert(1)></textarea>",
     "<title><img src=x onerror=alert(1)></title>",
     "<xmp><img src=x onerror=alert(1)></xmp>",
-    "<table><td><svg></p><style><a id=\"</style><img src=x onerror=alert(1)>\">",
+    '<table><td><svg></p><style><a id="</style><img src=x onerror=alert(1)>">',
     "<a id=location name=cookie>x</a>",
     "<form id=x><input name=attributes></form>",
-    "<a href=\"https://ok.example/\" target=_blank>x</a>",
-    "<a href=\"https://ok.example/\" rel=opener>x</a>",
-    "<p class=\"tap-html-lead\" id=a name=b form=c onclick=1 style=2 data-x=3>x</p>",
+    '<a href="https://ok.example/" target=_blank>x</a>',
+    '<a href="https://ok.example/" rel=opener>x</a>',
+    '<p class="tap-html-lead" id=a name=b form=c onclick=1 style=2 data-x=3>x</p>',
     "<!--[if IE]><script>alert(1)</script><![endif]-->",
     "<![CDATA[<script>alert(1)</script>]]>",
     "<?php echo 1; ?>",
     "<!DOCTYPE html><html><head><title>x</title></head><body>y</body></html>",
-    "<img src=\"/static/ok.png\" onerror=alert(1) srcset=\"https://evil.example/x.png 1x\">",
-    "<img src=\"/static/../../etc/passwd\">",
+    '<img src="/static/ok.png" onerror=alert(1) srcset="https://evil.example/x.png 1x">',
+    '<img src="/static/../../etc/passwd">',
     "<p>" + "<b>" * 100 + "x",
     "\x00<script>alert(1)</script>",
     "<scr\x00ipt>alert(1)</scr\x00ipt>",
     "<<script>alert(1)//<</script>",
-    "<img src=\"x\" alt=\"\"onerror=alert(1) \">",
-    "<a href=\"mailto:a@b.example?subject=x\">x</a>",
+    '<img src="x" alt=""onerror=alert(1) ">',
+    '<a href="mailto:a@b.example?subject=x">x</a>',
 ]
 EVERY_FEATURE = h.Policy.from_config({"features": list(h.FEATURES)})
 
@@ -89,9 +91,10 @@ class _Independent(HTMLParser):
 
     def __init__(self, tags: set[str], attrs: dict[str, set[str]]) -> None:
         super().__init__()
-        self.tags, self.attrs, self.bad = tags, attrs, []
+        self.tags, self.attrs = tags, attrs
+        self.bad: list[str] = []
 
-    def handle_starttag(self, tag, attrs):  # type: ignore[no-untyped-def]
+    def handle_starttag(self, tag, attrs):
         if tag not in self.tags:
             self.bad.append(tag)
         for name, value in attrs:
@@ -104,7 +107,7 @@ class _Independent(HTMLParser):
             if name == "rel" and "noopener" not in (value or ""):
                 self.bad.append("rel")
 
-    def handle_comment(self, data):  # type: ignore[no-untyped-def]
+    def handle_comment(self, data):
         self.bad.append("comment")
 
 
@@ -124,7 +127,24 @@ def test_every_vector_comes_out_inside_the_allowlist(vector: str) -> None:
         return  # refusing a document is also safe
     assert independent_problems(out, EVERY_FEATURE) == [], (vector, out)
     low = out.lower()
-    for forbidden in ("<script", "<svg", "<math", "<iframe", "<style", "<form", "<input", "<meta", "<base", "<link", " on", "javascript:", "style=", " id=", " name=", "srcset"):
+    for forbidden in (
+        "<script",
+        "<svg",
+        "<math",
+        "<iframe",
+        "<style",
+        "<form",
+        "<input",
+        "<meta",
+        "<base",
+        "<link",
+        " on",
+        "javascript:",
+        "style=",
+        " id=",
+        " name=",
+        "srcset",
+    ):
         assert forbidden not in low or forbidden == " on" and not re.search(r"\son\w+\s*=", low), (vector, out)
 
 
@@ -151,8 +171,14 @@ def test_nothing_is_fetched_from_elsewhere() -> None:
 
 @pytest.mark.spec("req-web-panels-html-clean-5")
 def test_links_are_safe() -> None:
-    out = h.clean('<a href="https://ok.example/" target="_blank" rel="opener">x</a><a href="/local">y</a>', EVERY_FEATURE).html
-    assert out.count('rel="noopener noreferrer nofollow"') == 2 and "target" not in out and "opener\"" not in out.replace("noopener", "")
+    out = h.clean(
+        '<a href="https://ok.example/" target="_blank" rel="opener">x</a><a href="/local">y</a>', EVERY_FEATURE
+    ).html
+    assert (
+        out.count('rel="noopener noreferrer nofollow"') == 2
+        and "target" not in out
+        and 'opener"' not in out.replace("noopener", "")
+    )
 
 
 @pytest.mark.spec("req-web-panels-html-clean-6")
@@ -222,7 +248,9 @@ class TestFeatures:
 
     @pytest.mark.spec("req-web-panels-html-clean-11")
     def test_classes_narrow(self) -> None:
-        out = h.clean('<p class="tap-html-lead tap-html-muted">x</p>', h.Policy.from_config({"classes": ["tap-html-muted"]})).html
+        out = h.clean(
+            '<p class="tap-html-lead tap-html-muted">x</p>', h.Policy.from_config({"classes": ["tap-html-muted"]})
+        ).html
         assert out == '<p class="tap-html-muted">x</p>'
         assert "class" not in h.clean('<p class="tap-html-lead">x</p>', h.Policy.from_config({"classes": []})).html
 
@@ -242,17 +270,37 @@ class TestFeatures:
             {"max_bytes": 0},
         ],
     )
-    def test_a_policy_cannot_name_anything_outside_the_vocabulary(self, config: dict) -> None:
+    def test_a_policy_cannot_name_anything_outside_the_vocabulary(self, config: dict[str, Any]) -> None:
         with pytest.raises(ValueError):  # noqa: PT011
             h.Policy.from_config(config)
 
     @pytest.mark.spec("req-web-panels-html-clean-11")
     def test_no_policy_can_reach_a_forbidden_tag(self) -> None:
         union = set().union(*(tags for tags, _ in h.FEATURES.values()))
-        assert not union & {"script", "style", "iframe", "object", "embed", "form", "input", "button", "svg", "math", "link", "meta", "base", "video", "audio", "template"}
+        assert not union & {
+            "script",
+            "style",
+            "iframe",
+            "object",
+            "embed",
+            "form",
+            "input",
+            "button",
+            "svg",
+            "math",
+            "link",
+            "meta",
+            "base",
+            "video",
+            "audio",
+            "template",
+        }
         every = set(h.Policy.from_config({"features": list(h.FEATURES)}).attributes.values().__iter__().__next__())
         allattrs = set().union(*h.Policy.from_config({"features": list(h.FEATURES)}).attributes.values())
-        assert not allattrs & {"style", "id", "name", "form", "target", "onclick", "srcset", "ping", "formaction"} and every
+        assert (
+            not allattrs & {"style", "id", "name", "form", "target", "onclick", "srcset", "ping", "formaction"}
+            and every
+        )
 
 
 @pytest.mark.spec("req-web-panels-html-clean-10")
@@ -271,7 +319,7 @@ def test_the_configured_allowlist_is_the_one_in_the_spec() -> None:
                 attrs[tag.strip(" `")] = set(re.findall(r"`([a-z]+)`", names))
             documented[cells[0].strip("`")] = (tags, attrs)
     assert set(documented) == set(h.FEATURES)
-    for name, (tags, attrs) in h.FEATURES.items():
-        assert (set(tags), {t: set(a) for t, a in attrs.items()}) == documented[name], name
+    for name, (feature_tags, feature_attrs) in h.FEATURES.items():
+        assert (set(feature_tags), {t: set(a) for t, a in feature_attrs.items()}) == documented[name], name
     for cls in h.CLASSES:
         assert f"`{cls}`" in text

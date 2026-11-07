@@ -18,7 +18,11 @@ HTML_PANEL_CONFIG_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "oneOf": [{"required": ["html"]}, {"required": ["field"]}],
     "properties": {
-        "html": {"description": "The markup, written in the config.", "type": "string", "maxLength": sanitize.MAX_BYTES_CEILING},
+        "html": {
+            "description": "The markup, written in the config.",
+            "type": "string",
+            "maxLength": sanitize.MAX_BYTES_CEILING,
+        },
         "field": {
             "description": "The row field of the bound Search that holds the markup.",
             "type": "string",
@@ -73,7 +77,7 @@ def validate_config(config: Any) -> str | None:
         jsonschema.validate(config, HTML_PANEL_CONFIG_SCHEMA)
         sanitize.Policy.from_config(config)
     except jsonschema.ValidationError as exc:
-        return exc.message
+        return str(exc.message)
     except ValueError as exc:
         return str(exc)
     return None

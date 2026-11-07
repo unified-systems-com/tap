@@ -39,7 +39,18 @@ FEATURES: dict[str, tuple[frozenset[str], dict[str, frozenset[str]]]] = {
 ALWAYS = "text"
 DEFAULT_FEATURES = frozenset(FEATURES) - {"images"}  # an image is opt-in
 CLASSES = frozenset(
-    {"tap-html-lead", "tap-html-muted", "tap-html-callout", "tap-html-callout-note", "tap-html-callout-warning", "tap-html-columns", "tap-html-badge", "tap-html-figure", "tap-html-table", "tap-html-quote"}
+    {
+        "tap-html-lead",
+        "tap-html-muted",
+        "tap-html-callout",
+        "tap-html-callout-note",
+        "tap-html-callout-warning",
+        "tap-html-columns",
+        "tap-html-badge",
+        "tap-html-figure",
+        "tap-html-table",
+        "tap-html-quote",
+    }
 )
 SCHEMES = ("http", "https", "mailto")
 GLOBAL_ATTRS = frozenset({"lang", "dir"})
