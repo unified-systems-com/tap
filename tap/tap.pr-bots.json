@@ -9,6 +9,13 @@
       "note": "Our self-hosted Renovate GitHub App (the author of every Renovate PR here, e.g. PR# 339)."
     },
     {
+      "login": "tap-renovate[bot]",
+      "id": 353051615,
+      "type": "Bot",
+      "verified": "2026-11-07",
+      "note": "The current tap-renovate GitHub App, run from unified-systems-com/org-bots (fleet Renovate, which covers tap again from 2026-11-07). A different account from the 2026-09-08 entry above, which has the same login and an older id; both are approved and the older one authors nothing now."
+    },
+    {
       "login": "dependabot[bot]",
       "id": 49699333,
       "type": "Bot",
