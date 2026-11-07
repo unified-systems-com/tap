@@ -1,0 +1,22 @@
+{% comment %}
+HTML panel (req-web-panels-html-render): `content` is the one variable that is already cleaned and marked safe, in
+tap_web/panels/html/__init__.py. Every other variable is escaped. No script, no inline style.
+{% endcomment %}
+<div class="tap-panel tap-panel--html">
+    {% if not panel.config.hide_header %}{% include "tap_web/panel_header.html" %}{% endif %}
+    {% if state == "ok" %}
+    <div class="tap-html">{{ content }}</div>
+    {% elif state == "bad_config" %}
+    <p class="tap-html-empty">Panel config invalid: {{ detail }}</p>
+    {% elif state == "failed" %}
+    <p class="tap-html-empty">The content could not be read.</p>
+    {% elif state == "empty" %}
+    <p class="tap-html-empty">No content.</p>
+    {% elif state == "not_text" %}
+    <p class="tap-html-empty">The field is not text.</p>
+    {% elif state == "refused" %}
+    <p class="tap-html-empty">The content was refused: {{ detail }}.</p>
+    {% else %}
+    <p class="tap-html-empty">The content cannot be shown.</p>
+    {% endif %}
+</div>

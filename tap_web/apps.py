@@ -109,6 +109,7 @@ class TapWebConfig(AppConfig):
         from tap_web.editor import EditorDescriptor
         from tap_web.panels.chart import ChartPanelType
         from tap_web.panels.flip_panel import FlipPanelType
+        from tap_web.panels.html import HtmlPanelType
         from tap_web.panels.stat_card_panel import StatCardPanelType
         from tap_web.panels.table_panel import TablePanelType
         from tap_web.panels.text_panel import TextPanelType
@@ -151,6 +152,7 @@ class TapWebConfig(AppConfig):
         panel_type_registry.register("viewer", ViewerPanelType)
         panel_type_registry.register("editor", EditorPanelType)
         panel_type_registry.register("chart", ChartPanelType)
+        panel_type_registry.register("html", HtmlPanelType)
         panel_type_registry.register("sequence-nav", SequenceNavPanelType)
         panel_type_registry.register("batch-viewer", BatchViewerPanelType)
         panel_type_registry.register("batch-summary", BatchSummaryPanelType)

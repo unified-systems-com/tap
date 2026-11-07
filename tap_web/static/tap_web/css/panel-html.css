@@ -1,0 +1,76 @@
+/* HTML panel (req-web-panels-html-style). Every rule is scoped under .tap-panel--html. Every colour is a palette token from
+   theme.css, which the theme redefines for dark, so no dark block is needed here and no colour literal appears
+   (req-web-theme-surfaces-1). No inline style and no script are needed, so the panel works under a policy that forbids
+   unsafe-inline. */
+
+.tap-panel--html {
+  --tap-html-ink: rgb(var(--tap-slate-800));
+  --tap-html-body: rgb(var(--tap-slate-700));
+  --tap-html-muted: rgb(var(--tap-slate-600));
+  --tap-html-rule: rgb(var(--tap-slate-200));
+  --tap-html-tint: rgb(var(--tap-slate-50));
+  --tap-html-accent: rgb(var(--tap-blue-600));
+  --tap-html-accent-ink: rgb(var(--tap-blue-700));
+  --tap-html-warn: rgb(var(--tap-amber-700));
+  container-type: inline-size;
+  color: var(--tap-html-body);
+}
+
+.tap-panel--html .tap-html-empty { color: var(--tap-html-muted); font-style: italic; margin: 0.6rem 0 0; }
+
+/* The content is contained to its box: nothing it holds can paint outside it or sit over the page. */
+.tap-panel--html .tap-html {
+  contain: content;
+  overflow: hidden;
+  position: relative;
+  max-width: 72ch;
+  margin-top: 0.6rem;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.tap-panel--html .tap-html > :first-child { margin-top: 0; }
+.tap-panel--html .tap-html p { margin: 0 0 0.9em; }
+.tap-panel--html .tap-html h2, .tap-panel--html .tap-html h3, .tap-panel--html .tap-html h4 { color: var(--tap-html-ink); line-height: 1.3; margin: 1.2em 0 0.4em; }
+.tap-panel--html .tap-html h2 { font-size: 1.2rem; }
+.tap-panel--html .tap-html h3 { font-size: 1.05rem; }
+.tap-panel--html .tap-html h4 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tap-html-muted); }
+.tap-panel--html .tap-html a { color: var(--tap-html-accent-ink); text-decoration: underline; text-underline-offset: 0.15em; }
+.tap-panel--html .tap-html ul, .tap-panel--html .tap-html ol { margin: 0 0 0.9em; padding-left: 1.4em; }
+.tap-panel--html .tap-html ul { list-style: disc; }
+.tap-panel--html .tap-html ol { list-style: decimal; }
+.tap-panel--html .tap-html dt { font-weight: 600; color: var(--tap-html-ink); }
+.tap-panel--html .tap-html dd { margin: 0 0 0.5em 1.2em; }
+.tap-panel--html .tap-html code, .tap-panel--html .tap-html kbd { font-size: 0.88em; background: var(--tap-html-tint); border: 1px solid var(--tap-html-rule); border-radius: 0.25rem; padding: 0 0.3em; }
+.tap-panel--html .tap-html pre { background: var(--tap-html-tint); border: 1px solid var(--tap-html-rule); border-radius: 0.375rem; padding: 0.75rem 1rem; overflow-x: auto; margin: 0 0 0.9em; }
+.tap-panel--html .tap-html pre code { background: none; border: 0; padding: 0; }
+.tap-panel--html .tap-html blockquote, .tap-panel--html .tap-html .tap-html-quote { margin: 0 0 0.9em; padding-left: 1rem; border-left: 3px solid var(--tap-html-rule); color: var(--tap-html-muted); }
+.tap-panel--html .tap-html hr { border: 0; border-top: 1px solid var(--tap-html-rule); margin: 1.2em 0; }
+.tap-panel--html .tap-html table, .tap-panel--html .tap-html .tap-html-table { border-collapse: collapse; margin: 0 0 0.9em; font-variant-numeric: tabular-nums; }
+.tap-panel--html .tap-html th, .tap-panel--html .tap-html td { border-bottom: 1px solid var(--tap-html-rule); padding: 0.3rem 0.7rem 0.3rem 0; text-align: left; vertical-align: top; }
+.tap-panel--html .tap-html th { color: var(--tap-html-muted); font-size: 0.85rem; font-weight: 600; }
+.tap-panel--html .tap-html caption { text-align: left; color: var(--tap-html-muted); font-size: 0.85rem; padding-bottom: 0.3rem; }
+.tap-panel--html .tap-html figure, .tap-panel--html .tap-html .tap-html-figure { margin: 0 0 0.9em; }
+.tap-panel--html .tap-html figcaption { color: var(--tap-html-muted); font-size: 0.85rem; margin-top: 0.3rem; }
+.tap-panel--html .tap-html img { max-width: 100%; height: auto; }
+.tap-panel--html .tap-html details { margin: 0 0 0.9em; }
+.tap-panel--html .tap-html summary { cursor: pointer; color: var(--tap-html-accent-ink); }
+
+/* The classes the panel offers (sanitize.CLASSES). */
+.tap-panel--html .tap-html .tap-html-lead { font-size: 1.1rem; line-height: 1.55; color: var(--tap-html-ink); }
+.tap-panel--html .tap-html .tap-html-muted { color: var(--tap-html-muted); }
+.tap-panel--html .tap-html .tap-html-callout { background: var(--tap-html-tint); border: 1px solid var(--tap-html-rule); border-left: 3px solid var(--tap-html-accent); border-radius: 0.375rem; padding: 0.75rem 1rem; margin: 0 0 0.9em; }
+.tap-panel--html .tap-html .tap-html-callout-note { border-left-color: var(--tap-html-accent); }
+.tap-panel--html .tap-html .tap-html-callout-warning { border-left-color: var(--tap-html-warn); }
+.tap-panel--html .tap-html .tap-html-columns { column-count: 2; column-gap: 2rem; }
+.tap-panel--html .tap-html .tap-html-badge { display: inline-block; font-size: 0.75em; letter-spacing: 0.03em; text-transform: uppercase; border: 1px solid var(--tap-html-rule); border-radius: 0.25rem; padding: 0 0.4em; color: var(--tap-html-muted); }
+
+@container (max-width: 40rem) {
+  .tap-panel--html .tap-html .tap-html-columns { column-count: 1; }
+}
+
+@media print {
+  .tap-panel--html .tap-html { max-width: none; overflow: visible; }
+  .tap-panel--html .tap-html a { color: inherit; }
+  .tap-panel--html .tap-html pre, .tap-panel--html .tap-html table, .tap-panel--html .tap-html figure { break-inside: avoid; }
+}
