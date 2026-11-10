@@ -1266,9 +1266,9 @@ def test_a_uid_with_no_login_name_leaves_the_deny_list_one_entry_shorter(monkeyp
     def no_name() -> str:
         raise KeyError("getpwuid(): uid not found: 1001")
 
-    monkeypatch.setattr(br.getpass, "getuser", no_name)
+    monkeypatch.setattr(getpass, "getuser", no_name)
     assert br._login_name() is None
-    monkeypatch.setattr(br.getpass, "getuser", lambda: (_ for _ in ()).throw(OSError("No username set")))
+    monkeypatch.setattr(getpass, "getuser", lambda: (_ for _ in ()).throw(OSError("No username set")))
     assert br._login_name() is None
-    monkeypatch.setattr(br.getpass, "getuser", lambda: "someone")
+    monkeypatch.setattr(getpass, "getuser", lambda: "someone")
     assert br._login_name() == "someone"
