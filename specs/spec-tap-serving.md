@@ -76,6 +76,7 @@ reachable before release.
 | req-tap-serving-readiness | [Readiness Is Server-Independent](#readiness-is-server-independent) | Proposed | What "ready" means, and the relationship to the steady_queue supervisor |
 | req-tap-serving-grants | [A Table Cannot Exist Without Its Grant](#a-table-cannot-exist-without-its-grant) | Proposed | tap#431; migration and grant reconciliation must be inseparable |
 | req-tap-serving-process-failure | [Process Failure Is Visible](#process-failure-is-visible) | Proposed | Two process trees, one container; either dying must turn readiness red |
+| req-tap-serving-process-roles | [Process Roles](#process-roles) | Implemented | `TAP_PROCESS_ROLE` splits one image into web, worker, scheduler and migrate containers; the default `all` is unchanged |
 | req-tap-serving-proxy | [Deployment Behind A Proxy](#deployment-behind-a-proxy) | Proposed | TLS termination, trusted proxy headers, secure cookies; tap#272, tap#277 |
 | req-tap-serving-durability | [Durability Tuning Is Confined To Disposable Databases](#durability-tuning-is-confined-to-disposable-databases) | Proposed | The shipped compose disables `fsync`; that must not reach a durable deployment |
 | req-tap-serving-codespace | [The One-Click Codespace Is The First Deployment](#the-one-click-codespace-is-the-first-deployment) | Proposed | git-serious-tap#86; sets which requirements are critical path and which can wait |
@@ -1316,6 +1317,43 @@ collecting*, and *down* are three distinct states, and today the middle one is r
 | req-tap-serving-process-failure-1 | Supervisor Death Turns Readiness Red | Proposed | Killing the steady_queue supervisor causes the readiness surface to report unhealthy while the web server is still answering. | The silent half-failure |
 | req-tap-serving-process-failure-2 | Web Death Ends The Container | Proposed | Death of the web server terminates the container rather than leaving an unreachable instance running. | |
 | req-tap-serving-process-failure-3 | Shutdown Reaches Both Trees | Proposed | A stop signal reaches both the web server and the supervisor, and the supervisor drains rather than being killed outright. | Requires resolving tap#229 |
+
+### Process Roles
+----
+RID: `req-tap-serving-process-roles`
+
+Status: `Implemented`
+
+One image, several start commands. `TAP_PROCESS_ROLE` selects which of the container's process trees
+run, so a deployment that must not let collector work share request workers splits the same image
+into containers instead of building a second one. Only the process invocation moves; the task backend
+and queue names do not (`req-tap-cares-task-backend-deployment`).
+
+| Role | Runs | Migrates |
+| --- | --- | --- |
+| `all` (default) | gunicorn and the whole Steady Queue tree, exactly as before | yes |
+| `web` | gunicorn only | yes, unless `TAP_SKIP_MIGRATE=1` |
+| `worker` | Steady Queue `default` workers; scales out | no; waits for the schema |
+| `scheduler` | the `scheduler` queue, the dispatcher and the recurring tick; run exactly one per database | no; waits for the schema |
+| `migrate` | preboot and migrate, then exits 0 | yes |
+
+A role that does not migrate polls `migrate --check` for `TAP_MIGRATE_WAIT_SECONDS` (default 300) and
+then aborts, rather than serving or working against a schema the code does not expect. Each container
+holds its own connections, so a split database's ceiling is the sum of
+`tap.serving.role_connection_budget` over every running container plus `ADMIN_SESSION_HEADROOM` once.
+`docker-compose.worker.yml` is the local split.
+
+This narrows `req-tap-serving-process-failure` for the split shape: a `worker` or `scheduler`
+container runs the supervisor as its only process, so the supervisor dying ends the container.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-process-roles-1 | Default Is Unchanged | Implemented | An unset role is `all`, and `all` runs every queue, every dispatcher and the recurring tick. An unknown role is refused at settings import and by the entrypoint. | `tap/tests/test_process_roles.py` |
+| req-tap-serving-process-roles-2 | Split Roles Add Up | Implemented | `web`, `worker` and `scheduler` together run exactly the queues, dispatchers and recurring tick of `all`, and their connection budgets sum to the `all` budget. | `tap/tests/test_process_roles.py` |
+| req-tap-serving-process-roles-3 | One Migrator | Implemented | `worker` and `scheduler` never migrate; they wait for the schema and abort after the wait. | `docker/entrypoint.sh` |
+| req-tap-serving-process-roles-4 | Queue Supervisor Is The Container Process | Implemented | A `worker` or `scheduler` container `exec`s the Steady Queue supervisor, so its death ends the container. | `docker/entrypoint.sh` |
 
 ### Deployment Behind A Proxy
 ----
