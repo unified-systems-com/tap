@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# scripts/bug-fix-intake -- the one fetch behind the submit-a-fix skill (specs/spec-dev-bug-reporting.md).
+#
+# Fetches ONE issue and its comments from a unified-systems-com repository, but only after the
+# issue's AUTHOR has been checked as a maintainer session account, by numeric id and type
+# (req-dev-bugfix-ownreports). The author is read through a filter that drops the body, so for any
+# other author the body is never fetched and never reaches the session. The fetched text is piped
+# into tap/bug_report.py and read as data: invisible characters, HTML comments and collapsed blocks
+# stripped and counted, comments from other accounts not read, anything that reads like an
+# instruction reported as a finding with the text withheld. The raw fetch is never written to disk.
+#
+# Version 0 has no sandbox: this script does not claim the session that runs it holds no
+# credential and no network (req-dev-bugfix-isolation is Backlog).
+#
+# Usage: scripts/bug-fix-intake unified-systems-com/<repo> <issue-number>
+# Exit:  0 report read, nothing flagged | 1 stopped (author or malformed report) | 2 findings, human decides
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+mkdir -p .bug-reports
+
+repo="${1:-}"; number="${2:-}"
+[[ "$repo" =~ ^unified-systems-com/[A-Za-z0-9_.-]+$ ]] || { echo "bug-fix-intake: repository must be unified-systems-com/<name>" >&2; exit 2; }
+[[ "$number" =~ ^[0-9]{1,9}$ ]] || { echo "bug-fix-intake: issue number must be digits" >&2; exit 2; }
+
+dc_py() { scripts/dc exec -T web uv run python -m tap.bug_report "$@"; }
+
+# 1. Author only, by a GraphQL query that selects the author's identity and nothing else: the body
+#    is not even downloaded before the gate (a REST fetch with --jq would download it and filter here).
+owner="${repo%%/*}"; name="${repo#*/}"
+author_query='query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { author { login __typename ... on User { databaseId } ... on Bot { databaseId } ... on Organization { databaseId } ... on Mannequin { databaseId } } } } }'
+if ! gh api graphql -f query="$author_query" -F owner="$owner" -F name="$name" -F number="$number" --jq '.data.repository.issue.author | {id: .databaseId, type: .__typename, login: .login}' | dc_py gate-author >&2; then
+  echo "bug-fix-intake: STOP. The issue body was not fetched." >&2
+  exit 1
+fi
+
+# 2. The author is a maintainer session account: now the body and the comments, piped straight into
+#    the intake. Nothing unsanitised is written to disk, so the skill's Read cannot reach the raw
+#    body, the HTML comments, the collapsed blocks or the outsiders' comments; the agent sees only
+#    what the intake prints, and nothing when a finding stops the run (untrusted-intake-1, -2).
+{
+  printf '{"issue":'
+  gh api "repos/$repo/issues/$number"
+  printf ',"comments":'
+  gh api --paginate --slurp "repos/$repo/issues/$number/comments"
+  printf '}'
+} | dc_py intake -
