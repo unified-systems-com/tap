@@ -288,6 +288,13 @@ run reports the base sha, so a stale verdict is indistinguishable from a fresh o
 missing seat is SEAT ABSENT, not a pass; a repo with no ai-review workflow is a defect to fix, not a
 clean run.
 
+**Three fix-and-push rounds against the AI review, then halt and ask.** The review is advisory and
+does not converge: each push costs a full CI cycle and yields a fresh run with one more finding.
+Tally each round (real gaps closed vs restated, ruled design or minutiae) in the answering comment;
+after the third round stop pushing and ask the maintainer whether another cycle is worth it, and
+stop earlier on your own judgement when a round only restates (ruled 2026-11-11 after tap#1175 ran
+seven rounds and sat three hours past mergeable). The procedure lives in `close-out-pr`.
+
 ## Standing Filters
 
 Each names the spec that owns it. The filter is the one-line trigger; the spec is the canon.

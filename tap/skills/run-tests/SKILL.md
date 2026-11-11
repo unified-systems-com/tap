@@ -136,7 +136,7 @@ that merge there), push, and read the plugin's CI (if it has any).
    boot on the shared VM. Use it only to clear data you must clear.
 8. **Plugin CI is slow and review rounds multiply it.** A plugin's server-side boot-and-test took 4–5
    minutes per push, and AI-review rounds meant 4–5 pushes per PR. One local plugin lane before each
-   push (rule 3, the short-lane form) is what saves the CPU there.
+   push (rule 3, the short-lane form) is what saves the CPU there. `close-out-pr` caps the fix-and-push rounds against the AI review at three before halting and asking the maintainer; count the pushes, not just the minutes.
 
 ## 4b. A plugin PR (no promote)
 
