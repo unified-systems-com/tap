@@ -24,8 +24,11 @@ repo="${1:-}"; number="${2:-}"
 
 dc_py() { scripts/dc exec -T web uv run python -m tap.bug_report "$@"; }
 
-# 1. Author only. The jq filter keeps three fields; the body stays inside gh.
-if ! gh api "repos/$repo/issues/$number" --jq '{id: .user.id, type: .user.type, login: .user.login}' | dc_py gate-author >&2; then
+# 1. Author only, by a GraphQL query that selects the author's identity and nothing else: the body
+#    is not even downloaded before the gate (a REST fetch with --jq would download it and filter here).
+owner="${repo%%/*}"; name="${repo#*/}"
+author_query='query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { author { login __typename ... on User { databaseId } ... on Bot { databaseId } ... on Organization { databaseId } ... on Mannequin { databaseId } } } } }'
+if ! gh api graphql -f query="$author_query" -F owner="$owner" -F name="$name" -F number="$number" --jq '.data.repository.issue.author | {id: .databaseId, type: .__typename, login: .login}' | dc_py gate-author >&2; then
   echo "bug-fix-intake: STOP. The issue body was not fetched." >&2
   exit 1
 fi

@@ -136,7 +136,7 @@ model or field name from the published schema) and passes the tripwire before it
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-dev-bugreport-route-1 | Possible Vulnerability Goes Private | Proposed | When the agent's answer to the security question is yes or might be, the skill produces no public issue draft and names the private vulnerability reporting URL for the target repository. | |
-| req-dev-bugreport-route-2 | Owner From The Boot Record | Proposed | For a failure in an installed plugin, the target repository is the `install.plugins[].source.url` of that plugin in the running instance's boot record, not a name the agent infers. | |
+| req-dev-bugreport-route-2 | Owner From The Boot Record | Proposed | For a failure in an installed plugin, the target repository is the `install.plugins[].source.url` of that plugin in the running instance's boot record, not a name the agent infers; a block whose target is not where the boot record routes its component is refused at render, check, preview and send. | Bound mechanically, since the block is authored as JSON |
 | req-dev-bugreport-route-3 | Third-Party Plugins Are Not Ours To File | Proposed | A source URL outside `unified-systems-com` is reported to the reporter as a third-party repository; the skill does not open an issue in a `unified-systems-com` repository for it. | |
 | req-dev-bugreport-route-4 | The Search Query Is Checked Before It Leaves | Proposed | The issue-search query passes the tripwire before it is sent; a query containing a planted instance value is blocked. | |
 | req-dev-bugreport-route-5 | Related Issues Are Named | Proposed | The report lists the existing issues the agent judged related, by number, with one line each on why. | |
@@ -273,7 +273,7 @@ like everything else. The tripwire is a detector, not a licence.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-bugreport-disclosure-1 | One Component, One Version | Proposed | The parseable block names exactly one component and its version, and the render step refuses a block that names a version for any other component. | |
+| req-dev-bugreport-disclosure-1 | One Component, One Version | Proposed | The parseable block names exactly one component and its version, the version is the one the install runs (core's version, or the plugin's `rev` and `commit` from the boot record), and a block that names another version, another component or a version for any other component is refused at render, check, preview and send. | The deny list exempts only the version the boot record confirms |
 | req-dev-bugreport-disclosure-2 | No Build Facts By Default | Proposed | A report contains no boot profile, host OS, architecture, Docker or Compose version unless the block carries that fact beside a stated reason it is evidence. | |
 | req-dev-bugreport-disclosure-3 | No Instance Text | Proposed | The report contains no log line, row, dump or export from the instance; command output present as evidence has its values removed and passes the tripwire. | |
 
@@ -451,10 +451,12 @@ Status: `Proposed`
 
 Ruled by George, 2026-10-25, and carried into version 1 unchanged. Until the sandbox of
 `req-dev-bugfix-isolation` is enabled, `submit-a-fix` reads an issue only when a maintainer session
-account wrote it. The author is read from the issue as fetched, by account identity and never by a
-name in the text, using the same allowlist that `req-cicd-issue-link-7` uses. Any other author stops
-the run before the issue body is read, with a message that says why: bugs from other accounts wait
-for the sandbox. The fetch, the report-as-data intake and the human push are unchanged.
+account wrote it. The author is read by a query that selects the author's identity and nothing
+else, so the body is not downloaded before the gate; the check is by account identity and never by
+a name in the text, using the same allowlist that `req-cicd-issue-link-7` uses. Any other author
+stops the run before the issue body is fetched, with a message that says why: bugs from other
+accounts wait for the sandbox. The fetch, the report-as-data intake and the human push are
+unchanged.
 
 #### Acceptance Criteria
 

@@ -571,7 +571,7 @@ def author_gate(
 ) -> tuple[bool, str]:
     """May ``submit-a-fix`` read this issue's body? True only for a maintainer session account.
 
-    TAP-IMPLEMENTS: req-dev-bugfix-ownreports@9a46954b5131/966cd224714e (enforcement) — the one author check; it asks scripts/pr_session_identity.py.
+    TAP-IMPLEMENTS: req-dev-bugfix-ownreports@4a8342a44670/966cd224714e (enforcement) — the one author check; it asks scripts/pr_session_identity.py.
 
     The authority is the numeric account id plus the type from the issue as GitHub returned it,
     never a name in the text. Anything but a listed session account, including an unreadable
@@ -674,6 +674,34 @@ def component_facts(
         "version": source.get("rev") or "unknown",
         "commit": source.get("commit"),
     }
+
+
+def check_binding(data: dict[str, Any], record: dict[str, Any], core_version: str) -> None:
+    """The component and target the block claims are the ones the boot record derives (req-dev-bugreport-route-2, -disclosure-1).
+
+    A block is authored as JSON, so without this a report could name any repository of ours as its
+    target and any version as the buggy component's; the deny list would then exempt that version.
+    Bound mechanically here, at render, check, preview and send.
+    """
+    component = data["component"]
+    slug = component["slug"] if component["kind"] == "plugin" else None
+    expected_repo, _ = route_target(record, slug)
+    if data["target_repository"] != expected_repo:
+        raise BugReportError(
+            f"target_repository {data['target_repository']!r} is not where the boot record routes "
+            f"{component['kind']} {component['slug']!r}: {expected_repo}"
+        )
+    expected = component_facts(record, slug, core_version)
+    claimed = (component["kind"], component["slug"], component["version"])
+    if claimed != (expected["kind"], expected["slug"], expected["version"]):
+        raise BugReportError(
+            f"component {' '.join(claimed)} is not what this install runs: "
+            f"{expected['kind']} {expected['slug']} {expected['version']} (from scripts/bug-report component)"
+        )
+    if expected["commit"] and component["commit"] != expected["commit"]:
+        raise BugReportError(
+            f"component commit {component['commit']!r} is not the boot record's {expected['commit']!r}"
+        )
 
 
 def require_repository(repo: str) -> str:
@@ -1003,8 +1031,10 @@ def report_deny(deny: list[tuple[str, str]], data: dict[str, Any]) -> list[tuple
     return exempt_build_facts(kept, data)
 
 
-def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, Any]:
-    """Everything the container checks before `gh issue create`: a block render would accept, no hidden text, tripwire clean, our repository.
+def prepare_send(
+    report: Path, deny: list[tuple[str, str]], *, record: dict[str, Any], core_version: str
+) -> dict[str, Any]:
+    """Everything the container checks before `gh issue create`: a block render would accept, bound to the boot record, no hidden text, tripwire clean, our repository.
 
     The host wrapper adds the consent check (a record for exactly this digest, typed at a terminal).
     """
@@ -1012,6 +1042,7 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, Any]:
     text = raw.decode("utf-8")
     extracted = extract_report(text)
     validate_block(extracted.data)
+    check_binding(extracted.data, record, core_version)
     if extracted.stripped.any():
         raise BugReportError(
             f"the report holds hidden text ({extracted.stripped.describe()}); a report we send has none"
@@ -1046,6 +1077,12 @@ def _login_name() -> str | None:
         return None
     except KeyError:
         return None
+
+
+def _core_version() -> str:
+    from tap.core_version import core_tap_version
+
+    return str(core_tap_version())
 
 
 def _profile_id() -> str | None:
@@ -1279,6 +1316,7 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
     if cmd == "render":
         answers = fill_descriptions(json.loads(resolve_in_work_dir(args.answers).read_text(encoding="utf-8")))
         text = render_report(answers)
+        check_binding(answers, read_boot_record(_profile_id()), _core_version())
         args.component = answers["component"]["slug"]
         hits = tripwire(text, report_deny(_local_deny(args), answers))
         if hits:
@@ -1294,6 +1332,7 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
     text = report.read_text(encoding="utf-8")
     extracted = extract_report(text)
     validate_block(extracted.data)
+    check_binding(extracted.data, read_boot_record(_profile_id()), _core_version())
     if cmd == "digest":
         file_digest = bundle_digest(report)
         print(json.dumps({"digest": file_digest, "phrase": consent_phrase(file_digest)}))
@@ -1342,7 +1381,9 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         print("----- END FILE -----")
         return 0
     if cmd == "verify-send":
-        info = prepare_send(report, _local_deny(args))
+        info = prepare_send(
+            report, _local_deny(args), record=read_boot_record(_profile_id()), core_version=_core_version()
+        )
         print(info[args.field] if args.field else json.dumps(info))
         return 0
     raise BugReportError(f"unknown subcommand {cmd}")  # pragma: no cover

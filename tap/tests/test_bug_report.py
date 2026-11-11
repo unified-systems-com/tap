@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 from tap import bug_report as br
+from tap.core_version import core_tap_version
 from tap.credential_patterns import ALLOW_MARKER
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +52,8 @@ THIRD_PARTY_REPO = "acme-secret-plugins/billing-sync-tap"
 GITHUB_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # TAP-CREDENTIAL-OK
 SESSION_ACCOUNT: dict[str, Any] = {"id": 286052, "type": "User", "login": "notgeorge"}
 OTHER_PLUGIN_COMMIT = "b" * 40
+#: The sample reports core at the version this checkout runs, because the send binds the block to it.
+CORE_VERSION = core_tap_version()
 
 
 def sample_answers(*, screenshots: bool = False, theories: bool = False) -> dict[str, Any]:
@@ -97,7 +100,7 @@ def _base_answers() -> dict[str, Any]:
         "component": {
             "kind": "core",
             "slug": "tap",
-            "version": "0.3.0",
+            "version": CORE_VERSION,
             "commit": "0123456789abcdef0123456789abcdef01234567",
         },
         "reporter_description": "A query with two WHERE clauses returns rows the second clause should have excluded.",
@@ -292,7 +295,7 @@ def test_the_human_sections_are_rendered_from_the_block() -> None:
     text = build_report()
     for heading in br.HEADINGS:
         assert f"## {heading}\n" in text
-    assert "core `tap` at 0.3.0 (commit 0123456789abcdef0123456789abcdef01234567)" in text
+    assert f"core `tap` at {CORE_VERSION} (commit 0123456789abcdef0123456789abcdef01234567)" in text
     assert "0. `read` tap_grid/gryphon/planner.py:212" in text
     assert "Root cause at `tap_grid/gryphon/planner.py` line 212" in text
     assert "- #811: same planner" in text
@@ -789,7 +792,7 @@ def test_the_digest_a_yes_binds_to_changes_with_any_byte(work: Path) -> None:
 def test_a_send_needs_a_valid_report_a_clean_tripwire_and_our_repository(work: Path) -> None:
     report = work / "r.md"
     report.write_text(build_report(), encoding="utf-8")
-    info = br.prepare_send(report, [])
+    info = br.prepare_send(report, [], record={}, core_version=CORE_VERSION)
     assert info["repository"] == "unified-systems-com/tap" and info["files"] == [
         {"path": ".bug-reports/r.md", "sha256": br.digest(report.read_bytes()), "alt": ""}
     ]
@@ -797,12 +800,14 @@ def test_a_send_needs_a_valid_report_a_clean_tripwire_and_our_repository(work: P
         report
     )
     with pytest.raises(br.BugReportError, match="Tripwire BLOCKED"):
-        br.prepare_send(report, br.build_deny_list({}, hostnames=["two-hop match"]))
+        br.prepare_send(
+            report, br.build_deny_list({}, hostnames=["two-hop match"]), record={}, core_version=CORE_VERSION
+        )
     other = br.fill_descriptions({**sample_answers(), "target_repository": THIRD_PARTY_REPO})
     third = work / "third.md"
     third.write_text(br.render_report(other), encoding="utf-8")
-    with pytest.raises(br.BugReportError, match="not ours to file into"):
-        br.prepare_send(third, [])
+    with pytest.raises(br.BugReportError, match="not where the boot record routes|not ours to file into"):
+        br.prepare_send(third, [], record={}, core_version=CORE_VERSION)
 
 
 @pytest.mark.spec("req-dev-bugreport-consent-6")
@@ -816,18 +821,70 @@ def test_a_block_edited_after_rendering_is_refused_at_check_preview_and_send(
     assert rendered.count('"answer": "no"') == 1
     report.write_text(rendered.replace('"answer": "no"', '"answer": "yes"'), encoding="utf-8")
     with pytest.raises(br.BugReportError, match="security/advisories/new"):
-        br.prepare_send(report, [])
+        br.prepare_send(report, [], record={}, core_version=CORE_VERSION)
     for verb in ("check", "preview", "verify-send"):
         assert br.main([verb, ".bug-reports/r.md", "--host-user", "", "--host-home", ""]) == 1
         assert "no public issue" in capsys.readouterr().err
     both = rendered.replace('"kind": "root_cause"', '"kind": "theories"')
     report.write_text(both, encoding="utf-8")
     with pytest.raises(br.BugReportError, match="root_cause must be null"):
-        br.prepare_send(report, [])
+        br.prepare_send(report, [], record={}, core_version=CORE_VERSION)
     leaky = rendered.replace("192.0.2.10", "10.0.0.7")
     report.write_text(leaky, encoding="utf-8")
     with pytest.raises(br.BugReportError, match="10.0.0.7"):
-        br.prepare_send(report, [])
+        br.prepare_send(report, [], record={}, core_version=CORE_VERSION)
+
+
+@pytest.mark.spec("req-dev-bugreport-route-2")
+@pytest.mark.spec("req-dev-bugreport-disclosure-1")
+def test_the_target_and_the_component_are_bound_to_the_boot_record_at_send(
+    work: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A block is authored as JSON: the send refuses a target or a component the boot record does not derive."""
+    record = _record()
+    report = work / "r.md"
+    report.write_text(build_report(), encoding="utf-8")
+    assert (
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)["repository"] == "unified-systems-com/tap"
+    )
+    elsewhere = sample_answers()
+    elsewhere["target_repository"] = "unified-systems-com/grid-fixtures-tap"
+    report.write_text(build_report(elsewhere), encoding="utf-8")
+    with pytest.raises(br.BugReportError, match="not where the boot record routes"):
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)
+    assert br.main(["check", ".bug-reports/r.md", "--host-user", "", "--host-home", ""]) == 1
+    assert "not where the boot record routes" in capsys.readouterr().err
+    older = sample_answers()
+    older["component"]["version"] = "0.0.1"
+    report.write_text(build_report(older), encoding="utf-8")
+    with pytest.raises(br.BugReportError, match="not what this install runs"):
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)
+    plugin = sample_answers()
+    plugin["target_repository"] = "unified-systems-com/grid-fixtures-tap"
+    plugin["component"] = {
+        "kind": "plugin",
+        "slug": "grid_fixtures",
+        "version": "v0.3.1",
+        "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8",
+    }
+    report.write_text(build_report(plugin), encoding="utf-8")
+    assert (
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)["repository"]
+        == "unified-systems-com/grid-fixtures-tap"
+    )
+    plugin["component"]["version"] = "v0.9.9"
+    report.write_text(build_report(plugin), encoding="utf-8")
+    with pytest.raises(br.BugReportError, match="not what this install runs"):
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)
+    plugin["component"]["version"], plugin["component"]["commit"] = "v0.3.1", "c" * 40
+    report.write_text(build_report(plugin), encoding="utf-8")
+    with pytest.raises(br.BugReportError, match="not the boot record's"):
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)
+    unknown = sample_answers()
+    unknown["component"] = {"kind": "plugin", "slug": "invented_by_the_agent", "version": "v1", "commit": None}
+    report.write_text(build_report(unknown), encoding="utf-8")
+    with pytest.raises(br.BugReportError, match="not in the install's boot record"):
+        br.prepare_send(report, [], record=record, core_version=CORE_VERSION)
 
 
 @pytest.mark.spec("req-dev-bugreport-consent-1")
@@ -848,7 +905,7 @@ def test_the_preview_names_the_repository_public_permanent_what_it_discloses_and
     assert br.main(["preview", ".bug-reports/r.md", "--host-user", "", "--host-home", ""]) == 0
     out = capsys.readouterr().out
     assert "unified-systems-com/tap" in out and "PUBLIC and PERMANENT" in out and "does not remove earlier text" in out
-    assert "Discloses: core tap at 0.3.0, and nothing else about your build." in out
+    assert f"Discloses: core tap at {CORE_VERSION}, and nothing else about your build." in out
     assert "you are the one who knows what in it would identify you" in out
     assert br.consent_phrase(br.digest(report.read_bytes())) in out
     assert "in their own terminal" in out and "An agent cannot record that yes" in out
@@ -1165,7 +1222,9 @@ def test_an_outsiders_issue_body_is_never_fetched_written_or_shown(fix_env: dict
     assert result.returncode == 1, result.stdout + result.stderr
     assert "author check failed" in result.stdout + result.stderr
     assert marker not in result.stdout + result.stderr
-    assert log.count("\n") == 1 and "--jq" in log, f"only the author-filtered call may run, got: {log}"
+    assert log.count("\n") == 1 and "graphql" in log and "--jq" in log, (
+        f"only the author-identity query may run, got: {log}"
+    )
     assert not (fix_env["repo"] / ".bug-reports" / "issue-7.json").exists()
 
 
