@@ -141,7 +141,9 @@ it.
    Besides reviews and failing checks it prints a `CONFLICT` line when the PR stops
    merging into its base, which happens after opening whenever the base moves.
 
-   Then hand off: **`close-out-pr` owns everything from here.**
+   Then hand off: **`close-out-pr` owns everything from here** — including its cap of
+   **three** fix-and-push rounds against the AI review before halting and asking the
+   maintainer; each push is a full CI cycle, and the review never converges on its own.
 
 ## What this skill is deliberately not
 

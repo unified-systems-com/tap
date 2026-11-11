@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap/skills/bug-report.schema.json",
+  "title": "TAP bug report data block",
+  "description": "The one machine-readable block inside a bug report: the single fenced JSON document that `submit-a-bug` writes and `submit-a-fix` reads (req-dev-bugreport-shape-1, req-dev-bugreport-shape-3). This file is the only place the report's fields are defined; neither skill restates them, and tap/tests/test_bug_report.py fails when a field here is written by one side and not read by the other. Version 1: the agent's own investigation, a root cause or ranked theories with the method behind each finding, an invented scenario with sample data, and the version of the one component that has the bug and nothing else about the build (req-dev-bugreport-conclude, -scenario, -disclosure). No value read from the reporter's instance appears anywhere in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "description",
+    "schema_version",
+    "target_repository",
+    "title",
+    "component",
+    "reporter_description",
+    "security",
+    "findings",
+    "conclusion",
+    "scenario",
+    "not_observed",
+    "related_issues",
+    "suggested_fix",
+    "evidence_build_facts"
+  ],
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What this document is, in a sentence: the machine-readable block of a TAP bug report. Present because every JSON structure carries a description at its top level and on each key."
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "Version of this report shape. 1 is the agent-investigates shape (George, 2026-11-11): one component's version, findings with their method, a root cause or theories, an invented scenario. A change to the shape changes this number and this file together."
+    },
+    "target_repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$",
+      "description": "The repository that owns the failing code, as owner/name: read from the install's boot record for a plugin, `unified-systems-com/tap` for core or an unattributed failure (req-dev-bugreport-route-2)."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n]+$",
+      "description": "The issue title: one line naming the symptom in TAP's own vocabulary (a plugin slug, a model or field name, an error class), never a value from the reporter's instance."
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "kind",
+        "slug",
+        "version",
+        "commit"
+      ],
+      "description": "The one component that has the bug, and its version: the only fact about the reporter's build a report carries (req-dev-bugreport-disclosure-1). Core is reported as the TAP version; a plugin as its slug, rev and commit from the boot record. There is no slot for a second component's version anywhere in this document.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the one component with the bug and its version."
+        },
+        "kind": {
+          "enum": [
+            "core",
+            "plugin"
+          ],
+          "description": "`core` when the bug is in TAP itself, `plugin` when it is in one installed plugin that is ours."
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The plugin's slug from the boot record, or `tap` for core."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The TAP version or image tag for core; the boot record's `rev` for a plugin. From the running install, never from an env file."
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "The commit the component runs at: the boot record's `commit` for a plugin, the checkout's commit for core when run from one; null when only a release or image tag is known."
+        }
+      }
+    },
+    "reporter_description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The behaviour the reporter described, in their own words. The one input the reporter had to give (req-dev-bugreport-investigate). It passes the tripwire like everything else."
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "answer",
+        "reasoning"
+      ],
+      "description": "The agent's answer to the security question: could this let someone read data they should not, act as someone else, or get past a check? A report is rendered only when the answer is `no`; `might be` and `yes` go to private vulnerability reporting instead (req-dev-bugreport-route-1).",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the security answer and why."
+        },
+        "answer": {
+          "enum": [
+            "no",
+            "might be",
+            "yes"
+          ],
+          "description": "`no` when the agent found no way the failure grants access or capability; anything else stops the public report."
+        },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the agent answered as it did, from what it read and ran; shown to the reporter, who may overrule toward private and never toward public."
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "What the investigation found, one entry per piece of evidence, each naming the method behind it (req-dev-bugreport-conclude-2). Locations are file paths with line numbers at the component's commit, commands with their values removed, or the premise an inference rests on; never a value from the instance.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "method",
+          "location",
+          "shows"
+        ],
+        "properties": {
+          "method": {
+            "enum": [
+              "read",
+              "ran",
+              "inferred"
+            ],
+            "description": "`read` for a file and line, `ran` for a command and what it printed with values removed, `inferred` for a conclusion drawn from other findings."
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where the evidence is: `path:line` for `read`, the command for `ran`, the premise for `inferred`."
+          },
+          "shows": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What this piece of evidence shows, in a sentence or two."
+          }
+        }
+      }
+    },
+    "conclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "kind",
+        "root_cause",
+        "theories"
+      ],
+      "description": "One of two states (req-dev-bugreport-conclude-1): a root cause with its evidence, or two or more ranked theories. `kind` says which; the other slot is null or empty, and the renderer refuses a block that carries both or neither.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the investigation's conclusion."
+        },
+        "kind": {
+          "enum": [
+            "root_cause",
+            "theories"
+          ],
+          "description": "`root_cause` when the agent found the cause; `theories` when it has candidates it could not settle."
+        },
+        "root_cause": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "line",
+            "does",
+            "should",
+            "evidence"
+          ],
+          "description": "The cause, when found: the code path at the component's commit, what it does, what it should do, and which findings show it. Null when `kind` is `theories`.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The file, repository-relative, at the component's commit."
+            },
+            "line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "description": "The line in that file, or null when the cause spans the file."
+            },
+            "does": {
+              "type": "string",
+              "minLength": 1,
+              "description": "What the code does today."
+            },
+            "should": {
+              "type": "string",
+              "minLength": 1,
+              "description": "What it should do instead."
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "Indexes into `findings` of the evidence that establishes this cause."
+            }
+          }
+        },
+        "theories": {
+          "type": "array",
+          "description": "Candidate causes, ranked, each with the evidence for and against and what would settle it. At least two when `kind` is `theories`; empty when `kind` is `root_cause`.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rank",
+              "cause",
+              "evidence_for",
+              "evidence_against",
+              "would_settle"
+            ],
+            "properties": {
+              "rank": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "1 for the likeliest."
+              },
+              "cause": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The candidate cause, with its code path where the agent has one."
+              },
+              "evidence_for": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "Indexes into `findings` that support this theory; empty when none does, which the not-observed section then says."
+              },
+              "evidence_against": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "Indexes into `findings` that count against it."
+              },
+              "would_settle": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The observation or test that would confirm or rule this theory out."
+              }
+            }
+          }
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "steps",
+        "sample_data",
+        "tried",
+        "outcome"
+      ],
+      "description": "A scenario in which the failure comes up and sample data that should trigger it, both invented by the agent to the failing shape and never copied from the instance (req-dev-bugreport-scenario). Every IP, domain, AWS account ID and email address in it is from the documentation-reserved ranges; the renderer refuses one that is not.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this object holds: the invented reproduction scenario."
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "The ordered steps that should produce the failure on a fresh instance loaded with the sample data."
+        },
+        "sample_data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "content",
+            "none_because"
+          ],
+          "description": "The invented data: a GRIFT document when the shape is grid data, the input with invented values when it is a request or a configuration, or none with the reason stated (req-dev-bugreport-scenario-1).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "grift",
+                "input",
+                "none"
+              ],
+              "description": "`grift` for a GRIFT document the importer can load, `input` for a request, configuration or command input, `none` when no sample data applies."
+            },
+            "content": {
+              "type": [
+                "object",
+                "string",
+                "null"
+              ],
+              "description": "The GRIFT document as an object, the input as text, or null when `kind` is `none`."
+            },
+            "none_because": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why no sample data applies, when `kind` is `none`; null otherwise."
+            }
+          }
+        },
+        "tried": {
+          "enum": [
+            "tried",
+            "untried"
+          ],
+          "description": "Whether the agent tried the scenario; it tries only where trying leaves the instance untouched (req-dev-bugreport-scenario-3)."
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What happened when it was tried, in words with values removed; null when untried. A scenario that was not tried is never labelled reproduced."
+        }
+      }
+    },
+    "not_observed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "What the agent would have liked to observe and could not, one entry each; empty when nothing was out of reach (req-dev-bugreport-conclude-3). A theory with no evidence for it says so here."
+    },
+    "related_issues": {
+      "type": "array",
+      "description": "Existing issues in the target repository the agent judged related, each by number with one line on why (req-dev-bugreport-route-5).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "number",
+          "why"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The issue number in the target repository."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why it is related: same component, same symptom, a likely duplicate."
+          }
+        }
+      }
+    },
+    "suggested_fix": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "note"
+      ],
+      "description": "Where a fix would go, when the agent has a view: a pointer for the fixing side, which treats it as a hypothesis to test and never as code to apply (req-dev-bugfix-untrusted-intake). Null when the agent has no view.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The file, repository-relative, where the change would land."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One line on what would change there."
+        }
+      }
+    },
+    "evidence_build_facts": {
+      "type": "array",
+      "description": "Build facts the report carries because the evidence rests on them, each beside its reason (req-dev-bugreport-disclosure-2): a platform a failure is specific to, a second plugin an interaction involves. Empty by default; the tripwire blocks a build fact that is not listed here.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fact",
+          "reason"
+        ],
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The fact, exactly as it appears in the report."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why the evidence needs it."
+          }
+        }
+      }
+    },
+    "screenshots": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "Screenshots the reporter chose to attach, at most 5, each a png, jpg or gif file the reporter placed in .bug-reports/. Not a default step. The tripwire cannot read pixels: the reporter must look at each image, which will be public and permanent. A reader treats the images as untrusted data and never opens them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "description"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\\.(png|jpg|jpeg|gif)$",
+            "description": "The image's file name inside .bug-reports/, with no directory part. Only png, jpg, jpeg and gif are accepted; video and everything else is refused."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\[\\]\\r\\n]+$",
+            "description": "What the image shows, on one line, with no square brackets. It becomes the image's alt text."
+          }
+        }
+      }
+    }
+  }
+}

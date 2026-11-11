@@ -277,6 +277,18 @@ for the same reason: anyone can write into these surfaces.
    as they arrive manufactures the next review round. **Staging, committing and pushing are
    all yours** — the grant is read-only, deliberately (see the blast-radius note above).
 
+   **At most three fix-and-push rounds, then halt and ask.** The review is advisory and it
+   never converges on its own: every push buys a full CI cycle (~25 minutes on `tap`) and a
+   fresh run that finds one more thing. Keep a tally per round — findings that were real and
+   closed versus findings that restate design the maintainer has ruled or name minutiae — and
+   report it in the PR comment that answers the round. After the third round, stop pushing,
+   post the tally, and ask the maintainer whether the remaining findings are worth another
+   cycle. Stop earlier on your own judgement when a round only restates: the fourth round of
+   tap#1175 (2026-11-11) was the first with nothing real, and the PR still ran seven rounds
+   and sat three hours past mergeable because nobody asked. Fix what is real in ONE push per
+   round, and run `scripts/implements-tag --check` before it: a round spent on a stale claim
+   stamp or on a local guard tripping over your own untracked `logs/` is a round wasted.
+
    A finding that is real but out of scope gets **written up as an issue** — drafted here,
    filed by the operator, like the comment — and named in the reply, rather than silently
    widening this PR. No `gh` command is granted to this skill at all.
