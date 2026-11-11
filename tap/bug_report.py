@@ -988,7 +988,7 @@ def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
 def bundle_digest(report: Path) -> str:
     """The hash a yes binds to: the report's bytes and every attachment's bytes, in the report's order.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-consent@ad3520a7dcfb/3bcd4dddd89c (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
+    TAP-IMPLEMENTS: req-dev-bugreport-consent@8b23b8f63397/3bcd4dddd89c (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
 
     With no attachments it is the report file's own sha256. Changing or adding an image changes it.
     The consent record is written by `scripts/bug-report consent` on the host, from a terminal, to a
