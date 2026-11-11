@@ -25,7 +25,7 @@ so the rest are per-clone).
 | Standing up, diagnosing, or opening a session | `get-started`, `diagnose-failed-session-spawn`, `launch-ui` |
 | Handling secrets or credentials | `manage-secret`, `provision-secrets` |
 | Opening a PR | `open-a-pr` — never a hand-run `gh pr create` here (a PreToolUse hook refuses it); the lane it names is the one CI runs |
-| Finishing a PR | `close-out-pr` |
+| Finishing a PR | `close-out-pr` — at most three fix-and-push rounds against the AI review, then halt and ask |
 | Starting work on a view, table, bundle, spec or plugin — the guard rails per module, and the review step that proposes additions | `tap-best-practices` |
 | Auditing main for anything weird that has been built — hidden ID maps, bespoke builds, hardcoded values | `tap-conformance-audit` — read-only; ends by proposing updates to itself |
 | Touching OpenSSL / FIPS pins | `bump-openssl-fips` |
