@@ -17,8 +17,9 @@
 # OUTSIDE the worktree (consent-5): `consent FILE` refuses input that is not a TTY, and `send`
 # refuses a file with no record for exactly its bytes. Neither the container nor an agent's
 # granted tools can write that directory. A send spends the record (consent-7) and sends from a
-# snapshot outside the worktree whose bytes are re-hashed against the verified manifest, so what gh
-# reads is what was verified and consented to (consent-1).
+# snapshot outside the worktree; the host derives the target, the title, the attachments and the
+# digest from the copies itself, so what gh reads is what the yes named, and nothing the container
+# printed is trusted (consent-1). The container's checks gate the send by their exit status only.
 #
 # The host facts passed to the container (user, home, hostname, OS, architecture, Docker version) are
 # DENY-LIST entries: a report may not carry them unless it lists one as evidence (disclosure-2).
@@ -42,8 +43,43 @@ ours_re='^unified-systems-com/[A-Za-z0-9_.-]+$'
 number_re='^[0-9]{1,9}$'
 file_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && -f "$1" ]]; }
 out_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && "$1" != */ ]]; }
-# The digest the typed yes names: the report's bytes plus every attachment's, computed in the container.
-digest_of() { dc_py digest "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'; }
+# The host trusts nothing the container prints: the container's checks gate a send by their exit
+# status, and the host reads the block, the attachments and the digest itself, from the bytes it
+# holds. The digest the typed yes names is the report's bytes, or with screenshots the report and
+# each image in order, labelled; tap.bug_report.send_manifest computes the same and a test pins it.
+host_block() {
+  python3 - "$1" <<'PY'
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+blocks = re.findall(r"(?ms)^```json[ \t]*$\n(.*?)^```[ \t]*$", text)
+if len(blocks) != 1:
+    sys.exit("bug-report: expected exactly one fenced JSON block in the report")
+data = json.loads(blocks[0])
+print(data["target_repository"], str(data["title"]).replace("\t", " "), sep="\t")
+for shot in data.get("screenshots") or []:
+    print("shot", shot["file"], str(shot["description"]).replace("\t", " "), sep="\t")
+PY
+}
+host_digest() {
+  python3 - "$1" <<'PY'
+import hashlib, json, os, re, sys
+path = sys.argv[1]
+raw = open(path, "rb").read()
+blocks = re.findall(r"(?ms)^```json[ \t]*$\n(.*?)^```[ \t]*$", raw.decode("utf-8"))
+if len(blocks) != 1:
+    sys.exit("bug-report: expected exactly one fenced JSON block in the report")
+shots = json.loads(blocks[0]).get("screenshots") or []
+if not shots:
+    print(hashlib.sha256(raw).hexdigest())
+    sys.exit()
+outer = hashlib.sha256()
+blobs = [("report", raw)] + [(s["file"], open(os.path.join(os.path.dirname(path), s["file"]), "rb").read()) for s in shots]
+for label, blob in blobs:
+    outer.update(f"{label}\0{len(blob)}\0".encode())
+    outer.update(blob)
+print(outer.hexdigest())
+PY
+}
 
 cmd="${1:-}"
 [[ -n "$cmd" ]] || { sed -n '2,22p' "$0" >&2; exit 2; }
@@ -92,7 +128,8 @@ case "$cmd" in
       echo "bug-report: consent is typed by the reporter at a terminal. Input that is not a terminal (a pipe, a file, an agent's shell) is refused, and nothing was recorded." >&2
       exit 1
     fi
-    digest="$(digest_of "$file")"
+    dc_py check "$file" "${host_flags[@]}" > /dev/null || { echo "bug-report: the report does not pass check; nothing to consent to" >&2; exit 1; }
+    digest="$(host_digest "$file")"
     [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "bug-report: could not compute the report's digest" >&2; exit 1; }
     phrase="yes ${digest:0:12}"
     echo "To send exactly these bytes of $file, type: $phrase"
@@ -109,32 +146,37 @@ case "$cmd" in
   send)
     file="${1:-}"; shift || true
     file_ok "$file" || { echo "bug-report: send takes an existing file under .bug-reports/" >&2; exit 2; }
-    # One verification in the container: a block render would accept, no hidden text, tripwire clean,
-    # our repository, and a manifest naming every file's bytes by sha256 plus the digest the yes names.
-    manifest="$(dc_py verify-send "$file" "$@" "${host_flags[@]}")"
-    IFS=$'\t' read -r repo digest title < <(python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["repository"], m["digest"], m["title"].replace("\t", " "), sep="\t")' <<< "$manifest")
-    [[ "$repo" =~ $repo_re ]] || { echo "bug-report: refusing a repository that is not a plain owner/name" >&2; exit 1; }
-    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "bug-report: could not read the report's digest" >&2; exit 1; }
-    # A yes typed at a terminal for exactly these bytes, or no send (consent-2, consent-5).
-    if [[ ! -f "$consent_dir/$digest" ]]; then
-      echo "bug-report: no consent typed at a terminal for these bytes: the reporter runs 'scripts/bug-report consent $file' in their own terminal first (a changed file needs a new yes)" >&2
-      exit 1
-    fi
-    # Snapshot the verified bytes OUTSIDE the worktree, where neither the container nor the agent's
-    # granted tools can reach them, and re-hash the copies against the manifest before gh reads anything.
+    # The container's checks gate the send by their exit status: a block render would accept, bound
+    # to the boot record, no hidden text, tripwire clean, our repository. The host trusts nothing it prints.
+    dc_py verify-send "$file" "$@" "${host_flags[@]}" > /dev/null
+    # Snapshot the bytes OUTSIDE the worktree, where neither the container nor the agent's granted
+    # tools can reach them; everything below is read from the copies.
     snap="$(mktemp -d "${TMPDIR:-/tmp}/tap-bug-send.XXXXXX")"
     out_file="$(mktemp)"; err_file="$(mktemp)"
     trap 'rm -rf "$snap" "$out_file" "$err_file"' EXIT
-    body=""; attach_args=()
-    while IFS=$'\t' read -r path sha alt; do
-      [[ -n "$path" ]] || continue
-      file_ok "$path" || { echo "bug-report: manifest names a file outside .bug-reports/: $path" >&2; exit 1; }
-      cp "$path" "$snap/$(basename "$path")"
-      copied="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$snap/$(basename "$path")")"
-      [[ "$copied" == "$sha" ]] || { echo "bug-report: $path changed between verification and the send; nothing was sent. Preview it again and take a new yes." >&2; exit 1; }
-      if [[ -z "$body" ]]; then body="$snap/$(basename "$path")"; else attach_args+=(--attach "$snap/$(basename "$path")#$alt"); fi
-    done < <(python3 -c 'import json,sys; [print(f["path"], f["sha256"], f["alt"], sep="\t") for f in json.load(sys.stdin)["files"]]' <<< "$manifest")
-    [[ -n "$body" ]] || { echo "bug-report: the manifest named no report" >&2; exit 1; }
+    body="$snap/$(basename "$file")"
+    cp "$file" "$body"
+    attach_args=()
+    repo=""; title=""
+    while IFS=$'\t' read -r first second third; do
+      if [[ "$first" == "shot" ]]; then
+        shot=".bug-reports/$second"
+        file_ok "$shot" || { echo "bug-report: screenshot $second is not a plain file under .bug-reports/" >&2; exit 1; }
+        [[ ! -L "$shot" ]] || { echo "bug-report: screenshot $second is a symbolic link" >&2; exit 1; }
+        cp "$shot" "$snap/$second"
+        attach_args+=(--attach "$snap/$second#$third")
+      else
+        repo="$first"; title="$second"
+      fi
+    done < <(host_block "$body")
+    [[ "$repo" =~ $ours_re ]] || { echo "bug-report: refusing to file into $repo: only unified-systems-com/<repo>" >&2; exit 1; }
+    [[ -n "$title" ]] || { echo "bug-report: the report has no title" >&2; exit 1; }
+    # The yes names the digest of exactly these bytes: computed here, from the copies (consent-2, consent-5).
+    digest="$(host_digest "$body")"
+    if [[ ! "$digest" =~ ^[0-9a-f]{64}$ || ! -f "$consent_dir/$digest" ]]; then
+      echo "bug-report: no consent typed at a terminal for these bytes: the reporter runs 'scripts/bug-report consent $file' in their own terminal first (a changed file needs a new yes)" >&2
+      exit 1
+    fi
     # The yes is spent by this send, success or failure: a second send needs a new yes (consent-7).
     rm -f "$consent_dir/$digest"
     label_args=()

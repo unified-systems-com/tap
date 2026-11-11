@@ -1383,7 +1383,7 @@ def test_one_yes_is_spent_by_one_send_and_a_changed_file_is_caught_before_gh(
         sum(1 for ln in Path(send_env["env"]["FAKE_GH_LOG"]).read_text().splitlines() if ln.startswith("issue create"))
         == 1
     )
-    # The snapshot is re-hashed against the manifest: a copy that differs from the verified bytes stops the send.
+    # The container still prints the manifest it verified; the host derives its own digest from the copies, and the two agree.
     consent_for(send_env, monkeypatch)
     manifest = json.loads(
         subprocess.run(  # noqa: S603 # nosec B603 - fixed argv
