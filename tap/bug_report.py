@@ -189,6 +189,7 @@ _IPV6_RE = re.compile(r"(?<![\w:])([0-9a-f]{1,4}(?::[0-9a-f]{0,4}){2,7})(?![\w:]
 _EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
 _AWS_ACCOUNT_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 _DOMAIN_RE = re.compile(r"(?<![\w/@.-])((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\w/-])", re.I)
+_URL_HOST_RE = re.compile(r"[a-z][a-z0-9+.-]*://(?:[^/\s@]*@)?([a-z0-9.-]+)", re.I)
 _CODE_SUFFIXES = (
     ".py",
     ".json",
@@ -245,6 +246,11 @@ def unreserved_values(text: str, *, domains: bool) -> list[tuple[str, str]]:
             if name.lower().endswith(_CODE_SUFFIXES) or _reserved_domain(name):
                 continue
             bad.append(("domain", name))
+        for m in _URL_HOST_RE.finditer(text):
+            host = m.group(1)
+            if host.replace(".", "").isdigit() or _reserved_domain(host):
+                continue
+            bad.append(("url host", host))
     return bad
 
 
@@ -477,10 +483,14 @@ def instruction_findings(text: str) -> list[Finding]:
     return findings
 
 
+#: What the intake prints in place of text it will not hand over (req-dev-bugreport-investigate-3).
+WITHHELD = "withheld: {n} instruction-shaped line(s); the findings carry the excerpts and the human decides"
+
+
 def read_as_data(text: str) -> tuple[str, Stripped, list[Finding]]:
     """An existing issue read during investigation: sanitised, with its instruction-shaped lines flagged.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-investigate@6b8f984682c8/b5805aa4411b (enforcement) — the one intake every issue body read by submit-a-bug passes.
+    TAP-IMPLEMENTS: req-dev-bugreport-investigate@bf6e683be7fd/b5805aa4411b (enforcement) — the one intake every issue body read by submit-a-bug passes.
     """
     clean, stripped = sanitize(text)
     return clean, stripped, instruction_findings(clean)
@@ -943,7 +953,7 @@ def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
 def bundle_digest(report: Path) -> str:
     """The hash a yes binds to: the report's bytes and every attachment's bytes, in the report's order.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-consent@586c851bcd0c/d7410ce1431f (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
+    TAP-IMPLEMENTS: req-dev-bugreport-consent@ad3520a7dcfb/d7410ce1431f (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
 
     With no attachments it is the report file's own sha256. Changing or adding an image changes it.
     The consent record is written by `scripts/bug-report consent` on the host, from a terminal, to a
@@ -960,6 +970,32 @@ def bundle_digest(report: Path) -> str:
     return outer.hexdigest()
 
 
+def send_manifest(report: Path) -> dict[str, Any]:
+    """What the host snapshots before `gh` reads anything: each file's bytes named by sha256, and the digest the yes names.
+
+    One read per file: the digest is derived from the same bytes the per-file hashes name, so the
+    host can copy the files outside the worktree, re-hash the copies, and know the copies are the
+    bytes that were verified and consented to.
+    """
+    raw = report.read_bytes()
+    attachments = load_attachments(report, extract_report(raw.decode("utf-8")).data)
+    blobs = [("report", report.name, raw, ""), *((a.name, a.name, a.path.read_bytes(), a.alt) for a in attachments)]
+    if attachments:
+        outer = hashlib.sha256()
+        for label, _, blob, _ in blobs:
+            outer.update(f"{label}\0{len(blob)}\0".encode())
+            outer.update(blob)
+        file_digest = outer.hexdigest()
+    else:
+        file_digest = digest(raw)
+    return {
+        "digest": file_digest,
+        "files": [
+            {"path": f"{WORK_DIR_NAME}/{name}", "sha256": digest(blob), "alt": alt} for _, name, blob, alt in blobs
+        ],
+    }
+
+
 def report_deny(deny: list[tuple[str, str]], data: dict[str, Any]) -> list[tuple[str, str]]:
     """The deny list for one report: the one component's own version is not a hit, and carried build facts are exempt."""
     own = {data["component"]["version"], data["component"].get("commit") or ""}
@@ -967,7 +1003,7 @@ def report_deny(deny: list[tuple[str, str]], data: dict[str, Any]) -> list[tuple
     return exempt_build_facts(kept, data)
 
 
-def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
+def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, Any]:
     """Everything the container checks before `gh issue create`: a block render would accept, no hidden text, tripwire clean, our repository.
 
     The host wrapper adds the consent check (a record for exactly this digest, typed at a terminal).
@@ -983,12 +1019,13 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
     if hits:
         raise BugReportError(format_hits(hits))
     repo = require_ours(extracted.data["target_repository"])
-    attachments = "\n".join(f"{a.host_path}#{a.alt}" for a in load_attachments(report, extracted.data))
+    load_attachments(report, extracted.data)
+    manifest = send_manifest(report)
     return {
         "repository": repo,
         "title": extracted.data["title"],
-        "attachments": attachments,
-        "digest": bundle_digest(report),
+        "files": manifest["files"],
+        "digest": manifest["digest"],
     }
 
 
@@ -1086,8 +1123,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--print",
         dest="field",
-        choices=("repository", "title", "attachments", "digest"),
-        help="print one field of the verified send, for the wrapper",
+        choices=("repository", "title", "digest"),
+        help="print one field of the verified send, for the wrapper; without it the whole manifest as JSON",
     )
     _add_deny_args(p)
     sub.add_parser("gate-author")
@@ -1148,7 +1185,8 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
                 {
                     "number": issue.get("number"),
                     "state": issue.get("state"),
-                    "text": clean,
+                    "text": None if findings else clean,
+                    "withheld": WITHHELD.format(n=len(findings)) if findings else None,
                     "stripped": stripped.describe(),
                     "findings": [{"line": f.line, "rule": f.rule, "excerpt": f.excerpt} for f in findings],
                     "stop": bool(findings),
@@ -1192,10 +1230,11 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         print(
             json.dumps(
                 {
-                    "report": extracted.data,
-                    "sections": extracted.sections,
+                    "report": None if findings else extracted.data,
+                    "sections": None if findings else extracted.sections,
+                    "withheld": WITHHELD.format(n=len(findings)) if findings else None,
                     "stripped": extracted.stripped.describe(),
-                    "comments_read": clean_comments,
+                    "comments_read": [] if findings else clean_comments,
                     "comments_not_read": dropped,
                     "findings": [{"line": f.line, "rule": f.rule, "excerpt": f.excerpt} for f in findings],
                     "stop": bool(findings),

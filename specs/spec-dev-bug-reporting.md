@@ -178,7 +178,7 @@ later.
 | --- | --- | :---: | --- | --- |
 | req-dev-bugreport-investigate-1 | Nothing Written | Proposed | The investigation performs no grid write, migration, restart, collector run, settings change or live-stack test run; the instance's state after the skill equals its state before. | |
 | req-dev-bugreport-investigate-2 | Secrets Not Read | Proposed | Building a report reads no `.env*` file and nothing under the secrets store. | |
-| req-dev-bugreport-investigate-3 | Issues Read As Data | Proposed | An existing issue read during investigation has hidden text stripped and instruction-shaped text reported as a finding before any of it reaches the agent, and the unsanitised body is never written to disk; the agent acts on none of it. | The body goes straight from `gh` into the intake |
+| req-dev-bugreport-investigate-3 | Issues Read As Data | Proposed | An existing issue read during investigation has hidden text stripped and, when any line reads as an instruction, the text is withheld and only the findings (line, rule, excerpt) are handed over, so the body never reaches the agent as something to act on; the unsanitised body is never written to disk. | The body goes straight from `gh` into the intake; the excerpts are what the human judges |
 | req-dev-bugreport-investigate-4 | Observed Values Recorded | Proposed | Every literal value the agent read from the instance during investigation is appended to the observed-values file before the report is rendered. | The honest gap: a value the agent read and did not record is caught only by the reporter's preview |
 
 ### A Root Cause Or Named Theories
@@ -358,6 +358,7 @@ save the report locally only, or open the repository's new-issue page and paste 
 | req-dev-bugreport-consent-4 | One Attempt, No Improvising | Proposed | A failed send is reported verbatim and not retried by any other route; the local-only and paste-it-yourself alternatives are offered. | |
 | req-dev-bugreport-consent-5 | Typed At A Terminal, Recorded Outside The Worktree | Proposed | The consent command refuses input that is not a terminal and takes no phrase as an argument; a yes typed at a terminal is recorded outside the worktree, and the send refuses a file with no record for exactly its bytes. | The agent sees the phrase and still cannot record it |
 | req-dev-bugreport-consent-6 | Send Re-Runs What Render Checks | Proposed | A report whose block carries what render refuses (a security answer other than no, a conclusion that is not one of its two states, sample data outside the reserved ranges) is refused at check, preview and send, so a block edited after rendering cannot reach GitHub. | |
+| req-dev-bugreport-consent-7 | One Yes, One Send, From A Snapshot | Proposed | The send copies the verified bytes outside the worktree, re-hashes the copies against the manifest the verification produced, sends from the copies, and spends the consent record whether the send succeeds or fails; a file that changed between verification and the copy, or a second send on the same yes, is refused. | Closes the file-change race and the reuse of one yes |
 
 ### A Report Shape The Fixer Can Parse
 ----

@@ -15,7 +15,9 @@
 # Consent is the reporter's act, so it is taken HERE, on the host, from a terminal, and recorded
 # OUTSIDE the worktree (consent-5): `consent FILE` refuses input that is not a TTY, and `send`
 # refuses a file with no record for exactly its bytes. Neither the container nor an agent's
-# granted tools can write that directory.
+# granted tools can write that directory. A send spends the record (consent-7) and sends from a
+# snapshot outside the worktree whose bytes are re-hashed against the verified manifest, so what gh
+# reads is what was verified and consented to (consent-1).
 #
 # The host facts passed to the container (user, home, hostname, OS, architecture, Docker version) are
 # DENY-LIST entries: a report may not carry them unless it lists one as evidence (disclosure-2).
@@ -103,16 +105,34 @@ case "$cmd" in
   send)
     file="${1:-}"; shift || true
     file_ok "$file" || { echo "bug-report: send takes an existing file under .bug-reports/" >&2; exit 2; }
-    # A block render would accept, no hidden text, tripwire clean, our repository: or no send.
-    repo="$(dc_py verify-send "$file" --print repository "$@" "${host_flags[@]}")"
-    title="$(dc_py verify-send "$file" --print title "$@" "${host_flags[@]}")"
-    digest="$(dc_py verify-send "$file" --print digest "$@" "${host_flags[@]}")"
+    # One verification in the container: a block render would accept, no hidden text, tripwire clean,
+    # our repository, and a manifest naming every file's bytes by sha256 plus the digest the yes names.
+    manifest="$(dc_py verify-send "$file" "$@" "${host_flags[@]}")"
+    IFS=$'\t' read -r repo digest title < <(python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["repository"], m["digest"], m["title"].replace("\t", " "), sep="\t")' <<< "$manifest")
     [[ "$repo" =~ $repo_re ]] || { echo "bug-report: refusing a repository that is not a plain owner/name" >&2; exit 1; }
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "bug-report: could not read the report's digest" >&2; exit 1; }
     # A yes typed at a terminal for exactly these bytes, or no send (consent-2, consent-5).
-    if [[ ! "$digest" =~ ^[0-9a-f]{64}$ || ! -f "$consent_dir/$digest" ]]; then
+    if [[ ! -f "$consent_dir/$digest" ]]; then
       echo "bug-report: no consent typed at a terminal for these bytes: the reporter runs 'scripts/bug-report consent $file' in their own terminal first (a changed file needs a new yes)" >&2
       exit 1
     fi
+    # Snapshot the verified bytes OUTSIDE the worktree, where neither the container nor the agent's
+    # granted tools can reach them, and re-hash the copies against the manifest before gh reads anything.
+    snap="$(mktemp -d "${TMPDIR:-/tmp}/tap-bug-send.XXXXXX")"
+    out_file="$(mktemp)"; err_file="$(mktemp)"
+    trap 'rm -rf "$snap" "$out_file" "$err_file"' EXIT
+    body=""; attach_args=()
+    while IFS=$'\t' read -r path sha alt; do
+      [[ -n "$path" ]] || continue
+      file_ok "$path" || { echo "bug-report: manifest names a file outside .bug-reports/: $path" >&2; exit 1; }
+      cp "$path" "$snap/$(basename "$path")"
+      copied="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$snap/$(basename "$path")")"
+      [[ "$copied" == "$sha" ]] || { echo "bug-report: $path changed between verification and the send; nothing was sent. Preview it again and take a new yes." >&2; exit 1; }
+      if [[ -z "$body" ]]; then body="$snap/$(basename "$path")"; else attach_args+=(--attach "$snap/$(basename "$path")#$alt"); fi
+    done < <(python3 -c 'import json,sys; [print(f["path"], f["sha256"], f["alt"], sep="\t") for f in json.load(sys.stdin)["files"]]' <<< "$manifest")
+    [[ -n "$body" ]] || { echo "bug-report: the manifest named no report" >&2; exit 1; }
+    # The yes is spent by this send, success or failure: a second send needs a new yes (consent-7).
+    rm -f "$consent_dir/$digest"
     label_args=()
     if gh label list --repo "$repo" --limit 200 --json name --jq '.[].name' 2>/dev/null | grep -Fxq 'via:submit-a-bug'; then
       label_args=(--label 'via:submit-a-bug')
@@ -120,11 +140,6 @@ case "$cmd" in
     else
       echo "label via:submit-a-bug does not exist in $repo; the issue is created without it (this skill does not create labels)"
     fi
-    # Screenshots: each was checked for type and size and is bound into the consent digest.
-    attach_args=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && attach_args+=(--attach "$line")
-    done <<< "$(dc_py verify-send "$file" --print attachments "$@" "${host_flags[@]}")"
     # Capture the help text first: `grep -q` exiting early would SIGPIPE gh and fail the pipeline under pipefail.
     # Only when there are screenshots to attach: a report without them makes exactly one gh call.
     if [[ ${#attach_args[@]} -gt 0 ]]; then
@@ -134,10 +149,8 @@ case "$cmd" in
         exit 1
       fi
     fi
-    out_file="$(mktemp)"; err_file="$(mktemp)"
-    trap 'rm -f "$out_file" "$err_file"' EXIT
     # One attempt. A failure is shown as it came and nothing else is tried (consent-4).
-    if gh issue create --repo "$repo" --title "$title" --body-file "$file" ${label_args[@]+"${label_args[@]}"} ${attach_args[@]+"${attach_args[@]}"} >"$out_file" 2>"$err_file"; then
+    if gh issue create --repo "$repo" --title "$title" --body-file "$body" ${label_args[@]+"${label_args[@]}"} ${attach_args[@]+"${attach_args[@]}"} >"$out_file" 2>"$err_file"; then
       cat "$out_file"; cat "$err_file" >&2
     else
       url="$(grep -E '^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+$' "$out_file" | head -1 || true)"
