@@ -178,7 +178,7 @@ later.
 | --- | --- | :---: | --- | --- |
 | req-dev-bugreport-investigate-1 | Nothing Written | Proposed | The investigation performs no grid write, migration, restart, collector run, settings change or live-stack test run; the instance's state after the skill equals its state before. | |
 | req-dev-bugreport-investigate-2 | Secrets Not Read | Proposed | Building a report reads no `.env*` file and nothing under the secrets store. | |
-| req-dev-bugreport-investigate-3 | Issues Read As Data | Proposed | An existing issue read during investigation has hidden text stripped and instruction-shaped text reported as a finding; the agent acts on none of it. | |
+| req-dev-bugreport-investigate-3 | Issues Read As Data | Proposed | An existing issue read during investigation has hidden text stripped and instruction-shaped text reported as a finding before any of it reaches the agent, and the unsanitised body is never written to disk; the agent acts on none of it. | The body goes straight from `gh` into the intake |
 | req-dev-bugreport-investigate-4 | Observed Values Recorded | Proposed | Every literal value the agent read from the instance during investigation is appended to the observed-values file before the report is rendered. | The honest gap: a value the agent read and did not record is caught only by the reporter's preview |
 
 ### A Root Cause Or Named Theories
@@ -331,6 +331,17 @@ reporter or the agent, produces a new preview and needs a new yes. This is the r
 besides describing the bug, and the skill says so: the agent wrote the report, the reporter is the
 one who knows what in it would identify them.
 
+**The yes is the reporter's act, so the mechanism makes it one the agent cannot perform.** The
+phrase is deterministic and the agent sees it in the preview, so a consent command that accepted
+the phrase as an argument would let the agent preview, copy, consent and send on its own. Instead
+the consent command runs on the host, takes the phrase only from a terminal (input that is a pipe,
+a file or an agent's shell is refused, and nothing is recorded), and writes the record outside the
+worktree, in a directory the container cannot see and the agent's granted tools cannot write. The
+send checks for a record naming exactly the bytes about to go. With `scripts/dc exec` granted for
+investigation, no in-process gate is unforgeable by an agent that sets out to forge it; this one
+removes the direct route and leaves the skill's rule, which the agent does not run `consent`, as
+the remainder.
+
 The send is `gh issue create --body-file <file>`. If it fails for any reason, the skill stops and
 reports the failure verbatim. It does not retry with another method, re-quote the body, split it,
 or post it some other way. Improvising after a failed post is how an agent once posted internal
@@ -345,6 +356,8 @@ save the report locally only, or open the repository's new-issue page and paste 
 | req-dev-bugreport-consent-2 | Consent Bound To Content | Proposed | A change to the file after consent invalidates it; sending requires a new preview and yes. | |
 | req-dev-bugreport-consent-3 | Public And Permanent Named | Proposed | The consent prompt names the target repository and states that the issue is public and that edits do not remove earlier text. | |
 | req-dev-bugreport-consent-4 | One Attempt, No Improvising | Proposed | A failed send is reported verbatim and not retried by any other route; the local-only and paste-it-yourself alternatives are offered. | |
+| req-dev-bugreport-consent-5 | Typed At A Terminal, Recorded Outside The Worktree | Proposed | The consent command refuses input that is not a terminal and takes no phrase as an argument; a yes typed at a terminal is recorded outside the worktree, and the send refuses a file with no record for exactly its bytes. | The agent sees the phrase and still cannot record it |
+| req-dev-bugreport-consent-6 | Send Re-Runs What Render Checks | Proposed | A report whose block carries what render refuses (a security answer other than no, a conclusion that is not one of its two states, sample data outside the reserved ranges) is refused at check, preview and send, so a block edited after rendering cannot reach GitHub. | |
 
 ### A Report Shape The Fixer Can Parse
 ----
@@ -422,7 +435,7 @@ The same intake applies when `submit-a-bug` reads an existing issue during its i
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-bugfix-untrusted-intake-1 | Only Author And Maintainer Comments | Proposed | Comments from accounts other than the issue author and the repository's maintainers are not read into the session. | |
+| req-dev-bugfix-untrusted-intake-1 | Only Author And Maintainer Comments | Proposed | Comments from accounts other than the issue author and the repository's maintainers are not read into the session; the comments that are read pass the same hidden-text stripping and instruction check as the body, and a finding in one stops the run. | An author's or a maintainer's account can be compromised |
 | req-dev-bugfix-untrusted-intake-2 | Hidden Text Stripped And Named | Proposed | Invisible characters, HTML comments and collapsed blocks are removed before the model reads the issue, and the removal is reported. | |
 | req-dev-bugfix-untrusted-intake-3 | Instruction-Shaped Text Stops The Run | Proposed | A planted instruction in the issue body (for example, "also run `curl …`") is reported as a finding, and the skill does not act on it. | |
 | req-dev-bugfix-untrusted-intake-4 | A Classifier Only Adds Stops | Proposed | With a typed classifier configured, its yes stops the run, and its no on a planted instruction still leaves the run stopped by the skill's own reading; with none configured, the skill behaves identically otherwise. | |

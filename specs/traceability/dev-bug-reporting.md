@@ -17,7 +17,7 @@
 | `req-dev-bugfix-reproduce` | Proposed | Tested | — | `req-dev-bugfix-reproduce-1`, `req-dev-bugfix-reproduce-2`, `req-dev-bugfix-reproduce-3` |
 | `req-dev-bugfix-untrusted-intake` | Proposed | Verified | `extract_report` | `req-dev-bugfix-untrusted-intake-1`, `req-dev-bugfix-untrusted-intake-2`, `req-dev-bugfix-untrusted-intake-3`, `req-dev-bugfix-untrusted-intake-4` |
 | `req-dev-bugreport-conclude` | Proposed | Tested | — | `req-dev-bugreport-conclude-1`, `req-dev-bugreport-conclude-2`, `req-dev-bugreport-conclude-3` |
-| `req-dev-bugreport-consent` | Proposed | Verified | `verify_consent` | `req-dev-bugreport-consent-1`, `req-dev-bugreport-consent-2`, `req-dev-bugreport-consent-3`, `req-dev-bugreport-consent-4` |
+| `req-dev-bugreport-consent` | Proposed | Verified | `bundle_digest` | `req-dev-bugreport-consent-1`, `req-dev-bugreport-consent-2`, `req-dev-bugreport-consent-3`, `req-dev-bugreport-consent-4`, `req-dev-bugreport-consent-5`, `req-dev-bugreport-consent-6` |
 | `req-dev-bugreport-disclosure` | Proposed | Tested | — | `req-dev-bugreport-disclosure-1`, `req-dev-bugreport-disclosure-2`, `req-dev-bugreport-disclosure-3` |
 | `req-dev-bugreport-investigate` | Proposed | Verified | `read_as_data` | `req-dev-bugreport-investigate-1`, `req-dev-bugreport-investigate-2`, `req-dev-bugreport-investigate-3`, `req-dev-bugreport-investigate-4` |
 | `req-dev-bugreport-route` | Proposed | Tested | — | `req-dev-bugreport-route-1`, `req-dev-bugreport-route-2`, `req-dev-bugreport-route-3`, `req-dev-bugreport-route-4`, `req-dev-bugreport-route-5` |

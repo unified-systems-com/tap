@@ -275,13 +275,13 @@ def check_sample_data(data: dict[str, Any]) -> None:
         )
 
 
-def render_report(data: dict[str, Any]) -> str:
-    """Render the Markdown report from a validated data block (the template of `submit-a-bug`).
+def validate_block(data: dict[str, Any]) -> None:
+    """Every check a data block must pass, at render time and again at check, preview and send time.
 
-    Fixed headings rendered from the block, one fenced JSON block, and the disclosure line last.
-    Refuses a value holding a code fence, which could end a block early and let a report carry two
-    data blocks; a security answer other than no; a conclusion that is not exactly one of its two
-    states; and sample data outside the reserved ranges.
+    The schema; no value holding a code fence, which could end a block early and let a report
+    carry two data blocks; a security answer of no; a conclusion that is exactly one of its two
+    states; sample data in the reserved ranges. Re-run before a send so a block edited by hand
+    after rendering cannot carry what render would have refused.
     """
     errors = schema_errors(data)
     if errors:
@@ -292,6 +292,15 @@ def render_report(data: dict[str, Any]) -> str:
     check_security_answer(data)
     check_conclusion(data)
     check_sample_data(data)
+
+
+def render_report(data: dict[str, Any]) -> str:
+    """Render the Markdown report from a validated data block (the template of `submit-a-bug`).
+
+    Fixed headings rendered from the block, one fenced JSON block, and the disclosure line last.
+    Refuses everything `validate_block` refuses.
+    """
+    validate_block(data)
     component = data["component"]
     conclusion = data["conclusion"]
     scenario = data["scenario"]
@@ -471,7 +480,7 @@ def instruction_findings(text: str) -> list[Finding]:
 def read_as_data(text: str) -> tuple[str, Stripped, list[Finding]]:
     """An existing issue read during investigation: sanitised, with its instruction-shaped lines flagged.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-investigate@96c96b9c5217/b5805aa4411b (enforcement) — the one intake every issue body read by submit-a-bug passes.
+    TAP-IMPLEMENTS: req-dev-bugreport-investigate@6b8f984682c8/b5805aa4411b (enforcement) — the one intake every issue body read by submit-a-bug passes.
     """
     clean, stripped = sanitize(text)
     return clean, stripped, instruction_findings(clean)
@@ -491,7 +500,7 @@ class Extracted:
 def extract_report(markdown: str) -> Extracted:
     """Read a report into the report shape (the reader of `submit-a-fix`).
 
-    TAP-IMPLEMENTS: req-dev-bugfix-untrusted-intake@a4d065003f75/8ca9e5ae9f91 (derivation) — the one reader: sanitise, extract the block, flag instruction-shaped text.
+    TAP-IMPLEMENTS: req-dev-bugfix-untrusted-intake@1703dc8e0d68/8ca9e5ae9f91 (derivation) — the one reader: sanitise, extract the block, flag instruction-shaped text.
 
     Raises BugReportError unless the text has exactly one fenced JSON block that validates against
     the schema, the fixed headings, and the closing disclosure (req-dev-bugreport-shape-1, -2).
@@ -862,10 +871,6 @@ def resolve_in_work_dir(path: str, work_dir: Path | None = None) -> Path:
     return resolved
 
 
-def consent_path(report: Path) -> Path:
-    return report.with_name(report.name + ".consent")
-
-
 IMAGE_MAGIC: dict[str, tuple[bytes, ...]] = {
     ".png": (b"\x89PNG\r\n\x1a\n",),
     ".jpg": (b"\xff\xd8\xff",),
@@ -938,7 +943,11 @@ def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
 def bundle_digest(report: Path) -> str:
     """The hash a yes binds to: the report's bytes and every attachment's bytes, in the report's order.
 
+    TAP-IMPLEMENTS: req-dev-bugreport-consent@586c851bcd0c/d7410ce1431f (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
+
     With no attachments it is the report file's own sha256. Changing or adding an image changes it.
+    The consent record is written by `scripts/bug-report consent` on the host, from a terminal, to a
+    directory outside the worktree: neither the container nor an agent's granted tools can write it.
     """
     raw = report.read_bytes()
     attachments = load_attachments(report, extract_report(raw.decode("utf-8")).data)
@@ -951,31 +960,6 @@ def bundle_digest(report: Path) -> str:
     return outer.hexdigest()
 
 
-def record_consent(report: Path, typed: str) -> str:
-    """Write a consent record iff ``typed`` is exactly the phrase for the report and its attachments as they are now."""
-    current = bundle_digest(report)
-    if typed.strip() != consent_phrase(current):
-        raise BugReportError(
-            f"consent not recorded: the yes must be exactly {consent_phrase(current)!r} for these bytes"
-        )
-    consent_path(report).write_text(current + "\n", encoding="utf-8")
-    return current
-
-
-def verify_consent(report: Path) -> str:
-    """Return the file's digest iff a consent record exists for exactly these bytes; otherwise refuse.
-
-    TAP-IMPLEMENTS: req-dev-bugreport-consent@034196673b59/cdbaeef74db7 (enforcement) — the one check that a yes still covers the file about to be sent.
-    """
-    record = consent_path(report)
-    if not record.is_file():
-        raise BugReportError("no consent recorded for this file: preview it and take a yes first")
-    current = bundle_digest(report)
-    if record.read_text(encoding="utf-8").strip() != current:
-        raise BugReportError("the report or an attachment changed after consent; preview it again and take a new yes")
-    return current
-
-
 def report_deny(deny: list[tuple[str, str]], data: dict[str, Any]) -> list[tuple[str, str]]:
     """The deny list for one report: the one component's own version is not a hit, and carried build facts are exempt."""
     own = {data["component"]["version"], data["component"].get("commit") or ""}
@@ -984,9 +968,13 @@ def report_deny(deny: list[tuple[str, str]], data: dict[str, Any]) -> list[tuple
 
 
 def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
-    """Everything that must hold before `gh issue create`: valid report, tripwire clean, consent on these bytes, our repository."""
+    """Everything the container checks before `gh issue create`: a block render would accept, no hidden text, tripwire clean, our repository.
+
+    The host wrapper adds the consent check (a record for exactly this digest, typed at a terminal).
+    """
     text = report.read_text(encoding="utf-8")
     extracted = extract_report(text)
+    validate_block(extracted.data)
     if extracted.stripped.any():
         raise BugReportError(
             f"the report holds hidden text ({extracted.stripped.describe()}); a report we send has none"
@@ -994,10 +982,14 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, str]:
     hits = tripwire(text, report_deny(deny, extracted.data))
     if hits:
         raise BugReportError(format_hits(hits))
-    verify_consent(report)
     repo = require_ours(extracted.data["target_repository"])
     attachments = "\n".join(f"{a.host_path}#{a.alt}" for a in load_attachments(report, extracted.data))
-    return {"repository": repo, "title": extracted.data["title"], "attachments": attachments}
+    return {
+        "repository": repo,
+        "title": extracted.data["title"],
+        "attachments": attachments,
+        "digest": bundle_digest(report),
+    }
 
 
 # --------------------------------------------------------------------------------------------
@@ -1065,7 +1057,6 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("schema-path")
     p = sub.add_parser("render")
     p.add_argument("answers")
-    p.add_argument("out")
     _add_deny_args(p)
     p = sub.add_parser("route")
     p.add_argument("--plugin")
@@ -1081,19 +1072,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("query")
     _add_deny_args(p)
     p = sub.add_parser("read-issue")
-    p.add_argument("file")
+    p.add_argument(
+        "file",
+        help="a JSON issue under .bug-reports/, or - for stdin (the wrapper pipes gh api so nothing unsanitised touches disk)",
+    )
     p = sub.add_parser("preview")
     p.add_argument("file")
     _add_deny_args(p)
-    p = sub.add_parser("consent")
+    p = sub.add_parser("digest")
     p.add_argument("file")
-    p.add_argument("typed")
     p = sub.add_parser("verify-send")
     p.add_argument("file")
     p.add_argument(
         "--print",
         dest="field",
-        choices=("repository", "title", "attachments"),
+        choices=("repository", "title", "attachments", "digest"),
         help="print one field of the verified send, for the wrapper",
     )
     _add_deny_args(p)
@@ -1146,7 +1139,8 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         print("removed: " + (", ".join(removed) or "nothing to remove"))
         return 0
     if cmd == "read-issue":
-        issue = json.loads(resolve_in_work_dir(args.file).read_text(encoding="utf-8"))
+        raw = sys.stdin.read() if args.file == "-" else resolve_in_work_dir(args.file).read_text(encoding="utf-8")
+        issue = json.loads(raw)
         prefix = "(pull request) " if "pull_request" in issue else ""
         clean, stripped, findings = read_as_data(f"{prefix}{issue.get('title') or ''}\n\n{issue.get('body') or ''}")
         print(
@@ -1188,9 +1182,13 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         maintainers = set(_session_identity().load_session_authors()) | set(args.maintainer_id)
         kept, dropped = filter_comments(comments, issue["user"]["id"], maintainers)
         clean_comments = []
+        findings = list(extracted.findings)
         for c in kept:
-            text, _ = sanitize(str(c.get("body") or ""))
+            text, _, comment_findings = read_as_data(str(c.get("body") or ""))
             clean_comments.append({"author_id": c["user"]["id"], "body": text})
+            findings += [
+                Finding(f.line, f"comment by {c['user']['id']}: {f.rule}", f.excerpt) for f in comment_findings
+            ]
         print(
             json.dumps(
                 {
@@ -1199,27 +1197,22 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
                     "stripped": extracted.stripped.describe(),
                     "comments_read": clean_comments,
                     "comments_not_read": dropped,
-                    "findings": [{"line": f.line, "rule": f.rule, "excerpt": f.excerpt} for f in extracted.findings],
-                    "stop": bool(extracted.findings),
+                    "findings": [{"line": f.line, "rule": f.rule, "excerpt": f.excerpt} for f in findings],
+                    "stop": bool(findings),
                 },
                 indent=2,
                 sort_keys=True,
             )
         )
-        return 2 if extracted.findings else 0
-    if cmd == "consent":
-        print(f"consent recorded for sha256 {record_consent(resolve_in_work_dir(args.file), args.typed)}")
-        return 0
+        return 2 if findings else 0
     if cmd == "render":
         answers = fill_descriptions(json.loads(resolve_in_work_dir(args.answers).read_text(encoding="utf-8")))
-        out = resolve_in_work_dir(args.out)
         text = render_report(answers)
         args.component = answers["component"]["slug"]
         hits = tripwire(text, report_deny(_local_deny(args), answers))
         if hits:
             raise BugReportError("not written: " + format_hits(hits))
-        out.write_text(text, encoding="utf-8")
-        print(f"wrote {out.name}")
+        print(text, end="")
         return 0
     # The remaining subcommands build the deny list.
     if cmd == "search-query":
@@ -1229,6 +1222,11 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
     report = resolve_in_work_dir(args.file)
     text = report.read_text(encoding="utf-8")
     extracted = extract_report(text)
+    validate_block(extracted.data)
+    if cmd == "digest":
+        file_digest = bundle_digest(report)
+        print(json.dumps({"digest": file_digest, "phrase": consent_phrase(file_digest)}))
+        return 0
     args.component = extracted.data["component"]["slug"]
     deny = report_deny(_local_deny(args), extracted.data)
     if cmd == "check":
@@ -1264,7 +1262,10 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         print(
             "The agent wrote this report from its own investigation; you are the one who knows what in it would identify you. Read it all."
         )
-        print(f"To send exactly these bytes, type: {consent_phrase(file_digest)}")
+        print(
+            f"To send exactly these bytes, the reporter runs `scripts/bug-report consent {WORK_DIR_NAME}/{report.name}` in their own terminal and types: {consent_phrase(file_digest)}"
+        )
+        print("An agent cannot record that yes: the consent command refuses input that is not typed at a terminal.")
         print("----- BEGIN FILE -----")
         print(text, end="")
         print("----- END FILE -----")

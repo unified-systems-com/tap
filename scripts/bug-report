@@ -3,13 +3,19 @@
 #
 # Every subcommand is a fixed verb of tap/bug_report.py run in the web container; nothing here
 # evals, interpolates a report's text into a command, or takes a flag the skill did not name.
-# Report files live only in .bug-reports/ (gitignored). The three verbs that touch GitHub run on the
+# Report files live only in .bug-reports/ (gitignored). The verbs that touch GitHub run on the
 # host, with the operator's own gh login:
 #
 #   search REPO QUERY   numbers, titles, URLs and states of matching issues (route-4)
-#   issue REPO NUMBER   one issue's title and body, read as data: hidden text stripped, instruction-shaped
-#                       lines reported, exit 2 when there are any (investigate-3)
+#   issue REPO NUMBER   one issue's title and body, piped into the container and read as data: hidden
+#                       text stripped, instruction-shaped lines reported, exit 2 when there are any;
+#                       nothing unsanitised is written to disk (investigate-3)
 #   send FILE           gh issue create --body-file FILE, once, and never retried (consent-1..4)
+#
+# Consent is the reporter's act, so it is taken HERE, on the host, from a terminal, and recorded
+# OUTSIDE the worktree (consent-5): `consent FILE` refuses input that is not a TTY, and `send`
+# refuses a file with no record for exactly its bytes. Neither the container nor an agent's
+# granted tools can write that directory.
 #
 # The host facts passed to the container (user, home, hostname, OS, architecture, Docker version) are
 # DENY-LIST entries: a report may not carry them unless it lists one as evidence (disclosure-2).
@@ -26,20 +32,38 @@ host_flags=(
   --host-fact "$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)"
   --host-fact "$(docker compose version --short 2>/dev/null || echo unknown)"
 )
+consent_dir="${XDG_STATE_HOME:-$HOME/.local/state}/tap-bug-reports/consent"
 repo_re='^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$'
 number_re='^[0-9]{1,9}$'
 file_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && -f "$1" ]]; }
+out_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && "$1" != */ ]]; }
+# The digest the typed yes names: the report's bytes plus every attachment's, computed in the container.
+digest_of() { dc_py digest "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'; }
 
 cmd="${1:-}"
-[[ -n "$cmd" ]] || { sed -n '2,17p' "$0" >&2; exit 2; }
+[[ -n "$cmd" ]] || { sed -n '2,22p' "$0" >&2; exit 2; }
 shift
 
 case "$cmd" in
-  component|route|observe|consent|finish)
+  component|route|observe)
     dc_py "$cmd" "$@"
     ;;
-  render|check|preview|search-query)
+  check|preview|search-query)
     dc_py "$cmd" "$@" "${host_flags[@]}"
+    ;;
+  render)
+    answers="${1:-}"; out="${2:-}"; shift 2 || true
+    file_ok "$answers" || { echo "bug-report: render takes an answers file under .bug-reports/" >&2; exit 2; }
+    out_ok "$out" || { echo "bug-report: render writes only under .bug-reports/" >&2; exit 2; }
+    # The container prints the report; the file is written here, whole or not at all.
+    tmp="$(mktemp .bug-reports/.render.XXXXXX)"
+    if dc_py render "$answers" "$@" "${host_flags[@]}" > "$tmp"; then
+      mv "$tmp" "$out"
+      echo "wrote $out"
+    else
+      rm -f "$tmp"
+      exit 1
+    fi
     ;;
   search)
     repo="${1:-}"; query="${2:-}"; shift 2 || true
@@ -52,17 +76,43 @@ case "$cmd" in
     repo="${1:-}"; number="${2:-}"
     [[ "$repo" =~ $repo_re ]] || { echo "bug-report: repository must be a plain owner/name" >&2; exit 2; }
     [[ "$number" =~ $number_re ]] || { echo "bug-report: issue number must be digits" >&2; exit 2; }
-    # Fetched to a file under .bug-reports/, then read as data by the container (investigate-3).
-    gh api "repos/$repo/issues/$number" > ".bug-reports/read-$number.json"
-    dc_py read-issue ".bug-reports/read-$number.json"
+    # Piped straight into the container's intake: the raw body never lands on disk (investigate-3).
+    gh api "repos/$repo/issues/$number" | dc_py read-issue -
+    ;;
+  consent)
+    file="${1:-}"
+    file_ok "$file" || { echo "bug-report: consent takes an existing file under .bug-reports/" >&2; exit 2; }
+    if [[ ! -t 0 ]]; then
+      echo "bug-report: consent is typed by the reporter at a terminal. Input that is not a terminal (a pipe, a file, an agent's shell) is refused, and nothing was recorded." >&2
+      exit 1
+    fi
+    digest="$(digest_of "$file")"
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "bug-report: could not compute the report's digest" >&2; exit 1; }
+    phrase="yes ${digest:0:12}"
+    echo "To send exactly these bytes of $file, type: $phrase"
+    printf '> '
+    IFS= read -r typed
+    if [[ "$typed" != "$phrase" ]]; then
+      echo "bug-report: consent not recorded: the yes must be exactly '$phrase' for these bytes" >&2
+      exit 1
+    fi
+    mkdir -p "$consent_dir"
+    printf '%s\n%s\n' "$file" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$consent_dir/$digest"
+    echo "consent recorded for sha256 $digest (outside the worktree, in $consent_dir)"
     ;;
   send)
     file="${1:-}"; shift || true
     file_ok "$file" || { echo "bug-report: send takes an existing file under .bug-reports/" >&2; exit 2; }
-    # Tripwire, valid report and a consent recorded for exactly these bytes, or no send.
+    # A block render would accept, no hidden text, tripwire clean, our repository: or no send.
     repo="$(dc_py verify-send "$file" --print repository "$@" "${host_flags[@]}")"
     title="$(dc_py verify-send "$file" --print title "$@" "${host_flags[@]}")"
+    digest="$(dc_py verify-send "$file" --print digest "$@" "${host_flags[@]}")"
     [[ "$repo" =~ $repo_re ]] || { echo "bug-report: refusing a repository that is not a plain owner/name" >&2; exit 1; }
+    # A yes typed at a terminal for exactly these bytes, or no send (consent-2, consent-5).
+    if [[ ! "$digest" =~ ^[0-9a-f]{64}$ || ! -f "$consent_dir/$digest" ]]; then
+      echo "bug-report: no consent typed at a terminal for these bytes: the reporter runs 'scripts/bug-report consent $file' in their own terminal first (a changed file needs a new yes)" >&2
+      exit 1
+    fi
     label_args=()
     if gh label list --repo "$repo" --limit 200 --json name --jq '.[].name' 2>/dev/null | grep -Fxq 'via:submit-a-bug'; then
       label_args=(--label 'via:submit-a-bug')
@@ -70,7 +120,7 @@ case "$cmd" in
     else
       echo "label via:submit-a-bug does not exist in $repo; the issue is created without it (this skill does not create labels)"
     fi
-    # Screenshots: each was checked for type and size and is bound into the consent hash.
+    # Screenshots: each was checked for type and size and is bound into the consent digest.
     attach_args=()
     while IFS= read -r line; do
       [[ -n "$line" ]] && attach_args+=(--attach "$line")
@@ -105,6 +155,15 @@ case "$cmd" in
         echo "Offered instead: keep the report locally in $file, or open https://github.com/$repo/issues/new and paste it yourself." >&2
       fi
       exit 1
+    fi
+    ;;
+  finish)
+    # Nothing local outlives the skill: the observed-values file in the container's view, the consent records here (tripwire-6).
+    dc_py finish
+    if [[ -d "$consent_dir" ]]; then
+      n="$(find "$consent_dir" -type f | wc -l | tr -d ' ')"
+      rm -f "$consent_dir"/*
+      echo "removed $n consent record(s) from $consent_dir"
     fi
     ;;
   *)
