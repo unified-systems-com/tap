@@ -683,6 +683,11 @@ def test_the_search_query_is_checked_before_it_leaves() -> None:
     assert br.check_search_query(f"error for {INSTANCE_VALUE}", deny), "a planted instance value must block the query"
     assert br.check_search_query('"quoted" -operators OR (this)', deny), "a query that is not plain words is refused"
     assert br.check_search_query(GITHUB_TOKEN, deny)
+    for qualifier in ("is:open gryphon", "repo:other-org/x gryphon", "-label:bug gryphon", "gryphon -where"):
+        assert br.check_search_query(qualifier, deny), f"a GitHub search qualifier is refused: {qualifier}"
+    assert br.check_search_query("two-hop match drops a WHERE clause", deny) == [], (
+        "a hyphenated word is still a plain word"
+    )
 
 
 # ---- routing and the one component (req-dev-bugreport-route, -disclosure) ------------------------
@@ -1173,6 +1178,9 @@ def test_a_maintainers_report_is_fetched_and_read_as_data(fix_env: dict[str, Any
     out = json.loads(result.stdout)
     assert out["report"]["title"].startswith("Gryphon drops")
     assert out["comments_not_read"] == 1 and out["comments_read"] == [] and out["stop"] is False
+    assert not list((fix_env["repo"] / ".bug-reports").glob("issue-*")), (
+        "the raw issue and comments are never written to disk"
+    )
 
 
 @pytest.mark.spec("req-dev-bugfix-untrusted-intake-3")

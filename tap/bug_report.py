@@ -510,7 +510,7 @@ class Extracted:
 def extract_report(markdown: str) -> Extracted:
     """Read a report into the report shape (the reader of `submit-a-fix`).
 
-    TAP-IMPLEMENTS: req-dev-bugfix-untrusted-intake@1703dc8e0d68/8ca9e5ae9f91 (derivation) — the one reader: sanitise, extract the block, flag instruction-shaped text.
+    TAP-IMPLEMENTS: req-dev-bugfix-untrusted-intake@6787382cecee/8ca9e5ae9f91 (derivation) — the one reader: sanitise, extract the block, flag instruction-shaped text.
 
     Raises BugReportError unless the text has exactly one fenced JSON block that validates against
     the schema, the fixed headings, and the closing disclosure (req-dev-bugreport-shape-1, -2).
@@ -794,7 +794,7 @@ def format_hits(hits: list[Hit]) -> str:
     return "Tripwire BLOCKED the send:\n" + "\n".join(lines)
 
 
-_VOCABULARY_QUERY_RE = re.compile(r"^[A-Za-z0-9_ .:/-]{1,120}$")
+_VOCABULARY_QUERY_RE = re.compile(r"^[A-Za-z0-9_ .-]{1,120}$")
 
 
 def check_search_query(query: str, deny: list[tuple[str, str]]) -> list[Hit]:
@@ -804,8 +804,15 @@ def check_search_query(query: str, deny: list[tuple[str, str]]) -> list[Hit]:
     or field name); anything with quoting, operators or punctuation is refused as a hit.
     """
     hits = tripwire(query, deny)
-    if not _VOCABULARY_QUERY_RE.match(query or ""):
-        hits.append(Hit(1, "query shape", "not a short run of plain words from TAP's own vocabulary"))
+    qualifier = any(token.startswith("-") for token in (query or "").split())
+    if not _VOCABULARY_QUERY_RE.match(query or "") or qualifier:
+        hits.append(
+            Hit(
+                1,
+                "query shape",
+                "not a short run of plain words from TAP's own vocabulary (no search qualifiers or operators)",
+            )
+        )
     return hits
 
 
@@ -1126,8 +1133,10 @@ def main(argv: list[str] | None = None) -> int:
     _add_deny_args(p)
     sub.add_parser("gate-author")
     p = sub.add_parser("intake")
-    p.add_argument("issue")
-    p.add_argument("comments")
+    p.add_argument(
+        "payload",
+        help="a JSON object {issue, comments} under .bug-reports/, or - for stdin (the wrapper pipes gh api so nothing unsanitised touches disk)",
+    )
     p.add_argument("--maintainer-id", action="append", type=int, default=[])
     args = parser.parse_args(argv)
     try:
@@ -1223,8 +1232,10 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
         print(reason)
         return 0 if ok else 1
     if cmd == "intake":
-        issue = json.loads(resolve_in_work_dir(args.issue).read_text(encoding="utf-8"))
-        comments = json.loads(resolve_in_work_dir(args.comments).read_text(encoding="utf-8"))
+        raw = sys.stdin.read() if args.payload == "-" else resolve_in_work_dir(args.payload).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+        issue = payload.get("issue") or {}
+        comments = payload.get("comments") or []
         ok, reason = author_gate(
             (issue.get("user") or {}).get("id"),
             (issue.get("user") or {}).get("type"),

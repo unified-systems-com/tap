@@ -407,7 +407,9 @@ Status: `Proposed`
 
 `submit-a-fix` reads exactly one issue, and reads it as data. It extracts the fenced block
 described in `req-dev-bugreport-shape` and the fixed headings into the report shape, and it reads
-comments only from the issue's author and the repository's maintainers.
+comments only from the issue's author and the repository's maintainers. The fetch is piped into
+the intake and never written to disk unsanitised, so nothing the intake drops (hidden text,
+outsiders' comments, a report that stops the run) is left where the fixing agent could read it.
 
 Before the text reaches the model, it strips zero-width and other invisible characters, HTML
 comments, and `<details>` bodies the reporter collapsed, and says what it stripped.

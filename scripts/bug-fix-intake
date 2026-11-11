@@ -4,10 +4,10 @@
 # Fetches ONE issue and its comments from a unified-systems-com repository, but only after the
 # issue's AUTHOR has been checked as a maintainer session account, by numeric id and type
 # (req-dev-bugfix-ownreports). The author is read through a filter that drops the body, so for any
-# other author the body is never fetched, never written to disk, and never reaches the session.
-# The fetched text is then read as data by tap/bug_report.py: invisible characters, HTML comments
-# and collapsed blocks stripped and counted, comments from other accounts not read, and anything
-# that reads like an instruction reported as a finding.
+# other author the body is never fetched and never reaches the session. The fetched text is piped
+# into tap/bug_report.py and read as data: invisible characters, HTML comments and collapsed blocks
+# stripped and counted, comments from other accounts not read, anything that reads like an
+# instruction reported as a finding with the text withheld. The raw fetch is never written to disk.
 #
 # Version 0 has no sandbox: this script does not claim the session that runs it holds no
 # credential and no network (req-dev-bugfix-isolation is Backlog).
@@ -30,9 +30,14 @@ if ! gh api "repos/$repo/issues/$number" --jq '{id: .user.id, type: .user.type, 
   exit 1
 fi
 
-# 2. The author is a maintainer session account: now the body and the comments.
-gh api "repos/$repo/issues/$number" > ".bug-reports/issue-$number.json"
-gh api --paginate --slurp "repos/$repo/issues/$number/comments" > ".bug-reports/issue-$number.comments.json"
-
-# 3. Read as data.
-dc_py intake ".bug-reports/issue-$number.json" ".bug-reports/issue-$number.comments.json"
+# 2. The author is a maintainer session account: now the body and the comments, piped straight into
+#    the intake. Nothing unsanitised is written to disk, so the skill's Read cannot reach the raw
+#    body, the HTML comments, the collapsed blocks or the outsiders' comments; the agent sees only
+#    what the intake prints, and nothing when a finding stops the run (untrusted-intake-1, -2).
+{
+  printf '{"issue":'
+  gh api "repos/$repo/issues/$number"
+  printf ',"comments":'
+  gh api --paginate --slurp "repos/$repo/issues/$number/comments"
+  printf '}'
+} | dc_py intake -
