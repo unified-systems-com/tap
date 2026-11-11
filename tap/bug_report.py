@@ -904,6 +904,7 @@ class Attachment:
     path: Path
     size: int
     sha256: str
+    data: bytes = b""
 
     @property
     def host_path(self) -> str:
@@ -940,12 +941,11 @@ def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
         size = path.stat().st_size
         if not 0 < size <= MAX_ATTACHMENT_BYTES:
             raise BugReportError(f"screenshot {name} is {size} bytes; the limit is {MAX_ATTACHMENT_BYTES}")
-        with path.open("rb") as handle:
-            head = handle.read(16)
-        if not any(head.startswith(magic) for magic in IMAGE_MAGIC[suffix]):
+        blob = path.read_bytes()
+        if not any(blob.startswith(magic) for magic in IMAGE_MAGIC[suffix]):
             raise BugReportError(f"screenshot {name} is not a real {suffix[1:]} image")
         found.append(
-            Attachment(name=name, alt=item["description"], path=path, size=size, sha256=digest(path.read_bytes()))
+            Attachment(name=name, alt=item["description"], path=path, size=len(blob), sha256=digest(blob), data=blob)
         )
     return found
 
@@ -953,7 +953,7 @@ def load_attachments(report: Path, data: dict[str, Any]) -> list[Attachment]:
 def bundle_digest(report: Path) -> str:
     """The hash a yes binds to: the report's bytes and every attachment's bytes, in the report's order.
 
-    TAP-IMPLEMENTS: req-dev-bugreport-consent@ad3520a7dcfb/d7410ce1431f (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
+    TAP-IMPLEMENTS: req-dev-bugreport-consent@ad3520a7dcfb/3bcd4dddd89c (derivation) — the one digest the typed yes names and the send re-derives; the record itself is kept by the host wrapper.
 
     With no attachments it is the report file's own sha256. Changing or adding an image changes it.
     The consent record is written by `scripts/bug-report consent` on the host, from a terminal, to a
@@ -961,25 +961,18 @@ def bundle_digest(report: Path) -> str:
     """
     raw = report.read_bytes()
     attachments = load_attachments(report, extract_report(raw.decode("utf-8")).data)
-    if not attachments:
-        return digest(raw)
-    outer = hashlib.sha256()
-    for label, blob in (("report", raw), *((a.name, a.path.read_bytes()) for a in attachments)):
-        outer.update(f"{label}\0{len(blob)}\0".encode())
-        outer.update(blob)
-    return outer.hexdigest()
+    return str(send_manifest(report, raw, attachments)["digest"])
 
 
-def send_manifest(report: Path) -> dict[str, Any]:
+def send_manifest(report: Path, raw: bytes, attachments: list[Attachment]) -> dict[str, Any]:
     """What the host snapshots before `gh` reads anything: each file's bytes named by sha256, and the digest the yes names.
 
-    One read per file: the digest is derived from the same bytes the per-file hashes name, so the
-    host can copy the files outside the worktree, re-hash the copies, and know the copies are the
-    bytes that were verified and consented to.
+    Built from bytes already in hand (``raw`` is the report as read once; each attachment carries
+    its bytes), so the digest, the per-file hashes, and every check that ran are all over the same
+    bytes; the host then copies the files outside the worktree, re-hashes the copies, and knows the
+    copies are the bytes that were verified and consented to.
     """
-    raw = report.read_bytes()
-    attachments = load_attachments(report, extract_report(raw.decode("utf-8")).data)
-    blobs = [("report", report.name, raw, ""), *((a.name, a.name, a.path.read_bytes(), a.alt) for a in attachments)]
+    blobs = [("report", report.name, raw, ""), *((a.name, a.name, a.data, a.alt) for a in attachments)]
     if attachments:
         outer = hashlib.sha256()
         for label, _, blob, _ in blobs:
@@ -1008,7 +1001,8 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, Any]:
 
     The host wrapper adds the consent check (a record for exactly this digest, typed at a terminal).
     """
-    text = report.read_text(encoding="utf-8")
+    raw = report.read_bytes()
+    text = raw.decode("utf-8")
     extracted = extract_report(text)
     validate_block(extracted.data)
     if extracted.stripped.any():
@@ -1019,8 +1013,7 @@ def prepare_send(report: Path, deny: list[tuple[str, str]]) -> dict[str, Any]:
     if hits:
         raise BugReportError(format_hits(hits))
     repo = require_ours(extracted.data["target_repository"])
-    load_attachments(report, extracted.data)
-    manifest = send_manifest(report)
+    manifest = send_manifest(report, raw, load_attachments(report, extracted.data))
     return {
         "repository": repo,
         "title": extracted.data["title"],
@@ -1042,7 +1035,9 @@ def _login_name() -> str | None:
     """
     try:
         return getpass.getuser()
-    except OSError, KeyError:
+    except OSError:
+        return None
+    except KeyError:
         return None
 
 

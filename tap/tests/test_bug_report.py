@@ -1523,8 +1523,12 @@ def test_the_issue_verb_pipes_one_issue_into_the_intake_and_writes_nothing_unsan
         if p.is_file() and marker in p.read_text(encoding="utf-8", errors="ignore")
     ]
     assert on_disk == [], f"the raw body landed on disk: {on_disk}"
-    for bad in (["unified-systems-com/tap", "12; id"], ["evil/../tap", "12"]):
+    for bad in (["unified-systems-com/tap", "12; id"], ["evil/../tap", "12"], ["other-org/private-tap", "12"]):
         assert run_wrapper(send_env, "issue", *bad).returncode == 2
+    assert run_wrapper(send_env, "search", "other-org/private-tap", "loader").returncode == 2
+    assert Path(send_env["env"]["FAKE_GH_LOG"]).read_text().splitlines() == [
+        "api repos/unified-systems-com/tap/issues/12"
+    ], "no read reached gh for another owner"
 
 
 # ---- the procedures that live in the fix skill's prose (req-dev-bugfix-reproduce, -handback) ----
