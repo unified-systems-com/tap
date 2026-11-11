@@ -1103,6 +1103,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("search-query")
     p.add_argument("query")
     _add_deny_args(p)
+    p = sub.add_parser("read-search")
+    p.add_argument("file", help="the JSON list gh issue list printed, or - for stdin; every title passes the intake")
     p = sub.add_parser("read-issue")
     p.add_argument(
         "file",
@@ -1169,6 +1171,30 @@ def _dispatch(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912,
     if cmd == "finish":
         removed = finish()
         print("removed: " + (", ".join(removed) or "nothing to remove"))
+        return 0
+    if cmd == "read-search":
+        raw = sys.stdin.read() if args.file == "-" else resolve_in_work_dir(args.file).read_text(encoding="utf-8")
+        rows = []
+        withheld = 0
+        for item in json.loads(raw) or []:
+            clean, _, findings = read_as_data(str(item.get("title") or ""))
+            withheld += bool(findings)
+            rows.append(
+                {
+                    "number": item.get("number"),
+                    "state": item.get("state"),
+                    "url": item.get("url"),
+                    "title": None if findings else clean,
+                    "findings": [{"rule": f.rule, "excerpt": f.excerpt} for f in findings],
+                }
+            )
+        print(
+            json.dumps(
+                {"results": rows, "withheld": WITHHELD.format(n=withheld) if withheld else None},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     if cmd == "read-issue":
         raw = sys.stdin.read() if args.file == "-" else resolve_in_work_dir(args.file).read_text(encoding="utf-8")

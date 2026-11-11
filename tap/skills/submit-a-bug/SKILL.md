@@ -64,7 +64,7 @@ Enumerated, not summarised:
 | verb | runs | reaches |
 | --- | --- | --- |
 | `component`, `route`, `observe`, `render`, `check`, `search-query`, `preview`, `finish` | the module `tap/bug_report.py` in the web container | local files in `.bug-reports/`, the boot record, the instance hostnames |
-| `search REPO QUERY` | the query check, then `gh issue list --json number,title,url,state` | GitHub, outbound, numbers, titles, URLs and states only |
+| `search REPO QUERY` | the query check, then `gh issue list --json number,title,url,state` in our repositories only, every title through the intake | GitHub, outbound, numbers, titles, URLs and states only; a title that reads as an instruction is withheld |
 | `issue REPO NUMBER` | `gh api` for one issue, piped into the read-as-data intake | GitHub, inbound; the body reaches you only after hidden text is stripped, instruction-shaped lines are findings, and nothing unsanitised is written to disk |
 | `consent FILE` | on the host, from a terminal only: prints the phrase, reads what is typed, records a yes outside the worktree | nothing; it refuses input that is not a terminal, so you cannot run it |
 | `send FILE` | the verifications, the consent record for exactly these bytes, then one `gh issue create --body-file` | GitHub, outbound, once |

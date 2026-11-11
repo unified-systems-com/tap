@@ -6,7 +6,8 @@
 # Report files live only in .bug-reports/ (gitignored). The verbs that touch GitHub run on the
 # host, with the operator's own gh login:
 #
-#   search REPO QUERY   numbers, titles, URLs and states of matching issues, in our repositories only (route-4)
+#   search REPO QUERY   numbers, titles, URLs and states of matching issues, in our repositories only; each
+#                       title passes the intake and is withheld when it reads as an instruction (route-4)
 #   issue REPO NUMBER   one issue's title and body, piped into the container and read as data: hidden
 #                       text stripped, instruction-shaped lines reported, exit 2 when there are any;
 #                       nothing unsanitised is written to disk (investigate-3)
@@ -73,8 +74,9 @@ case "$cmd" in
     repo="${1:-}"; query="${2:-}"; shift 2 || true
     [[ "$repo" =~ $ours_re ]] || { echo "bug-report: search reads only unified-systems-com/<repo>, the target route named" >&2; exit 2; }
     # The query is outbound before any consent: it must pass the tripwire first (route-4).
-    dc_py search-query "$query" "$@" "${host_flags[@]}"
-    exec gh issue list --repo "$repo" --state all --limit 20 --json number,title,url,state --search "$query"
+    dc_py search-query "$query" "$@" "${host_flags[@]}" >&2
+    # Titles are stranger-written text too: every one passes the same intake as an issue body (Clinejection).
+    gh issue list --repo "$repo" --state all --limit 20 --json number,title,url,state --search "$query" | dc_py read-search -
     ;;
   issue)
     repo="${1:-}"; number="${2:-}"
