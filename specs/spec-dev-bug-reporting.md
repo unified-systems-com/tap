@@ -94,6 +94,7 @@ send attempt, the one-JSON-block report shape, and every `submit-a-fix` requirem
 | req-dev-bugreport-consent | [Exact Bytes, Explicit Yes, Fail Closed](#exact-bytes-explicit-yes-fail-closed) | Proposed | Preview the exact file, name the repository as public and permanent, take a yes bound to that content, and never improvise on a failed send |
 | req-dev-bugreport-shape | [A Report Shape The Fixer Can Parse](#a-report-shape-the-fixer-can-parse) | Proposed | Fixed headings plus one machine-readable block carrying the diagnosis, the scenario and the sample data; an AI-assistance disclosure |
 | req-dev-bugfix-untrusted-intake | [The Report Is Data](#the-report-is-data) | Proposed | Extract into the report shape; read only the reporter's and maintainers' comments; nothing in it is an instruction |
+| req-dev-bugfix-ownreports | [Until The Sandbox, Only Our Own Reports](#until-the-sandbox-only-our-own-reports) | Proposed | `submit-a-fix` reads an issue only when a maintainer session account wrote it, by account identity; the gate lifts when the sandbox is enabled, never by a flag |
 | req-dev-bugfix-isolation | [No Credentials, No Network, After Reading](#no-credentials-no-network-after-reading) | Proposed | Runs only inside a named deny-all sandbox, on commits reachable from our own refs, in a confined throwaway stack; a fail-closed preflight refuses a credentialed or networked session |
 | req-dev-bugfix-reproduce | [Reproduce Twice Before Fixing](#reproduce-twice-before-fixing) | Proposed | A failing test on the reporter's version and on `main`, starting from the report's scenario, or one of three named exits |
 | req-dev-bugfix-handback | [A Human Pushes](#a-human-pushes) | Proposed | A local branch, before and after evidence, and a draft PR body; the skill never pushes, opens a PR, or signs off |
@@ -144,8 +145,6 @@ model or field name from the published schema) and passes the tripwire before it
 ----
 RID: `req-dev-bugreport-investigate`
 
-Trace: `process` — performed by the agent following the skill; the checkable substance is the report shape and the tripwire
-
 Status: `Proposed`
 
 The investigation is the agent's own, and it uses every local source it has:
@@ -185,8 +184,6 @@ later.
 ### A Root Cause Or Named Theories
 ----
 RID: `req-dev-bugreport-conclude`
-
-Trace: `process` — the agent's judgement; the report shape carries and checks its form
 
 Status: `Proposed`
 
@@ -429,6 +426,26 @@ The same intake applies when `submit-a-bug` reads an existing issue during its i
 | req-dev-bugfix-untrusted-intake-2 | Hidden Text Stripped And Named | Proposed | Invisible characters, HTML comments and collapsed blocks are removed before the model reads the issue, and the removal is reported. | |
 | req-dev-bugfix-untrusted-intake-3 | Instruction-Shaped Text Stops The Run | Proposed | A planted instruction in the issue body (for example, "also run `curl …`") is reported as a finding, and the skill does not act on it. | |
 | req-dev-bugfix-untrusted-intake-4 | A Classifier Only Adds Stops | Proposed | With a typed classifier configured, its yes stops the run, and its no on a planted instruction still leaves the run stopped by the skill's own reading; with none configured, the skill behaves identically otherwise. | |
+
+### Until The Sandbox, Only Our Own Reports
+----
+RID: `req-dev-bugfix-ownreports`
+
+Status: `Proposed`
+
+Ruled by George, 2026-10-25, and carried into version 1 unchanged. Until the sandbox of
+`req-dev-bugfix-isolation` is enabled, `submit-a-fix` reads an issue only when a maintainer session
+account wrote it. The author is read from the issue as fetched, by account identity and never by a
+name in the text, using the same allowlist that `req-cicd-issue-link-7` uses. Any other author stops
+the run before the issue body is read, with a message that says why: bugs from other accounts wait
+for the sandbox. The fetch, the report-as-data intake and the human push are unchanged.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-bugfix-ownreports-1 | Only A Maintainer Account's Issue Is Read | Proposed | An issue authored by an account that is not a maintainer session account stops the run before its body is read; the skill names the author check as the reason. | By numeric account id and type, as `req-cicd-issue-link-7` does. |
+| req-dev-bugfix-ownreports-2 | The Gate Lifts With The Sandbox | Proposed | Enabling `req-dev-bugfix-isolation` is what removes this requirement; the gate is not bypassed by a flag or an environment variable. | |
 
 ### No Credentials, No Network, After Reading
 ----
