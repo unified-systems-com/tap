@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.4](https://github.com/unified-systems-com/tap/compare/v0.3.3...v0.3.4) (2026-11-12)
+
+
+### Features
+
+* **grid:** fill Entity.natural_key from each type's NATURAL_KEY (+1 more) [via aws-build] ([906b344](https://github.com/unified-systems-com/tap/commit/906b3445f68d01dda4cf1e6624a8ea2acea46be4))
+
+
+### Bug Fixes
+
+* **ci:** approve the current tap-release-please bot account for the DCO and issue-link checks [via fedramp-20x-vdr] ([4c6e010](https://github.com/unified-systems-com/tap/commit/4c6e0102358236c1028f852181f4c18947f6d3f0))
+
 ## [0.3.3](https://github.com/unified-systems-com/tap/compare/v0.3.2...v0.3.3) (2026-11-12)
 
 
