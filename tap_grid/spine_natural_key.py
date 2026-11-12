@@ -246,9 +246,12 @@ def resync_natural_keys(*entity_types: str, using: str = "default") -> SyncRepor
 
 def check(entity_types: Iterable[str] | None = None, *, sample: int = 200, using: str = "default") -> DriftReport:
     """Sample each type's rows and compare the stored spine key with a fresh composition; list the
-    types whose recorded recipe fingerprint is missing or differs. Reads only."""
+    types whose recorded recipe fingerprint is missing or differs. Reads only. A sample under one
+    row would check nothing and could report clean, so it is refused."""
     from django.db import connections
 
+    if sample < 1:
+        raise ValueError(f"--sample must be at least 1 (got {sample}): a check of zero rows checks nothing")
     connection = connections[using]
     report = DriftReport()
     with connection.cursor() as probe:

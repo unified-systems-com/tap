@@ -542,6 +542,15 @@ class TestCatchUpAndDrift:
         call_command("sync_spine_natural_keys", "--type", "panel")
         call_command("sync_spine_natural_keys", "--check", "--type", "panel")
 
+    def test_a_zero_row_sample_is_refused(self) -> None:
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        with pytest.raises(ValueError, match="at least 1"):
+            check(["panel"], sample=0)
+        with pytest.raises(CommandError, match="at least 1"):
+            call_command("sync_spine_natural_keys", "--check", "--sample", "0", "--type", "panel")
+
     def test_a_skipped_type_is_not_clean(self) -> None:
         """A type the check could not read was not checked, so the report cannot be clean."""
         from tap_grid.spine_natural_key import DriftReport
