@@ -461,13 +461,25 @@ COMPOSITION_VERSION: Final[str] = "1"
 
 
 def recipe_fingerprint(model: Any) -> str:
-    """A hash of what a type's spine key is made from: its type, its ``NATURAL_KEY`` tuple and the
-    composition itself (``-25``). When it changes, every stored key of that type may be stale."""
+    """A hash of what a type's spine key is made from: its type, its ``NATURAL_KEY`` tuple, each
+    entry's field class and the composition itself (``-25``). When it changes, every stored key of that type may be stale."""
     declared = getattr(model, "NATURAL_KEY", None)
+    # Each entry's field class too: composition runs the field's to_python first, so changing a
+    # constituting column from CharField to IntegerField can change every key with the tuple unchanged.
+    fields: list[str] = []
+    if isinstance(declared, tuple):
+        for entry in declared:
+            root = split_path(entry)[0] if is_path(entry) else entry
+            try:
+                field_cls = type(model._meta.get_field(root))
+                fields.append(f"{field_cls.__module__}.{field_cls.__qualname__}")
+            except Exception:  # an unresolvable entry is a declaration problem, reported elsewhere
+                fields.append("?")
     recipe = json.dumps(
         {
             "entity_type": model.ENTITY_TYPE,
             "declared": list(declared) if isinstance(declared, tuple) else ("KEYLESS" if declared is KEYLESS else "None"),
+            "fields": fields,
             "composition": [COMPOSITION_VERSION, KEY_SEPARATOR, KEY_ESCAPE],
         },
         sort_keys=True,

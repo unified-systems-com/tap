@@ -464,6 +464,18 @@ class TestCatchUpAndDrift:
         sync(["panel"])
         assert check(["panel"], sample=10_000).clean
 
+    def test_a_changed_field_class_changes_the_fingerprint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Composition runs the field's to_python first, so a constituting column changing class can
+        change every key with the NATURAL_KEY tuple untouched; the fingerprint must see it."""
+        before = recipe_fingerprint(Panel)
+        real = Panel._meta.get_field
+
+        def get_field(name: str) -> Any:
+            return models.IntegerField(name="slug") if name == "slug" else real(name)
+
+        monkeypatch.setattr(Panel._meta, "get_field", get_field)
+        assert recipe_fingerprint(Panel) != before
+
     def test_a_changed_recipe_is_stale_until_the_changed_only_sync(self, monkeypatch: pytest.MonkeyPatch) -> None:
         panel = _panel("recipe")
         sync(["panel"])

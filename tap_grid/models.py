@@ -635,13 +635,15 @@ class EntityType(models.Model):
 _KEYS_DERIVED: contextvars.ContextVar[bool] = contextvars.ContextVar("tap_grid_keys_derived", default=False)
 
 
-def _copy_keys_to_spine(objs: Iterable[Any]) -> None:
-    """Re-derive each row's natural key and write it to its spine row, where it differs (``-19``)."""
+def _copy_keys_to_spine(objs: Iterable[Any], using: str | None = None) -> None:
+    """Re-derive each row's natural key and write it to its spine row, where it differs (``-19``),
+    in the database the row came from (``using``, else the row's own)."""
     for obj in objs:
         entity_id = getattr(obj, "entity_id", None)
         if entity_id is not None:
             key = obj.derive_natural_key()
-            Entity.objects.filter(pk=entity_id).exclude(natural_key=key).update(natural_key=key)
+            alias = using or obj._state.db or "default"
+            Entity.objects.using(alias).filter(pk=entity_id).exclude(natural_key=key).update(natural_key=key)
 
 
 class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
@@ -675,7 +677,7 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         if not pks:
             return
         with unguarded_read():
-            _copy_keys_to_spine(self.filter(pk__in=pks))
+            _copy_keys_to_spine(self.filter(pk__in=pks), using=self.db)
 
     def update(self, **kwargs: Any) -> int:
         # Django's bulk_update writes through update(); ours re-derives every key after itself.
@@ -701,7 +703,7 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
             finally:
                 _KEYS_DERIVED.reset(token)
             with unguarded_read():
-                _copy_keys_to_spine(self.model.all_objects.using(self.db).filter(pk__in=pks))
+                _copy_keys_to_spine(self.model.all_objects.using(self.db).filter(pk__in=pks), using=self.db)
         return written
 
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
@@ -1123,7 +1125,9 @@ class BaseModel(models.Model):
         saved = set(update_fields)
         attnames = {column: getattr(meta.get_field(column), "attname", column) for column in declared_columns(type(self))}
         unsaved = [attname for column, attname in attnames.items() if column not in saved and attname not in saved]
-        stored = type(self)._base_manager.filter(pk=self.pk).values(*unsaved).first() if unsaved else {}
+        stored = (
+            type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).values(*unsaved).first() if unsaved else {}
+        )
         if stored is None:
             return None
         row = {

@@ -226,6 +226,27 @@ class TestSpineColumn:
         """Guard the guard: a scan that reads nothing passes silently."""
         assert "tap_grid/models.py" in self._referencing_files()
 
+    # Files allowed only specific lines: the write pipeline is identity code, so a whole-file pass
+    # would let a later lookup on the column slip in beside the one derived write it carries.
+    ALLOWED_LINES = {
+        "tap_grid/services/_impl.py": {"natural_key=instance.derive_natural_key(),"},
+    }
+
+    def test_the_write_pipeline_only_writes_the_derived_key(self) -> None:
+        root = self._repo_root()
+        for rel, allowed in self.ALLOWED_LINES.items():
+            text = (root / rel).read_text(encoding="utf-8")
+            code = [
+                ln.strip()
+                for ln in text.splitlines()
+                if self._TOKEN.search(ln) and not self._IMPORT.search(ln) and not ln.strip().startswith("#")
+            ]
+            stray = [ln for ln in code if ln not in allowed]
+            assert stray == [], (
+                f"{rel} may only write the derived key ({sorted(allowed)}); found {stray} "
+                "(req-grid-entity-natural-key-21)"
+            )
+
     def test_only_the_derived_write_touches_the_column(self) -> None:
         extra = sorted(self._referencing_files() - self.ALLOWED)
         assert extra == [], (
