@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.3.3](https://github.com/unified-systems-com/tap/compare/v0.3.2...v0.3.3) (2026-11-12)
+
+
+### Features
+
+* **auth:** the shared collector role holds grid.delete (interim, global) [via collector-grid-delete] ([dc34bce](https://github.com/unified-systems-com/tap/commit/dc34bced13778f3f084c2197763ee7dde4730f0d))
+* **dev:** choose the container engine once; fall back to Podman when Docker is down [via podman-build] ([24cd178](https://github.com/unified-systems-com/tap/commit/24cd178d01b98ddaf483020c28b923ac72be10cc))
+* **dev:** scripts/test --plugins auto runs the plugin suites a core diff can reach (+4 more) [via gryphon-date-arith] ([fc8e6f8](https://github.com/unified-systems-com/tap/commit/fc8e6f8d0849e5120a901541c56011c88c465156))
+* **dev:** spawn and dc run with no Docker CLI, falling through to Podman ([6e36fae](https://github.com/unified-systems-com/tap/commit/6e36faedd6b2ece22f218072baf7642b6783194b))
+* **dev:** spawn and dc run with no Docker CLI, falling through to Podman [via nightly-skip-forks] ([0912731](https://github.com/unified-systems-com/tap/commit/0912731fb7b7f976a66caac804c648bd84d24df2))
+* **skills:** submit-a-bug version 1, the agent investigates and guards what leaves ([c42e4e6](https://github.com/unified-systems-com/tap/commit/c42e4e616e5c543e41c1afa317ad49a14c86a6a8))
+* **tap_web:** a standard HTML panel that cleans untrusted markup against a per-panel feature allowlist ([d3d4a12](https://github.com/unified-systems-com/tap/commit/d3d4a127c868cfdc31e43327dbc6c56ed543f9ac))
+* **tap_web:** a standard HTML panel that cleans untrusted markup against a per-panel feature allowlist (+2 more) [via fedramp-20x-vdr] ([856597f](https://github.com/unified-systems-com/tap/commit/856597fc65e79eace152493399ec841f3ef71539))
+
+
+### Bug Fixes
+
+* **ci:** approve the current tap-renovate bot account for the DCO and issue-link checks ([ca2ac31](https://github.com/unified-systems-com/tap/commit/ca2ac31ea4a6561db2a730bea2f707b42ee5db17))
+* **ci:** approve the current tap-renovate bot account for the DCO and issue-link checks [via fedramp-20x-vdr] ([952fa07](https://github.com/unified-systems-com/tap/commit/952fa07c57b3238766ac66b1941392ba2876ce97))
+* **ci:** the nightly owner-issue job skips forks ([4bc1210](https://github.com/unified-systems-com/tap/commit/4bc12108415ad33ecb459c0590f59ebf93f35d36))
+* **ci:** the nightly owner-issue job skips forks [via nightly-skip-forks] ([2a7ddf1](https://github.com/unified-systems-com/tap/commit/2a7ddf100fe67ffa3ac4332bb175040eaf8aea7b))
+* **compose:** give the loopback criteria their own requirement, and find compose files at any depth ([c5a63c4](https://github.com/unified-systems-com/tap/commit/c5a63c471809684a81642b212c9eb3a49d144bfb))
+* **compose:** publish stack ports on 127.0.0.1 unless a stack is told otherwise ([03d538e](https://github.com/unified-systems-com/tap/commit/03d538ec9ac9a2a7aef091481be51e038aabeb71))
+* **compose:** publish stack ports on 127.0.0.1 unless a stack is told otherwise (+1 more) [via compose-loopback] ([2db7ea4](https://github.com/unified-systems-com/tap/commit/2db7ea436b67fb74e391cc8a4b08fdf86bc4d7f4))
+* **compose:** stop the dev database cleanly; restart it only after a crash ([2937037](https://github.com/unified-systems-com/tap/commit/293703703fd53a4448402654b6ce262e111f6660))
+* **compose:** stop the dev database cleanly; restart it only after a crash [via nightly-skip-forks] ([e379e7f](https://github.com/unified-systems-com/tap/commit/e379e7f45a85f9b1ccf5198ad58ebbd6dcab0fff))
+* **dev:** --skip-stack really skips the stack, volume and network teardown ([98c0154](https://github.com/unified-systems-com/tap/commit/98c0154f9072d4d79d5d5c203e058e308047a5e0))
+* **dev:** despawn stops when the session's engine is unreachable; bound engine probes without GNU timeout ([5c52a7c](https://github.com/unified-systems-com/tap/commit/5c52a7c5d7cb2844717e547811bc0c6851a19131))
+* **dev:** despawn stops when the session's engine is unreachable; bound engine probes without GNU timeout [via podman-build] ([b4725b6](https://github.com/unified-systems-com/tap/commit/b4725b6ad2868a721661c165e46663dd04f93b5f))
+* **docker:** pin py3-pip-wheel so the layer cache cannot hide a fixed revision ([8ee7d9d](https://github.com/unified-systems-com/tap/commit/8ee7d9d3991bfd789bf72d3c6a61a61436768470))
+* **docker:** pin py3-pip-wheel so the layer cache cannot hide a fixed revision [via pr-bots-id] ([fe1eb13](https://github.com/unified-systems-com/tap/commit/fe1eb13de90bfe208c29a832eb7c0dc4c3e126a5))
+* **logging:** configure plugin loggers under tap_plugin, not the retired plugins prefix ([79c5636](https://github.com/unified-systems-com/tap/commit/79c563660a8a22a71bfd201ff40b158edc8ba3f8))
+* **logging:** configure plugin loggers under tap_plugin, not the retired plugins prefix (+1 more) [via plugin-logger-ns] ([afc5d7f](https://github.com/unified-systems-com/tap/commit/afc5d7fd57cdfe22d752acda293ca190c52169a4))
+* **search:** ORM search no longer returns tombstoned entities ([4029ce8](https://github.com/unified-systems-com/tap/commit/4029ce8f042d81a3b29bd72fd32ccefec402da51))
+* **search:** ORM search no longer returns tombstoned entities [via gryphon-query-fixes] ([991392f](https://github.com/unified-systems-com/tap/commit/991392f1b475c177ff0af11da82d07bfb387e3c6))
+* **skills:** consent is typed at a terminal and kept outside the worktree; send re-runs render's checks ([b9ea6ea](https://github.com/unified-systems-com/tap/commit/b9ea6eae0ba0860accdfcca54ba8b5a247935a48))
+* **skills:** one read per file behind every send check; reads stay in our repositories ([f3d6cbd](https://github.com/unified-systems-com/tap/commit/f3d6cbdf28d17d3c6ffee2f5f985ba712f484102))
+* **skills:** search titles pass the same intake as an issue body ([ff1703a](https://github.com/unified-systems-com/tap/commit/ff1703af424f1e526c53ebec8d4793676488501d))
+* **skills:** send from a snapshot, spend the yes, withhold flagged text, check URL hosts ([b338844](https://github.com/unified-systems-com/tap/commit/b33884421574a1570d9d17230dddf7c06362f851))
+* **skills:** the block's target and component are bound to the boot record; the author gate downloads no body ([a0cfe1b](https://github.com/unified-systems-com/tap/commit/a0cfe1bcf628b05cf07f72b4fe1c734a37e27f2b))
+* **skills:** the fix intake is piped, never written to disk; search queries carry no qualifiers ([6d8a30c](https://github.com/unified-systems-com/tap/commit/6d8a30ca9af660ae5667ac549212458d3ea23ddc))
+* **skills:** the host derives the send's target, title, attachments and digest from its own copies ([41c62a6](https://github.com/unified-systems-com/tap/commit/41c62a6a42530b1ef2c3792ef87abdedb8ec8750))
+* **tap_web:** HTML panel cites only requirements that exist; a test for the nh3 dependency ([9ee32f4](https://github.com/unified-systems-com/tap/commit/9ee32f44171a7517107c18fc0247c3510a9723f9))
+* **tap_web:** the HTML panel takes its colours from the theme palette ([37a170e](https://github.com/unified-systems-com/tap/commit/37a170e42c963d3479a39c3e020063907e75dcbb))
+
+
+### Documentation
+
+* **misc:** record the check of the tree-sitter extraction against the provider schema dump ([98d4d16](https://github.com/unified-systems-com/tap/commit/98d4d16dd1507d280ee5aab189166e304045ced8))
+* **misc:** tree-sitter as a source of code structure, beside the code_core seed ([5743819](https://github.com/unified-systems-com/tap/commit/57438195d209f632df93e4d03f3ece0ebbd2925d))
+* **misc:** tree-sitter as a source of code structure, beside the code_core seed (+1 more) [via aws-build] ([a47fdbc](https://github.com/unified-systems-com/tap/commit/a47fdbc8f402eaccc8fb7979d9349f78f32dde4a))
+* **new-plugin:** a plugin lands tagged v0.1.0, and releases are release PRs ([54e61c4](https://github.com/unified-systems-com/tap/commit/54e61c4ba0296905ad400c65e912c0e74248fbeb))
+* **new-plugin:** a plugin lands tagged v0.1.0, and releases are release PRs [via new-plugin-tag] ([517a069](https://github.com/unified-systems-com/tap/commit/517a0698c7238908c6db03921be9b43df7728d35))
+* **skills:** at most three AI-review rounds on a PR, then halt and ask ([25e5fa8](https://github.com/unified-systems-com/tap/commit/25e5fa8410f743262294ad484e620699ebec9d6a))
+* **skills:** at most three AI-review rounds on a PR, then halt and ask [via review-rounds] ([ccb5350](https://github.com/unified-systems-com/tap/commit/ccb5350107bbd0bbb01be9c7a5368e4d6dc93b7c))
+* **spec:** bug reporting version 1, the agent investigates and guards what leaves ([4bd274b](https://github.com/unified-systems-com/tap/commit/4bd274bf523010e67c92f186383e6e4e8361e003))
+* **spec:** bug reporting version 1, the agent investigates and guards what leaves (+1 more) [via bug-report-v1] ([00a72d2](https://github.com/unified-systems-com/tap/commit/00a72d2fb039c2df670e6ac6bdf0d60ad5028151))
+
 ## [0.3.2](https://github.com/unified-systems-com/tap/compare/v0.3.1...v0.3.2) (2026-10-30)
 
 
