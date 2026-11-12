@@ -138,7 +138,7 @@ Proposed as the first viewer-shell integration point for history and provenance 
 - Collapsed section labels may include lightweight counts when available, for example:
   - `History (10)`
   - `FLIP (7 fields)`
-- The viewer should not require side drawers, pop-out windows, or other more complex chrome for the first implementation.
+- The viewer page itself does not depend on side drawers or pop-out windows. Inspecting an entity *without leaving a list* is the resource drawer's job (`spec-web-drawer.md`), which reuses the viewer's field and FLIP context and links back to this page as "Open full page".
 - If a given inspection capability is unavailable or has no meaningful data for the object, the viewer may omit that section or render a quiet empty state.
 
 #### Development
@@ -149,7 +149,7 @@ This keeps the object's main meaning front and center while still making inspect
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-web-viewer-inspect-1 | Secondary Inspection Region Allowed | Implemented | The shared viewer shell may include a dedicated region below the main body for secondary inspection surfaces. | FLIP section added to `viewer.html` |
-| req-web-viewer-inspect-2 | Collapsed By Default In V1 | Implemented | The first inspection surfaces render as collapsed sections by default rather than expanded panes or side drawers. | `<details>` element, closed by default |
+| req-web-viewer-inspect-2 | Collapsed By Default In V1 | Implemented | On the viewer page, the inspection surfaces render as collapsed sections by default rather than expanded panes. The list-side resource drawer is a separate surface (`req-web-drawer`). | `<details>` element, closed by default; revised 2026-11 for the drawer |
 | req-web-viewer-inspect-3 | Lightweight Counts In Labels | Implemented | Inspection section headers may include useful counts such as number of history entries or tracked FLIP fields. | `FLIP (N fields)` in summary label |
 | req-web-viewer-inspect-4 | Main Content Remains Primary | Implemented | Inspection surfaces are presented as secondary supporting UI and do not displace the main object context and body regions. | Section placed after Details |
 

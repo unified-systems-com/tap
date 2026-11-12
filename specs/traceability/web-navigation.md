@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 6 |
+| mapped | 7 |
 | excluded | 5 |
 | unbuilt | 2 |
 | retired | 1 |
@@ -32,3 +32,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-web-nav-index-endpoint` | Implemented | Implemented | `nav_index_view` | — |
 | `req-web-nav-page-discoverable` | Implemented | Verified | `Page` | `req-web-nav-page-discoverable-3` |
 | `req-web-nav-page-weight` | Implemented | Implemented | `Page` | — |
+| `req-web-nav-sidebar` | Implemented | Verified | `build_nav_tree` | `req-web-nav-sidebar-1`, `req-web-nav-sidebar-2`, `req-web-nav-sidebar-3`, `req-web-nav-sidebar-4` |

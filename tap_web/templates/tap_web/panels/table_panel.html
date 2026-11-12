@@ -32,6 +32,8 @@
     </div>
     {% else %}
 
+    {% if table_filter_bar %}{% include "tap_web/panels/_table_filter_bar.html" %}{% endif %}
+
     {# Tabulator mount point. data-tap-table-panel-id links to the JSON data block below. #}
     <div data-tap-table-mount
          data-tap-table-panel-id="{{ panel.entity_id }}"{% if table_mode == "raw" %}
@@ -40,6 +42,10 @@
          {% if table_height %}data-tap-table-height="{{ table_height }}"{% endif %}
          {% if table_refresh_seconds %}data-tap-table-refresh="{{ table_refresh_seconds }}"{% endif %}
          {% if table_empty_text %}data-tap-table-empty-text="{{ table_empty_text }}"{% endif %}
+         {% if table_drawer is not None %}data-tap-table-drawer
+         {% if table_drawer.id_field %}data-tap-drawer-id-field="{{ table_drawer.id_field }}"{% endif %}
+         {% if table_drawer.type_field %}data-tap-drawer-type-field="{{ table_drawer.type_field }}"{% endif %}
+         {% if table_drawer.entity_type %}data-tap-drawer-entity-type="{{ table_drawer.entity_type }}"{% endif %}{% endif %}
          class="tap-table-container{% if table_striped %} tap-table--striped{% endif %}"></div>
 
     {# Embedded search result payload (req-web-stdpanel-table-render-3). #}

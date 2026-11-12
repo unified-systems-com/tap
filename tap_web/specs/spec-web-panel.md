@@ -111,6 +111,7 @@ Asset source semantics:
 | req-web-panel-obj-6 | Web Dimension | Implemented | Panel carries `DEFAULT_DIMENSIONS = {"tap.graph": "web"}` (already implemented). | |
 | req-web-panel-obj-7 | Config Defaults Empty Object | Implemented | `config` is required and defaults to `{}`. | |
 | req-web-panel-obj-8 | Editor View Optional | Implemented | `editor_view` is optional and only required when a panel supports edit mode. | |
+| req-web-panel-obj-9 | URL Slug Is Slugified | Implemented | The slug part of a `<slug>--<uuid>` token is slugified when built, so an object whose fallback slug is a name containing `/` or spaces (an ARN, a path) still reverses to a routable URL. | `tap_web/tests/test_utils.py`; the viewer of a `/`-named entity renders |
 
 #### Future
 

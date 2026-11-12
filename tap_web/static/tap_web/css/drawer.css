@@ -1,0 +1,293 @@
+/* Resource drawer (spec-web-drawer.md): a non-modal region on the right edge, under the header. */
+
+.tap-drawer {
+  position: fixed;
+  top: 2.5rem; /* the header is h-10 */
+  right: 0;
+  bottom: 0;
+  z-index: 40; /* under the header (z-50) and the palette */
+  width: min(36rem, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: rgb(var(--tap-white));
+  border-left: 1px solid rgb(var(--tap-slate-200));
+  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
+  transform: translateX(100%);
+  transition: transform 160ms ease;
+}
+
+.tap-drawer[hidden] {
+  display: none;
+}
+
+.tap-drawer--in {
+  transform: translateX(0);
+}
+
+.tap-drawer[aria-busy="true"] .tap-drawer-body {
+  opacity: 0.55;
+}
+
+.tap-drawer-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.tap-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem 0.625rem;
+  border-bottom: 1px solid rgb(var(--tap-slate-200));
+}
+
+.tap-drawer-ident {
+  display: flex;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+.tap-drawer-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+}
+
+.tap-drawer-titles {
+  min-width: 0;
+}
+
+.tap-drawer-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: rgb(var(--tap-slate-900));
+  overflow-wrap: anywhere;
+}
+
+.tap-drawer-title:focus {
+  outline: none;
+}
+
+.tap-drawer-title:focus-visible {
+  outline: 2px solid rgb(var(--tap-indigo-500));
+  outline-offset: 2px;
+}
+
+.tap-drawer-type {
+  font-size: 0.75rem;
+  color: rgb(var(--tap-slate-600));
+}
+
+.tap-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: none;
+}
+
+.tap-drawer-open {
+  font-size: 0.8125rem;
+  color: rgb(var(--tap-indigo-700));
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.tap-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.875rem;
+  height: 1.875rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--tap-slate-600));
+  cursor: pointer;
+}
+
+.tap-drawer-close:hover {
+  background: rgb(var(--tap-slate-100));
+  color: rgb(var(--tap-slate-900));
+}
+
+.tap-drawer-close svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.tap-drawer-close:focus-visible,
+.tap-drawer-open:focus-visible,
+.tap-drawer-tabs a:focus-visible,
+.tap-drawer-links a:focus-visible {
+  outline: 2px solid rgb(var(--tap-indigo-500));
+  outline-offset: 1px;
+}
+
+.tap-drawer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgb(var(--tap-slate-200));
+}
+
+.tap-drawer-tabs a {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: rgb(var(--tap-slate-700));
+  background: rgb(var(--tap-slate-100));
+  text-decoration: none;
+}
+
+.tap-drawer-tabs a:hover {
+  background: rgb(var(--tap-slate-200));
+}
+
+.tap-drawer-count {
+  display: inline-block;
+  min-width: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-align: center;
+  color: rgb(var(--tap-slate-700));
+  background: rgb(var(--tap-slate-200));
+}
+
+.tap-drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 1rem 2rem;
+  overscroll-behavior: contain;
+}
+
+.tap-drawer-section {
+  padding: 0.875rem 0;
+  border-bottom: 1px solid rgb(var(--tap-slate-100));
+  scroll-margin-top: 0.5rem;
+}
+
+.tap-drawer-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgb(var(--tap-slate-600));
+}
+
+.tap-drawer-subhead {
+  margin: 0.625rem 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: rgb(var(--tap-slate-800));
+}
+
+.tap-drawer-dir {
+  color: rgb(var(--tap-slate-500));
+}
+
+.tap-drawer-dl {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.tap-drawer-dl dt {
+  color: rgb(var(--tap-slate-600));
+}
+
+.tap-drawer-dl dd {
+  margin: 0;
+  color: rgb(var(--tap-slate-900));
+  overflow-wrap: anywhere;
+}
+
+.tap-drawer-mono,
+.tap-drawer-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.tap-drawer-pre {
+  margin: 0.375rem 0 0;
+  padding: 0.5rem;
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre;
+  border-radius: 6px;
+  background: rgb(var(--tap-slate-50));
+  color: rgb(var(--tap-slate-800));
+}
+
+.tap-drawer-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.tap-drawer-links li {
+  padding: 0.125rem 0;
+  overflow-wrap: anywhere;
+}
+
+.tap-drawer-links a {
+  color: rgb(var(--tap-indigo-700));
+  text-decoration: underline;
+}
+
+.tap-drawer-empty,
+.tap-drawer-more {
+  margin: 0.25rem 0;
+  font-size: 0.8125rem;
+  color: rgb(var(--tap-slate-600));
+}
+
+.tap-drawer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.tap-drawer-table th,
+.tap-drawer-table td {
+  padding: 0.25rem 0.375rem;
+  text-align: left;
+  border-bottom: 1px solid rgb(var(--tap-slate-100));
+  color: rgb(var(--tap-slate-800));
+}
+
+.tap-drawer-table th {
+  color: rgb(var(--tap-slate-600));
+  font-weight: 600;
+}
+
+/* The row whose entity is in the drawer. */
+.tap-row--drawer-active {
+  box-shadow: inset 3px 0 0 rgb(var(--tap-indigo-600));
+  background: rgb(var(--tap-indigo-50)) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-drawer {
+    transition: none;
+  }
+}
+
+@media print {
+  .tap-drawer {
+    display: none;
+  }
+}

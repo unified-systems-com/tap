@@ -13,4 +13,4 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |
+| `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4`, `req-web-panel-obj-9` |

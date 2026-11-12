@@ -145,7 +145,6 @@ tap_viz/panels/graph_panel/__init__.py:misc:4
 tap_viz/panels/graph_panel/projection_resolver.py:attr-defined:5
 tap_viz/urls.py:type-arg:1
 tap_web/models.py:type-arg:4
-tap_web/navigation.py:no-untyped-def:1
 tap_web/page.py:arg-type:1
 tap_web/page.py:attr-defined:3
 tap_web/page.py:misc:2

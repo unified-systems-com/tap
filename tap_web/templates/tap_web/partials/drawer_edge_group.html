@@ -1,0 +1,10 @@
+{# One edge group inside a drawer category: a label, a direction, the first neighbours as drawer links. #}
+<div class="tap-drawer-group">
+    <h4 class="tap-drawer-subhead">{{ group.label }} <span class="tap-drawer-dir">{% if group.direction == "out" %}→{% else %}←{% endif %}</span> <span class="tap-drawer-count">{{ group.total }}</span></h4>
+    <ul class="tap-drawer-links">
+        {% for n in group.neighbours %}
+            <li><a href="{{ n.page_url }}" data-tap-drawer="{{ n.drawer_url }}">{{ n.name }}</a> <span class="tap-drawer-type">{{ n.type_name|default:n.entity_type }}</span></li>
+        {% endfor %}
+    </ul>
+    {% if group.total > group.neighbours|length %}<p class="tap-drawer-more">Showing {{ group.neighbours|length }} of {{ group.total }}; open the full page for the rest.</p>{% endif %}
+</div>

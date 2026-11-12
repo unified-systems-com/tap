@@ -1,0 +1,58 @@
+{# Filter bar, views and group-by choices (req-web-stdpanel-table-filters). Every control is a real link or a GET form, #}
+{# so it works without JavaScript; panel-table.js turns a click into a panel re-fetch and a URL update. #}
+{% with bar=table_filter_bar %}
+<div class="tap-filterbar" data-tap-filterbar data-tap-panel-url="/panel/{{ panel.slug }}--{{ panel.entity_id }}/">
+    {% if bar.views %}
+    <nav class="tap-filterbar-views" aria-label="{{ panel.name }} views">
+        {% for tab in bar.views %}
+            <a href="{{ tab.href }}" class="tap-filterbar-view{% if tab.active %} is-active{% endif %}" data-tap-filter-link{% if tab.active %} aria-current="true"{% endif %}>{{ tab.label }}</a>
+        {% endfor %}
+    </nav>
+    {% endif %}
+
+    {% if bar.filters or bar.group_choices %}
+    <div class="tap-filterbar-row">
+        {% for f in bar.filters %}
+            <div class="tap-filter{% if f.active %} is-active{% endif %}" role="group" aria-labelledby="tap-filter-{{ panel.entity_id }}-{{ forloop.counter }}">
+                <span class="tap-filter-label" id="tap-filter-{{ panel.entity_id }}-{{ forloop.counter }}">{{ f.label }}</span>
+                {% if f.kind == "enum" %}
+                    {% for chip in f.chips %}
+                        <a href="{{ chip.href }}" class="tap-chip{% if chip.active %} is-active{% endif %}" data-tap-filter-link>
+                            <span class="tap-chip-label">{{ chip.label }}</span><span class="tap-chip-count">{{ chip.count }}</span>{% if chip.active %}<span class="sr-only">, selected</span>{% endif %}
+                        </a>
+                    {% empty %}
+                        <span class="tap-filter-none">no values</span>
+                    {% endfor %}
+                    {% if f.hidden_chips %}<span class="tap-filter-more" title="Use the quick filter or a narrower view to reach the rest">+{{ f.hidden_chips }} more</span>{% endif %}
+                {% else %}
+                    <form method="get" action="" class="tap-filter-form" data-tap-filter-form>
+                        {% for k, v in f.hidden_params %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+                        {% if f.kind == "text" %}
+                            <input type="search" name="f.{{ f.field }}" value="{{ f.text }}" placeholder="contains…" aria-label="{{ f.label }} contains" class="tap-filter-input">
+                        {% else %}
+                            <input type="number" step="any" name="f.{{ f.field }}.min" value="{{ f.low }}" placeholder="min" aria-label="{{ f.label }} at least" class="tap-filter-input tap-filter-input--num">
+                            <span aria-hidden="true">–</span>
+                            <input type="number" step="any" name="f.{{ f.field }}.max" value="{{ f.high }}" placeholder="max" aria-label="{{ f.label }} at most" class="tap-filter-input tap-filter-input--num">
+                        {% endif %}
+                        <button type="submit" class="tap-filter-apply">Apply</button>
+                    </form>
+                {% endif %}
+                {% if f.active %}<a href="{{ f.clear_href }}" class="tap-filter-clear" data-tap-filter-link aria-label="Clear {{ f.label }} filter">×</a>{% endif %}
+            </div>
+        {% endfor %}
+
+        {% if bar.group_choices %}
+            <div class="tap-filter tap-filter--group" role="group" aria-labelledby="tap-group-{{ panel.entity_id }}">
+                <span class="tap-filter-label" id="tap-group-{{ panel.entity_id }}">Group by</span>
+                {% for choice in bar.group_choices %}
+                    <a href="{{ choice.href }}" class="tap-chip{% if choice.active %} is-active{% endif %}" data-tap-filter-link{% if choice.active %} aria-current="true"{% endif %}>{{ choice.label }}</a>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {% if bar.active %}<a href="{{ bar.clear_all_href }}" class="tap-filter-clearall" data-tap-filter-link>Clear filters</a>{% endif %}
+    </div>
+    {% endif %}
+    {% if bar.partial %}<p class="tap-filterbar-note">Filters apply to the {{ table_meta.showing }} rows loaded; show all rows to filter the whole list.</p>{% endif %}
+</div>
+{% endwith %}

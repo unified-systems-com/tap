@@ -1,0 +1,23 @@
+{# One level of the structural sidebar (req-web-nav-sidebar); recurses for children. #}
+<ul class="tap-sb-list{% if depth %} tap-sb-list--nested{% endif %}"{% if list_id %} id="{{ list_id }}"{% endif %}{% if depth and not open %} hidden{% endif %}>
+    {% for node in nodes %}
+        <li class="tap-sb-item">
+            <div class="tap-sb-row{% if node.is_current %} tap-sb-row--current{% endif %}">
+                <a href="{{ node.url }}" class="tap-sb-link" title="{{ node.name }}"{% if node.is_current %} aria-current="page"{% endif %}>
+                    {% if not depth %}<span class="tap-sb-initial" aria-hidden="true">{{ node.initial }}</span>{% endif %}
+                    <span class="tap-sb-label">{{ node.name }}</span>
+                </a>
+                {% if node.children %}
+                    <button type="button" class="tap-sb-toggle" data-tap-sb-toggle aria-controls="tap-sb-{{ node.url|slugify }}" aria-expanded="{% if node.is_open %}true{% else %}false{% endif %}" aria-label="Show pages under {{ node.name }}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                    </button>
+                {% endif %}
+            </div>
+            {% if node.children %}
+                {% with list_id="tap-sb-"|add:node.url|slugify %}
+                    {% include "tap_web/partials/sidebar_items.html" with nodes=node.children depth=1 open=node.is_open list_id=list_id %}
+                {% endwith %}
+            {% endif %}
+        </li>
+    {% endfor %}
+</ul>

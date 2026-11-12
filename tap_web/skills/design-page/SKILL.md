@@ -1,3 +1,10 @@
+---
+name: design-page
+description: Decide how a TAP page reads before building it, and check the render after — name the page's job, choose board or profile, apply the shared visual system, connect the page to its neighbours, and run the cognitive-load checklist on the screenshot. Use when designing, reviewing or reshaping any page or room (templated or composed from standard panels in GRIFT). For improving rooms that already exist, follow with refine-page; for sign-off, qa-page.
+allowed-tools: Read Grep Glob Bash
+argument-hint: <page or room to design>
+---
+
 # Design a Page: Working Boards, Not Walls of Text
 
 > **Skill source-of-truth.** Canonical location: `tap_web/skills/design-page/SKILL.md`; `.claude/skills/design-page`
@@ -11,6 +18,9 @@ text in the order the author thought of it.
 
 Run it **before** the first template is written and **again** on the screenshot, because it catches two
 different failures: a page designed without a job, and a page whose render does not match its template.
+It applies equally to a room composed only of standard panels in GRIFT (no template at all): Steps 0, 1, 3–6
+are about data and links, and [`references/investigation-patterns.md`](references/investigation-patterns.md)
+maps each pattern onto panel config.
 
 ## Authoritative sources (read first; do not guess)
 
@@ -149,7 +159,54 @@ A profile is read top to bottom once, then returned to for one section. So:
 5. **Prev / next along the board's order** at the foot, and a link to the board in the kind line.
 6. **Exact copies of upstream text are attributed inline** (repo @ pin · path) and licensed in provenance.
 
-## Step 5: Cognitive-load checklist (run on the screenshot, not the template)
+### Drawer or profile?
+
+A board's rows usually do not need a page each. The resource drawer (`spec-web-drawer.md`) shows any entity's
+Overview, Findings, Relationships, Configuration, Tags, Provenance and Raw beside the list, derived from the
+grid, with no page to build. Give a list `drawer: {}` (node rows) or `drawer: {id_field, entity_type}`
+(projection rows) and its plain row click opens it; Cmd/Ctrl-click still opens the row's page.
+
+Build a **profile** only when the reader's job about one thing is more than "what is it and what touches it":
+a timeline, a comparison, a computed verdict, panels the drawer's categories cannot hold. Then link the
+drawer's "Open full page" reader to it through the row's `row_url_template`. A profile that only restates the
+drawer's categories is a page the sidebar has to carry for nothing.
+
+Lists that the reader narrows should declare `filters` (the two to four fields they act on), `views` for the
+questions the room is asked most, and `group_by.choices` for the axes they fix by
+(`req-web-stdpanel-table-filters`). The structural sidebar lists every discoverable page, so a page set
+`discoverable: false` (a profile that needs a parameter) stays out of it, as it should.
+
+## Step 5: Connect the page to its neighbours (cross-page navigation)
+
+A page is one stop on an investigation, not a destination. Security tools that read well (the public Wiz
+material is the reference here; see [`references/investigation-patterns.md`](references/investigation-patterns.md))
+share one shape: an **overview** that says where to look, a **board** that says what to act on, a **profile**
+that shows one object with everything that touches it, and the **raw card** for "says who?". Each level carries
+just enough to decide whether to go one deeper. Design the page's place in that chain before its contents:
+
+1. **Name the level.** Overview, board, profile or raw (the object viewer is always the raw level; never
+   rebuild it). A page that is two levels is two pages.
+2. **One link down from every row.** A board row opens its profile (or the object viewer when no profile
+   exists); a count on an overview opens the board it counts. In data-only rooms that is `row_url_template` on
+   projection rows and the table `link` formatter (`external: false`) on a name column. A row that opens
+   nothing is a dead end; say in the meaning line why it is inert.
+3. **One way up from every page.** The breadcrumb is URL-derived; when the URL does not express the hierarchy
+   (a room under `/aws/...` that belongs to a `/stage` overview), add a `NESTS_UNDER` page→page edge
+   ([`spec-web-navigation.md`](../../specs/spec-web-navigation.md)). Never fake a parent with a text link alone.
+4. **Pivot both ways between peers.** If a finding names a resource, the resource's profile lists its
+   findings; the pair is what makes the pages interoperate. Build the pivot from a grid edge (a
+   `CONCERNS_RESOURCE`-style relationship), never from string matching on ids.
+5. **Parameterized pages are not menu items.** A profile driven by `?entity_id=` sets `discoverable: false`
+   (it is reached by drill-down only) and its search declares the input in `input_schema`; the missing or
+   wrong id is a state (Step 1.5), rendered by the panels' `empty_text`.
+6. **Order the room list for the job.** `nav_weight` floats the overview and the action boards above
+   reference rooms; `description` is the one sentence the palette and the directory show, so write it as the
+   page's job, not its contents.
+7. **Group by what the reader fixes once.** A list of thousands groups by the axis where one fix closes many
+   rows (the image, the package, the host, the control), with the count in the group header. Grouping by a
+   field that has one value across the collection (every row CRITICAL) is noise; check the distribution first.
+
+## Step 6: Cognitive-load checklist (run on the screenshot, not the template)
 
 Take the screenshot (`drive-browser`) and answer each with a yes:
 
@@ -167,7 +224,27 @@ Take the screenshot (`drive-browser`) and answer each with a yes:
       registered in the running process (restart `web` after editing `apps.py`) or the context key changed.
       A screenshot of the *wrong* page passing this checklist is the presence-not-correctness trap again.
 
-## Step 6: What the query-pack first cut got wrong (so it is not repeated)
+**Navigation (run as a crawl, not by eye):**
+
+- [ ] Is every same-origin link on the page a 200 (or a deliberate redirect) to depth 3 from the landing page?
+- [ ] Does every page except the landing have a breadcrumb parent that is a page, not just `/`?
+- [ ] Does every board row and every overview count open something one level down?
+- [ ] Does every profile link back to the board it was opened from (breadcrumb or kind line)?
+- [ ] Do the peer pivots work both ways (finding → resource → findings)?
+- [ ] Is every parameterized page `discoverable: false`, and does it render a sentence, not a 500, with no input?
+- [ ] Does the Cmd-K palette list the rooms in job order, each with a one-sentence description?
+
+**Interaction (adapted from the public Vercel web-interface guidelines; core chrome already meets most):**
+
+- [ ] Numbers that are compared are tabular and right-aligned.
+- [ ] State is never colour alone: a tone always carries a word or a glyph.
+- [ ] Empty, sparse, dense and error states have each been looked at once (zero rows, one row, a full page, a
+      bad id).
+- [ ] Links are links (`<a href>`), so open-in-new-tab, copy-link and the back button all work.
+- [ ] Keyboard: Tab reaches every link in order and the focus ring is visible.
+- [ ] Long values truncate with the full text one hover or one click away, never silently cut.
+
+## Step 7: What the query-pack first cut got wrong (so it is not repeated)
 
 The pack page listed 79 rows in a five-column table under a paragraph of prose, with counts typed into
 sentences and no summary strip; the query page put the answer table under four sections of text with no
@@ -177,8 +254,9 @@ states were badges buried in a column instead of tiles; the list had no icons, s
 text; and the screenshot was never taken, so a blank render (an unregistered panel type) shipped. Every one
 of those is a checklist line above.
 
-## Step 7: Record it
+## Step 8: Record it
 
 The page's spec (`spec-<plugin>-<page>.md`) gets a **Design** subsection: the job sentence, board or profile,
 the summary tiles or subject facts chosen, the grouping axis, the loud element, and which icons render
-where. The checklist result rides the PR description with the screenshot.
+where, plus its **level** (overview, board, profile), the page it nests under, and the links it offers down
+and across. The checklist result rides the PR description with the screenshot and the crawl summary.

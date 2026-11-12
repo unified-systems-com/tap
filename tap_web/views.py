@@ -425,6 +425,34 @@ def object_view(request: HttpRequest, entity_type: str, object_url_id: str) -> H
     )
 
 
+@require_GET
+def object_drawer_view(request: HttpRequest, entity_type: str, object_url_id: str) -> HttpResponse:
+    """The resource drawer's body for one entity, as an HTML fragment (spec-web-drawer).
+
+    TAP-IMPLEMENTS: req-web-drawer-fragment@4bc796834185/4b2f4649f92a (surface) — the drawer's route:
+        the viewer's url_id grammar and READ_CAPABILITY, a fragment instead of a page.
+
+    Same URL grammar and authorization as :func:`object_view`; a missing entity is a 404
+    fragment with a sentence, so the drawer can show it in place.
+    """
+    from tap_auth import policy
+    from tap_grid.caller_context import get_caller_context
+    from tap_web.drawer import build_drawer_context
+
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="object_drawer_view")
+
+    entity_uuid = parse_panel_url_id(object_url_id)
+    context = build_drawer_context(entity_type, entity_uuid) if entity_uuid else None
+    if context is None:
+        return render(
+            request,
+            "tap_web/partials/drawer_missing.html",
+            {"drawer_entity_type": entity_type},
+            status=404,
+        )
+    return render(request, "tap_web/partials/drawer.html", context)
+
+
 def _handle_object_edit_post(
     request: HttpRequest,
     obj: Any,

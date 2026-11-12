@@ -151,7 +151,9 @@ class TestFillRender:
         _make_fill_page(_fill_layout(bands=bands), f"fill{bands}")
         html = make_admin_client().get(f"/fill{bands}").content.decode()
         assert '<body class="h-full flex flex-col">' in html
-        assert '<main class="flex flex-col flex-1 min-h-0">' in html
+        # The sidebar shell (req-web-nav-sidebar) is the flex row between body and main; both stay definite.
+        assert '<div class="tap-shell flex flex-1 min-h-0">' in html
+        assert '<main class="flex flex-col flex-1 min-w-0 min-h-0">' in html
         assert "flex-1 min-h-0 max-w-[1700px] mx-auto" in html
         assert "flex: 1 1 0; min-height: var(--tap-fill-min, 24rem); overflow-y: auto;" in html
 

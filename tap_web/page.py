@@ -322,8 +322,14 @@ def build_url_id(slug: str, entity_id: Any) -> str:
     is the canonical identifier. Every place a `/panel/...` or `/object/...` URL
     is constructed derives the token here (paths come from ``reverse()`` on the
     named routes in ``tap_web/urls.py``), so the grammar is stated once.
+
+    The slug is passed through :func:`django.utils.text.slugify`: callers fall
+    back to an entity *name*, and a name may hold ``/`` (an ARN, a path), which
+    the ``str`` route converter cannot match.
     """
-    return f"{slug}{_URL_ID_SEPARATOR}{entity_id}"
+    from django.utils.text import slugify
+
+    return f"{slugify(slug or '')}{_URL_ID_SEPARATOR}{entity_id}"
 
 
 def parse_panel_url_id(panel_url_id: str) -> str | None:

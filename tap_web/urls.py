@@ -4,6 +4,7 @@ URL patterns (evaluated in order):
     /panel/<slug>--<uuid>/edit/                Panel editor
     /panel/<slug>--<uuid>/                     Panel HTMX fragment endpoint
     /object/<entity-type>/<slug>--<uuid>/edit/ Generic object editor
+    /object/<entity-type>/<slug>--<uuid>/drawer/ Resource drawer fragment
     /object/<entity-type>/<slug>--<uuid>/      Generic object viewer
     /                                          Landing page (or placeholder if none configured)
     /<path:page_slug>                          Catch-all dynamic page resolution
@@ -21,6 +22,7 @@ urlpatterns = [
     path("panel/<str:panel_url_id>/edit/", views.panel_edit_view, name="panel-edit"),
     path("panel/<str:panel_url_id>/", views.panel_view, name="panel"),
     path("object/<str:entity_type>/<str:object_url_id>/edit/", views.object_edit_view, name="object-edit"),
+    path("object/<str:entity_type>/<str:object_url_id>/drawer/", views.object_drawer_view, name="object-drawer"),
     path("object/<str:entity_type>/<str:object_url_id>/", views.object_view, name="object-view"),
     path("__nav-index.json", views.nav_index_view, name="nav-index"),
     path("", views.landing_view, name="landing"),
