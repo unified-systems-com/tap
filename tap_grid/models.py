@@ -699,7 +699,8 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         self._guard("update", self._queryset_row_types(), fields=kwargs.keys())
         with transaction.atomic(using=self.db):
             with unguarded_read():
-                pks = list(self.select_for_update(of=("self",)).values_list("pk", flat=True))
+                # Locked in primary-key order, so two overlapping updates cannot deadlock on each other.
+                pks = list(self.select_for_update(of=("self",)).order_by("pk").values_list("pk", flat=True))
             token = _KEYS_DERIVED.set(True)
             try:
                 written = self.model.all_objects.using(self.db).filter(pk__in=pks).update(**kwargs)
@@ -712,19 +713,22 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
         objs = list(objs)
         fields = tuple(fields)
-        token = _KEYS_DERIVED.set(True)
-        try:
-            written = super().bulk_update(objs, fields, *args, **kwargs)
-        finally:
-            _KEYS_DERIVED.reset(token)
-        if set(fields) & self._key_columns():
-            self._respine_stored(objs)
+        # One transaction for the write and its spine repair, so neither commits without the other.
+        with transaction.atomic(using=self.db):
+            token = _KEYS_DERIVED.set(True)
+            try:
+                written = super().bulk_update(objs, fields, *args, **kwargs)
+            finally:
+                _KEYS_DERIVED.reset(token)
+            if set(fields) & self._key_columns():
+                self._respine_stored(objs)
         return written
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[BaseModel]:
         objs = list(objs)
-        created = super().bulk_create(objs, *args, **kwargs)
-        self._respine_stored(objs)
+        with transaction.atomic(using=self.db):
+            created = super().bulk_create(objs, *args, **kwargs)
+            self._respine_stored(objs)
         return created
 
     def live(self) -> BaseModelQuerySet:

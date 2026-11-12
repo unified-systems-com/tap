@@ -162,7 +162,9 @@ def sync(
     with connection.cursor() as probe:
         tables = set(connection.introspection.table_names(probe))
     recorded = _recorded(connection, tables)
-    set_spine = "UPDATE tap_entity SET natural_key = %s WHERE id = %s"
+    # Conditional on the value read: a normal write that lands between the read and this update
+    # has already published the fresh key, and the catch-up must not put the stale one back.
+    set_spine = "UPDATE tap_entity SET natural_key = %s WHERE id = %s AND natural_key IS NOT DISTINCT FROM %s"
     for model in _registered_models(entity_types):
         entity_type = model.ENTITY_TYPE
         fingerprint = recipe_fingerprint(model)
@@ -182,7 +184,7 @@ def sync(
                     report.rows += 1
                     derived = row_natural_key(model, _decode(model, columns, tuple(values))) if columns else None
                     if derived != published:
-                        changes.append((derived, entity_id))
+                        changes.append((derived, entity_id, published))
                 if changes:
                     writer.executemany(set_spine, changes)
                     report.written += len(changes)

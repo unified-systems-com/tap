@@ -238,6 +238,18 @@ class TestTheWritePaths:
             panel.save(update_fields=["slug"])
         assert Entity.objects.get(pk=panel.entity_id).natural_key == "after-partial"
 
+    @pytest.mark.enforce_write_guard
+    def test_a_key_column_update_outside_the_service_layer_is_still_refused(self) -> None:
+        """The key-column branch of update() reimplements the write; it must still fail closed, and
+        refuse before it reads anything."""
+        from tap_auth.errors import UnguardedOperation
+
+        panel = _panel("guarded")
+        with pytest.raises(UnguardedOperation):
+            # update() is typed against BaseModel, so django-stubs cannot see Panel.slug.
+            Panel.objects.filter(slug="guarded").update(slug="never")  # type: ignore[misc]
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "guarded"
+
     def test_a_queryset_update_of_a_constituting_column_re_derives(self) -> None:
         """The filter matches on the very column being changed, so the rows are named first."""
         from tap_grid.write_guard import unguarded_write
