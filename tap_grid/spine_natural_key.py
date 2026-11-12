@@ -155,7 +155,7 @@ def sync(
     none — the deploy-time run. Idempotent; tombstoned rows are included and keep their key. A
     KEYLESS type's spine keys are set to null.
     """
-    from django.db import connections
+    from django.db import connections, transaction
 
     connection = connections[using]
     report = SyncReport()
@@ -176,7 +176,9 @@ def sync(
             continue
         report.types += 1
         columns = declared_columns(model)
-        with connection.cursor() as reader, connection.cursor() as writer:
+        # A server-side cursor (chunked_cursor), so a large table streams in CHUNK rows instead of
+        # being buffered whole by the driver.
+        with transaction.atomic(using=using), connection.chunked_cursor() as reader, connection.cursor() as writer:
             reader.execute(_rows_sql(connection, model))
             while rows := reader.fetchmany(CHUNK):
                 changes = []

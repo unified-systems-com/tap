@@ -26,6 +26,11 @@ def clear(apps, schema_editor):  # type: ignore[no-untyped-def]
 
 
 class Migration(migrations.Migration):
+    # Not one transaction around the whole backfill: sync() commits per type, so a large grid is not
+    # held in a single long transaction on tap_entity. An interrupted run is safe to repeat: types
+    # already in step are recorded and skipped by the --changed catch-up after migrate.
+    atomic = False
+
     dependencies = [
         ("tap_grid", "0009_naturalkeyrecipe"),
     ]
