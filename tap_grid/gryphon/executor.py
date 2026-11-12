@@ -1745,7 +1745,11 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
             f'never holds. Write `dimensions["{suggested}"]` instead.'
         )
 
-    return names[0]
+    # The query names the dimension; storage may key it otherwise. One resolver maps the two
+    # (req-grid-dimension-names), at compile time, so the storage flip changes no query text.
+    from tap_grid.dimension_names import storage_key
+
+    return storage_key(names[0])
 
 
 class _LiteralKeyPath(str):
