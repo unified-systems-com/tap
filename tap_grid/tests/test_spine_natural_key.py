@@ -3,8 +3,8 @@
 ``Entity.natural_key`` holds each keyed row's natural key in the grid's standard form, derived from
 the declared columns on every write and never supplied (spine only — no per-model column). A
 single-field key is its value verbatim (an ARN, bare); a multi-field key joins its field-coerced
-values in declared order with ``|``, escaping only ``%`` and ``|``. The identity lock key is the same
-string behind the type. ``panel`` is the live fixture: keyed on ``slug`` alone, so its key is the slug.
+values in declared order with ``|``, escaping only ``%`` and ``|``. The identity lock key keeps its
+own format, so old and new importers still share a lock. ``panel`` is the live fixture: keyed on ``slug`` alone, so its key is the slug.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class TestStringificationIsPinned:
 
     def test_a_json_entry_keeps_its_json_type_in_the_string(self) -> None:
         """A JSON entry renders as JSON, so 123 and "123" — two identities to the typed search — are
-        two strings too, and the lock key built from them stays two locks."""
+        two strings too."""
         assert compose_natural_key(ADDRESS, {"config.k": 123}) == "123"
         assert compose_natural_key(ADDRESS, {"config.k": "123"}) == '"123"'
         assert compose_natural_key(ADDRESS, {"config.k": {"b": 1, "a": 1.0}}) == '{"a":1,"b":1}'
@@ -142,8 +142,10 @@ class TestMultiFieldKeys:
     def test_the_separator_is_one_constant(self) -> None:
         assert KEY_SEPARATOR == "|"
 
-    def test_the_lock_key_is_the_type_then_the_natural_key(self) -> None:
-        assert identity_lock_key("panel", {"slug": "s"}) == "panel\x1fs"
+    def test_the_lock_key_keeps_its_format(self) -> None:
+        """A changed lock string would let an old and a new importer lock different strings for one
+        object during a rolling deploy and both create it, so the lock key did not move."""
+        assert identity_lock_key("panel", {"slug": "s"}) == 'panel\x1f{"slug":"s"}'
         assert identity_lock_key("panel", {"slug": None}) is None
 
     def test_there_is_no_per_model_column_or_format(self) -> None:
@@ -256,6 +258,28 @@ class TestTheWritePaths:
         with unguarded_write():
             Panel.objects.bulk_update([panel], ["slug"])
         assert Entity.objects.get(pk=panel.entity_id).natural_key == "bulk-after"
+
+    def test_a_bulk_update_that_writes_nothing_leaves_the_spine(self) -> None:
+        """A filtered queryset can skip the object; its unsaved slug must not reach the spine."""
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("bulk-skipped")
+        panel.slug = "never-written-in-bulk"
+        with unguarded_write():
+            # none() is typed against BaseModel, so django-stubs cannot see Panel.slug.
+            Panel.objects.none().bulk_update([panel], ["slug"])  # type: ignore[misc]
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "bulk-skipped"
+
+    def test_a_bulk_create_conflict_ignored_leaves_the_spine(self) -> None:
+        """ignore_conflicts skips the insert for an existing row, so the spine keeps the stored key."""
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("bulk-existing")
+        clash = Panel(entity_id=panel.entity_id, slug="never-inserted", **_PANEL_FIELDS)
+        with unguarded_write():
+            Panel.objects.bulk_create([clash], ignore_conflicts=True)
+        assert Panel.objects.get(entity_id=panel.entity_id).slug == "bulk-existing"
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "bulk-existing"
 
     def test_a_tombstone_keeps_its_key(self) -> None:
         """-25 (anchore b): retirement never nulls the key; the indexes are not partial."""

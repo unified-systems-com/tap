@@ -657,9 +657,25 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
     # to the spine.
 
     def _key_columns(self) -> set[str]:
+        """The constituting columns under every name a write can use: a foreign key is both
+        ``owner`` and ``owner_id`` to ``update()``."""
         from tap_grid.natural_key import declared_columns
 
-        return set(declared_columns(self.model))
+        meta = self.model._meta
+        names = set(declared_columns(self.model))
+        return names | {getattr(meta.get_field(name), "attname", name) for name in names}
+
+    def _respine_stored(self, objs: list[Any]) -> None:
+        """Re-derive the spine key from the rows as stored, not from the objects handed in: a bulk
+        write can skip some of them (a conflict ignored, a filtered queryset), and a skipped object's
+        values never reached its table."""
+        from tap_grid.read_guard import unguarded_read
+
+        pks = [obj.pk for obj in objs if obj.pk is not None]
+        if not pks:
+            return
+        with unguarded_read():
+            _copy_keys_to_spine(self.filter(pk__in=pks))
 
     def update(self, **kwargs: Any) -> int:
         # Django's bulk_update writes through update(); ours re-derives every key after itself.
@@ -687,13 +703,13 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         finally:
             _KEYS_DERIVED.reset(token)
         if set(fields) & self._key_columns():
-            _copy_keys_to_spine(objs)
+            self._respine_stored(objs)
         return written
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[BaseModel]:
         objs = list(objs)
         created = super().bulk_create(objs, *args, **kwargs)
-        _copy_keys_to_spine(objs)
+        self._respine_stored(objs)
         return created
 
     def live(self) -> BaseModelQuerySet:

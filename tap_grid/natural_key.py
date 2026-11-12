@@ -409,32 +409,21 @@ def row_natural_key(model: Any, row: Mapping[str, object]) -> str | None:
 
 
 def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str | None:
-    """The one string two writers resolving the same source object both lock on: the type, a unit
-    separator, and the natural key the row will store (:func:`compose_natural_key`), so the lock and
-    the stored key cannot drift (``req-grid-entity-natural-key-13``, ``-19``).
+    """The one string two writers resolving the same source object both lock on.
 
-    Computed before the row exists, from the payload's declared values coerced through the
-    registered model's fields. ``None`` when any value is a hole: nothing can be found by a hole, so
-    there is nothing for two writers to serialise on. ``""`` is observed-empty and IS searched
-    (Issue# 866 - tap), so it is locked too. JSON values keep their type in the key (``123`` and
-    ``"123"`` are two identities) because the search compares them typed.
+    Derived from the type and the declared values, canonically serialised, so the lock key
+    is a function of the declaration and never authored a second time (``req-grid-entity-
+    natural-key-13``). ``None`` when any value is a hole: nothing can be found by a hole, so
+    there is nothing for two writers to serialise on. A hole is ``None`` and only ``None`` — the
+    test ``find_existing`` applies. ``""`` is observed-empty and IS searched (Issue# 866 - tap), so
+    it must also be locked, or two writers resolving an empty-scoped object race. JSON values keep
+    their type in the key (``123`` and ``"123"`` are two identities) because the search compares
+    them typed.
     """
-    model = None
-    try:
-        from tap_grid.registry import get_model_class
-
-        model = get_model_class(entity_type)
-    except (KeyError, ImportError):
-        model = None
-    # A function of the values, not of the mapping's order: the type's declared order when the
-    # entries are its declaration (what constituting_properties returns), else sorted by name.
-    declared = getattr(model, "NATURAL_KEY", None)
-    if isinstance(declared, tuple) and set(declared) == set(properties):
-        order = list(declared)
-    else:
-        order = sorted(properties)
-    key = compose_natural_key(model, {name: properties[name] for name in order})
-    return None if key is None else f"{entity_type}\x1f{key}"
+    if any(value is None for value in properties.values()):
+        return None
+    canonical = {name: _canonical(value) for name, value in properties.items()}
+    return f"{entity_type}\x1f" + json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def natural_key_prefix(model: Any, leading: Mapping[str, object]) -> str:
