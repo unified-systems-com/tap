@@ -257,6 +257,9 @@ class TestNothingCallsTheSearchYet:
         "tap_grid/tests/test_find_existing.py",
         "tap_grid/tests/test_natural_key_json_path.py",
         "tap_grid/services/__init__.py",
+        # Names the search only to read its source and prove it never touches the spine
+        # column (req-grid-entity-natural-key-21); calls nothing.
+        "tap_grid/tests/test_spine_natural_key.py",
     }
     # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
     # scanned nothing until the missing-dir check below was made loud (Grok on #569).

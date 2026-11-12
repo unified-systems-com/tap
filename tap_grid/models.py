@@ -4,6 +4,7 @@ TAP Core Models — Entity, Edge, EntityType, BaseModel, User, Batch, BatchEvent
 Design philosophy: See DESIGN.md in this directory.
 """
 
+import contextvars
 import datetime
 import hashlib
 import inspect
@@ -13,15 +14,17 @@ from typing import Any, ClassVar, TypeVar
 
 import jsonschema
 from django.conf import settings
-from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.indexes import GinIndex, HashIndex, OpClass
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import models, transaction
+from django.db.models.functions import Left
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from tap_grid.history import _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
+    PREFIX_INDEX_CHARS,
     AmbiguousIdentity,
     Keyless,
     declaration_problems,
@@ -419,18 +422,19 @@ class Entity(models.Model):
     )
     name = models.CharField(max_length=255, blank=True, default="")
     # null, not '': the grid convention is null = never written, '' = observed-empty
-    # (req-grid-node-observation), and a placeholder nothing writes is the former.
+    # (req-grid-node-observation).
     natural_key = models.TextField(  # noqa: DJ001
         null=True,
         blank=True,
-        db_index=True,
         help_text=(
-            "PLACEHOLDER — reserved, not load-bearing. Nothing reads or writes this column "
-            "until the gate in front of identity phase 3 decides its shape: a per-type "
-            "composed, readable identifier (a purl, an ARN, 'github:repository:<id>') for "
-            "cross-type search, derived by declaration and never authored. Non-unique by "
-            "design. How a row is found today is the model's NATURAL_KEY declaration and the "
-            "search generated from it. See req-grid-entity-natural-key in spec-grid-entity.md."
+            "The row's natural key in the grid's standard form, for cross-type search: a "
+            "single-field key's value verbatim (an ARN, bare), a multi-field key's field-coerced "
+            "values joined in declared order with '|'. No type prefix: entity_type is on the row. "
+            "Derived by the grid on every write, never authored; null for a KEYLESS type or an "
+            "unobserved constituting value; kept on a tombstone. Output only: no lookup, merge or "
+            "refusal reads it — a row is found by its model's NATURAL_KEY search. Non-unique by "
+            "design. Indexed by hash (equality) and by its first characters (prefix), never by a "
+            "plain btree, which refuses a long value. See req-grid-entity-natural-key."
         ),
     )
     dimensions = models.JSONField(
@@ -468,6 +472,15 @@ class Entity(models.Model):
         ordering = ["-created_at"]
         indexes = [
             GinIndex(fields=["dimensions"], name="idx_entity_dimensions_gin"),
+            # The spine natural key (req-grid-entity-natural-key-22): a hash index for equality,
+            # which has no row-size limit, and a btree over the first characters for prefix
+            # search. A plain btree refuses an index row over ~2700 bytes, which a composed key
+            # can exceed, so the full value is never btree-indexed.
+            HashIndex(fields=["natural_key"], name="idx_entity_natural_key_hash"),
+            models.Index(
+                OpClass(Left("natural_key", PREFIX_INDEX_CHARS), name="text_pattern_ops"),
+                name="idx_entity_natural_key_prefix",
+            ),
         ]
 
     # ------------------------------------------------------------------
@@ -617,12 +630,71 @@ class EntityType(models.Model):
 # one home for the live filter, no risk of drift between them.
 
 
+#: Set while BaseModelQuerySet.bulk_update writes rows whose spine keys it re-derives right after,
+#: so the update() Django writes them through is not refused.
+_KEYS_DERIVED: contextvars.ContextVar[bool] = contextvars.ContextVar("tap_grid_keys_derived", default=False)
+
+
+def _copy_keys_to_spine(objs: Iterable[Any]) -> None:
+    """Re-derive each row's natural key and write it to its spine row, where it differs (``-19``)."""
+    for obj in objs:
+        entity_id = getattr(obj, "entity_id", None)
+        if entity_id is not None:
+            key = obj.derive_natural_key()
+            Entity.objects.filter(pk=entity_id).exclude(natural_key=key).update(natural_key=key)
+
+
 class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
     """QuerySet for BaseModel subclasses exposing `.live()` and `.tombstoned()`.
 
     The filter joins through the FK to Entity (``entity__deleted_at IS NULL``
     for live).
     """
+
+    # The spine natural key is derived, never supplied (req-grid-entity-natural-key-19). A queryset
+    # write never calls save, so these keep it true: update(), bulk_update and bulk_create each
+    # re-derive the key of every row they wrote whenever a constituting column moved, and write it
+    # to the spine.
+
+    def _key_columns(self) -> set[str]:
+        from tap_grid.natural_key import declared_columns
+
+        return set(declared_columns(self.model))
+
+    def update(self, **kwargs: Any) -> int:
+        # Django's bulk_update writes through update(); ours re-derives every key after itself.
+        if not set(kwargs) & self._key_columns() or _KEYS_DERIVED.get():
+            return super().update(**kwargs)
+        # SQL cannot compose a key, so a write to a constituting column re-derives the spine key of
+        # every row it touched: the rows are named before the write (the filter may match on the
+        # very column being changed) and re-read after it. The grid reading its own rows to keep a
+        # derived column true is internal maintenance, so the read backstop is not asked.
+        from tap_grid.read_guard import unguarded_read
+
+        with unguarded_read():
+            pks = list(self.values_list("pk", flat=True))
+        written = super().update(**kwargs)
+        with unguarded_read():
+            _copy_keys_to_spine(self.model.all_objects.filter(pk__in=pks))
+        return written
+
+    def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
+        objs = list(objs)
+        fields = tuple(fields)
+        token = _KEYS_DERIVED.set(True)
+        try:
+            written = super().bulk_update(objs, fields, *args, **kwargs)
+        finally:
+            _KEYS_DERIVED.reset(token)
+        if set(fields) & self._key_columns():
+            _copy_keys_to_spine(objs)
+        return written
+
+    def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> list[BaseModel]:
+        objs = list(objs)
+        created = super().bulk_create(objs, *args, **kwargs)
+        _copy_keys_to_spine(objs)
+        return created
 
     def live(self) -> BaseModelQuerySet:
         return self.filter(entity__deleted_at__isnull=True)
@@ -996,6 +1068,26 @@ class BaseModel(models.Model):
             raise AmbiguousIdentity(cls.ENTITY_TYPE, properties, [row.entity_id for row in rows])
         return rows[0]
 
+    def derive_natural_key(self) -> str | None:
+        """This row's natural key from its own constituting values (``req-grid-entity-natural-key-19``).
+
+        Through :func:`tap_grid.natural_key.compose_natural_key`, the one function the lock key also
+        uses, so field-coerced values compose the same way before and after the row exists. Never
+        authored — the pattern :meth:`get_name` follows for ``Entity.name``. ``None`` for a KEYLESS
+        type and for a row with any constituting value unobserved. Output only: nothing finds,
+        merges or refuses a row by it (``-21``).
+        """
+        from tap_grid.natural_key import declared_columns, row_natural_key
+
+        # attname, so a foreign key composes as the id the column stores — what the catch-up sync
+        # reads (tap_grid.spine_natural_key) — never as the related row's str().
+        meta = self._meta
+        row = {
+            column: getattr(self, getattr(meta.get_field(column), "attname", column))
+            for column in declared_columns(type(self))
+        }
+        return row_natural_key(type(self), row)
+
     def get_name(self) -> str:
         """Return the name for the auto-created Entity.
 
@@ -1166,6 +1258,10 @@ class BaseModel(models.Model):
             if update_fields is not None:
                 kwargs["update_fields"] = list(update_fields) + ["flip_map"]
 
+        # The spine natural key is the grid's, derived here on every save from the declared columns
+        # (req-grid-entity-natural-key-19); nothing a caller supplies reaches it.
+        natural_key = self.derive_natural_key()
+
         if self.entity_id is None:
             with transaction.atomic():
                 base_dims = dict(getattr(self.__class__, "DEFAULT_DIMENSIONS", {}))
@@ -1173,6 +1269,7 @@ class BaseModel(models.Model):
                 self.entity = Entity.objects.create(
                     entity_type=entity_type,
                     name=self.get_name(),
+                    natural_key=natural_key,
                     dimensions={**base_dims, **caller_dims},
                 )
                 super().save(*args, **kwargs)
@@ -1205,10 +1302,17 @@ class BaseModel(models.Model):
             new_name = self.get_name()
             if self.entity.name != new_name:
                 spine_updates["name"] = new_name
+            # The spine natural key (req-grid-entity-natural-key-19), in this same statement,
+            # written only when it changed.
+            new_key = natural_key
+            if self.entity.natural_key != new_key:
+                spine_updates["natural_key"] = new_key
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
             if "name" in spine_updates:
                 # Keep the in-memory entity in lockstep with the persisted spine.
                 self.entity.name = new_name
+            if "natural_key" in spine_updates:
+                self.entity.natural_key = new_key
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Delete the node/edge — must route through the service layer.
@@ -1648,6 +1752,27 @@ class BatchEventType(models.TextChoices):
     # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
     # each proposal, and on the batch for each claim's outcome.
     AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
+
+
+class NaturalKeyRecipe(models.Model):
+    """The recipe each type's spine natural keys were last derived with (req-grid-entity-natural-key-25).
+
+    Standalone bookkeeping, like ``BatchEvent``: one row per entity type, written by
+    ``tap_grid.spine_natural_key.sync`` after it re-derives that type. When a type's current
+    ``recipe_fingerprint`` (its slug, its ``NATURAL_KEY`` tuple, the composition version) differs
+    from the row here — or there is no row — its stored keys may be stale, and the deploy-time sync
+    and the drift check say so.
+    """
+
+    entity_type = models.CharField(max_length=255, unique=True)
+    fingerprint = models.CharField(max_length=64)
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "tap_natural_key_recipe"
+
+    def __str__(self) -> str:
+        return f"{self.entity_type} {self.fingerprint[:12]}"
 
 
 class BatchEvent(models.Model):

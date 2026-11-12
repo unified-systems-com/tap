@@ -1641,7 +1641,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@91817a01cb5a/af7e2a65f8ce (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@78135c5890de/af7e2a65f8ce (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
