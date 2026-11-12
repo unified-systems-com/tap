@@ -57,7 +57,9 @@ class DriftReport:
 
     @property
     def clean(self) -> bool:
-        return not self.drifted and not self.stale_recipes
+        # A skipped type was not checked, so it cannot count as clean: a gate must not pass on
+        # work it did not do.
+        return not self.drifted and not self.stale_recipes and not self.skipped
 
 
 def _registered_models(entity_types: Iterable[str] | None) -> list[Any]:

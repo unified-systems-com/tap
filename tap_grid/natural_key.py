@@ -35,9 +35,10 @@ Two things this module deliberately is **not**:
 Instead the spine stores each keyed row's natural key in a readable standard form
 (:func:`compose_natural_key`, ``req-grid-entity-natural-key-19``): a single-field key's value
 verbatim (an ARN, bare), a multi-field key's values joined in declared order with
-:data:`KEY_SEPARATOR`. The values are field-coerced first, and the identity lock key is the same
-string behind the type, so the lock and the stored key cannot drift. The stored key is output
-only: the search reads the declared columns, never it.
+:data:`KEY_SEPARATOR`. The values are field-coerced first. The identity lock key is NOT this
+string: it keeps its canonical-JSON form (:func:`identity_lock_key`, ``-13``), so an old and a new
+importer still share one lock during a rolling deploy. The stored key is output only: the search
+reads the declared columns, never it.
 """
 
 from __future__ import annotations

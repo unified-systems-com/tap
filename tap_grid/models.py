@@ -687,13 +687,21 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         # derived column true is internal maintenance, so the read backstop is not asked.
         from tap_grid.read_guard import unguarded_read
 
-        # The write gate first, so a refused write never gets the unguarded read below.
+        # The write gate first, so a refused write never gets the unguarded read below. Then, in one
+        # transaction: lock and name the matching rows, update exactly those (a row that starts to
+        # match after the snapshot is not written, so it cannot be left with a stale key), and
+        # re-derive their spine keys.
         self._guard("update", self._queryset_row_types(), fields=kwargs.keys())
-        with unguarded_read():
-            pks = list(self.values_list("pk", flat=True))
-        written = super().update(**kwargs)
-        with unguarded_read():
-            _copy_keys_to_spine(self.model.all_objects.filter(pk__in=pks))
+        with transaction.atomic(using=self.db):
+            with unguarded_read():
+                pks = list(self.select_for_update(of=("self",)).values_list("pk", flat=True))
+            token = _KEYS_DERIVED.set(True)
+            try:
+                written = self.model.all_objects.using(self.db).filter(pk__in=pks).update(**kwargs)
+            finally:
+                _KEYS_DERIVED.reset(token)
+            with unguarded_read():
+                _copy_keys_to_spine(self.model.all_objects.using(self.db).filter(pk__in=pks))
         return written
 
     def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:

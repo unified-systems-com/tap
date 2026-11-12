@@ -490,6 +490,25 @@ class TestCatchUpAndDrift:
         call_command("sync_spine_natural_keys", "--type", "panel")
         call_command("sync_spine_natural_keys", "--check", "--type", "panel")
 
+    def test_a_skipped_type_is_not_clean(self) -> None:
+        """A type the check could not read was not checked, so the report cannot be clean."""
+        from tap_grid.spine_natural_key import DriftReport
+
+        assert DriftReport().clean
+        assert not DriftReport(skipped={"panel": "table tap_panel does not exist yet"}).clean
+
+    def test_the_queryset_respine_fills_a_null_key(self) -> None:
+        """exclude(natural_key=k) compiles to NOT (k = x AND k IS NOT NULL), so a null spine key is
+        filled, not skipped."""
+        from tap_grid.models import _copy_keys_to_spine
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("was-null")
+        with unguarded_write():
+            Entity.objects.filter(pk=panel.entity_id).update(natural_key=None)
+            _copy_keys_to_spine([panel])
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "was-null"
+
     def test_a_named_type_that_does_not_exist_fails_the_command(self) -> None:
         """A typo would otherwise check zero types and report clean."""
         from django.core.management import call_command
