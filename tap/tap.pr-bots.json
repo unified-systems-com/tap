@@ -30,6 +30,13 @@
       "note": "Our release-please GitHub App (release PRs)."
     },
     {
+      "login": "tap-release-please[bot]",
+      "id": 352957841,
+      "type": "Bot",
+      "verified": "2026-11-12",
+      "note": "The current tap-release-please GitHub App, run from unified-systems-com/org-bots (fleet release-please, which covers tap from 2026-11-12). A different account from the 2026-09-08 entry above, which has the same login and an older id; both are approved and the older one authors nothing now."
+    },
+    {
       "login": "tap-renovate-runner",
       "id": 347434375,
       "type": "User",
