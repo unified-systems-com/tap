@@ -39,6 +39,7 @@ Future:
 | req-web-page-params | [Page Variables](#page-variables) | Proposed | URL-backed `tap_page_vars` provide canonical shared page state |
 | req-web-page-local | [Page Persistent Variables](#page-persistent-variables) | Proposed | In-memory `tap_page_persistent_vars` allow panels to reuse derived data and results |
 | req-web-page-coord | [Page Variable Coordinator](#page-variable-coordinator) | Proposed | Small page-level JavaScript coordinator resolves variable mappings and dispatches panel input updates |
+| req-web-page-plugin-urls | [Plugin URL Mounts](#plugin-url-mounts) | Implemented | A plugin's optional `tap_plugin.<slug>.urls` mounts at `/plugins/<slug>/` under the plugin's namespace, ahead of the Page catch-all; `/plugins` is reserved against Page slugs |
 
 
 ## Invariants
@@ -154,6 +155,29 @@ Keep `panel-id` ownership in the page spec. Panels are independent of slot ident
 | req-web-page-panel-id-2 | Layout Declares panel-id | Implemented | `panel-id` values are declared by Page layout rows. | |
 | req-web-page-panel-id-3 | Kebab Case Format | Implemented | `panel-id` must match `^[a-z][a-z0-9-]*$`. | |
 | req-web-page-panel-id-4 | Unique Within Page | Implemented | `panel-id` values are unique within a single Page layout. | |
+
+
+### Plugin URL Mounts
+----
+RID: `req-web-page-plugin-urls`
+
+Status: `Implemented`
+
+Some plugin behavior is a form post or a fragment endpoint rather than a Page: a board card move, a chat turn. A plugin that needs such a route ships a `urls` module; core owns where it mounts so plugins never edit `tap_web/urls.py`. The shape follows NetBox, which mounts each plugin's `urls.py` under `/plugins/<name>/`.
+
+#### Implementation
+- For every installed `TapPluginConfig` whose package has a `urls` module, core mounts its `urlpatterns` at `plugins/<label>/` with application namespace and instance namespace both `<label>`.
+- Plugin mounts sit before the Page catch-all, so a plugin route is never shadowed by a Page slug.
+- A plugin without a `urls` module mounts nothing; importing the URLconf does not fail.
+- `/plugins` is a reserved top-level prefix (`TapWebConfig.reserved_url_prefixes`), so no Page slug can occupy it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-page-plugin-urls-1 | Namespaced Mount | Implemented | `reverse("<label>:<name>")` resolves to `/plugins/<label>/<route>` for a plugin that ships `urls`. | `tap_web/tests/test_plugin_urls.py` |
+| req-web-page-plugin-urls-2 | Optional Module | Implemented | A plugin with no `urls` module contributes no URL patterns. | `tap_web/tests/test_plugin_urls.py` |
+| req-web-page-plugin-urls-3 | Reserved Prefix | Implemented | `/plugins` is in `get_reserved_url_prefixes()`. | `tap_web/tests/test_plugin_urls.py` |
 
 
 ### Page Slug Sanitization
