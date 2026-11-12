@@ -204,6 +204,7 @@ class TestTheWritePaths:
     def test_a_supplied_key_never_lands(self) -> None:
         result = create_node("panel", {"slug": "honest", "natural_key": "forged", **_PANEL_FIELDS})
         if result.success:
+            assert result.entity_id is not None
             assert Entity.objects.get(pk=result.entity_id).natural_key == "honest"
 
     def test_a_keyless_row_has_no_key(self) -> None:
@@ -221,7 +222,8 @@ class TestTheWritePaths:
         panel = _panel("by-update")
         other = _panel("untouched")
         with unguarded_write():
-            Panel.objects.filter(slug="by-update").update(slug="renamed-by-update")
+            # BaseModelQuerySet.update is typed against BaseModel, so django-stubs cannot see Panel.slug.
+            Panel.objects.filter(slug="by-update").update(slug="renamed-by-update")  # type: ignore[misc]
         assert Entity.objects.get(pk=panel.entity_id).natural_key == "renamed-by-update"
         assert Entity.objects.get(pk=other.entity_id).natural_key == "untouched"
 
