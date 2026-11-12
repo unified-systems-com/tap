@@ -687,6 +687,8 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         # derived column true is internal maintenance, so the read backstop is not asked.
         from tap_grid.read_guard import unguarded_read
 
+        # The write gate first, so a refused write never gets the unguarded read below.
+        self._guard("update", self._queryset_row_types(), fields=kwargs.keys())
         with unguarded_read():
             pks = list(self.values_list("pk", flat=True))
         written = super().update(**kwargs)

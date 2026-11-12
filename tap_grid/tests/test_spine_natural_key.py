@@ -489,3 +489,29 @@ class TestCatchUpAndDrift:
             call_command("sync_spine_natural_keys", "--check", "--type", "panel")
         call_command("sync_spine_natural_keys", "--type", "panel")
         call_command("sync_spine_natural_keys", "--check", "--type", "panel")
+
+    def test_a_named_type_that_does_not_exist_fails_the_command(self) -> None:
+        """A typo would otherwise check zero types and report clean."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        with pytest.raises(CommandError, match="unknown entity type"):
+            call_command("sync_spine_natural_keys", "--check", "--type", "definitely-not-a-type")
+        with pytest.raises(CommandError, match="unknown entity type"):
+            call_command("sync_spine_natural_keys", "--type", "definitely-not-a-type")
+
+    def test_migrate_runs_the_catch_up_and_flush_does_not(self) -> None:
+        """post_migrate from migrate (a plan, even an empty one) re-derives changed recipes; from flush
+        (no plan) it does nothing."""
+        from tap_grid.spine_natural_key import sync_after_migrate
+
+        panel = _panel("after-migrate")
+        sync(["panel"])
+        self._stale(panel)
+        sync_after_migrate(None, plan=None)
+        assert Entity.objects.get(pk=panel.entity_id).natural_key != "after-migrate"
+        from tap_grid.models import NaturalKeyRecipe
+
+        NaturalKeyRecipe.objects.filter(entity_type="panel").delete()
+        sync_after_migrate(None, plan=[])
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "after-migrate"

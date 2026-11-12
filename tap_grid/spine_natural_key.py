@@ -64,13 +64,25 @@ def _registered_models(entity_types: Iterable[str] | None) -> list[Any]:
     from tap_grid.models import BaseModel
     from tap_grid.registry import get_model_class, list_entity_types
 
-    wanted = sorted(list_entity_types()) if entity_types is None else list(entity_types)
-    models = []
-    for entity_type in wanted:
-        model = get_model_class(entity_type)
-        if isinstance(model, type) and issubclass(model, BaseModel):
-            models.append(model)
-    return models
+    if entity_types is None:
+        models = []
+        for entity_type in sorted(list_entity_types()):
+            model = get_model_class(entity_type)
+            if isinstance(model, type) and issubclass(model, BaseModel):
+                models.append(model)
+        return models
+    # A type asked for by name must exist and be keyed by the grid: a typo checking zero types
+    # would report clean having done no work.
+    named = []
+    for entity_type in entity_types:
+        try:
+            model = get_model_class(entity_type)
+        except KeyError:
+            raise ValueError(f"unknown entity type {entity_type!r}") from None
+        if not (isinstance(model, type) and issubclass(model, BaseModel)):
+            raise ValueError(f"entity type {entity_type!r} is not a BaseModel type; it has no spine natural key")
+        named.append(model)
+    return named
 
 
 def _decode(model: Any, columns: list[str], values: tuple[Any, ...]) -> dict[str, object]:
@@ -257,3 +269,14 @@ def check(entity_types: Iterable[str] | None = None, *, sample: int = 200, using
                 if derived != published:
                     report.drifted.setdefault(entity_type, []).append((str(entity_id), published, derived))
     return report
+
+
+def sync_after_migrate(sender: Any, *, using: str = "default", plan: Any = None, **kwargs: Any) -> None:
+    """Re-derive the spine keys of every type whose recipe changed, once ``migrate`` has applied
+    every app's migrations (``-23``). Migration 0010 skips plugin tables that do not exist yet, and a
+    NATURAL_KEY can change with no migration at all, so the catch-up runs here, at every migrate,
+    rather than relying on a deploy step to remember it. ``flush`` sends this signal with no plan;
+    it is skipped, since it leaves nothing to derive."""
+    if plan is None:
+        return
+    sync(changed_only=True, using=using)

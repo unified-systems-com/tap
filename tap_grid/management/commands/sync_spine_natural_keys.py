@@ -32,6 +32,12 @@ class Command(BaseCommand):
         parser.add_argument("--sample", type=int, default=200, help="Rows sampled per type by --check")
 
     def handle(self, *args: Any, **options: Any) -> None:
+        try:
+            self._run(options)
+        except ValueError as error:
+            raise CommandError(str(error)) from error
+
+    def _run(self, options: dict[str, Any]) -> None:
         if options["check"]:
             drift = check(options.get("types"), sample=options["sample"])
             self.stdout.write(f"rows sampled: {drift.sampled}")
