@@ -277,8 +277,13 @@ def sync_after_migrate(sender: Any, *, using: str = "default", plan: Any = None,
     """Re-derive the spine keys of every type whose recipe changed, once ``migrate`` has applied
     every app's migrations (``-23``). Migration 0010 skips plugin tables that do not exist yet, and a
     NATURAL_KEY can change with no migration at all, so the catch-up runs here, at every migrate,
-    rather than relying on a deploy step to remember it. ``flush`` sends this signal with no plan;
-    it is skipped, since it leaves nothing to derive."""
+    rather than relying on a deploy step to remember it. Django sends post_migrate once the whole
+    plan has applied, for every app, so plugin migrations in the same run have landed by now.
+    ``flush`` sends it with no plan, and a rollback with backwards steps; both are skipped."""
     if plan is None:
+        return
+    # A rollback (any step applied backwards) must not be undone by the catch-up: reversing 0010
+    # clears the keys on purpose.
+    if any(backwards for _migration, backwards in plan):
         return
     sync(changed_only=True, using=using)

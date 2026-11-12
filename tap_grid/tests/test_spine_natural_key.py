@@ -464,6 +464,46 @@ class TestCatchUpAndDrift:
         sync(["panel"])
         assert check(["panel"], sample=10_000).clean
 
+    def test_a_changed_field_option_changes_the_fingerprint(self) -> None:
+        """to_python can depend on options as well as the class (unpack_ipv4 on an IP field)."""
+        from tap_grid.natural_key import _field_recipe
+
+        packed = models.GenericIPAddressField(name="address")
+        unpacked = models.GenericIPAddressField(name="address", unpack_ipv4=True, protocol="both")
+        assert _field_recipe(packed) != _field_recipe(unpacked)
+        assert _field_recipe(models.CharField(name="s", max_length=9, help_text="a")) == _field_recipe(
+            models.CharField(name="s", max_length=9, help_text="b")
+        ), "a cosmetic option must not re-derive a type"
+
+    def test_the_fingerprint_is_stable_across_processes(self) -> None:
+        """A callable option is spelled by its import path, never a repr with a memory address."""
+        from tap_grid.natural_key import _field_recipe
+
+        fk = models.ForeignKey("tap_grid.Entity", on_delete=models.CASCADE, name="owner")
+        assert "0x" not in _field_recipe(fk)
+
+    def test_a_filtered_bulk_update_re_derives_a_row_it_moved_out_of_the_filter(self) -> None:
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("filtered-before")
+        panel.slug = "filtered-after"
+        with unguarded_write():
+            # The filter is typed against BaseModel, so django-stubs cannot see Panel.slug.
+            Panel.objects.filter(slug="filtered-before").bulk_update([panel], ["slug"])  # type: ignore[misc]
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "filtered-after"
+
+    def test_a_rollback_does_not_run_the_catch_up(self) -> None:
+        from tap_grid.spine_natural_key import sync_after_migrate
+
+        panel = _panel("rolled-back")
+        sync(["panel"])
+        self._stale(panel)
+        from tap_grid.models import NaturalKeyRecipe
+
+        NaturalKeyRecipe.objects.filter(entity_type="panel").delete()
+        sync_after_migrate(None, plan=[(object(), True)])
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "stale"
+
     def test_a_changed_field_class_changes_the_fingerprint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Composition runs the field's to_python first, so a constituting column changing class can
         change every key with the NATURAL_KEY tuple untouched; the fingerprint must see it."""

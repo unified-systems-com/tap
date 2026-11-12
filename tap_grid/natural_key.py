@@ -460,6 +460,30 @@ PREFIX_INDEX_CHARS: Final[int] = 600
 COMPOSITION_VERSION: Final[str] = "1"
 
 
+# Field options that never change what to_python returns, left out so that editing a help text does
+# not re-derive a whole type.
+_COSMETIC_FIELD_OPTIONS = frozenset(
+    {"help_text", "verbose_name", "db_comment", "editable", "blank", "error_messages", "validators", "choices"}
+)
+
+
+def _field_recipe(field: Any) -> str:
+    """A field's class and the options that can change its ``to_python`` (``unpack_ipv4``, ``max_digits``
+    and the like), from ``deconstruct()``, so the fingerprint sees a change in coercion."""
+    _name, path, args, kwargs = field.deconstruct()
+    options = {key: value for key, value in kwargs.items() if key not in _COSMETIC_FIELD_OPTIONS}
+    return json.dumps([path, list(args), options], sort_keys=True, default=_stable_repr)
+
+
+def _stable_repr(value: Any) -> str:
+    """A process-independent spelling of an option value: a callable (``on_delete=CASCADE``, a
+    ``default`` factory) by its import path, never by a repr that carries a memory address."""
+    qualname = getattr(value, "__qualname__", None)
+    if qualname is not None:
+        return f"{getattr(value, '__module__', '')}.{qualname}"
+    return repr(value)
+
+
 def recipe_fingerprint(model: Any) -> str:
     """A hash of what a type's spine key is made from: its type, its ``NATURAL_KEY`` tuple, each
     entry's field class and the composition itself (``-25``). When it changes, every stored key of that type may be stale."""
@@ -471,8 +495,7 @@ def recipe_fingerprint(model: Any) -> str:
         for entry in declared:
             root = split_path(entry)[0] if is_path(entry) else entry
             try:
-                field_cls = type(model._meta.get_field(root))
-                fields.append(f"{field_cls.__module__}.{field_cls.__qualname__}")
+                fields.append(_field_recipe(model._meta.get_field(root)))
             except Exception:  # an unresolvable entry is a declaration problem, reported elsewhere
                 fields.append("?")
     recipe = json.dumps(

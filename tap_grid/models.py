@@ -676,8 +676,11 @@ class BaseModelQuerySet(_GuardedWriteQuerySet["BaseModel"]):
         pks = [obj.pk for obj in objs if obj.pk is not None]
         if not pks:
             return
+        # Re-read by primary key through all_objects, not through self: the write may have changed
+        # the very column self filters on. Deriving from stored values is safe for a row the write
+        # skipped too: its stored values give back the key it already has.
         with unguarded_read():
-            _copy_keys_to_spine(self.filter(pk__in=pks), using=self.db)
+            _copy_keys_to_spine(self.model.all_objects.using(self.db).filter(pk__in=pks), using=self.db)
 
     def update(self, **kwargs: Any) -> int:
         # Django's bulk_update writes through update(); ours re-derives every key after itself.
