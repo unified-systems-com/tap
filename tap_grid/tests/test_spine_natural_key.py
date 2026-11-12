@@ -554,6 +554,14 @@ class TestCatchUpAndDrift:
         call_command("sync_spine_natural_keys", "--type", "panel")
         call_command("sync_spine_natural_keys", "--check", "--type", "panel")
 
+    def test_an_undeclared_type_is_skipped_not_synced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Undeclared is never keyless (-5): it gets no fingerprint and the check is not clean."""
+        _panel("undeclared")
+        monkeypatch.setattr(Panel, "NATURAL_KEY", None)
+        report = sync(["panel"])
+        assert "panel" in report.skipped and "undeclared" in report.skipped["panel"]
+        assert not check(["panel"]).clean
+
     def test_a_zero_row_sample_is_refused(self) -> None:
         from django.core.management import call_command
         from django.core.management.base import CommandError

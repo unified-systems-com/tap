@@ -99,6 +99,18 @@ def _decode(model: Any, columns: list[str], values: tuple[Any, ...]) -> dict[str
     return row
 
 
+def _undeclared(model: Any) -> str | None:
+    """Why this type has no spine key to derive because it never declared one. Undeclared is never
+    treated as keyless (``req-grid-entity-natural-key-5``), so the type is skipped, which keeps a check
+    from passing on it, instead of being published as null and recorded as in step."""
+    from tap_grid.natural_key import KEYLESS
+
+    declared = getattr(model, "NATURAL_KEY", None)
+    if isinstance(declared, tuple) or declared is KEYLESS:
+        return None
+    return "NATURAL_KEY is undeclared; declare the constituting entries or KEYLESS with a reason"
+
+
 def _readable(connection: Any, model: Any, tables: set[str]) -> str | None:
     """Why this type's rows cannot be read yet, or ``None`` when they can."""
     table = model._meta.db_table
@@ -170,7 +182,7 @@ def sync(
         fingerprint = recipe_fingerprint(model)
         if changed_only and recorded.get(entity_type) == fingerprint:
             continue
-        reason = _readable(connection, model, tables)
+        reason = _undeclared(model) or _readable(connection, model, tables)
         if reason is not None:
             report.skipped[entity_type] = reason
             continue
@@ -265,7 +277,7 @@ def check(entity_types: Iterable[str] | None = None, *, sample: int = 200, using
         entity_type = model.ENTITY_TYPE
         if recorded.get(entity_type) != recipe_fingerprint(model):
             report.stale_recipes.append(entity_type)
-        reason = _readable(connection, model, tables)
+        reason = _undeclared(model) or _readable(connection, model, tables)
         if reason is not None:
             report.skipped[entity_type] = reason
             continue
