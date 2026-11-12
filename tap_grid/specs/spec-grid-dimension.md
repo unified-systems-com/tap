@@ -25,6 +25,8 @@ Entities are the base node of the grid / graph and the place where data about a 
 | req-grid-dimension-no-edges | [Nothing Draws an Edge to a Dimension Node](#nothing-draws-an-edge-to-a-dimension-node) | Approved for Development | `INBOUND_EDGES = []` / `OUTBOUND_EDGES = []`. Supersedes the `req-grid-dimension-dn` Future note that allowed any edge |
 | req-grid-dimension-reference | [Entities Reference Dimensions by Id, With Provenance](#entities-reference-dimensions-by-id-with-provenance) | Proposed | PROVISIONAL map shape `{<uuid>: {v, src}}`. Amends `req-grid-dimension-em` (flat object / string values) |
 | req-grid-dimension-names | [Dimension Names at the Edges](#dimension-names-at-the-edges) | Implemented | One resolver maps a dimension name to its stored key and a stored map to a name-keyed view; every reader goes through it, so the storage flip changes no query text or payload |
+| req-grid-dimension-knobs | [Dimension Knobs](#dimension-knobs) | Implemented | The Dimension node carries its settings as named fields: `values` (bounded or open) and `usable_in_keys`. Further knobs arrive as fields of their own |
+| req-grid-dimension-core-vocabulary | [Core Dimension Vocabulary](#core-dimension-vocabulary) | Proposed | Core declares the dimension keys it stamps (`tap.meta`, `tap.graph`, `tap_cares`) in a seed with fixed ids |
 | req-grid-dimension-lifecycle | [Dimension Lifecycle Rides Node History](#dimension-lifecycle-rides-node-history) | Approved for Development | Rename and deprecation are the node's history; entity membership is the entity's history — two reads |
 | req-grid-dimension-tabled | [Deliberately Tabled Dimension Capabilities](#deliberately-tabled-dimension-capabilities) | Proposed | Records four decisions to defer — mandate, delete-by-dimension, namespace reservation, second map |
 
@@ -588,6 +590,54 @@ seed documents; that lands with the storage flip.
 | req-grid-dimension-names-1 | One Resolver | Implemented | `tap_grid.dimension_names` is the only code that maps a dimension name to its stored key (`storage_key`), builds a containment fragment for a name and value (`containment`), or turns a stored map into `{name: value}` (`view`). Gryphon's dimension key compile, the GRIFT export selection and the read envelope's `dimensions` go through it. | `tap_grid/dimension_names.py`; `executor.py::_json_spine_inner_path`; `grift/exporter.py` selection; `grift/subgraph.py::build_spine_surface`. Tests in `tap_grid/tests/test_dimension_names.py`. |
 | req-grid-dimension-names-2 | Name-Keyed Shape Passes Through | Implemented | While `STORAGE_IS_NAME_KEYED` holds, `storage_key(name)` is `name`, `containment(k, v)` is `{k: v}` and `view(m)` is a copy of `m`, with no database query. | `tap_grid/tests/test_dimension_names.py`. |
 | req-grid-dimension-names-3 | Names Resolve to Declared Nodes Only | Implemented | `resolve(name)` returns the uuid of the one live Dimension node carrying the name; none raises `UnknownDimension`, several raise `AmbiguousDimension` naming every id. Nothing is minted. The storage flip routes `storage_key` through it. | `tap_grid/tests/test_dimension_names.py`. Ruled 2026-11-12 (aws-build Q48a). |
+
+### Dimension Knobs
+----
+RID: `req-grid-dimension-knobs`
+
+A dimension's settings are **named fields on its node, one per knob**, not a list of role strings
+(ruled 2026-11-12, aws-build Q51 and Q52a). Each knob gets its own type, default, schema validation
+and requirement row, and a misspelled knob fails validation, where a misspelled role string would
+sit unread. The first two:
+
+- `values`: a list of strings, or null. A list makes the dimension **bounded**: only those values are
+  accepted. Null leaves it **open**: any string is accepted (ruled aws-build Q47: "if it's there,
+  that's the scope, if it's not then it's open").
+- `usable_in_keys`: a boolean, default false. A type may name the dimension in its `NATURAL_KEY` only
+  when it is true. It declares eligibility; it does not make the value immutable on a row, which is a
+  separate rule decided per type (unified-systems-com/tap#1186).
+
+No knob is named `natural_key`: that name is the spine column (`req-grid-entity-natural-key-19`), and
+the output-only guard scans core for it. Later knobs, each its own field: `security_scope`, a value
+shape check (unified-systems-com/tap#1181), the vocabulary fields of #709 (`owner`, `status`,
+`superseded_by`, `boundaries`), and immutability (#1186).
+
+| RID | Name | Status | Notes | Trace |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-knobs-1 | Knobs Are Named Fields | Implemented | `Dimension.values` (JSON, null by default) and `Dimension.usable_in_keys` (boolean, false by default), both in `FIELD_CRUD_SCHEMA`. No field is named `natural_key`. | `tap_grid/models.py::Dimension`; migration `0011_dimension_knobs`; `tap_grid/tests/test_dimension_knobs.py::TestKnobs`. |
+| req-grid-dimension-knobs-2 | Bounded or Open | Implemented | `values` is a list of unique non-empty strings or null. `Dimension.accepts(v)` is true for any string when `values` is null and only for a listed value otherwise. Refusing a write outside a bounded list lands with the uuid-keyed map, where writes resolve the node. | `Dimension.is_bounded`, `Dimension.accepts`; `test_dimension_knobs.py::TestKnobs::test_a_values_list_bounds_the_dimension`. |
+| req-grid-dimension-knobs-3 | Key Eligibility Is Declared | Proposed | A type naming a dimension in its `NATURAL_KEY` requires that dimension's `usable_in_keys` to be true. The check lands with form 3 keys (a `NATURAL_KEY` entry that names a dimension), which do not exist yet. | Field: `Dimension.usable_in_keys`. |
+
+### Core Dimension Vocabulary
+----
+RID: `req-grid-dimension-core-vocabulary`
+
+Core stamps three dimension keys of its own: `tap.meta` (on every Dimension node and on the keystone),
+`tap.graph` (core's web records, `tap_web/dimensions.py`) and `tap_cares` (the collection machinery's
+own models). Dimensions are declared, never created on demand (aws-build Q48a), so core declares
+these in `tap_grid/data/dimensions.grift.json`, with ids fixed once and the same on every grid:
+
+| Key | Dimension node id |
+| --- | --- |
+| `tap.meta` | `01a1d14c-d80b-725d-8002-eb0b3e272f1d` |
+| `tap.graph` | `01a1d14c-d80b-725d-8002-eb0c8e7f34c6` |
+| `tap_cares` | `01a1d14c-d80b-725d-8002-eb0d87d7f8e5` |
+
+`tap_cares` keeps its undotted current name (aws-build Q50c); a rename later is one field update.
+
+| RID | Name | Status | Notes | Trace |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-core-vocabulary-1 | Core Declares Its Keys | Proposed | Every dimension key a core module stamps has a node in core's seed with a fixed UUIDv7, and every node in the seed names a key core stamps. How the seed reaches a grid before anything resolves a name is open. | `tap_grid/data/dimensions.grift.json`; `tap_grid/tests/test_dimension_knobs.py::TestCoreVocabularySeed`. |
 
 ### Dimension Lifecycle Rides Node History
 ----

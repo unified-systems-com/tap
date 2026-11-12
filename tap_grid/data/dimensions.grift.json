@@ -1,0 +1,66 @@
+{
+  "metadata": {
+    "grift_version": "0"
+  },
+  "_reserved": {},
+  "batches": [
+    {
+      "batch_entity": {
+        "entity_id": "01a1d14c-d80b-725d-8002-eb0a03110525",
+        "entity_type": "batch",
+        "name": "Core dimension vocabulary v0.1.0",
+        "dimensions": {}
+      },
+      "batch_node": {
+        "source": "tap_grid",
+        "name": "Core dimension vocabulary v0.1.0",
+        "description": "Dimension nodes for the dimension keys core itself stamps (req-grid-dimension-core-vocabulary). Dimensions are declared, never created on demand (aws-build Q48a)."
+      },
+      "nodes": [
+        {
+          "entity": {
+            "entity_id": "01a1d14c-d80b-725d-8002-eb0b3e272f1d",
+            "entity_type": "dimension",
+            "name": "tap.meta",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.meta",
+            "description": "What kind of grid record a node is, for records that describe the grid itself rather than observe the world. Core stamps it on every Dimension node (value `dimension`) and on the keystone (value `keystone`). Bounded by use, open as declared: core owns the values."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d14c-d80b-725d-8002-eb0c8e7f34c6",
+            "entity_type": "dimension",
+            "name": "tap.graph",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.graph",
+            "description": "Which graph a node belongs to. Core's web layer stamps `web` on its own models and edges (tap_web/dimensions.py), so presentation records partition from observed ones."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d14c-d80b-725d-8002-eb0d87d7f8e5",
+            "entity_type": "dimension",
+            "name": "tap_cares",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap_cares",
+            "description": "Which part of the collection machinery (tap_cares) a record belongs to: `collector`, `collection_job`, `schedule`, `schedule_fire`. Core stamps it on tap_cares' own models. Not a dotted name; declared under its current name and renamed later if wanted (a rename is one field update on this node)."
+          }
+        }
+      ],
+      "edges": []
+    }
+  ]
+}
