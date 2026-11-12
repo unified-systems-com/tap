@@ -59,6 +59,14 @@ class TapCoreConfig(AppConfig):
 
         install_natural_key_indexes()
 
+        # The spine natural key catch-up runs after every migrate (req-grid-entity-natural-key-23),
+        # once, for this app's post_migrate, by which point every app's migrations have applied.
+        from django.db.models.signals import post_migrate
+
+        from tap_grid.spine_natural_key import sync_after_migrate
+
+        post_migrate.connect(sync_after_migrate, sender=self, dispatch_uid="tap_grid.spine_natural_key_sync")
+
         # Register the grid-population probe from tap_grid's own boundary
         # (req-tap-health-probe-registry-3). Registration only appends a callable —
         # no DB here; the probe body runs later at run_health() time.

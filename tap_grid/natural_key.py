@@ -28,16 +28,27 @@ Two things this module deliberately is **not**:
   the same id, and every write addresses the tombstone), so ids are assigned and rows
   are found by lookup.
 - It is not a hash. An earlier draft derived a UUIDv8 over SHA-256 of a canonical key
-  document into the placeholder column on ``Entity``; that was withdrawn on 2026-09-17 —
+  document into the spine column on ``Entity``; that was withdrawn on 2026-09-17 —
   tombstoning forced lookup-by-facts, not hash-of-facts, and no two-key precedent
-  stores a hashed non-id key. That column is now a **text placeholder**
-  that nothing reads or writes until its named consumer arrives (a per-type composed,
-  readable identifier for cross-type search; see the requirement).
+  stores a hashed non-id key.
+
+Instead the spine stores each keyed row's natural key in a readable standard form
+(:func:`compose_natural_key`, ``req-grid-entity-natural-key-19``): a single-field key's value
+verbatim (an ARN, bare), a multi-field key's values joined in declared order with
+:data:`KEY_SEPARATOR`. The values are field-coerced first. The identity lock key is NOT this
+string: it keeps its canonical-JSON form (:func:`identity_lock_key`, ``-13``), so an old and a new
+importer still share one lock during a rolling deploy. The stored key is output only: the search
+reads the declared columns, never it.
 """
 
 from __future__ import annotations
 
+import datetime
+import decimal
+import hashlib
 import json
+import re
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
@@ -45,16 +56,27 @@ if TYPE_CHECKING:
     from django.db.models import Expression, QuerySet
 
 __all__ = [
+    "COMPOSITION_VERSION",
     "KEYLESS",
+    "KEY_ESCAPE",
+    "KEY_SEPARATOR",
     "PATH_SEPARATOR",
+    "PREFIX_INDEX_CHARS",
     "AmbiguousIdentity",
     "Keyless",
+    "compose_natural_key",
     "constituting_properties",
+    "declared_columns",
     "declaration_problems",
+    "encode_key_part",
     "identity_lock_key",
     "index_expressions",
     "is_path",
+    "natural_key_prefix",
+    "recipe_fingerprint",
+    "row_natural_key",
     "search",
+    "split_key",
     "split_path",
 ]
 
@@ -262,6 +284,131 @@ def _canonical(value: object) -> object:
     return value
 
 
+#: Joins a multi-field key's values, in declared order (``req-grid-entity-natural-key-19``).
+#: Ruled 2026-11-11 by George (Issue# 1178 - tap).
+KEY_SEPARATOR: Final[str] = "|"
+
+#: Escapes the separator, and itself, inside a multi-field key's values, percent-style:
+#: ``%`` → ``%25`` and ``|`` → ``%7C``, so the join splits back exactly. Nothing else is
+#: escaped, so an IPv6 address or a path stays readable (``corp|fe80::1|tcp|443``).
+KEY_ESCAPE: Final[str] = "%"
+
+
+def _escaped(char: str) -> str:
+    return f"{KEY_ESCAPE}{ord(char):02X}"
+
+
+def encode_key_part(text: str) -> str:
+    """One value of a multi-field key, with the escape and the separator escaped (escape first)."""
+    return text.replace(KEY_ESCAPE, _escaped(KEY_ESCAPE)).replace(KEY_SEPARATOR, _escaped(KEY_SEPARATOR))
+
+
+def split_key(value: str) -> list[str]:
+    """A multi-field key back into its values, as text, in declared order (the exact round trip)."""
+    codes = {_escaped(KEY_ESCAPE): KEY_ESCAPE, _escaped(KEY_SEPARATOR): KEY_SEPARATOR}
+    pattern = "|".join(re.escape(code) for code in codes)
+    return [re.sub(pattern, lambda match: codes[match.group(0)], part) for part in value.split(KEY_SEPARATOR)]
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(_canonical(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def _scalar_text(value: object) -> str:
+    """A field-coerced column value as key text — the pinned stringification (``-19``).
+
+    Strings verbatim (an IP address arrives here already in ``GenericIPAddressField.to_python``'s
+    canonical form); ``true``/``false``; integers canonical, an integral float as its integer
+    (``1.0`` is ``1``); a ``Decimal`` normalised and never in exponent form (``1.50`` is ``1.5``,
+    ``1E+2`` is ``100``); a UUID lower-case hyphenated; an aware datetime as ISO-8601 in UTC
+    (``2026-11-11T05:00:00+00:00``), a naive one as ISO-8601 read as UTC; a date as ISO-8601; an
+    object or array as compact sorted JSON; anything else by ``str()``.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(_canonical(value))
+    if isinstance(value, decimal.Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, uuid.UUID):
+        return str(value).lower()
+    if isinstance(value, datetime.datetime):
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=datetime.UTC)
+        return aware.astimezone(datetime.UTC).isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    if isinstance(value, Mapping | list | tuple):
+        return _json_text(value)
+    return str(value)
+
+
+def _coerced_text(model: Any, name: str, value: object) -> str | None:
+    """One declared entry's value as key text, from the FIELD-COERCED value, never the raw payload.
+
+    A column entry goes through its model field's ``to_python``, so ``"443"`` and ``443`` on an
+    integer column, or two spellings of one IPv6 address on an address column, give one key. A
+    value the field cannot coerce stays as given (the write's own validation refuses it). A JSON
+    entry — a path into a JSON field, or a whole JSON column — keeps its JSON type, rendered as
+    compact sorted JSON, because the search compares it typed: ``123`` and ``"123"`` are two
+    identities there, so they must be two keys (``req-grid-entity-natural-key-15``). ``None`` when
+    the coerced value is a hole (an integer column given ``""`` coerces to ``None``).
+    """
+    column, keys = split_path(name)
+    field = None
+    if model is not None:
+        from django.core.exceptions import FieldDoesNotExist
+
+        try:
+            field = model._meta.get_field(column)
+        except FieldDoesNotExist:
+            field = None
+    if keys or (field is not None and field.get_internal_type() == "JSONField"):
+        return _json_text(value)
+    if field is not None:
+        from django.core.exceptions import ValidationError
+
+        try:
+            value = field.to_python(value)
+        except ValidationError:
+            pass
+        if value is None:
+            return None
+    return _scalar_text(value)
+
+
+def compose_natural_key(model: Any, properties: Mapping[str, object]) -> str | None:
+    """THE natural key: the one function behind the spine key and the identity lock key.
+
+    ``properties`` maps each declared entry to its value in declared order — what
+    :func:`constituting_properties` returns for a payload, or a row read through the same grammar.
+    A single-field key is its value verbatim (a type keyed on its ARN stores the ARN, bare). A
+    multi-field key joins its values in declared order with :data:`KEY_SEPARATOR`, each escaped by
+    :func:`encode_key_part`. ``None`` when any value is a hole — before or after coercion — never a
+    partial key (null = not observed); ``""`` is a value. ``model`` supplies the fields that coerce
+    each value; ``None`` (an unregistered type) coerces nothing.
+    """
+    if any(value is None for value in properties.values()):
+        return None
+    texts = [_coerced_text(model, name, value) for name, value in properties.items()]
+    if any(text is None for text in texts):
+        return None
+    parts = [text for text in texts if text is not None]
+    if len(parts) == 1:
+        return parts[0]
+    return KEY_SEPARATOR.join(encode_key_part(part) for part in parts)
+
+
+def row_natural_key(model: Any, row: Mapping[str, object]) -> str | None:
+    """:func:`compose_natural_key` for a row: ``row`` maps each declared column to its value (a JSON
+    column as its decoded document). ``None`` for a type not keyed by a tuple."""
+    declared = getattr(model, "NATURAL_KEY", None)
+    if not isinstance(declared, tuple):
+        return None
+    return compose_natural_key(model, constituting_properties(declared, row))
+
+
 def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str | None:
     """The one string two writers resolving the same source object both lock on.
 
@@ -278,3 +425,94 @@ def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str
         return None
     canonical = {name: _canonical(value) for name, value in properties.items()}
     return f"{entity_type}\x1f" + json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def natural_key_prefix(model: Any, leading: Mapping[str, object]) -> str:
+    """The prefix that finds every row of a multi-field type whose LEADING declared values are these.
+
+    ``leading`` names the first k declared entries (k fewer than all), composed exactly as
+    :func:`compose_natural_key` composes them — coerced, escaped, joined — and ends with the
+    separator, so ``corp|10.0.1.5|`` matches ``corp|10.0.1.5|tcp|443`` and never
+    ``corp|10.0.1.50|…`` (``req-grid-entity-natural-key-24``). Refuses a single-field type, entries
+    that are not a leading run of the declaration, and a hole.
+    """
+    declared = getattr(model, "NATURAL_KEY", None)
+    if not isinstance(declared, tuple) or len(declared) < 2:
+        raise ValueError("a prefix of leading values needs a type keyed on two or more entries")
+    names = list(leading)
+    if not names or names != list(declared[: len(names)]) or len(names) == len(declared):
+        raise ValueError(f"{names} is not a leading run (fewer than all) of NATURAL_KEY {declared}")
+    texts = [None if value is None else _coerced_text(model, name, value) for name, value in leading.items()]
+    if any(text is None for text in texts):
+        raise ValueError("a prefix cannot contain a hole")
+    return "".join(f"{encode_key_part(text)}{KEY_SEPARATOR}" for text in texts if text is not None)
+
+
+#: How many leading characters of the spine key the prefix index covers. A btree index row
+#: over ~2700 bytes is an error on insert; at four bytes per character in the worst UTF-8 case, 600
+#: characters stay under it (2400 bytes), so no key of any length can fail a write
+#: (``req-grid-entity-natural-key-22``). A longer prefix is still answered, by rechecking the full value.
+PREFIX_INDEX_CHARS: Final[int] = 600
+
+
+#: Bumped when the composition itself changes (separator, escape, stringification), so every type's
+#: fingerprint changes with it and the deploy-time sync re-derives everything.
+COMPOSITION_VERSION: Final[str] = "1"
+
+
+# Field options that never change what to_python returns, left out so that editing a help text does
+# not re-derive a whole type.
+_COSMETIC_FIELD_OPTIONS = frozenset(
+    {"help_text", "verbose_name", "db_comment", "editable", "blank", "error_messages", "validators", "choices"}
+)
+
+
+def _field_recipe(field: Any) -> str:
+    """A field's class and the options that can change its ``to_python`` (``unpack_ipv4``, ``max_digits``
+    and the like), from ``deconstruct()``, so the fingerprint sees a change in coercion."""
+    _name, path, args, kwargs = field.deconstruct()
+    options = {key: value for key, value in kwargs.items() if key not in _COSMETIC_FIELD_OPTIONS}
+    return json.dumps([path, list(args), options], sort_keys=True, default=_stable_repr)
+
+
+def _stable_repr(value: Any) -> str:
+    """A process-independent spelling of an option value: a callable (``on_delete=CASCADE``, a
+    ``default`` factory) by its import path, never by a repr that carries a memory address."""
+    qualname = getattr(value, "__qualname__", None)
+    if qualname is not None:
+        return f"{getattr(value, '__module__', '')}.{qualname}"
+    return repr(value)
+
+
+def recipe_fingerprint(model: Any) -> str:
+    """A hash of what a type's spine key is made from: its type, its ``NATURAL_KEY`` tuple, each
+    entry's field class and the composition itself (``-25``). When it changes, every stored key of that type may be stale."""
+    declared = getattr(model, "NATURAL_KEY", None)
+    # Each entry's field class too: composition runs the field's to_python first, so changing a
+    # constituting column from CharField to IntegerField can change every key with the tuple unchanged.
+    fields: list[str] = []
+    if isinstance(declared, tuple):
+        for entry in declared:
+            root = split_path(entry)[0] if is_path(entry) else entry
+            try:
+                fields.append(_field_recipe(model._meta.get_field(root)))
+            except Exception:  # an unresolvable entry is a declaration problem, reported elsewhere
+                fields.append("?")
+    recipe = json.dumps(
+        {
+            "entity_type": model.ENTITY_TYPE,
+            "declared": list(declared) if isinstance(declared, tuple) else ("KEYLESS" if declared is KEYLESS else "None"),
+            "fields": fields,
+            "composition": [COMPOSITION_VERSION, KEY_SEPARATOR, KEY_ESCAPE],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(recipe.encode("utf-8")).hexdigest()
+
+
+def declared_columns(model: Any) -> list[str]:
+    """The concrete columns a model's tuple declaration reads, in declared order, without repeats."""
+    declared = getattr(model, "NATURAL_KEY", None)
+    if not isinstance(declared, tuple):
+        return []
+    return list(dict.fromkeys(split_path(name)[0] for name in declared))

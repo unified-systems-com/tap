@@ -1,9 +1,10 @@
-"""The identity declaration and the placeholder column (``req-grid-entity-natural-key``).
+"""The identity declaration and the spine column (``req-grid-entity-natural-key``).
 
-Phase 2 ("Cascade First", 2026-09-17) withdrew the hashed key. What remains to test is
-the declaration contract on every core model — three states, not two — the placeholder
-column's shape, the guard that nothing reads or writes it yet, and the load-bearing
-absence that keeps a collector from supplying one.
+Phase 2 ("Cascade First", 2026-09-17) withdrew the hashed key. What is tested here is the
+declaration contract on every core model — three states, not two — the spine column's shape,
+the guard on which code may touch that column (only the derived write, never a lookup), and the
+load-bearing absence that keeps a collector from supplying one. The composition and the write
+paths are ``test_spine_natural_key.py``.
 """
 
 from __future__ import annotations
@@ -125,22 +126,29 @@ class TestEveryCoreTypeHasDeclared:
         )
 
 
-class TestPlaceholderColumn:
-    """req-grid-entity-natural-key-11: the column is text, inert, and says so.
+class TestSpineColumn:
+    """req-grid-entity-natural-key-11 (rewritten) and -21: the column is text, published, and
+    output only.
 
-    A placeholder that something quietly reads or writes is a second way to find a
-    row. The scan below is the guard: the only code allowed to know the column exists
-    is the model that declares it, its migrations, the spine-surface inventories, and
-    this test.
+    A published value that something quietly reads to find, merge or refuse a row is a second
+    way to find a row — the thing the spec forbids. The scan below is the guard: the only code
+    allowed to know the column exists is the model that declares and derives it, the one service
+    create path that pre-creates a spine row, the catch-up sync and its command, the
+    spine-surface inventories, and these tests. A search reading it would have to land in one of
+    those files, and the source checks in ``test_spine_natural_key.py`` keep the identity
+    functions themselves clean.
     """
 
     # Files that may mention the column by name. Everything else in the app trees is
-    # a violation — including a "helpful" service-layer stamp or a query on it. The
-    # trees are core's: plugins are wheels from their own repositories, outside any
-    # in-tree scan, and their conformance is phase 3's (Grok on #569).
+    # a violation — including a "helpful" lookup on it. The trees are core's: plugins are
+    # wheels from their own repositories, outside any in-tree scan (Grok on #569).
     ALLOWED = {
         "tap_grid/models.py",
+        "tap_grid/services/_impl.py",
+        "tap_grid/spine_natural_key.py",
+        "tap_grid/management/commands/sync_spine_natural_keys.py",
         "tap_grid/tests/test_natural_key.py",
+        "tap_grid/tests/test_spine_natural_key.py",
         "tap_grid/tests/test_core_serialization_contract.py",
     }
     # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
@@ -175,20 +183,42 @@ class TestPlaceholderColumn:
                     hits.add(str(path.relative_to(root)))
         return hits
 
-    def test_column_is_a_text_placeholder(self) -> None:
+    def test_column_is_published_text_and_never_unique(self) -> None:
         from tap_grid.models import Entity
 
         field = Entity._meta.get_field("natural_key")
         assert isinstance(field, django_models.TextField), f"natural_key is {type(field).__name__}, expected TextField"
-        assert field.null and field.blank and getattr(field, "db_index", False)
-        assert not field.unique, "the placeholder is non-unique by design (req-grid-entity-natural-key-3)"
-        help_text = str(field.help_text)
-        assert "placeholder" in help_text.lower(), "the help text must say what this column is"
-        assert "gate" in help_text.lower(), "the help text must name the trigger that makes it load-bearing"
+        assert field.null and field.blank
+        # Never a plain btree on the full value (-22): an index row over ~2700 bytes is an error
+        # on insert, and a composed key can be longer.
+        assert not getattr(field, "db_index", False), "no plain btree on the spine natural key"
+        # Ruled 2026-11-11: a duplicate published value costs a search one row; a constraint
+        # would let whoever lands a value first block another type's writes (-22).
+        assert not field.unique, "the spine natural key is non-unique by design (req-grid-entity-natural-key-22)"
+        assert not any("natural_key" in getattr(c, "fields", ()) for c in Entity._meta.constraints), (
+            "no constraint may cover the spine natural key (req-grid-entity-natural-key-22)"
+        )
+        help_text = str(field.help_text).lower()
+        assert "derived" in help_text and "never authored" in help_text, (
+            "the help text must say where the value comes from"
+        )
+        assert "output only" in help_text, "the help text must say nothing finds a row by it"
+
+    def test_equality_and_prefix_are_index_backed_without_a_size_limit(self) -> None:
+        """-22: a hash index for equality, a btree over the first characters for prefix."""
+        from django.contrib.postgres.indexes import HashIndex
+
+        from tap_grid.models import Entity
+
+        by_name = {index.name: index for index in Entity._meta.indexes}
+        assert isinstance(by_name["idx_entity_natural_key_hash"], HashIndex)
+        assert by_name["idx_entity_natural_key_hash"].fields == ["natural_key"]
+        assert by_name["idx_entity_natural_key_prefix"].expressions, "the prefix index is over an expression"
 
     def test_the_sentinel_module_is_not_exempt(self) -> None:
-        """Codex on #564: exempting tap_grid/natural_key.py wholesale would let a future
-        read or write of the column hide in the one module named after it."""
+        """Codex on #564: exempting tap_grid/natural_key.py wholesale would let a read of the
+        column hide in the one module named after it — the module the search and the lock live
+        in. It composes the value from a row it is handed and never touches the column."""
         assert "tap_grid/natural_key.py" not in self.ALLOWED
         assert "tap_grid/natural_key.py" not in self._referencing_files()
 
@@ -196,13 +226,34 @@ class TestPlaceholderColumn:
         """Guard the guard: a scan that reads nothing passes silently."""
         assert "tap_grid/models.py" in self._referencing_files()
 
-    def test_nothing_reads_or_writes_the_placeholder(self) -> None:
+    # Files allowed only specific lines: the write pipeline is identity code, so a whole-file pass
+    # would let a later lookup on the column slip in beside the one derived write it carries.
+    ALLOWED_LINES = {
+        "tap_grid/services/_impl.py": {"natural_key=instance.derive_natural_key(),"},
+    }
+
+    def test_the_write_pipeline_only_writes_the_derived_key(self) -> None:
+        root = self._repo_root()
+        for rel, allowed in self.ALLOWED_LINES.items():
+            text = (root / rel).read_text(encoding="utf-8")
+            code = [
+                ln.strip()
+                for ln in text.splitlines()
+                if self._TOKEN.search(ln) and not self._IMPORT.search(ln) and not ln.strip().startswith("#")
+            ]
+            stray = [ln for ln in code if ln not in allowed]
+            assert stray == [], (
+                f"{rel} may only write the derived key ({sorted(allowed)}); found {stray} "
+                "(req-grid-entity-natural-key-21)"
+            )
+
+    def test_only_the_derived_write_touches_the_column(self) -> None:
         extra = sorted(self._referencing_files() - self.ALLOWED)
         assert extra == [], (
-            f"These files reference Entity.natural_key: {extra}. The column is a placeholder "
-            "that nothing reads or writes until the gate in front of phase 3 "
-            "(req-grid-entity-natural-key-11). If you are building that gate, extend "
-            "ALLOWED deliberately and flip the AC."
+            f"These files reference Entity.natural_key: {extra}. The column is published by the "
+            "derived write alone and read by nothing that finds, merges or refuses a row "
+            "(req-grid-entity-natural-key-21). A search reads it by entity_type and value from "
+            "a query surface, never from identity code; extend ALLOWED only with that argument."
         )
 
 

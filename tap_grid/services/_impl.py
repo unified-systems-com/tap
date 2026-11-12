@@ -839,6 +839,10 @@ def _execute_write_pipeline(
                 id=prespecified_id,
                 entity_type=model_cls.ENTITY_TYPE,
                 name=instance.get_name(),
+                # The row's natural key, which BaseModel.save derives again and stores on the row
+                # (req-grid-entity-natural-key-19); the save below skips its spine sync for this
+                # logical create, so the spine copy is written here.
+                natural_key=instance.derive_natural_key(),
                 dimensions=merged_dims,
             )
             # Signal BaseModel.save() to skip its spine_updates branch on the
