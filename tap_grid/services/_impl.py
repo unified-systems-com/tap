@@ -755,8 +755,16 @@ def _execute_write_pipeline(
         # Thread caller-supplied dimensions onto the instance so the non-prespecified-id
         # path (BaseModel.save() / Edge.save()) can merge them with type defaults.
         # The prespecified-id branch below applies the same merge explicitly before save().
+        # The caller's map in stored shape (req-grid-dimension-reference-3). A map the importer
+        # already settled under a trusted collector run passes through; any other is untrusted, so
+        # a `src: derived` in it is reset to declared and `src: default` is refused.
         if is_create and op.dimensions:
-            instance._initial_dimensions = dict(op.dimensions)
+            from tap_grid.dimension_map import DimensionWriteError, supplied
+
+            try:
+                instance._initial_dimensions = supplied(op.dimensions, where=f"{op.type_slug or op.edge_type} dimensions")
+            except (DimensionWriteError, LookupError) as error:
+                raise ServiceValidationError(str(error)) from error
 
         # Step 8 (early): edge_type immutability — checked before schema validation so the
         # error code is "constraint_violation" rather than "validation_error".
@@ -833,8 +841,13 @@ def _execute_write_pipeline(
                 base_dims = dict(get_edge_default_dimensions(op.edge_type))  # type: ignore[arg-type]
             else:
                 base_dims = dict(getattr(model_cls, "DEFAULT_DIMENSIONS", {}))
-            caller_dims: dict[str, str] = getattr(instance, "_initial_dimensions", {}) or {}
-            merged_dims = {**base_dims, **caller_dims}
+            from tap_grid.dimension_map import DimensionWriteError, stamp
+
+            caller_dims: Any = getattr(instance, "_initial_dimensions", {}) or {}
+            try:
+                merged_dims = stamp(base_dims, caller_dims, where=f"{op.type_slug or op.edge_type} dimensions")
+            except (DimensionWriteError, LookupError) as error:
+                raise ServiceValidationError(str(error)) from error
             instance.entity = Entity.objects.create(
                 id=prespecified_id,
                 entity_type=model_cls.ENTITY_TYPE,

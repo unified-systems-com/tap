@@ -1,0 +1,444 @@
+{
+  "metadata": {
+    "grift_version": "0"
+  },
+  "_reserved": {},
+  "batches": [
+    {
+      "batch_entity": {
+        "entity_id": "01a1d150-0000-7000-8000-000000000000",
+        "entity_type": "batch",
+        "name": "Test dimension vocabulary",
+        "dimensions": {}
+      },
+      "batch_node": {
+        "source": "tap_grid.tests",
+        "name": "Test dimension vocabulary",
+        "description": "Dimension keys the test suites write. Used by the test harness only, and only for a name no installed seed declares."
+      },
+      "nodes": [
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000001",
+            "entity_type": "dimension",
+            "name": "tap.playground",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.playground",
+            "description": "Test dimension tap.playground."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000002",
+            "entity_type": "dimension",
+            "name": "tap.cloud",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.cloud",
+            "description": "Test dimension tap.cloud."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000003",
+            "entity_type": "dimension",
+            "name": "tap.web",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.web",
+            "description": "Test dimension tap.web."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000004",
+            "entity_type": "dimension",
+            "name": "tap.test",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.test",
+            "description": "Test dimension tap.test."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000005",
+            "entity_type": "dimension",
+            "name": "tap.region",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.region",
+            "description": "Test dimension tap.region."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000006",
+            "entity_type": "dimension",
+            "name": "tap.env",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.env",
+            "description": "Test dimension tap.env."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000007",
+            "entity_type": "dimension",
+            "name": "tap.g",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.g",
+            "description": "Test dimension tap.g."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000008",
+            "entity_type": "dimension",
+            "name": "env",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "env",
+            "description": "Test dimension env."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000009",
+            "entity_type": "dimension",
+            "name": "region",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "region",
+            "description": "Test dimension region."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000a",
+            "entity_type": "dimension",
+            "name": "zone",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "zone",
+            "description": "Test dimension zone."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000b",
+            "entity_type": "dimension",
+            "name": "dcom",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "dcom",
+            "description": "Test dimension dcom."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000c",
+            "entity_type": "dimension",
+            "name": "deployment",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "deployment",
+            "description": "Test dimension deployment."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000d",
+            "entity_type": "dimension",
+            "name": "collected.from",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "collected.from",
+            "description": "Test dimension collected.from."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000e",
+            "entity_type": "dimension",
+            "name": "isnull",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "isnull",
+            "description": "Test dimension isnull."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000000f",
+            "entity_type": "dimension",
+            "name": "contains",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "contains",
+            "description": "Test dimension contains."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000010",
+            "entity_type": "dimension",
+            "name": "regex",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "regex",
+            "description": "Test dimension regex."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000011",
+            "entity_type": "dimension",
+            "name": "exact",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "exact",
+            "description": "Test dimension exact."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000012",
+            "entity_type": "dimension",
+            "name": "gt",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "gt",
+            "description": "Test dimension gt."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000013",
+            "entity_type": "dimension",
+            "name": "in",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "in",
+            "description": "Test dimension in."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000014",
+            "entity_type": "dimension",
+            "name": "startswith",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "startswith",
+            "description": "Test dimension startswith."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000015",
+            "entity_type": "dimension",
+            "name": "tap__cloud",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap__cloud",
+            "description": "Test dimension tap__cloud."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000016",
+            "entity_type": "dimension",
+            "name": "a__b",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "a__b",
+            "description": "Test dimension a__b."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000017",
+            "entity_type": "dimension",
+            "name": "k",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "k",
+            "description": "Test dimension k."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000018",
+            "entity_type": "dimension",
+            "name": "tap.zone",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.zone",
+            "description": "Test dimension tap.zone."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-000000000019",
+            "entity_type": "dimension",
+            "name": "shifted",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "shifted",
+            "description": "Test dimension shifted."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000001a",
+            "entity_type": "dimension",
+            "name": "tap.perspective",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.perspective",
+            "description": "Test dimension tap.perspective."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000001b",
+            "entity_type": "dimension",
+            "name": "other",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "other",
+            "description": "Test dimension other."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000001c",
+            "entity_type": "dimension",
+            "name": "a",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "a",
+            "description": "Test dimension a."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000001d",
+            "entity_type": "dimension",
+            "name": "b",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "b",
+            "description": "Test dimension b."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a1d150-0000-7000-8000-00000000001e",
+            "entity_type": "dimension",
+            "name": "present",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "present",
+            "description": "Test dimension present."
+          }
+        }
+      ],
+      "edges": []
+    }
+  ]
+}

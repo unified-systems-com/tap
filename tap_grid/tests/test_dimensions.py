@@ -11,6 +11,7 @@ from django.core.exceptions import ImproperlyConfigured
 from tap_plugin.grid_fixtures.models import ConstrainedSource, Unconstrained
 
 from tap.pytest_harness import batch_ctx, isolated_registry
+from tap_grid.dimension_names import view
 from tap_grid.constraints import (
     _edge_default_dimensions_registry,
     register_edge_default_dimensions,
@@ -32,18 +33,18 @@ class TestEntityDimensionsField:
     def test_dimensions_defaults_to_empty_dict(self):
         """New Entity gets dimensions={} by default (em-1, em-2)."""
         entity = make_spine_entity("grid_fixtures__constrained_source")
-        assert entity.dimensions == {}
+        assert view(entity.dimensions) == {}
 
     def test_dimensions_can_be_set_on_create(self):
         """Entity.objects.create() accepts explicit dimensions (em-1)."""
         entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"env": "staging"})
-        assert entity.dimensions == {"env": "staging"}
+        assert view(entity.dimensions) == {"env": "staging"}
 
     def test_dimensions_persists_after_save(self):
         """Dimensions round-trip correctly through the DB (em-1)."""
         entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"tap.graph": "web", "env": "prod"})
         entity.refresh_from_db()
-        assert entity.dimensions == {"tap.graph": "web", "env": "prod"}
+        assert view(entity.dimensions) == {"tap.graph": "web", "env": "prod"}
 
     def test_dimensions_field_is_non_nullable(self):
         """The dimensions field is non-nullable; the DB stores a dict (em-2)."""
@@ -69,21 +70,21 @@ class TestDefaultDimensions:
     def test_default_dimensions_applied(self):
         """Creating a model with DEFAULT_DIMENSIONS populates the backing Entity (dc-1)."""
         dim = Dimension.objects.create(name="web")
-        assert dim.entity.dimensions == {"tap.meta": "dimension"}
+        assert view(dim.entity.dimensions) == {"tap.meta": "dimension"}
 
     def test_explicit_wins_over_default(self):
         """Caller-supplied _initial_dimensions overrides overlapping defaults (dc-3)."""
         dim = Dimension(name="custom")
         dim._initial_dimensions = {"tap.meta": "custom-override"}
         dim.save()
-        assert dim.entity.dimensions == {"tap.meta": "custom-override"}
+        assert view(dim.entity.dimensions) == {"tap.meta": "custom-override"}
 
     def test_non_overlapping_keys_merged(self):
         """Non-overlapping keys from defaults and caller are both present (dc-3)."""
         dim = Dimension(name="merged")
         dim._initial_dimensions = {"env": "staging"}
         dim.save()
-        assert dim.entity.dimensions == {"tap.meta": "dimension", "env": "staging"}
+        assert view(dim.entity.dimensions) == {"tap.meta": "dimension", "env": "staging"}
 
     def test_defaults_not_enforced_after_creation(self):
         """Changing dimensions after creation causes no validation error (dc-2)."""
@@ -91,13 +92,13 @@ class TestDefaultDimensions:
         dim.entity.dimensions = {}
         dim.entity.save(update_fields=["dimensions", "updated_at"])
         dim.entity.refresh_from_db()
-        assert dim.entity.dimensions == {}
+        assert view(dim.entity.dimensions) == {}
 
     def test_model_without_defaults_gets_empty_dims(self):
         """Model without DEFAULT_DIMENSIONS gets dimensions={} on the Entity (dc-1)."""
         with batch_ctx(source="test:dims"):
             character = ConstrainedSource.objects.create(description="no defaults")
-        assert character.entity.dimensions == {}
+        assert view(character.entity.dimensions) == {}
 
 
 @pytest.mark.django_db
@@ -120,7 +121,7 @@ class TestEdgeDefaultDimensions:
             to_entity=target.entity,
             edge_type="WEB_EDGE",
         )
-        assert edge.entity.dimensions == {"tap.graph": "web"}
+        assert view(edge.entity.dimensions) == {"tap.graph": "web"}
 
     def test_edge_without_registered_defaults_gets_empty(self):
         """Edge with no registered default_dimensions gets dimensions={} (dc-4)."""
@@ -131,7 +132,7 @@ class TestEdgeDefaultDimensions:
             to_entity=target.entity,
             edge_type="APPLIES_TO",
         )
-        assert edge.entity.dimensions == {}
+        assert view(edge.entity.dimensions) == {}
 
     def test_caller_dims_override_edge_defaults(self):
         """Caller-supplied _initial_dimensions override edge default_dimensions (dc-4)."""
@@ -142,7 +143,7 @@ class TestEdgeDefaultDimensions:
         edge = Edge(from_entity=source.entity, to_entity=target.entity, edge_type="WEB_EDGE2")
         edge._initial_dimensions = {"tap.graph": "override"}
         edge.save()
-        assert edge.entity.dimensions == {"tap.graph": "override"}
+        assert view(edge.entity.dimensions) == {"tap.graph": "override"}
 
     def test_caller_adds_non_overlapping_key(self):
         """Non-overlapping caller key is merged alongside edge defaults (dc-4)."""
@@ -153,7 +154,7 @@ class TestEdgeDefaultDimensions:
         edge = Edge(from_entity=source.entity, to_entity=target.entity, edge_type="WEB_EDGE3")
         edge._initial_dimensions = {"env": "staging"}
         edge.save()
-        assert edge.entity.dimensions == {"tap.graph": "web", "env": "staging"}
+        assert view(edge.entity.dimensions) == {"tap.graph": "web", "env": "staging"}
 
     def test_duplicate_registration_raises(self):
         """Registering default_dimensions twice for the same edge type raises ImproperlyConfigured."""
@@ -195,7 +196,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success, result.errors or [r.errors for r in result.results]
 
         entity = Entity.objects.get(pk=uuid.UUID(entity_id))
-        assert entity.dimensions == {"tap.meta": "dimension", "tap.env": "genericom-prod"}
+        assert view(entity.dimensions) == {"tap.meta": "dimension", "tap.env": "genericom-prod"}
 
     def test_node_prespecified_id_envelope_overrides_default(self):
         """Envelope key wins when it collides with a DEFAULT_DIMENSIONS key (dc-5)."""
@@ -213,7 +214,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(entity_id))
-        assert entity.dimensions == {"tap.meta": "custom-override"}
+        assert view(entity.dimensions) == {"tap.meta": "custom-override"}
 
     def test_node_prespecified_id_no_envelope_dims_uses_defaults(self):
         """Without envelope dimensions, prespecified-id path applies only DEFAULT_DIMENSIONS (dc-5)."""
@@ -230,7 +231,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(entity_id))
-        assert entity.dimensions == {"tap.meta": "dimension"}
+        assert view(entity.dimensions) == {"tap.meta": "dimension"}
 
     def test_edge_prespecified_id_merges_edge_defaults_with_envelope(self):
         """Edge create with prespecified id merges edge default_dimensions + op.dimensions (dc-5)."""
@@ -254,7 +255,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success, result.errors or [r.errors for r in result.results]
 
         entity = Entity.objects.get(pk=uuid.UUID(edge_entity_id))
-        assert entity.dimensions == {"tap.cloud": "aws", "tap.env": "genericom-prod"}
+        assert view(entity.dimensions) == {"tap.cloud": "aws", "tap.env": "genericom-prod"}
 
     def test_edge_prespecified_id_envelope_overrides_edge_default(self):
         """Envelope edge dimension wins over edge-type default_dimensions (dc-5)."""
@@ -278,7 +279,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(edge_entity_id))
-        assert entity.dimensions == {"tap.cloud": "onprem"}
+        assert view(entity.dimensions) == {"tap.cloud": "onprem"}
 
     def test_edge_prespecified_id_no_envelope_dims_uses_edge_defaults(self):
         """Without envelope dimensions, edge prespecified-id path applies only edge defaults (dc-5)."""
@@ -301,7 +302,7 @@ class TestPrespecifiedIdDimensionMerge:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(edge_entity_id))
-        assert entity.dimensions == {"tap.cloud": "aws"}
+        assert view(entity.dimensions) == {"tap.cloud": "aws"}
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +322,7 @@ class TestDimensionNode:
     def test_dimension_nodes_self_tagged(self):
         """Dimension nodes get tap.meta=dimension on their backing Entity (dn-2)."""
         dim = Dimension.objects.create(name="data", description="Core data dimension")
-        assert dim.entity.dimensions == {"tap.meta": "dimension"}
+        assert view(dim.entity.dimensions) == {"tap.meta": "dimension"}
 
     def test_dimension_carries_name_and_description(self):
         """Dimension model has name and description fields (dn-3)."""

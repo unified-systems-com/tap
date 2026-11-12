@@ -58,7 +58,7 @@ class WriteOperation:
     to_target: str | uuid.UUID | None = None
     edge_type: str | None = None
     entity_id: str | uuid.UUID | None = None
-    dimensions: dict[str, str] | None = None
+    dimensions: dict[str, Any] | None = None
     entity_expected_version: int | None = None
     reason: str | None = None
     metadata: dict[str, Any] | None = None

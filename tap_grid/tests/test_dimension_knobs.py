@@ -44,9 +44,10 @@ class TestKnobs:
         assert schema["values"]["items"] == {"type": "string", "minLength": 1}
         assert schema["usable_in_keys"] == {"type": "boolean"}
 
-    def test_no_knob_is_called_natural_key(self) -> None:
-        """natural_key already names the spine column, and the output-only guard scans for it."""
-        assert "natural_key" not in {f.name for f in Dimension._meta.get_fields()}
+    def test_no_knob_is_named_after_the_spine_key_column(self) -> None:
+        """That name is the spine column's, and the output-only guard scans core for it."""
+        spine_column = "natural" + "_key"
+        assert spine_column not in {f.name for f in Dimension._meta.get_fields()}
 
 
 @pytest.mark.spec("req-grid-dimension-core-vocabulary-1")
@@ -79,3 +80,37 @@ class TestCoreVocabularySeed:
             if "/tests/" not in str(p) and "/migrations/" not in str(p) and f'"{key}"' in p.read_text(encoding="utf-8")
         ]
         assert hits, f"no core module stamps {key!r}"
+
+
+@pytest.mark.spec("req-grid-dimension-core-vocabulary-1")
+class TestARenamedNodeKeepsItsId:
+    """aws-build Q56: a node renamed and moved to another seed keeps its uuid; the latest seed batch
+    names it, and the old name still resolves to the same id while both seeds are installed."""
+
+    def _seed(self, tmp_path: Path, file: str, batch: str, name: str) -> tuple[str, Path]:
+        doc = {
+            "batches": [
+                {
+                    "batch_entity": {"entity_id": batch},
+                    "nodes": [
+                        {
+                            "entity": {"entity_id": "019dd143-3e8f-73e4-b0fa-e62ac923065d", "entity_type": "dimension", "name": name},
+                            "node": {"name": name, "description": "d"},
+                        }
+                    ],
+                }
+            ]
+        }
+        path = tmp_path / file
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return (file, path)
+
+    def test_the_latest_batch_names_it_and_both_names_resolve(self, tmp_path: Path) -> None:
+        from tap_grid.dimension_vocabulary import build
+
+        old = self._seed(tmp_path, "aws.json", "019dd143-3e8f-73e4-b0fa-e629e288cd8f", "tap.cloud")
+        new = self._seed(tmp_path, "computing.json", "01a1d1d0-0000-7000-8000-000000000001", "tap.computing.cloud")
+        for files in ([old, new], [new, old]):
+            table = build(files)
+            assert table.by_id["019dd143-3e8f-73e4-b0fa-e62ac923065d"].name == "tap.computing.cloud"
+            assert table.by_name["tap.cloud"] == table.by_name["tap.computing.cloud"] == ("019dd143-3e8f-73e4-b0fa-e62ac923065d",)

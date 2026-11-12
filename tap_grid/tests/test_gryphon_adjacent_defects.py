@@ -170,4 +170,7 @@ def test_the_key_is_a_bound_parameter_not_sql_text(label):
     assert statements
     for st in statements:
         assert "tap__cloud" not in st.sql, st.sql
-        assert "tap__cloud" in repr(st.params), st.params
+        # The name compiles to its declared node's id, bound as a parameter (req-grid-dimension-names).
+        from tap_grid.dimension_names import storage_key
+
+        assert storage_key("tap__cloud") in repr(st.params), st.params

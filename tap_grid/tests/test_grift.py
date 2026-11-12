@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from tap_grid.dimension_names import view
 from tap_grid.grift import (
     grift_import,
 )
@@ -672,7 +673,7 @@ class TestGriftEnvelopeDimensions:
         assert result.success, result.issues
 
         entity = Entity.objects.get(pk=uuid.UUID(node_id))
-        assert entity.dimensions == {"tap.meta": "dimension", "tap.env": "genericom-prod"}
+        assert view(entity.dimensions) == {"tap.meta": "dimension", "tap.env": "genericom-prod"}
 
     def test_envelope_dims_override_model_defaults(self):
         """Envelope key wins over colliding DEFAULT_DIMENSIONS key."""
@@ -690,7 +691,7 @@ class TestGriftEnvelopeDimensions:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(node_id))
-        assert entity.dimensions == {"tap.meta": "overridden"}
+        assert view(entity.dimensions) == {"tap.meta": "overridden"}
 
     def test_empty_envelope_dims_leaves_only_model_defaults(self):
         """Empty envelope dimensions still applies DEFAULT_DIMENSIONS."""
@@ -701,7 +702,7 @@ class TestGriftEnvelopeDimensions:
         assert result.success
 
         entity = Entity.objects.get(pk=uuid.UUID(node_id))
-        assert entity.dimensions == {"tap.meta": "dimension"}
+        assert view(entity.dimensions) == {"tap.meta": "dimension"}
 
 
 # ---------------------------------------------------------------------------

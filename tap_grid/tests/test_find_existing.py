@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
+from tap_grid.dimension_names import view
 from tap_grid.models import BaseModel, Batch, natural_key_index_name
 from tap_grid.natural_key import KEYLESS, AmbiguousIdentity, Keyless
 from tap_grid.service_types import WriteOperation
@@ -86,7 +87,7 @@ class TestFindExisting:
         written = write_batch([op])
         assert written.success, written.errors
         made = Panel.objects.get(entity_id=written.results[0].entity_id)
-        assert made.entity.dimensions == {**Panel.DEFAULT_DIMENSIONS, **dimensions}
+        assert view(made.entity.dimensions) == {**Panel.DEFAULT_DIMENSIONS, **dimensions}
         assert made.entity.dimensions != Panel.DEFAULT_DIMENSIONS
 
         found = Panel.find_existing(slug="moved-perspective")

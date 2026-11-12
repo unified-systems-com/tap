@@ -1747,9 +1747,17 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
 
     # The query names the dimension; storage may key it otherwise. One resolver maps the two
     # (req-grid-dimension-names), at compile time, so the storage flip changes no query text.
-    from tap_grid.dimension_names import storage_key
+    # An ambiguous name is refused, naming every node (aws-build Q48c). An undeclared name compiles
+    # to itself: no stored map holds a name key, so it matches nothing, as an absent key always has
+    # (req-grid-dimension-query-form).
+    from tap_grid.dimension_names import AmbiguousDimension, UnknownDimension, storage_key
 
-    return storage_key(names[0])
+    try:
+        return storage_key(names[0])
+    except AmbiguousDimension as error:
+        raise SearchExecutionError(f"{context}: {error}") from error
+    except UnknownDimension:
+        return names[0]
 
 
 class _LiteralKeyPath(str):
@@ -1774,15 +1782,24 @@ class _LiteralKeyPath(str):
         self.key = key
         return self
 
+    def expression(self) -> Any:
+        """`<column> -> <key>`, and on `dimensions` one level further to the value: a stored entry is
+        `{"v": ..., "src": ...}` (req-grid-dimension-reference), and a query compares the value."""
+        from django.db.models import F
+        from django.db.models.fields.json import KeyTransform
+
+        ref = KeyTransform(self.key, F(self.column))
+        if self.column.split("__")[-1] == "dimensions":
+            ref = KeyTransform("v", ref)
+        return ref
+
 
 def _path_ref(path: str) -> Any:
     """A Django expression for a resolved ORM path (`F(path)`, or `KeyTransform` for a literal key)."""
     from django.db.models import F
 
     if isinstance(path, _LiteralKeyPath):
-        from django.db.models.fields.json import KeyTransform
-
-        return KeyTransform(path.key, F(path.column))
+        return path.expression()
     return F(path)
 
 
@@ -1828,10 +1845,7 @@ class _KeyLookup(Expression):
         summarize: bool = False,
         for_save: bool = False,
     ) -> Any:
-        from django.db.models import F
-        from django.db.models.fields.json import KeyTransform
-
-        lhs = KeyTransform(self.key, F(self.column)).resolve_expression(query, allow_joins, reuse, summarize)
+        lhs = _LiteralKeyPath(self.column, self.key).expression().resolve_expression(query, allow_joins, reuse, summarize)
         return query.build_lookup([self.lookup], lhs, self.value)
 
 

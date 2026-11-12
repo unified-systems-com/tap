@@ -342,6 +342,9 @@ class CollectorBase(ABC):
         result = grift_import(  # TAP-AUTHZ-COV: grift_import self-authorizes grid.import_grift; runs as bound tap_cares.collector
             document,
             dangling_edge_mode=dangling_edge_mode,  # type: ignore[arg-type]
+            # The in-process collector runner is the one writer trusted to stamp src: derived
+            # (req-grid-dimension-reference-6; aws-build Q54 D3).
+            trusted_derivation=True,
         )
 
         self._produced_batches.extend((str(b.batch_entity_id), "imported") for b in result.imported_batches)

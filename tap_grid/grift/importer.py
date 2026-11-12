@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/9da071833305 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/270bdc7d4b66 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -11,6 +11,7 @@ Public API:
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import math
@@ -277,6 +278,20 @@ _NODE_REQUIRED = frozenset(["entity", "node"])
 _NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
 _EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
+# Whether this import runs under an in-process collector run that may stamp `src: derived`
+# (req-grid-dimension-reference-6; George 2026-11-12, aws-build Q54 D3). Set only by grift_import's
+# `trusted_derivation` argument, which only the collector runner passes; never from the document,
+# the HTTP API or a portable import, where a derived value is reset to declared.
+_TRUSTED_DERIVATION: contextvars.ContextVar[bool] = contextvars.ContextVar("grift_trusted_derivation", default=False)
+
+
+def _settled_dimensions(raw: Any) -> Any:
+    """An envelope's dimensions in stored shape, provenance settled under this import's trust."""
+    from tap_grid.dimension_map import supplied
+
+    return supplied(raw or {}, trusted=_TRUSTED_DERIVATION.get())
+
+
 _ENVELOPE_REQUIRED = frozenset(["entity_id", "entity_type", "dimensions"])
 # `entity_expected_version` is the optional OCC declaration on upsert
 # envelopes (req-grift-concurrency-version). The importer parses and
@@ -649,18 +664,25 @@ def _validate_envelope(
                 )
             )
         else:
-            for k, v in dims.items():
-                if not isinstance(k, str) or not isinstance(v, str):
-                    issues.append(
-                        _issue(
-                            "schema_validation_failed",
-                            f"dimensions must be string-to-string at {path}.dimensions",
-                            "schema",
-                            f"{path}.dimensions",
-                            batch_entity_id=batch_entity_id,
-                        )
+            # Keys are dimension names or node ids; a value is a string or {"v": <string>, "src": ...}
+            # (req-grid-dimension-reference-6). The provenance and vocabulary rules are the writer's
+            # (tap_grid.dimension_map): src "default" is refused, src "derived" survives only under a
+            # trusted collector run, and an undeclared dimension or a value outside a bounded one is
+            # refused here, before any write.
+            from tap_grid.dimension_map import DimensionWriteError, supplied
+
+            try:
+                supplied(dims, trusted=_TRUSTED_DERIVATION.get(), where=f"{path}.dimensions")
+            except (DimensionWriteError, LookupError) as error:
+                issues.append(
+                    _issue(
+                        "schema_validation_failed",
+                        str(error),
+                        "schema",
+                        f"{path}.dimensions",
+                        batch_entity_id=batch_entity_id,
                     )
-                    break
+                )
 
     if "name" in envelope and envelope["name"] is not None:
         if not isinstance(envelope["name"], str) or not envelope["name"]:
@@ -2888,7 +2910,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/a8591b861a7a (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/cac5f007ccd4 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3112,7 +3134,7 @@ def _execute_grift_batch(
                 node_entity_id = node_obj["entity"]["entity_id"]
                 entity_type = node_obj["entity"]["entity_type"]
                 envelope_name = node_obj["entity"].get("name")
-                envelope_dims = node_obj["entity"].get("dimensions") or {}
+                envelope_dims = _settled_dimensions(node_obj["entity"].get("dimensions"))
                 envelope_expected_version = node_obj["entity"].get("entity_expected_version")
                 payload = node_obj["node"]
                 node_path = f"{batch_path}.nodes[{node_idx}]"
@@ -3192,7 +3214,7 @@ def _execute_grift_batch(
             for edge_idx, edge_obj in enumerate(batch_container.get("edges", [])):
                 edge_entity_id = edge_obj["entity"]["entity_id"]
                 edge = edge_obj["edge"]
-                envelope_dims = edge_obj["entity"].get("dimensions") or {}
+                envelope_dims = _settled_dimensions(edge_obj["entity"].get("dimensions"))
                 envelope_expected_version = edge_obj["entity"].get("entity_expected_version")
                 edge_path = f"{batch_path}.edges[{edge_idx}]"
 
@@ -4844,6 +4866,9 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
         entity_uuid = uuid.UUID(intent["entity_id"])
         envelope_name = intent.get("envelope_name")
         envelope_dims = intent.get("envelope_dims") or {}
+        # The envelope is authoritative for the map on a replace, an empty one included: {} clears it
+        # (Issue# 608 - tap; aws-build Q46b; req-grid-dimension-reference-7). Defaults are a create's.
+        stored_dims = envelope_dims
 
         # Read the persisted spine values to decide whether anything needs to
         # change. A no-op update should not bump updated_at.
@@ -4855,8 +4880,8 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
         update_fields: dict[str, Any] = {}
         if envelope_name is not None and envelope_name != persisted["name"]:
             update_fields["name"] = envelope_name
-        if envelope_dims and envelope_dims != (persisted["dimensions"] or {}):
-            update_fields["dimensions"] = envelope_dims
+        if stored_dims != (persisted["dimensions"] or {}):
+            update_fields["dimensions"] = dict(stored_dims)
 
         if update_fields:
             update_fields["updated_at"] = now
@@ -5197,8 +5222,13 @@ def grift_import(
     force_batches: list[str] | set[str] | None = None,
     sweep_strict: bool = False,
     purge: bool = False,
+    trusted_derivation: bool = False,
 ) -> GriftImportResult:
     """Authorize, then import a GRIFT v0 document (req-tap-auth-service-boundary).
+
+    ``trusted_derivation`` lets the document's dimension values keep ``src: derived``. Only the
+    in-process collector runner passes it (req-grid-dimension-reference-6); every other import resets a
+    derived value to declared.
 
     GRIFT import requires `grid.import_grift`; a force-reimport `purge`
     additionally requires `grid.purge` (and DEBUG, enforced downstream). `actor`
@@ -5218,15 +5248,19 @@ def grift_import(
     with authorized(_auth_ctx, IMPORT_GRIFT_CAPABILITY, operation="grift_import"):
         if purge:
             policy.authorize(_auth_ctx, PURGE_CAPABILITY, operation="grift_import_purge")
-        return _grift_import_impl(
-            document,
-            dangling_edge_mode=dangling_edge_mode,
-            actor=actor,
-            force_batches=force_batches,
-            sweep_strict=sweep_strict,
-            purge=purge,
-            read_boundary=_producing_run_opened(_active),
-        )
+        token = _TRUSTED_DERIVATION.set(bool(trusted_derivation))
+        try:
+            return _grift_import_impl(
+                document,
+                dangling_edge_mode=dangling_edge_mode,
+                actor=actor,
+                force_batches=force_batches,
+                sweep_strict=sweep_strict,
+                purge=purge,
+                read_boundary=_producing_run_opened(_active),
+            )
+        finally:
+            _TRUSTED_DERIVATION.reset(token)
 
 
 def _producing_run_opened(active: Any) -> datetime | None:

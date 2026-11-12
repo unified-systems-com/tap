@@ -74,7 +74,6 @@
         "req-grid-entity-spine-1",
         "req-grid-import-grift-provenance-1"
       ],
-      "pending": "unified-systems-com/tap#608",
       "grid": {
         "nodes": [
           {

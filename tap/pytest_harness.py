@@ -250,6 +250,30 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         stack.close()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _test_dimension_vocabulary() -> Iterator[None]:
+    """Declare the dimension keys the test suites write (req-grid-dimension-reference-8).
+
+    Dimensions are declared, never minted, so a test writing `{"zone": "north"}` needs `zone` declared.
+    The installed seeds come first; the test seed adds only names no installed seed declares, so a
+    real declaration is never shadowed or made ambiguous.
+    """
+    from tap_grid import dimension_vocabulary as vocab
+
+    real = vocab.build()
+    extra = vocab.build([("tests", Path(__file__).resolve().parent.parent / "tap_grid" / "tests" / "data" / "test_dimensions.grift.json")])
+    by_id = dict(real.by_id)
+    by_name = dict(real.by_name)
+    for name, ids in extra.by_name.items():
+        if name not in by_name:
+            by_name[name] = ids
+            for ident in ids:
+                by_id[ident] = extra.by_id[ident]
+    vocab.reset(vocab.Vocabulary(by_id=by_id, by_name=by_name))
+    yield
+    vocab.reset()
+
+
 @pytest.fixture(autouse=True)
 def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerContext]:
     """Bind a CallerContext for the duration of each test.

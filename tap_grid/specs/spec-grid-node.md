@@ -291,6 +291,13 @@ Observed-empty is a **container-type** state, not a universal one. Container-lik
 
 Phase 1 reads `null` as **unobserved**. It does *not* try to express Codd's *not-applicable* in the column — that distinction is deferred to Phase 2 and represented out-of-band (below), never by a second column value or an in-band sentinel. We do not adopt Codd's two-mark four-valued logic; we keep one `NULL` and recover the lost axes (responsibility now, applicability in Phase 2) through FLIP. **No shadow columns.**
 
+**The dimensions map (unified-systems-com/tap#714).** The same three states hold per key of
+`Entity.dimensions`: a missing key is unobserved (unasserted), a key whose `v` is `""` is observed
+empty, and a key with a value is observed. `null` is never stored for a key: a patch that sets a key
+to null removes it. On a replace the envelope is authoritative and `{}` clears the map. Each stored
+value also records how it got there (`src`). The write rules are `req-grid-dimension-reference-7` in
+`spec-grid-dimension.md`.
+
 #### Declared Absence Semantics (`x-tap-absence`)
 
 The meaning of a field's absence is **declared in the field's `FIELD_CRUD_SCHEMA` entry**, not in a code comment. Because `_build_service_schemas` copies each field's schema dict wholesale into the published `SERVICE_CRUD_SCHEMA` (create/patch/replace), the annotation is automatically available to every consumer of the registry-backed schema surface — external readers and writers, the API, and schema-driven tooling — with no extra plumbing. It is a non-validating *annotation* keyword (JSON Schema treats unknown keywords as annotations, not assertions; the `x-` prefix follows the OpenAPI extension convention), so stock validators pass it through untouched while semantic consumers read it. (Publication makes the semantics *discoverable*; acting on them in queries — Gryphon's `IS UNOBSERVED`-style predicates — is a separate, Future concern.)

@@ -53,8 +53,20 @@
         },
         "dimensions": {
           "type": "object",
+          "description": "Keys are dimension names or Dimension node ids (declared only; nothing is minted). A value is a string, stored with src declared, or {\"v\": <string>, \"src\": declared|derived}. src default is refused (the grid stamps it from a type's declared defaults); src derived is kept only under a trusted collector run and reset to declared otherwise. On a replace the map is authoritative and {} clears it. See req-grid-dimension-reference-6.",
           "additionalProperties": {
-            "type": "string"
+            "oneOf": [
+              {"type": "string"},
+              {
+                "type": "object",
+                "required": ["v"],
+                "additionalProperties": false,
+                "properties": {
+                  "v": {"type": "string"},
+                  "src": {"type": "string", "enum": ["declared", "derived", "default"]}
+                }
+              }
+            ]
           }
         },
         "created_at": {

@@ -1319,13 +1319,16 @@ class BaseModel(models.Model):
 
         if self.entity_id is None:
             with transaction.atomic():
+                # Defaults stamped src: default, the caller's values over them (req-grid-dimension-reference-3).
+                from tap_grid.dimension_map import stamp
+
                 base_dims = dict(getattr(self.__class__, "DEFAULT_DIMENSIONS", {}))
-                caller_dims: dict[str, str] = getattr(self, "_initial_dimensions", {})
+                caller_dims: Any = getattr(self, "_initial_dimensions", {})
                 self.entity = Entity.objects.create(
                     entity_type=entity_type,
                     name=self.get_name(),
                     natural_key=natural_key,
-                    dimensions={**base_dims, **caller_dims},
+                    dimensions=stamp(base_dims, caller_dims, where=f"{entity_type} dimensions"),
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1465,9 +1468,11 @@ class Edge(BaseModel):
             # Apply edge type's own default dimensions (req-grid-dimension-dc-4)
             from tap_grid.constraints import get_edge_default_dimensions
 
+            from tap_grid.dimension_map import stamp
+
             edge_defaults = get_edge_default_dimensions(self.edge_type)
-            caller_dims: dict[str, str] = getattr(self, "_initial_dimensions", {})
-            merged = {**edge_defaults, **caller_dims}
+            caller_dims: Any = getattr(self, "_initial_dimensions", {})
+            merged = stamp(edge_defaults, caller_dims, where=f"{self.edge_type} dimensions")
             if merged:
                 self._initial_dimensions = merged
 

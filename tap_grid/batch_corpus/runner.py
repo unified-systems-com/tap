@@ -332,8 +332,12 @@ def _check_row(scenario: Scenario, built: Built, name: str, row: model_oracle.Ro
     entity = Entity.objects.get(pk=eid)
     if row.spine_name is not None and entity.name != row.spine_name:
         failures.append(f"{name} spine name {entity.name!r}, expected {row.spine_name!r}")
-    if row.dims is not None and (entity.dimensions or {}) != row.dims:
-        failures.append(f"{name} dimensions {entity.dimensions!r}, expected {row.dims!r}")
+    # The oracle speaks names and values; storage keys by dimension node id with provenance, so
+    # compare through the one name-keyed view (req-grid-dimension-names).
+    from tap_grid.dimension_names import view
+
+    if row.dims is not None and view(entity.dimensions) != row.dims:
+        failures.append(f"{name} dimensions {view(entity.dimensions)!r}, expected {row.dims!r}")
     if row.kind == "edge" and row.ends is not None:
         edge = cast(Edge | None, Edge.all_objects.filter(entity_id=eid).first())
         want_ends = (built.ids.get(row.ends[0]), built.ids.get(row.ends[1]))
