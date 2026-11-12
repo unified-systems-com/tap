@@ -104,17 +104,16 @@ def _rows_sql(connection: Any, model: Any, *, limit: int | None = None) -> str:
     quote = connection.ops.quote_name
     selected = "".join(f", t.{quote(model._meta.get_field(c).column)}" for c in declared_columns(model))
     sql = (
-        f"SELECT e.id, e.natural_key{selected} FROM {quote(model._meta.db_table)} t "  # noqa: S608 - names from model metadata
+        f"SELECT e.id, e.natural_key{selected} FROM {quote(model._meta.db_table)} t "  # noqa: S608  # nosec B608 - quoted names from model metadata, no values
         f"JOIN {quote('tap_entity')} e ON e.id = t.{quote('entity_id')}"
     )
     return sql if limit is None else f"{sql} ORDER BY random() LIMIT {int(limit)}"
 
 
 def _record(connection: Any, entity_type: str, fingerprint: str) -> None:
-    quote = connection.ops.quote_name
     with connection.cursor() as cursor:
         cursor.execute(
-            f"INSERT INTO {quote('tap_natural_key_recipe')} (entity_type, fingerprint, synced_at) "  # noqa: S608
+            "INSERT INTO tap_natural_key_recipe (entity_type, fingerprint, synced_at) "
             "VALUES (%s, %s, now()) ON CONFLICT (entity_type) "
             "DO UPDATE SET fingerprint = EXCLUDED.fingerprint, synced_at = EXCLUDED.synced_at",
             [entity_type, fingerprint],
@@ -145,12 +144,11 @@ def sync(
     from django.db import connections
 
     connection = connections[using]
-    quote = connection.ops.quote_name
     report = SyncReport()
     with connection.cursor() as probe:
         tables = set(connection.introspection.table_names(probe))
     recorded = _recorded(connection, tables)
-    set_spine = f"UPDATE {quote('tap_entity')} SET {quote('natural_key')} = %s WHERE id = %s"  # noqa: S608
+    set_spine = "UPDATE tap_entity SET natural_key = %s WHERE id = %s"
     for model in _registered_models(entity_types):
         entity_type = model.ENTITY_TYPE
         fingerprint = recipe_fingerprint(model)

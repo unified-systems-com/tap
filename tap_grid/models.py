@@ -1088,6 +1088,24 @@ class BaseModel(models.Model):
         }
         return row_natural_key(type(self), row)
 
+    def _stored_natural_key(self, update_fields: Iterable[str]) -> str | None:
+        """The natural key after a partial save: constituting values the save wrote come from this
+        instance, the ones it left out are read back from the row, which still holds them."""
+        from tap_grid.natural_key import declared_columns, row_natural_key
+
+        meta = self._meta
+        saved = set(update_fields)
+        attnames = {column: getattr(meta.get_field(column), "attname", column) for column in declared_columns(type(self))}
+        unsaved = [attname for column, attname in attnames.items() if column not in saved and attname not in saved]
+        stored = type(self)._base_manager.filter(pk=self.pk).values(*unsaved).first() if unsaved else {}
+        if stored is None:
+            return None
+        row = {
+            column: stored[attname] if attname in unsaved else getattr(self, attname)
+            for column, attname in attnames.items()
+        }
+        return row_natural_key(type(self), row)
+
     def get_name(self) -> str:
         """Return the name for the auto-created Entity.
 
@@ -1303,8 +1321,11 @@ class BaseModel(models.Model):
             if self.entity.name != new_name:
                 spine_updates["name"] = new_name
             # The spine natural key (req-grid-entity-natural-key-19), in this same statement,
-            # written only when it changed.
+            # written only when it changed. A partial save stores only its update_fields, so the key
+            # is derived from what the row now holds, not from unsaved in-memory values.
             new_key = natural_key
+            if kwargs.get("update_fields") is not None:
+                new_key = self._stored_natural_key(kwargs["update_fields"])
             if self.entity.natural_key != new_key:
                 spine_updates["natural_key"] = new_key
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)

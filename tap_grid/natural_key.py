@@ -424,7 +424,7 @@ def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str
         from tap_grid.registry import get_model_class
 
         model = get_model_class(entity_type)
-    except KeyError, ImportError:
+    except (KeyError, ImportError):
         model = None
     # A function of the values, not of the mapping's order: the type's declared order when the
     # entries are its declaration (what constituting_properties returns), else sorted by name.
@@ -477,7 +477,7 @@ def recipe_fingerprint(model: Any) -> str:
     recipe = json.dumps(
         {
             "entity_type": model.ENTITY_TYPE,
-            "declared": list(declared) if isinstance(declared, tuple) else repr(declared),
+            "declared": list(declared) if isinstance(declared, tuple) else ("KEYLESS" if declared is KEYLESS else "None"),
             "composition": [COMPOSITION_VERSION, KEY_SEPARATOR, KEY_ESCAPE],
         },
         sort_keys=True,

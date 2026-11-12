@@ -215,6 +215,27 @@ class TestTheWritePaths:
         assert batch is not None
         assert batch.entity.natural_key is None
 
+    def test_a_partial_save_keys_on_what_the_row_holds(self) -> None:
+        """update_fields leaves the slug unsaved, so the spine key stays the stored slug."""
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("partly-saved")
+        panel.slug = "never-written"
+        panel.name = "renamed"
+        with unguarded_write():
+            panel.save(update_fields=["name"])
+        assert Panel.objects.get(entity_id=panel.entity_id).slug == "partly-saved"
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "partly-saved"
+
+    def test_a_partial_save_of_a_constituting_column_re_derives(self) -> None:
+        from tap_grid.write_guard import unguarded_write
+
+        panel = _panel("before-partial")
+        panel.slug = "after-partial"
+        with unguarded_write():
+            panel.save(update_fields=["slug"])
+        assert Entity.objects.get(pk=panel.entity_id).natural_key == "after-partial"
+
     def test_a_queryset_update_of_a_constituting_column_re_derives(self) -> None:
         """The filter matches on the very column being changed, so the rows are named first."""
         from tap_grid.write_guard import unguarded_write
