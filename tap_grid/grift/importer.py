@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/b9e658bf4ba1 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/752b6a2d678a (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -12,7 +12,6 @@ Public API:
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import json
 import logging
 import math
@@ -280,14 +279,11 @@ _NODE_REQUIRED = frozenset(["entity", "node"])
 _NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
 _EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
-# Whether this import runs under an in-process collector run that may stamp `src: derived`
-# (req-grid-dimension-reference-6; George 2026-11-12, aws-build Q54 D3). Set only inside
-# `collector_derivation_scope()`, which only the collector runner enters (a source-scan guard pins
-# that); never from the document, the HTTP API or a portable import, where a derived value is reset
-# to declared.
-_TRUSTED_DERIVATION: contextvars.ContextVar[bool] = contextvars.ContextVar("grift_trusted_derivation", default=False)
 
 
+# A document's `src: derived` dimension values survive only inside this scope (req-grid-dimension-
+# reference-6; George 2026-11-12, aws-build Q54 D3); never from the document itself, the HTTP API
+# or a portable import, where a derived value is reset to declared.
 @contextlib.contextmanager
 def collector_derivation_scope() -> Iterator[None]:
     """Imports inside this block may keep a document's `src: derived` dimension values.
@@ -296,11 +292,13 @@ def collector_derivation_scope() -> Iterator[None]:
     cannot appear unnoticed (`tap_grid/tests/test_dimension_migration.py::TestTheTrustHatchHasOneCaller`).
     Entered only by `tap_cares.collectors.base` around a collector run's import.
     """
-    token = _TRUSTED_DERIVATION.set(True)
+    from tap_grid.dimension_map import _DERIVATION_TRUSTED
+
+    token = _DERIVATION_TRUSTED.set(True)
     try:
         yield
     finally:
-        _TRUSTED_DERIVATION.reset(token)
+        _DERIVATION_TRUSTED.reset(token)
 
 
 def _without_default_entries(raw: Any) -> Any:
@@ -315,7 +313,7 @@ def _settled_dimensions(raw: Any) -> Any:
     """An envelope's dimensions in stored shape, provenance settled under this import's trust."""
     from tap_grid.dimension_map import supplied
 
-    return supplied(_without_default_entries(raw or {}), trusted=_TRUSTED_DERIVATION.get())
+    return supplied(_without_default_entries(raw or {}))
 
 
 _ENVELOPE_REQUIRED = frozenset(["entity_id", "entity_type", "dimensions"])
@@ -698,7 +696,7 @@ def _validate_envelope(
             from tap_grid.dimension_map import DimensionWriteError, supplied
 
             try:
-                supplied(_without_default_entries(dims), trusted=_TRUSTED_DERIVATION.get(), where=f"{path}.dimensions")
+                supplied(_without_default_entries(dims), where=f"{path}.dimensions")
             except (DimensionWriteError, LookupError) as error:
                 issues.append(
                     _issue(

@@ -50,6 +50,12 @@ class DeclaredDimension:
         return self.values is None or value in self.values
 
 
+class InvalidDimensionKnob(RuntimeError):
+    """A seed declares a knob with the wrong type (PR# 1196 - tap review). Seeds are the source of
+    truth for write-time enforcement, so a malformed knob fails the table's build rather than reading
+    as "open" or "true" and weakening what writes enforce."""
+
+
 class DuplicateDimensionName(RuntimeError):
     """Two seed declarations give one dimension name to different node ids (PR# 1196 - tap review):
     every name must mean one dimension, or a name-keyed view and a name lookup silently pick one."""
@@ -88,13 +94,25 @@ def _declared(node: dict[str, Any], source: str) -> DeclaredDimension | None:
         logger.warning("[d1c5] dimension seed %s: node %s has no name; skipped", source, ident)
         return None
     values = payload.get("values")
+    if values is not None and not (
+        isinstance(values, list) and all(isinstance(v, str) and v for v in values) and len(set(values)) == len(values)
+    ):
+        raise InvalidDimensionKnob(
+            f"dimension seed {source}: {name!r} knob 'values' must be a list of unique non-empty strings or null, got {values!r}"
+        )
+    flags: dict[str, bool] = {}
+    for knob in ("usable_in_keys", "empty_is_meaningful"):
+        raw = payload.get(knob, False)
+        if not isinstance(raw, bool):
+            raise InvalidDimensionKnob(f"dimension seed {source}: {name!r} knob {knob!r} must be true or false, got {raw!r}")
+        flags[knob] = raw
     return DeclaredDimension(
         id=ident,
         name=name,
-        values=tuple(values) if isinstance(values, list) else None,
-        usable_in_keys=bool(payload.get("usable_in_keys", False)),
+        values=tuple(values) if values is not None else None,
+        usable_in_keys=flags["usable_in_keys"],
         source=source,
-        empty_is_meaningful=bool(payload.get("empty_is_meaningful", False)),
+        empty_is_meaningful=flags["empty_is_meaningful"],
     )
 
 

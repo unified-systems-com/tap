@@ -60,10 +60,24 @@ class TestTheWire:
         with pytest.raises(DimensionWriteError, match="default"):
             supplied({"tap.test.open": {"v": "x", "src": "default"}})
 
-    def test_src_derived_is_reset_to_declared_unless_trusted(self) -> None:
+    def test_src_derived_is_reset_to_declared_outside_the_collector_scope(self) -> None:
+        from tap_grid.grift import collector_derivation_scope
+
         raw = {"tap.test.open": {"v": "x", "src": "derived"}}
         assert supplied(raw)[OPEN]["src"] == "declared"
-        assert supplied(raw, trusted=True)[OPEN]["src"] == "derived"
+        with collector_derivation_scope():
+            assert supplied(raw)[OPEN]["src"] == "derived"
+
+    def test_a_forged_stamped_map_is_re_judged(self) -> None:
+        """PR# 1196 - tap review: only a map this module sealed passes through unjudged."""
+        from tap_grid.dimension_map import StampedDimensions
+
+        forged_derived = StampedDimensions({OPEN: {"v": "x", "src": "derived"}})
+        assert supplied(forged_derived)[OPEN]["src"] == "declared"
+        with pytest.raises(DimensionWriteError, match="default"):
+            supplied(StampedDimensions({OPEN: {"v": "x", "src": "default"}}))
+        sealed = stamp({"tap.test.open": "x"}, None)
+        assert supplied(sealed) is sealed and sealed[OPEN]["src"] == "default"
 
     def test_a_value_object_holds_only_v_and_src(self) -> None:
         with pytest.raises(DimensionWriteError):

@@ -35,7 +35,9 @@ def forwards(apps: Any, schema_editor: Any) -> None:
     boot seeds only after migrate. `src` is `default` when the value equals what the row's type
     declares as its default for that key today, else `declared` (aws-build Q48b). A key no seed
     declares stops the migration before anything is rewritten, listing each such key and the types
-    carrying it (aws-build Q50a): dimensions are declared, never minted (Q48a).
+    carrying it (aws-build Q50a): dimensions are declared, never minted (Q48a). Two names of one
+    renamed dimension on one row merge when their values agree and stop the migration, naming the row,
+    when they differ.
 
     Upgrade order (aws-build Q59 D7): install and migrate the aws_core release that renames its keys
     (Q56) and computing_core's seed before this one, or this stops on the old names.
@@ -46,6 +48,7 @@ def forwards(apps: Any, schema_editor: Any) -> None:
     edge_types = dict(Edge.objects.using(alias).values_list("entity_id", "edge_type"))
 
     undeclared: dict[str, set[str]] = {}
+    collisions: list[str] = []
     rewrites: list[tuple[Any, dict[str, dict[str, str]]]] = []
     rows = Entity.objects.using(alias).exclude(dimensions={}).values_list("id", "entity_type", "dimensions")
     for entity_id, entity_type, dims in rows.iterator(chunk_size=2000):
@@ -63,10 +66,25 @@ def forwards(apps: Any, schema_editor: Any) -> None:
                 undeclared.setdefault(key, set()).add(edge_type or entity_type)
                 continue
             src = "default" if defaults.get(key) == value else "declared"
-            new[dim_id] = {"v": str(value), "src": src}
+            entry = {"v": str(value), "src": src}
+            if dim_id in new:
+                # Two legacy names for one renamed dimension (aws-build Q56) on one row: equal values
+                # are one fact, kept once (declared wins over default); differing values would lose one.
+                if new[dim_id]["v"] != entry["v"]:
+                    collisions.append(f"{entity_id}: {key!r} = {value!r} vs {new[dim_id]['v']!r}")
+                    continue
+                if entry["src"] == "declared":
+                    new[dim_id] = entry
+                continue
+            new[dim_id] = entry
         if new != dims:
             rewrites.append((entity_id, new))
 
+    if collisions:
+        raise RuntimeError(
+            "rows hold two names of one dimension with different values; reconcile them before migrating "
+            "(nothing is written): " + "; ".join(collisions)
+        )
     if undeclared:
         listed = "; ".join(f"{key!r} on {', '.join(sorted(types))}" for key, types in sorted(undeclared.items()))
         raise RuntimeError(

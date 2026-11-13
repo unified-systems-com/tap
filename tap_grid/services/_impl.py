@@ -759,8 +759,9 @@ def _execute_write_pipeline(
         # already settled under a trusted collector run passes through; any other is untrusted, so
         # a `src: derived` in it is reset to declared and `src: default` is refused.
         # Dimensions are set at create. A replace or patch verb never writes them (the importer's
-        # replace re-stamps a node's map itself), so a map handed to one is refused, not dropped.
-        if not is_create and op.dimensions:
+        # replace re-stamps a node's map itself), so any map handed to one, `{}` included, is refused,
+        # not dropped.
+        if not is_create and op.dimensions is not None:
             raise ServiceValidationError(
                 f"{op.verb} does not write dimensions; they are set when the entity is created"
             )

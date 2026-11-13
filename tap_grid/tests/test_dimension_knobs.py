@@ -133,3 +133,20 @@ class TestARenamedNodeKeepsItsId:
             build([first, ("b.json", other)])
         assert "019dd143-3e8f-73e4-b0fa-e62ac923065d" in str(raised.value)
         assert "01a1d1d0-0000-7000-8000-0000000000ee" in str(raised.value)
+
+    @pytest.mark.parametrize(
+        ("knob", "bad"),
+        [("values", "restricted"), ("values", ["ok", ""]), ("empty_is_meaningful", "false"), ("usable_in_keys", 1)],
+    )
+    def test_a_wrong_typed_knob_fails_the_build_naming_seed_dimension_and_knob(self, tmp_path: Path, knob: str, bad: Any) -> None:
+        """PR# 1196 - tap review: a malformed knob must not read as open or true."""
+        from tap_grid.dimension_vocabulary import InvalidDimensionKnob, build
+
+        source, path = self._seed(tmp_path, "bad.json", "01a1d1d0-0000-7000-8000-000000000009", "tap.test.badknob")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["batches"][0]["nodes"][0]["node"][knob] = bad
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        with pytest.raises(InvalidDimensionKnob) as raised:
+            build([(source, path)])
+        message = str(raised.value)
+        assert "bad.json" in message and "tap.test.badknob" in message and knob in message

@@ -63,6 +63,45 @@ class TestTheMigration:
             migration.backwards(apps, _editor())
         assert META in Entity.objects.get(pk=node.entity_id).dimensions
 
+    def _with_alias(self) -> Any:
+        """The real table plus a renamed dimension declared under its old and new name (Q56)."""
+        from tap_grid import dimension_vocabulary as vocab
+
+        saved = vocab.vocabulary()
+        ident = "01a1d150-3333-7000-8000-000000000001"
+        node = vocab.DeclaredDimension(ident, "tap.test.new-name", None, False, "test")
+        vocab.reset(
+            vocab.Vocabulary(
+                by_id={**saved.by_id, ident: node},
+                by_name={**saved.by_name, "tap.test.old-name": (ident,), "tap.test.new-name": (ident,)},
+            )
+        )
+        return saved, ident
+
+    def test_two_names_of_one_dimension_with_different_values_stop_it(self) -> None:
+        from tap_grid import dimension_vocabulary as vocab
+
+        saved, _ident = self._with_alias()
+        try:
+            node = Dimension.objects.create(name="tap.test.aliased")
+            _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "b"})
+            with pytest.raises(RuntimeError, match="two names of one dimension"):
+                migration.forwards(apps, _editor())
+        finally:
+            vocab.reset(saved)
+
+    def test_two_names_of_one_dimension_with_equal_values_merge(self) -> None:
+        from tap_grid import dimension_vocabulary as vocab
+
+        saved, ident = self._with_alias()
+        try:
+            node = Dimension.objects.create(name="tap.test.aliased-equal")
+            _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "a"})
+            migration.forwards(apps, _editor())
+            assert Entity.objects.get(pk=node.entity_id).dimensions[ident] == {"v": "a", "src": "declared"}
+        finally:
+            vocab.reset(saved)
+
     def test_backwards_restores_names_and_plain_values(self) -> None:
         node = Dimension.objects.create(name="tap.test.reversed")
         migration.backwards(apps, _editor())
@@ -202,14 +241,43 @@ class TestTheTrustHatchHasOneCaller:
     """In-process code is trusted by construction; this guard names the one writer allowed to keep
     `src: derived`, so a second one cannot appear unnoticed (PR# 1196 - tap review)."""
 
+    # Files that ENTER the scope (`with collector_derivation_scope(`); naming it in a docstring is not
+    # entering it.
     ALLOWED = {
-        "tap_grid/grift/importer.py",  # defines it
-        "tap_grid/grift/__init__.py",  # re-exports it
         "tap_cares/collectors/base.py",  # the collector runner, the one caller
         "tap_grid/tests/test_dimension_migration.py",  # these tests
+        "tap_grid/tests/test_dimension_map.py",  # the provenance tests
+    }
+    # The scope's flag and the seal that lets a settled map skip re-judging: only the module that
+    # owns them and the scope that sets the flag may name them (PR# 1196 - tap review, round 2).
+    PRIVATE_ALLOWED = {
+        "_DERIVATION_TRUSTED": {"tap_grid/dimension_map.py", "tap_grid/grift/importer.py"},
+        "_SEAL": {"tap_grid/dimension_map.py"},
     }
 
+    def test_only_the_owners_name_the_flag_and_the_seal(self) -> None:
+        import re
+        from pathlib import Path
+
+        import tap_grid
+
+        root = Path(tap_grid.__file__).resolve().parent.parent
+        for token, allowed in self.PRIVATE_ALLOWED.items():
+            pattern = re.compile(rf"\b{token}\b")
+            hits = set()
+            for app in ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap", "tap_auth"):
+                base = root / app
+                if not base.is_dir():
+                    continue
+                for path in base.rglob("*.py"):
+                    if "/tests/" in str(path):
+                        continue
+                    if pattern.search(path.read_text(encoding="utf-8")):
+                        hits.add(str(path.relative_to(root)))
+            assert hits <= allowed, f"{token} named outside its owners: {sorted(hits - allowed)}"
+
     def test_only_the_collector_runner_enters_the_scope(self) -> None:
+        import re
         from pathlib import Path
 
         import tap_grid
@@ -221,7 +289,7 @@ class TestTheTrustHatchHasOneCaller:
             if not base.is_dir():
                 continue
             for path in base.rglob("*.py"):
-                if "collector_derivation_scope" in path.read_text(encoding="utf-8"):
+                if re.search(r"with\s+(?:\w+\.)?collector_derivation_scope\(", path.read_text(encoding="utf-8")):
                     hits.add(str(path.relative_to(root)))
         extra = sorted(hits - self.ALLOWED)
         assert extra == [], f"only the collector runner may enter collector_derivation_scope; also found: {extra}"
@@ -257,6 +325,7 @@ class TestEveryWritePathSettlesItsMap:
 
         node = Dimension.objects.create(name="tap.test.replace-dims")
         for verb in ("replace_node", "patch_node"):
-            result = write_batch([WriteOperation(verb=verb, target=str(node.entity_id), payload={"name": "tap.test.replace-dims"}, dimensions={"tap.graph": "web"})])
-            assert not result.success, verb
-            assert any("does not write dimensions" in str(r) for r in result.results), (verb, result)
+            for dims in ({"tap.graph": "web"}, {}):  # {} too: on a replace it would mean "clear"
+                result = write_batch([WriteOperation(verb=verb, target=str(node.entity_id), payload={"name": "tap.test.replace-dims"}, dimensions=dims)])
+                assert not result.success, (verb, dims)
+                assert any("does not write dimensions" in str(r) for r in result.results), (verb, dims, result)

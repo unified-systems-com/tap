@@ -10,8 +10,8 @@ Every writer goes through :func:`stamp`, which is the whole provenance rule (#71
   static vocabulary (never minted, aws-build Q48a);
 - defaults are stamped ``src: default``, a caller's values ``src: declared``, and a caller value beats
   a default, including an empty one (#712);
-- ``src: default`` is never accepted from a caller (Q48d); ``src: derived`` only when the writer is a
-  trusted collector run (Q48e, Q54 D3), otherwise it is reset to ``declared``;
+- ``src: default`` is never accepted from a caller (Q48d); ``src: derived`` only inside
+  ``collector_derivation_scope()`` (Q48e, Q54 D3), otherwise it is reset to ``declared``;
 - a value outside a bounded dimension's ``values`` is refused (Q47), and so is an empty value unless
   the dimension declares ``empty_is_meaningful`` (Q46a, Q59 D5);
 - null is never stored (Q46a).
@@ -19,6 +19,7 @@ Every writer goes through :func:`stamp`, which is the whole provenance rule (#71
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Mapping
 from typing import Any
 
@@ -34,13 +35,32 @@ class DimensionWriteError(ValueError):
     """A dimension value a writer may not store."""
 
 
-class StampedDimensions(dict[str, dict[str, str]]):
-    """A map already in stored shape, with provenance settled by :func:`supplied`.
+# Whether the running write may keep `src: derived` (req-grid-dimension-reference-6). Set only by
+# `tap_grid.grift.collector_derivation_scope`, which only the collector runner enters; there is no
+# parameter to pass trust in. A source-scan guard pins every reference to this variable and to the
+# seal below (tap_grid/tests/test_dimension_migration.py::TestTheTrustHatchHasOneCaller).
+_DERIVATION_TRUSTED: contextvars.ContextVar[bool] = contextvars.ContextVar("dimension_derivation_trusted", default=False)
 
-    Writers below the entry points (the model save, the service pipeline) take this as is, so a
-    trust decision made at the entry point (the importer, under a collector run) is not re-made, and
-    an untrusted raw map is never mistaken for a settled one.
+# Only maps this module builds carry it, so a settled map cannot be forged by building the class.
+_SEAL = object()
+
+
+class StampedDimensions(dict[str, dict[str, str]]):
+    """A map already in stored shape, with provenance settled by this module.
+
+    Writers below the entry points (the model save, the service pipeline) take a sealed one as is, so
+    a decision made at the entry point (the importer, a type's defaults) is not re-made. One built
+    anywhere else is unsealed and is re-judged as an untrusted caller map: a forged `src: derived`
+    becomes declared and a forged `src: default` is refused (PR# 1196 - tap review).
     """
+
+    def __init__(self, *args: Any, _seal: object = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.sealed = _seal is _SEAL
+
+
+def _sealed(entries: Mapping[str, dict[str, str]] | None = None) -> StampedDimensions:
+    return StampedDimensions(dict(entries or {}), _seal=_SEAL)
 
 
 def _refuse_meaningless_empty(found: Any, value: str, where: str) -> None:
@@ -78,15 +98,16 @@ def _entry(name_or_id: str, value: Any, *, trusted: bool, where: str) -> tuple[s
     return found.id, {"v": value, "src": src}
 
 
-def supplied(raw: Mapping[str, Any] | None, *, trusted: bool = False, where: str = "dimensions") -> StampedDimensions:
+def supplied(raw: Mapping[str, Any] | None, *, where: str = "dimensions") -> StampedDimensions:
     """A writer's map in stored shape, with its provenance settled.
 
     Keys are names or uuids. A value is a string or ``{"v": …, "src": …}``. A null value is not a
     value: it is dropped here, and only :func:`patch` reads it as a removal (Q46b).
     """
-    if isinstance(raw, StampedDimensions):
+    if isinstance(raw, StampedDimensions) and raw.sealed:
         return raw
-    out = StampedDimensions()
+    trusted = _DERIVATION_TRUSTED.get()
+    out = _sealed()
     for key, value in (raw or {}).items():
         if value is None:
             continue
@@ -99,7 +120,7 @@ def supplied(raw: Mapping[str, Any] | None, *, trusted: bool = False, where: str
 
 def defaults(declared_defaults: Mapping[str, str] | None) -> StampedDimensions:
     """A type's declared defaults in stored shape, each ``src: default``."""
-    out = StampedDimensions()
+    out = _sealed()
     for key, value in (declared_defaults or {}).items():
         found = declared(key)
         _refuse_meaningless_empty(found, value, "default dimensions")
@@ -115,20 +136,20 @@ def stamp(
     declared_defaults: Mapping[str, str] | None,
     caller: Mapping[str, Any] | None,
     *,
-    trusted: bool = False,
     where: str = "dimensions",
 ) -> StampedDimensions:
     """The stored map for a create or a replace: the type's defaults, then the caller's values over
     them. The caller wins on a conflict, even with an empty value (#712)."""
     out = defaults(declared_defaults)
-    out.update(supplied(caller, trusted=trusted, where=where))
+    out.update(supplied(caller, where=where))
     return out
 
 
-def patch(stored: Mapping[str, Any] | None, changes: Mapping[str, Any], *, trusted: bool = False) -> StampedDimensions:
+def patch(stored: Mapping[str, Any] | None, changes: Mapping[str, Any]) -> StampedDimensions:
     """Apply a patch (Q46b): an omitted key is unchanged, a key set to null is removed, any other key
     is set with its provenance settled as :func:`supplied` settles it."""
-    out = StampedDimensions(dict(stored or {}))
+    trusted = _DERIVATION_TRUSTED.get()
+    out = _sealed(stored)
     for key, value in changes.items():
         if value is None:
             out.pop(declared(key).id, None)
@@ -141,7 +162,7 @@ def patch(stored: Mapping[str, Any] | None, changes: Mapping[str, Any], *, trust
 def rederive(stored: Mapping[str, Any] | None, derived_values: Mapping[str, str]) -> StampedDimensions:
     """Write derived values (Q46c): a derived value replaces an absent or derived one, and never a
     declared or default one."""
-    out = StampedDimensions(dict(stored or {}))
+    out = _sealed(stored)
     for key, value in derived_values.items():
         dim_id, entry = _entry(key, {"v": value, "src": SRC_DERIVED}, trusted=True, where="re-derivation")
         current = out.get(dim_id)
