@@ -11,6 +11,11 @@ that no seed declares is unknown (Q48a).
 
 The table is built once, lazily, after every app is ready (plugin manifests load in their
 ``ready()``), and never touched per write.
+
+Until #1188 retires this table, the **seed files are the source of truth for every write-time knob**
+(``values``, ``empty_is_meaningful``, ``usable_in_keys``): writes read them from here, never from the
+Dimension rows. Editing a Dimension row's knobs on a grid changes nothing a write enforces; change
+the seed document and redeploy.
 """
 
 from __future__ import annotations
@@ -43,6 +48,11 @@ class DeclaredDimension:
     def accepts(self, value: str) -> bool:
         """Any string for an open dimension; a listed one for a bounded dimension (Q47)."""
         return self.values is None or value in self.values
+
+
+class DuplicateDimensionName(RuntimeError):
+    """Two seed declarations give one dimension name to different node ids (PR# 1196 - tap review):
+    every name must mean one dimension, or a name-keyed view and a name lookup silently pick one."""
 
 
 @dataclass(frozen=True)
@@ -110,10 +120,12 @@ def build(files: Iterable[tuple[str, Path]] | None = None) -> Vocabulary:
     computing_core's). So one id declared under two names is one dimension, not a duplicate: its
     current name is the one from the latest seed batch (batch ids are UUIDv7, ordered by time), and
     every name it was declared under still resolves to it while both seeds are installed. Two
-    different ids under one name remain ambiguous.
+    different ids under one name are refused here, loudly (:class:`DuplicateDimensionName`), so a
+    name always means one dimension.
     """
     latest: dict[str, tuple[str, DeclaredDimension]] = {}
     names: dict[str, list[str]] = {}
+    sources: dict[tuple[str, str], str] = {}
     for source, path in files if files is not None else _seed_files():
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -130,6 +142,17 @@ def build(files: Iterable[tuple[str, Path]] | None = None) -> Vocabulary:
             ids = names.setdefault(declared.name, [])
             if declared.id not in ids:
                 ids.append(declared.id)
+            sources.setdefault((declared.name, declared.id), source)
+    clashes = {name: ids for name, ids in names.items() if len(ids) > 1}
+    if clashes:
+        listed = "; ".join(
+            f"{name!r} on " + ", ".join(f"{ident} ({sources[(name, ident)]})" for ident in ids)
+            for name, ids in sorted(clashes.items())
+        )
+        raise DuplicateDimensionName(
+            "a dimension name is declared under more than one node id; fix the seeds so each name "
+            f"means one dimension (a renamed node keeps its id): {listed}"
+        )
     by_id = {ident: declared for ident, (_batch, declared) in latest.items()}
     return Vocabulary(by_id=by_id, by_name={name: tuple(ids) for name, ids in names.items()})
 

@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/06e7520ad88b (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/b9e658bf4ba1 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -11,6 +11,7 @@ Public API:
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import logging
@@ -19,6 +20,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
@@ -279,10 +281,26 @@ _NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
 _EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
 # Whether this import runs under an in-process collector run that may stamp `src: derived`
-# (req-grid-dimension-reference-6; George 2026-11-12, aws-build Q54 D3). Set only by grift_import's
-# `trusted_derivation` argument, which only the collector runner passes; never from the document,
-# the HTTP API or a portable import, where a derived value is reset to declared.
+# (req-grid-dimension-reference-6; George 2026-11-12, aws-build Q54 D3). Set only inside
+# `collector_derivation_scope()`, which only the collector runner enters (a source-scan guard pins
+# that); never from the document, the HTTP API or a portable import, where a derived value is reset
+# to declared.
 _TRUSTED_DERIVATION: contextvars.ContextVar[bool] = contextvars.ContextVar("grift_trusted_derivation", default=False)
+
+
+@contextlib.contextmanager
+def collector_derivation_scope() -> Iterator[None]:
+    """Imports inside this block may keep a document's `src: derived` dimension values.
+
+    In-process code is trusted by construction; this names the one trusted writer so a second one
+    cannot appear unnoticed (`tap_grid/tests/test_dimension_migration.py::TestTheTrustHatchHasOneCaller`).
+    Entered only by `tap_cares.collectors.base` around a collector run's import.
+    """
+    token = _TRUSTED_DERIVATION.set(True)
+    try:
+        yield
+    finally:
+        _TRUSTED_DERIVATION.reset(token)
 
 
 def _without_default_entries(raw: Any) -> Any:
@@ -5240,12 +5258,11 @@ def grift_import(
     force_batches: list[str] | set[str] | None = None,
     sweep_strict: bool = False,
     purge: bool = False,
-    trusted_derivation: bool = False,
 ) -> GriftImportResult:
     """Authorize, then import a GRIFT v0 document (req-tap-auth-service-boundary).
 
-    ``trusted_derivation`` lets the document's dimension values keep ``src: derived``. Only the
-    in-process collector runner passes it (req-grid-dimension-reference-6); every other import resets a
+    A document's ``src: derived`` dimension values survive only inside
+    :func:`collector_derivation_scope` (req-grid-dimension-reference-6); every other import resets a
     derived value to declared.
 
     GRIFT import requires `grid.import_grift`; a force-reimport `purge`
@@ -5266,19 +5283,15 @@ def grift_import(
     with authorized(_auth_ctx, IMPORT_GRIFT_CAPABILITY, operation="grift_import"):
         if purge:
             policy.authorize(_auth_ctx, PURGE_CAPABILITY, operation="grift_import_purge")
-        token = _TRUSTED_DERIVATION.set(bool(trusted_derivation))
-        try:
-            return _grift_import_impl(
-                document,
-                dangling_edge_mode=dangling_edge_mode,
-                actor=actor,
-                force_batches=force_batches,
-                sweep_strict=sweep_strict,
-                purge=purge,
-                read_boundary=_producing_run_opened(_active),
-            )
-        finally:
-            _TRUSTED_DERIVATION.reset(token)
+        return _grift_import_impl(
+            document,
+            dangling_edge_mode=dangling_edge_mode,
+            actor=actor,
+            force_batches=force_batches,
+            sweep_strict=sweep_strict,
+            purge=purge,
+            read_boundary=_producing_run_opened(_active),
+        )
 
 
 def _producing_run_opened(active: Any) -> datetime | None:

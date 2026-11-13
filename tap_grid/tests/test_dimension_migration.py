@@ -55,6 +55,14 @@ class TestTheMigration:
             migration.forwards(apps, _editor())
         assert Entity.objects.get(pk=node.entity_id).dimensions == {"tap.meta": "dimension", "tap.test.never-seeded": "x"}
 
+    def test_backwards_refuses_a_row_whose_keys_would_collide(self) -> None:
+        """Two stored keys landing on one name would make the rollback lossy; it refuses instead."""
+        node = Dimension.objects.create(name="tap.test.collide")
+        _set_raw(node.entity_id, {META: {"v": "dimension", "src": "default"}, "tap.meta": "legacy"})
+        with pytest.raises(RuntimeError, match="tap.meta"):
+            migration.backwards(apps, _editor())
+        assert META in Entity.objects.get(pk=node.entity_id).dimensions
+
     def test_backwards_restores_names_and_plain_values(self) -> None:
         node = Dimension.objects.create(name="tap.test.reversed")
         migration.backwards(apps, _editor())
@@ -104,11 +112,15 @@ class TestReplaceIsAuthoritative:
 
         ident = str(uuid.uuid7())
         stamped = {"tap.graph": {"v": "web", "src": "derived"}}
-        assert grift_import(_doc(ident, stamped), trusted_derivation=True).success
+        from tap_grid.grift import collector_derivation_scope
+
+        with collector_derivation_scope():
+            assert grift_import(_doc(ident, stamped)).success
         for _run in range(2):
             again = _doc(ident, stamped)
             again["batches"][0]["batch_entity"]["entity_id"] = str(uuid.uuid7())
-            assert grift_import(again, trusted_derivation=True).success
+            with collector_derivation_scope():
+                assert grift_import(again).success
             assert Entity.objects.get(pk=ident).dimensions == {
                 META: {"v": "dimension", "src": "default"},
                 GRAPH: {"v": "web", "src": "derived"},
@@ -124,7 +136,14 @@ class TestTrustedDerivation:
         from tap_grid.grift import grift_import
 
         ident = str(uuid.uuid7())
-        result = grift_import(_doc(ident, {"tap.graph": {"v": "web", "src": "derived"}}), trusted_derivation=trusted)
+        from tap_grid.grift import collector_derivation_scope
+
+        doc = _doc(ident, {"tap.graph": {"v": "web", "src": "derived"}})
+        if trusted:
+            with collector_derivation_scope():
+                result = grift_import(doc)
+        else:
+            result = grift_import(doc)
         assert result.success, result.errors
         stored: dict[str, Any] = Entity.objects.get(pk=ident).dimensions[GRAPH]
         return stored
@@ -176,3 +195,68 @@ class TestTrustedDerivation:
         result = grift_import(_doc(str(uuid.uuid7()), {"tap.test.never-seeded": "x"}))
         assert not result.success
         assert any("tap.test.never-seeded" in str(e) for e in result.errors)
+
+
+@pytest.mark.spec("req-grid-dimension-reference-6")
+class TestTheTrustHatchHasOneCaller:
+    """In-process code is trusted by construction; this guard names the one writer allowed to keep
+    `src: derived`, so a second one cannot appear unnoticed (PR# 1196 - tap review)."""
+
+    ALLOWED = {
+        "tap_grid/grift/importer.py",  # defines it
+        "tap_grid/grift/__init__.py",  # re-exports it
+        "tap_cares/collectors/base.py",  # the collector runner, the one caller
+        "tap_grid/tests/test_dimension_migration.py",  # these tests
+    }
+
+    def test_only_the_collector_runner_enters_the_scope(self) -> None:
+        from pathlib import Path
+
+        import tap_grid
+
+        root = Path(tap_grid.__file__).resolve().parent.parent
+        hits = set()
+        for app in ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap", "tap_auth"):
+            base = root / app
+            if not base.is_dir():
+                continue
+            for path in base.rglob("*.py"):
+                if "collector_derivation_scope" in path.read_text(encoding="utf-8"):
+                    hits.add(str(path.relative_to(root)))
+        extra = sorted(hits - self.ALLOWED)
+        assert extra == [], f"only the collector runner may enter collector_derivation_scope; also found: {extra}"
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-dimension-reference-7")
+class TestEveryWritePathSettlesItsMap:
+    """PR# 1196 - tap review: every path that writes dimensions goes through stamp()/supplied(),
+    or refuses a map it does not write."""
+
+    def test_a_create_through_the_service_layer_is_stamped(self) -> None:
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        result = write_batch([WriteOperation(verb="create_node", type_slug="dimension", payload={"name": "tap.test.svc"}, dimensions={"tap.graph": "web"})])
+        assert result.success, result
+        entity_id = result.results[0].entity_id
+        assert entity_id is not None
+        stored = Entity.objects.get(pk=entity_id).dimensions
+        assert stored == {META: {"v": "dimension", "src": "default"}, GRAPH: {"v": "web", "src": "declared"}}
+
+    def test_a_service_caller_cannot_claim_a_default(self) -> None:
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        result = write_batch([WriteOperation(verb="create_node", type_slug="dimension", payload={"name": "tap.test.claim"}, dimensions={"tap.graph": {"v": "web", "src": "default"}})])
+        assert not result.success
+
+    def test_a_replace_or_patch_verb_refuses_a_dimensions_map(self) -> None:
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        node = Dimension.objects.create(name="tap.test.replace-dims")
+        for verb in ("replace_node", "patch_node"):
+            result = write_batch([WriteOperation(verb=verb, target=str(node.entity_id), payload={"name": "tap.test.replace-dims"}, dimensions={"tap.graph": "web"})])
+            assert not result.success, verb
+            assert any("does not write dimensions" in str(r) for r in result.results), (verb, result)

@@ -119,3 +119,17 @@ class TestARenamedNodeKeepsItsId:
             table = build(files)
             assert table.by_id["019dd143-3e8f-73e4-b0fa-e62ac923065d"].name == "tap.computing.cloud"
             assert table.by_name["tap.cloud"] == table.by_name["tap.computing.cloud"] == ("019dd143-3e8f-73e4-b0fa-e62ac923065d",)
+
+    def test_one_name_under_two_ids_fails_loudly_naming_both(self, tmp_path: Path) -> None:
+        """PR# 1196 - tap review: a name must mean one dimension, or a name-keyed view collides."""
+        from tap_grid.dimension_vocabulary import DuplicateDimensionName, build
+
+        first = self._seed(tmp_path, "a.json", "01a1d1d0-0000-7000-8000-000000000001", "tap.test.clash")
+        doc = json.loads(first[1].read_text(encoding="utf-8"))
+        doc["batches"][0]["nodes"][0]["entity"]["entity_id"] = "01a1d1d0-0000-7000-8000-0000000000ee"
+        other = tmp_path / "b.json"
+        other.write_text(json.dumps(doc), encoding="utf-8")
+        with pytest.raises(DuplicateDimensionName, match="tap.test.clash") as raised:
+            build([first, ("b.json", other)])
+        assert "019dd143-3e8f-73e4-b0fa-e62ac923065d" in str(raised.value)
+        assert "01a1d1d0-0000-7000-8000-0000000000ee" in str(raised.value)

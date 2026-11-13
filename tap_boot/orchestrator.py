@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/60523a358f38 (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/8e5b9322088c (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/60523a358f38 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/8e5b9322088c (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -710,14 +710,26 @@ def _apply_seed_plugin(step: SeedPluginStep, bootloader: object, say: Echo) -> t
         if o.ok:
             logger.info("[e79e] seeded %s/%s", o.slug, o.bundle_name)
         else:
-            detail = o.read_error if o.read_error is not None else "import failed (see grift result)"
+            detail = o.read_error if o.read_error is not None else _import_failure_detail(o.result)
             logger.error("[916b] seed failed %s/%s: %s", o.slug, o.bundle_name, detail)
+            say(f"    seed failed {o.slug}/{o.bundle_name}: {detail}")
     entry |= {"bundles_seeded": len(outcomes) - len(failed), "failed_bundles": len(failed)}
     if failed:
         say(f"    FAILED — {step.plugin}: {len(failed)} bundle(s) did not import.")
         return False, entry
     say(f"    OK — {step.plugin}: {len(outcomes)} bundle(s) seeded.")
     return True, entry
+
+
+def _import_failure_detail(result: Any, limit: int = 5) -> str:
+    """Why a bundle's import failed, from the GRIFT result itself: each issue's code, path and message,
+    so the boot log names the reason instead of pointing at a result nobody can see."""
+    errors = list(getattr(result, "errors", None) or [])
+    if not errors:
+        return "import failed with no reported issue"
+    shown = "; ".join(f"[{e.code}] {e.path}: {e.message}" for e in errors[:limit])
+    more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
+    return f"import failed: {shown}{more}"
 
 
 def _apply_fire_collector(step: FireCollectorStep, say: Echo) -> tuple[bool, dict[str, Any]]:

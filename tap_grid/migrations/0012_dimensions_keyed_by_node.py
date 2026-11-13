@@ -78,18 +78,34 @@ def forwards(apps: Any, schema_editor: Any) -> None:
 
 
 def backwards(apps: Any, schema_editor: Any) -> None:
-    """Back to name keys and plain string values. A uuid no seed declares keeps its uuid key."""
+    """Back to name keys and plain string values. A uuid no seed declares keeps its uuid key. If two
+    stored keys of one row would land on one name, the reversal refuses, naming them, before writing."""
     from tap_grid.dimension_names import name_of
 
     Entity = apps.get_model("tap_grid", "Entity")
     alias = schema_editor.connection.alias
     rows = Entity.objects.using(alias).exclude(dimensions={}).values_list("id", "dimensions")
+    rewrites: list[tuple[Any, dict[str, Any]]] = []
+    collisions: list[str] = []
     for entity_id, dims in rows.iterator(chunk_size=2000):
         if not isinstance(dims, dict):
             continue
-        old = {(name_of(key) or key): (value.get("v") if isinstance(value, dict) else value) for key, value in dims.items()}
+        old: dict[str, Any] = {}
+        for key, value in dims.items():
+            name = name_of(key) or key
+            if name in old:
+                collisions.append(f"{entity_id}: {name!r}")
+                continue
+            old[name] = value.get("v") if isinstance(value, dict) else value
         if old != dims:
-            Entity.objects.using(alias).filter(pk=entity_id).update(dimensions=old)
+            rewrites.append((entity_id, old))
+    if collisions:
+        # Two stored keys would become one name: a rollback that silently dropped one is lossy.
+        raise RuntimeError(
+            "cannot reverse 0012: these rows hold two dimension keys that map to one name: " + "; ".join(collisions)
+        )
+    for entity_id, old in rewrites:
+        Entity.objects.using(alias).filter(pk=entity_id).update(dimensions=old)
 
 
 class Migration(migrations.Migration):

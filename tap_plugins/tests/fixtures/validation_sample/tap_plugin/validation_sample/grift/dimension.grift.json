@@ -31,7 +31,8 @@
             "description": "Which test-fixture plugin wrote a row. validation_sample stamps it (value `validation_sample`) on its SAMPLE_LINK edges through the edge type's default_dimensions. Fixture vocabulary only: no product plugin stamps it."
           }
         }
-      ]
+      ],
+      "edges": []
     }
   ]
 }

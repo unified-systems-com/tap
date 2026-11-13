@@ -337,15 +337,15 @@ class CollectorBase(ABC):
         """
         # Local import keeps tap_grid out of the import-time graph for tap_cares
         # tests that don't need it.
-        from tap_grid.grift import grift_import
+        from tap_grid.grift import collector_derivation_scope, grift_import
 
-        result = grift_import(  # TAP-AUTHZ-COV: grift_import self-authorizes grid.import_grift; runs as bound tap_cares.collector
-            document,
-            dangling_edge_mode=dangling_edge_mode,  # type: ignore[arg-type]
-            # The in-process collector runner is the one writer trusted to stamp src: derived
-            # (req-grid-dimension-reference-6; aws-build Q54 D3).
-            trusted_derivation=True,
-        )
+        # The in-process collector runner is the one writer trusted to stamp src: derived
+        # (req-grid-dimension-reference-6; aws-build Q54 D3).
+        with collector_derivation_scope():
+            result = grift_import(  # TAP-AUTHZ-COV: grift_import self-authorizes grid.import_grift; runs as bound tap_cares.collector
+                document,
+                dangling_edge_mode=dangling_edge_mode,  # type: ignore[arg-type]
+            )
 
         self._produced_batches.extend((str(b.batch_entity_id), "imported") for b in result.imported_batches)
         self._produced_batches.extend((str(b.batch_entity_id), "skipped") for b in result.skipped_batches)

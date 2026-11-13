@@ -258,6 +258,13 @@ def _test_dimension_vocabulary() -> Iterator[None]:
     The installed seeds come first; the test seed adds only names no installed seed declares, so a
     real declaration is never shadowed or made ambiguous.
     """
+    from django.apps import apps
+
+    # A bare pytest run with no Django configured (the harness-lock probes) has no app registry and
+    # writes no dimensions: nothing to declare.
+    if not apps.ready:
+        yield
+        return
     from tap_grid import dimension_vocabulary as vocab
 
     real = vocab.build()
