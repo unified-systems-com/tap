@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 11 |
+| mapped | 12 |
 | unbuilt | 9 |
 | retired | 1 |
 | 0-ACID (payable) | 0 |
@@ -20,6 +20,7 @@
 | `req-tap-serving-delta` | Implemented | Tested | — | `req-tap-serving-delta-2` |
 | `req-tap-serving-fail-closed` | Implemented | Tested | — | `req-tap-serving-fail-closed-1`, `req-tap-serving-fail-closed-2`, `req-tap-serving-fail-closed-3`, `req-tap-serving-fail-closed-5` |
 | `req-tap-serving-process-failure` | Proposed | Tested | — | `req-tap-serving-process-failure-2` |
+| `req-tap-serving-process-roles` | Implemented | Tested | — | `req-tap-serving-process-roles-1`, `req-tap-serving-process-roles-2`, `req-tap-serving-process-roles-3`, `req-tap-serving-process-roles-4` |
 | `req-tap-serving-server` | Implemented | Tested | — | `req-tap-serving-server-1`, `req-tap-serving-server-2`, `req-tap-serving-server-3`, `req-tap-serving-server-4`, `req-tap-serving-server-5` |
 | `req-tap-serving-static` | Implemented | Tested | — | `req-tap-serving-static-1`, `req-tap-serving-static-2`, `req-tap-serving-static-3` |
 | `req-tap-serving-static-unhashed` | Implemented | Tested | — | `req-tap-serving-static-unhashed-1` |

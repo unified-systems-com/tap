@@ -1,0 +1,69 @@
+# Split the stack by kind of work: web serves requests only, worker runs collectors,
+# scheduler runs the single recurring tick. Same image, same mounts, same environment;
+# only TAP_PROCESS_ROLE differs (tap/serving.py PROCESS_ROLES, docker/entrypoint.sh).
+#
+#   scripts/dc -f docker-compose.yml -f docker-compose.worker.yml up -d
+#
+# Each queue role has its own venv and uv cache volumes: on a fresh stack every container clears
+# and re-seeds an unstamped cache at boot, and three doing it to one volume collide.
+# web migrates; worker and scheduler wait for that and never migrate. Run one scheduler.
+# Workers may scale: `--scale worker=2`. Each container holds its own connections, so the
+# database ceiling is the sum of tap.serving.role_connection_budget over what runs.
+#
+# Policy evaluation runs in the worker, so a stack that uses the `policy` profile points
+# TAP_OPA_URL at the opa service as before; opa stays a compose sidecar.
+
+x-role-from-web: &role-from-web
+  image: ${TAP_WEB_IMAGE:?TAP_WEB_IMAGE unset — .env defines it from TAP_VERSION; see .env}
+  user: "${TAP_USER:-}"
+  entrypoint: ["/app/docker/entrypoint.sh"]
+  depends_on:
+    db:
+      condition: service_healthy
+  tmpfs:
+    - /run/tap-gunicorn:size=4m,mode=1777
+  stop_grace_period: 30s
+  restart: unless-stopped
+
+services:
+  web:
+    environment:
+      TAP_PROCESS_ROLE: web
+
+  worker:
+    <<: *role-from-web
+    volumes:
+      - .:/app
+      - venv_worker:/app/.venv
+      - uv_cache_worker:/home/nonroot/.cache/uv
+      - ./tap_secrets:/run/tap-secrets:ro
+    environment: &queue-env
+      TAP_PROCESS_ROLE: worker
+      DATABASE_URL: "postgres://tap:${POSTGRES_PASSWORD:-tap}@db:5432/tap"
+      TAP_SERVE_PROFILE: "${TAP_SERVE_PROFILE:-development}"
+      DEBUG: "${DEBUG:-true}"
+      SECRET_KEY: "${SECRET_KEY:-dev-secret-key-change-me}"
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-localhost,127.0.0.1,.localhost}"
+      TAP_GRID_ID: "${TAP_GRID_ID:-019c2a9a-cfdb-768e-82c5-7a037556064d}"
+      TAP_PRODUCT_NAME: "${TAP_PRODUCT_NAME:-RAMPART}"
+      TAP_SECRETS_ROOT: /run/tap-secrets
+      TAP_BOOT_PROFILE: "${TAP_BOOT_PROFILE:-}"
+      TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+      TAP_OPA_URL: "${TAP_OPA_URL:-}"
+
+  scheduler:
+    <<: *role-from-web
+    volumes:
+      - .:/app
+      - venv_scheduler:/app/.venv
+      - uv_cache_scheduler:/home/nonroot/.cache/uv
+      - ./tap_secrets:/run/tap-secrets:ro
+    environment:
+      <<: *queue-env
+      TAP_PROCESS_ROLE: scheduler
+
+volumes:
+  venv_worker:
+  venv_scheduler:
+  uv_cache_worker:
+  uv_cache_scheduler:

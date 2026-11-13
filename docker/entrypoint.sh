@@ -25,6 +25,25 @@ set -e
 # instant it appears, instead of waiting out its readiness timeout.
 emit_abort() { echo "TAP-ABORT: $1: $2" >&2; }
 
+# Process role: one image, several start commands (tap/serving.py PROCESS_ROLES).
+#   all       gunicorn + the whole Steady Queue tree (the default; every existing stack)
+#   web       migrate, then gunicorn only; no background work shares the request workers
+#   worker    Steady Queue default-queue workers only; waits for migrations, never runs them
+#   scheduler the single recurring tick, the scheduler queue and the dispatcher; run exactly one
+#   migrate   preboot + migrate, then exit 0; a one-off task ahead of a rollout
+# TAP_SKIP_MIGRATE=1 makes `web` wait for migrations instead, for a deployment that runs
+# the `migrate` role first and then several web containers at once.
+TAP_PROCESS_ROLE="${TAP_PROCESS_ROLE:-all}"
+case "${TAP_PROCESS_ROLE}" in
+    all|web|worker|scheduler|migrate) ;;
+    *) emit_abort role "TAP_PROCESS_ROLE=${TAP_PROCESS_ROLE} is not one of all, web, worker, scheduler, migrate"; exit 1 ;;
+esac
+export TAP_PROCESS_ROLE
+# The pre-migrate snapshot protects a migration. A role that never migrates takes none.
+case "${TAP_PROCESS_ROLE}" in
+    worker|scheduler) export TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE="${TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE:-false}" ;;
+esac
+
 # Seed an EMPTY uv-cache volume from the image's pre-compiled wheel cache
 # (/opt/uv-cache-seed, Dockerfile deps-warm stage) before syncing. The sync
 # below then CREATES the venv itself (the long-proven runtime path) but installs
@@ -332,12 +351,39 @@ fi
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
 uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
 
-echo "==> Running database migrations..."
 # The canonical fatal spot for a core->plugin-dep import leak (req-dev-validation-lean-boot):
 # migrate runs django.setup(), which imports every INSTALLED_APPS module; a core module
 # reaching a plugin-only dependency raises ModuleNotFoundError here. The sentinel turns that
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
-uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+runs_migrate=1
+case "${TAP_PROCESS_ROLE}" in
+    worker|scheduler) runs_migrate=0 ;;
+    web) [ "${TAP_SKIP_MIGRATE:-0}" = "1" ] && runs_migrate=0 ;;
+esac
+if [ "${runs_migrate}" = "1" ]; then
+    echo "==> Running database migrations..."
+    uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+else
+    # Never migrate from two places. Wait for whoever owns it, then fail loudly rather than
+    # serve or work against a schema this code does not expect.
+    waited=0
+    limit="${TAP_MIGRATE_WAIT_SECONDS:-300}"
+    until uv run python manage.py migrate --check --noinput >/dev/null 2>&1; do
+        if [ "${waited}" -ge "${limit}" ]; then
+            emit_abort migrate "role ${TAP_PROCESS_ROLE}: migrations still unapplied after ${limit}s; run the migrate role first"
+            exit 1
+        fi
+        echo "==> Role ${TAP_PROCESS_ROLE}: waiting for migrations (${waited}s)..."
+        sleep 5
+        waited=$((waited + 5))
+    done
+    echo "==> Role ${TAP_PROCESS_ROLE}: schema is current."
+fi
+
+if [ "${TAP_PROCESS_ROLE}" = "migrate" ]; then
+    echo "==> Role migrate: schema is current; exiting."
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Boot orchestration — CODESPACES ONLY (req-boot-*, spec-tap-boot-v0.md).
@@ -375,7 +421,7 @@ uv run python manage.py migrate --noinput || { emit_abort migrate "database migr
 # NOT fail-closed. A boot failure here leaves an instance that still serves and can
 # still be signed into, which is a better place to debug from than a container that
 # refuses to start — and the message names the step for anyone reading the log.
-if [ "${CODESPACES:-}" = "true" ]; then
+if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_PROCESS_ROLE}" = "all" ]; then
     echo "==> Codespace: running boot orchestration (no spawn-session.sh exists here)..."
     if uv run python manage.py boot; then
         echo "==> Codespace: boot complete."
@@ -423,11 +469,24 @@ echo "==> Persistent DB connections: TAP_DB_CONN_MAX_AGE=${TAP_DB_CONN_MAX_AGE} 
 # execution (req-tap-cares-task-backend-queue-isolation). Trap kills it on
 # exit. Steady Queue does NOT auto-reload; restart the container if you
 # edit task or scheduler code (req-tap-cares-task-backend-deployment-3).
-echo "==> Starting Steady Queue supervisor..."
-uv run python manage.py steady_queue &
-STEADY_QUEUE_PID=$!
+#
+# A worker or scheduler container runs the supervisor as PID 1 instead, so its death ends
+# the container and the orchestrator restarts it (req-tap-serving-process-roles-4).
+if [ "${TAP_PROCESS_ROLE}" = "worker" ] || [ "${TAP_PROCESS_ROLE}" = "scheduler" ]; then
+    echo "==> Role ${TAP_PROCESS_ROLE}: starting Steady Queue supervisor as the container process..."
+    export VIRTUAL_ENV=/app/.venv
+    export PATH="/app/.venv/bin:${PATH}"
+    exec /app/.venv/bin/python manage.py steady_queue
+fi
 
-trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
+if [ "${TAP_PROCESS_ROLE}" = "all" ]; then
+    echo "==> Starting Steady Queue supervisor..."
+    uv run python manage.py steady_queue &
+    STEADY_QUEUE_PID=$!
+    trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
+else
+    echo "==> Role web: no Steady Queue in this container; the worker and scheduler roles run it."
+fi
 
 # ---------------------------------------------------------------------------
 # The web server (req-tap-serving-server).

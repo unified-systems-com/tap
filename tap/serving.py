@@ -548,6 +548,87 @@ def connection_budget(
     return serving_demand + test_demand + ADMIN_SESSION_HEADROOM
 
 
+# ---------------------------------------------------------------------------
+# Process roles: one image, several start commands
+# ---------------------------------------------------------------------------
+# `all` is the one-container shape every existing stack runs: gunicorn plus the whole
+# Steady Queue tree. A deployment that must not let collector work share a container with
+# request serving splits the same image into roles. Only the process invocation moves; the
+# task backend and queue names do not (req-tap-cares-task-backend-deployment).
+
+ROLE_ALL = "all"
+ROLE_WEB = "web"
+ROLE_WORKER = "worker"
+ROLE_SCHEDULER = "scheduler"
+ROLE_MIGRATE = "migrate"
+
+#: Valid values of `TAP_PROCESS_ROLE`.
+PROCESS_ROLES = (ROLE_ALL, ROLE_WEB, ROLE_WORKER, ROLE_SCHEDULER, ROLE_MIGRATE)
+
+#: The queue each split role works. The scheduler lane holds the single recurring tick, so
+#: exactly one scheduler process may run per database; workers scale out on `default`.
+ROLE_QUEUES: dict[str, tuple[str, ...]] = {
+    ROLE_ALL: tuple(QUEUE_THREADS),
+    ROLE_WEB: (),
+    ROLE_WORKER: ("default",),
+    ROLE_SCHEDULER: ("scheduler",),
+    ROLE_MIGRATE: (),
+}
+
+
+def process_role() -> str:
+    """Return the configured process role, defaulting to `all`.
+
+    Raises:
+        ValueError: if `TAP_PROCESS_ROLE` is set to something outside `PROCESS_ROLES`.
+    """
+    raw = os.environ.get("TAP_PROCESS_ROLE", "").strip().lower()
+    if not raw:
+        return ROLE_ALL
+    if raw not in PROCESS_ROLES:
+        raise ValueError(f"TAP_PROCESS_ROLE={raw!r} is not one of {PROCESS_ROLES}")
+    return raw
+
+
+def role_queue_threads(role: str | None = None) -> dict[str, int]:
+    """The Steady Queue worker threads this role runs, keyed by queue."""
+    chosen = process_role() if role is None else role
+    return {queue: QUEUE_THREADS[queue] for queue in ROLE_QUEUES[chosen]}
+
+
+def role_dispatchers(role: str | None = None) -> int:
+    """Dispatchers this role runs. Scheduled and retried jobs need one per database, not one per worker."""
+    chosen = process_role() if role is None else role
+    return QUEUE_DISPATCHERS if chosen in (ROLE_ALL, ROLE_SCHEDULER) else 0
+
+
+def role_runs_recurring(role: str | None = None) -> bool:
+    """True when this role owns the recurring tick. Only `all` and `scheduler` do."""
+    chosen = process_role() if role is None else role
+    return chosen in (ROLE_ALL, ROLE_SCHEDULER)
+
+
+def role_connection_budget(role: str, *, web_workers: int | None = None, aliases: int | None = None) -> int:
+    """Connections one container of `role` can hold at a rolling-restart peak, without admin headroom.
+
+    A database serving split roles needs the sum over every running container, plus
+    `ADMIN_SESSION_HEADROOM` once.
+    """
+    if role not in PROCESS_ROLES:
+        raise ValueError(f"role {role!r} is not one of {PROCESS_ROLES}")
+    alias_count = len(ALL_ALIASES) if aliases is None else aliases
+    if role == ROLE_MIGRATE:
+        return alias_count
+    serving = 0
+    if role in (ROLE_ALL, ROLE_WEB):
+        serving = worker_count() if web_workers is None else web_workers
+    threads = role_queue_threads(role)
+    queue_holders = 0
+    if threads or role_dispatchers(role):
+        queue_holders = 1 + len(threads) + role_dispatchers(role) + sum(threads.values())
+    return (serving + queue_holders) * alias_count * RESTART_OVERLAP_FACTOR
+
+
 def development_connection_budget() -> int:
     """The ceiling the DEVELOPMENT / CI cluster declares, including the test lane.
 

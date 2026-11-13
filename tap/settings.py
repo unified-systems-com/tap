@@ -1057,13 +1057,16 @@ from steady_queue.configuration import Configuration  # noqa: E402
 # connection budget (req-tap-serving-connection-budget-3) — one fact, two readers. Raising
 # `threads` for a queue therefore raises the derived ceiling with it instead of silently
 # overdrawing a budget computed from the old value.
+#
+# TAP_PROCESS_ROLE narrows the shape for a split deployment (tap.serving.ROLE_QUEUES). The
+# default role, `all`, is exactly the full shape above.
 STEADY_QUEUE = Configuration.Options(
     dispatchers=[
         Configuration.Dispatcher(
             polling_interval=timedelta(seconds=1),
             batch_size=500,
         )
-        for _ in range(serving.QUEUE_DISPATCHERS)
+        for _ in range(serving.role_dispatchers())
     ],
     workers=[
         Configuration.Worker(
@@ -1071,6 +1074,7 @@ STEADY_QUEUE = Configuration.Options(
             threads=threads,
             polling_interval=timedelta(seconds=0.1),
         )
-        for queue, threads in serving.QUEUE_THREADS.items()
+        for queue, threads in serving.role_queue_threads().items()
     ],
+    skip_recurring=not serving.role_runs_recurring(),
 )
