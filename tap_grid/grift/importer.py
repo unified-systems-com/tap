@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/270bdc7d4b66 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/06e7520ad88b (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -285,11 +285,19 @@ _EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
 _TRUSTED_DERIVATION: contextvars.ContextVar[bool] = contextvars.ContextVar("grift_trusted_derivation", default=False)
 
 
+def _without_default_entries(raw: Any) -> Any:
+    """A document's map without its `src: default` entries (aws-build Q59 D4): the grid stamps its
+    own defaults, so an exported row re-imports cleanly instead of being refused for carrying one."""
+    if not isinstance(raw, dict):
+        return raw
+    return {k: v for k, v in raw.items() if not (isinstance(v, dict) and v.get("src") == "default")}
+
+
 def _settled_dimensions(raw: Any) -> Any:
     """An envelope's dimensions in stored shape, provenance settled under this import's trust."""
     from tap_grid.dimension_map import supplied
 
-    return supplied(raw or {}, trusted=_TRUSTED_DERIVATION.get())
+    return supplied(_without_default_entries(raw or {}), trusted=_TRUSTED_DERIVATION.get())
 
 
 _ENVELOPE_REQUIRED = frozenset(["entity_id", "entity_type", "dimensions"])
@@ -666,13 +674,13 @@ def _validate_envelope(
         else:
             # Keys are dimension names or node ids; a value is a string or {"v": <string>, "src": ...}
             # (req-grid-dimension-reference-6). The provenance and vocabulary rules are the writer's
-            # (tap_grid.dimension_map): src "default" is refused, src "derived" survives only under a
-            # trusted collector run, and an undeclared dimension or a value outside a bounded one is
-            # refused here, before any write.
+            # (tap_grid.dimension_map): a src "default" entry is dropped (the grid re-stamps its own
+            # defaults, Q59 D4), src "derived" survives only under a trusted collector run, and an
+            # undeclared dimension or a value outside a bounded one is refused here, before any write.
             from tap_grid.dimension_map import DimensionWriteError, supplied
 
             try:
-                supplied(dims, trusted=_TRUSTED_DERIVATION.get(), where=f"{path}.dimensions")
+                supplied(_without_default_entries(dims), trusted=_TRUSTED_DERIVATION.get(), where=f"{path}.dimensions")
             except (DimensionWriteError, LookupError) as error:
                 issues.append(
                     _issue(
@@ -2910,7 +2918,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/cac5f007ccd4 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/57d1dbf2cee2 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3185,6 +3193,7 @@ def _execute_grift_batch(
                     replace_spine_intents.append(
                         {
                             "entity_id": node_entity_id,
+                            "entity_type": entity_type,
                             "envelope_name": envelope_name,
                             "envelope_dims": envelope_dims,
                         }
@@ -4866,9 +4875,18 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
         entity_uuid = uuid.UUID(intent["entity_id"])
         envelope_name = intent.get("envelope_name")
         envelope_dims = intent.get("envelope_dims") or {}
-        # The envelope is authoritative for the map on a replace, an empty one included: {} clears it
-        # (Issue# 608 - tap; aws-build Q46b; req-grid-dimension-reference-7). Defaults are a create's.
-        stored_dims = envelope_dims
+        # The envelope is authoritative for the caller's values on a replace, an empty one included:
+        # {} clears them (Issue# 608 - tap; aws-build Q46b). The type's defaults are re-merged under
+        # it, src default, as a create builds them, so a collector's run never wipes them (aws-build
+        # Q59 D6; req-grid-dimension-reference-7).
+        from tap_grid.dimension_map import stamp
+        from tap_grid.registry import get_model_class
+
+        try:
+            type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
+        except KeyError:
+            type_defaults = {}
+        stored_dims = stamp(type_defaults, envelope_dims)
 
         # Read the persisted spine values to decide whether anything needs to
         # change. A no-op update should not bump updated_at.

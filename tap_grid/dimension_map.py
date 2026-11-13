@@ -12,7 +12,8 @@ Every writer goes through :func:`stamp`, which is the whole provenance rule (#71
   a default, including an empty one (#712);
 - ``src: default`` is never accepted from a caller (Q48d); ``src: derived`` only when the writer is a
   trusted collector run (Q48e, Q54 D3), otherwise it is reset to ``declared``;
-- a value outside a bounded dimension's ``values`` is refused (Q47);
+- a value outside a bounded dimension's ``values`` is refused (Q47), and so is an empty value unless
+  the dimension declares ``empty_is_meaningful`` (Q46a, Q59 D5);
 - null is never stored (Q46a).
 """
 
@@ -42,6 +43,15 @@ class StampedDimensions(dict[str, dict[str, str]]):
     """
 
 
+def _refuse_meaningless_empty(found: Any, value: str, where: str) -> None:
+    """An empty value is observed-empty only where the dimension declares it means something
+    (``empty_is_meaningful``, aws-build Q46a / Q59 D5); everywhere else it is refused."""
+    if value == "" and not getattr(found, "empty_is_meaningful", False):
+        raise DimensionWriteError(
+            f"{where}: an empty value for {found.name!r} is refused: the dimension does not declare empty as meaningful"
+        )
+
+
 def _entry(name_or_id: str, value: Any, *, trusted: bool, where: str) -> tuple[str, dict[str, str]]:
     found = declared(name_or_id)
     src = SRC_DECLARED
@@ -60,6 +70,7 @@ def _entry(name_or_id: str, value: Any, *, trusted: bool, where: str) -> tuple[s
             src = SRC_DECLARED
     if not isinstance(value, str):
         raise DimensionWriteError(f"{where}: dimension {found.name!r} needs a string value, got {type(value).__name__}")
+    _refuse_meaningless_empty(found, value, where)
     if not found.accepts(value):
         raise DimensionWriteError(
             f"{where}: {value!r} is not an allowed value of the bounded dimension {found.name!r} ({list(found.values or ())})"
@@ -91,6 +102,7 @@ def defaults(declared_defaults: Mapping[str, str] | None) -> StampedDimensions:
     out = StampedDimensions()
     for key, value in (declared_defaults or {}).items():
         found = declared(key)
+        _refuse_meaningless_empty(found, value, "default dimensions")
         if not found.accepts(value):
             raise DimensionWriteError(
                 f"default dimensions: {value!r} is not an allowed value of the bounded dimension {found.name!r}"

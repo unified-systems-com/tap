@@ -38,6 +38,7 @@ class DeclaredDimension:
     values: tuple[str, ...] | None
     usable_in_keys: bool
     source: str
+    empty_is_meaningful: bool = False
 
     def accepts(self, value: str) -> bool:
         """Any string for an open dimension; a listed one for a bounded dimension (Q47)."""
@@ -83,6 +84,7 @@ def _declared(node: dict[str, Any], source: str) -> DeclaredDimension | None:
         values=tuple(values) if isinstance(values, list) else None,
         usable_in_keys=bool(payload.get("usable_in_keys", False)),
         source=source,
+        empty_is_meaningful=bool(payload.get("empty_is_meaningful", False)),
     )
 
 

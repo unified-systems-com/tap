@@ -36,6 +36,9 @@ def forwards(apps: Any, schema_editor: Any) -> None:
     declares as its default for that key today, else `declared` (aws-build Q48b). A key no seed
     declares stops the migration before anything is rewritten, listing each such key and the types
     carrying it (aws-build Q50a): dimensions are declared, never minted (Q48a).
+
+    Upgrade order (aws-build Q59 D7): install and migrate the aws_core release that renames its keys
+    (Q56) and computing_core's seed before this one, or this stops on the old names.
     """
     Entity = apps.get_model("tap_grid", "Entity")
     Edge = apps.get_model("tap_grid", "Edge")

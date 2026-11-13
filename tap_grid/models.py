@@ -1516,6 +1516,7 @@ class Dimension(BaseModel):
             "uniqueItems": True,
         },
         "usable_in_keys": {"type": "boolean"},
+        "empty_is_meaningful": {"type": "boolean"},
     }
     CREATE_REQUIRED: ClassVar[list[str]] = ["name"]
 
@@ -1535,6 +1536,14 @@ class Dimension(BaseModel):
         help_text=(
             "Whether a type may name this dimension in its NATURAL_KEY (req-grid-dimension-knobs, aws-build "
             "Q52a). Declares eligibility only; immutability on rows is a separate rule (tap#1186)."
+        ),
+    )
+
+    empty_is_meaningful = models.BooleanField(
+        default=False,
+        help_text=(
+            "Whether an empty value means something for this dimension (observed empty). When false, an "
+            "empty value is refused on write (req-grid-dimension-knobs-4, aws-build Q59 D5)."
         ),
     )
 

@@ -60,6 +60,7 @@
         "absent": [],
         "dimensions": {
           "A": {
+            "tap.playground": "gridkin",
             "tap.zone": "north"
           }
         },
@@ -67,7 +68,7 @@
       }
     },
     {
-      "name": "a replace with an explicit empty dimensions map clears them (Issue# 608 - tap)",
+      "name": "a replace with an explicit empty dimensions map clears the caller's values and the type defaults return (Issue# 608 - tap)",
       "tags": [],
       "covers": [
         "req-grid-import-grift-batch",
@@ -147,7 +148,9 @@
         "tombstoned": {},
         "absent": [],
         "dimensions": {
-          "A": {}
+          "A": {
+            "tap.playground": "gridkin"
+          }
         },
         "note": "The envelope is authoritative for the spine on every import; an explicit {} is a value, not an omission. Today the sync applies dimensions only when the map is truthy, so b1's dimensions survive b2 — the exact shape Issue# 608 - tap names."
       }
@@ -464,6 +467,7 @@
         "absent": [],
         "dimensions": {
           "A": {
+            "tap.playground": "gridkin",
             "tap.zone": "north"
           }
         },

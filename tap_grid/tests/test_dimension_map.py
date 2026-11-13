@@ -14,6 +14,7 @@ from tap_grid.dimension_map import DimensionWriteError, patch, rederive, stamp, 
 
 OPEN = "01a1d150-2222-7000-8000-000000000001"
 BOUNDED = "01a1d150-2222-7000-8000-000000000002"
+EMPTY_OK = "01a1d150-2222-7000-8000-000000000003"
 
 
 @pytest.fixture
@@ -24,8 +25,9 @@ def table() -> Iterator[None]:
             by_id={
                 OPEN: vocab.DeclaredDimension(OPEN, "tap.test.open", None, False, "test"),
                 BOUNDED: vocab.DeclaredDimension(BOUNDED, "tap.test.bounded", ("a", "b"), False, "test"),
+                EMPTY_OK: vocab.DeclaredDimension(EMPTY_OK, "tap.test.empty_ok", None, False, "test", empty_is_meaningful=True),
             },
-            by_name={"tap.test.open": (OPEN,), "tap.test.bounded": (BOUNDED,)},
+            by_name={"tap.test.open": (OPEN,), "tap.test.bounded": (BOUNDED,), "tap.test.empty_ok": (EMPTY_OK,)},
         )
     )
     yield
@@ -40,7 +42,8 @@ class TestProvenance:
         assert stored == {OPEN: {"v": "x", "src": "default"}, BOUNDED: {"v": "a", "src": "declared"}}
 
     def test_the_caller_beats_a_default_even_with_an_empty_value(self) -> None:
-        assert stamp({"tap.test.open": "x"}, {"tap.test.open": ""}) == {OPEN: {"v": "", "src": "declared"}}
+        """#712, where the dimension declares empty meaningful."""
+        assert stamp({"tap.test.empty_ok": "x"}, {"tap.test.empty_ok": ""}) == {EMPTY_OK: {"v": "", "src": "declared"}}
 
     def test_a_key_may_be_a_name_or_a_node_id(self) -> None:
         assert supplied({OPEN: "x"}) == supplied({"tap.test.open": "x"})
@@ -80,6 +83,17 @@ class TestBounded:
 
     def test_an_open_dimension_accepts_any_string(self) -> None:
         assert supplied({"tap.test.open": "anything"})[OPEN]["v"] == "anything"
+
+
+@pytest.mark.spec("req-grid-dimension-knobs-4")
+@pytest.mark.usefixtures("table")
+class TestEmptyIsMeaningful:
+    def test_an_empty_value_is_refused_unless_the_dimension_says_it_means_something(self) -> None:
+        with pytest.raises(DimensionWriteError, match="empty"):
+            supplied({"tap.test.open": ""})
+        with pytest.raises(DimensionWriteError, match="empty"):
+            stamp({"tap.test.open": ""}, None)
+        assert supplied({"tap.test.empty_ok": ""})[EMPTY_OK] == {"v": "", "src": "declared"}
 
 
 @pytest.mark.spec("req-grid-dimension-reference-7")

@@ -24,6 +24,7 @@ CORE_KEYS = {"tap.meta", "tap.graph", "tap_cares"}
 
 @pytest.mark.spec("req-grid-dimension-knobs-1")
 @pytest.mark.spec("req-grid-dimension-knobs-2")
+@pytest.mark.spec("req-grid-dimension-knobs-4")
 class TestKnobs:
     def test_a_new_dimension_is_open_and_not_usable_in_keys(self) -> None:
         dimension = Dimension(name="example.open")
@@ -38,11 +39,15 @@ class TestKnobs:
         assert dimension.accepts("a")
         assert not dimension.accepts("c")
 
-    def test_the_crud_schema_names_both_knobs(self) -> None:
+    def test_the_crud_schema_names_every_knob(self) -> None:
         schema = Dimension.FIELD_CRUD_SCHEMA
         assert schema["values"]["type"] == ["array", "null"]
         assert schema["values"]["items"] == {"type": "string", "minLength": 1}
         assert schema["usable_in_keys"] == {"type": "boolean"}
+        assert schema["empty_is_meaningful"] == {"type": "boolean"}
+
+    def test_empty_is_not_meaningful_unless_declared(self) -> None:
+        assert Dimension(name="example.empty").empty_is_meaningful is False
 
     def test_no_knob_is_named_after_the_spine_key_column(self) -> None:
         """That name is the spine column's, and the output-only guard scans core for it."""
