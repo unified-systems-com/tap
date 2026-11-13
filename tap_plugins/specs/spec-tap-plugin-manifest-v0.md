@@ -601,6 +601,23 @@ On every `ready()` call, `TapPluginConfig` calls `grift_import` for each declare
 Duplicate GRIFT bundle names are structurally impossible within one TOML table.
 Duplicate GRIFT paths inside one manifest are invalid.
 
+**The `dimension` bundle.** One bundle name is reserved: `dimension` names the plugin's dimension
+vocabulary, the Dimension nodes for every dimension key the plugin stamps (unified-systems-com/tap#1188).
+Dimensions are declared, never minted, and names resolve from live Dimension rows
+(`req-grid-dimension-reference-9` in `tap_grid/specs/spec-grid-dimension.md`), so boot imports this
+bundle on every grid where the plugin is installed, in its vocabulary phase before any population
+step, whether or not the profile seeds the plugin (`req-boot-phases-5`). It therefore holds
+Dimension nodes only: no other node type, no edges, no removals, since anything else in it would land
+on grids that never asked to seed the plugin. The name was already the convention (every plugin with
+its own dimensions declares `dimension = "grift/dimension.grift.json"`), so no manifest field or
+schema change was needed and no plugin changes.
+
+```toml
+[grift]
+dimension = "grift/dimension.grift.json"
+seed = "grift/seed.grift.json"
+```
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -615,6 +632,7 @@ Duplicate GRIFT paths inside one manifest are invalid.
 | req-tap-plugin-manifest-v0-grift-8 | Database Not Ready Tolerated | Implemented | If the database is not ready at startup, GRIFT import is silently skipped (DEBUG log). | |
 | req-tap-plugin-manifest-v0-grift-9 | Duplicate Names Impossible | Implemented | The TOML table structure prevents duplicate GRIFT bundle names within one manifest. | |
 | req-tap-plugin-manifest-v0-grift-10 | Duplicate Paths Invalid | Implemented | Duplicate GRIFT bundle paths in one manifest are invalid. | |
+| req-tap-plugin-manifest-v0-grift-11 | The Dimension Bundle | Implemented | A `[grift]` entry named `dimension` is the plugin's dimension vocabulary. Boot imports it for every installed plugin in INSTALLED_APPS order, after core's and before any population step, whether or not the profile seeds the plugin (`req-boot-phases-5`). It holds Dimension nodes only; a bundle with any other node type, an edge or a removal aborts the boot naming the bundle. The plugin's own seed-plugin step later skips it (its batch id is seen). | `tap_plugins/seeding.py::dimension_bundles`, `::seed_dimension_vocabulary`; `tap_boot/tests/test_orchestrator.py::TestPluginDimensionVocabulary`. |
 
 #### Future
 When a plugin state system is introduced, auto-import can be conditioned on plugin install state (e.g. only import if the bundle has not been imported at the current version). Until then, every startup re-runs the upsert. Per-bundle import modes (replace, skip, etc.) are also deferred to a future manifest version.

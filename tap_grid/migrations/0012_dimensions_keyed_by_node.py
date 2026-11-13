@@ -1,3 +1,7 @@
+import json
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from django.db import migrations
@@ -18,21 +22,87 @@ def _type_defaults(entity_type: str, edge_type: str | None) -> dict[str, str]:
         return {}
 
 
-def _declared_id(key: str) -> str | None:
-    from tap_grid.dimension_names import declared
+@dataclass(frozen=True)
+class _SeedVocabulary:
+    """The Dimension nodes the installed seed documents declare, frozen here for this migration.
 
+    This migration runs before boot imports any Dimension row, so it cannot read them: it reads the
+    seed documents themselves, once (unified-systems-com/tap#1188 retired the runtime table that
+    did this for every write; the copy below is the migration's own and never changes). A node
+    renamed or moved to another seed keeps its id (aws-build Q56), so every name an id is declared
+    under resolves to it and the latest seed batch (batch ids are UUIDv7) names it.
+    """
+
+    by_name: dict[str, tuple[str, ...]]
+    name_of: dict[str, str]
+
+
+def _seed_files() -> list[tuple[str, Path]]:
+    from django.apps import apps
+
+    from tap_plugins.base import TapPluginConfig
+
+    files = [("tap_grid", Path(__file__).resolve().parent.parent / "data" / "dimensions.grift.json")]
+    for config in apps.get_app_configs():
+        if isinstance(config, TapPluginConfig) and config.manifest is not None:
+            manifest = config.manifest
+            files.extend((f"{manifest.slug}:{e.path}", Path(manifest.plugin_root) / e.path) for e in manifest.grift)
+    return files
+
+
+def _read_seeds(files: list[tuple[str, Path]]) -> _SeedVocabulary:
+    latest: dict[str, tuple[str, str]] = {}  # id -> (batch id, name)
+    names: dict[str, list[str]] = {}
+    for source, path in files:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f"dimension seed {source} ({path}) cannot be read: {error}") from error
+        for batch in (document.get("batches") or []) if isinstance(document, dict) else []:
+            batch_id = str((batch.get("batch_entity") or {}).get("entity_id") or "")
+            for node in batch.get("nodes") or []:
+                entity = node.get("entity") or {}
+                if entity.get("entity_type") != "dimension":
+                    continue
+                name = (node.get("node") or {}).get("name") or entity.get("name")
+                try:
+                    ident = str(uuid.UUID(str(entity.get("entity_id"))))
+                except ValueError:
+                    raise RuntimeError(f"dimension seed {source}: a Dimension node has no valid entity_id") from None
+                if not isinstance(name, str) or not name:
+                    raise RuntimeError(f"dimension seed {source}: Dimension node {ident} has no name")
+                if ident not in latest or batch_id > latest[ident][0]:
+                    latest[ident] = (batch_id, name)
+                if ident not in names.setdefault(name, []):
+                    names[name].append(ident)
+    clashes = {name: ids for name, ids in names.items() if len(ids) > 1}
+    if clashes:
+        listed = "; ".join(f"{name!r} on {', '.join(ids)}" for name, ids in sorted(clashes.items()))
+        raise RuntimeError(f"a dimension name is declared under more than one node id in the seeds: {listed}")
+    return _SeedVocabulary(
+        by_name={name: tuple(ids) for name, ids in names.items()},
+        name_of={ident: name for ident, (_batch, name) in latest.items()},
+    )
+
+
+def _vocabulary() -> _SeedVocabulary:
+    return _read_seeds(_seed_files())
+
+
+def _declared_id(key: str, vocabulary: _SeedVocabulary) -> str | None:
     try:
-        return declared(key).id
-    except LookupError:
-        return None
+        as_id = str(uuid.UUID(key))
+    except ValueError:
+        ids = vocabulary.by_name.get(key, ())
+        return ids[0] if ids else None
+    return as_id if as_id in vocabulary.name_of else None
 
 
 def forwards(apps: Any, schema_editor: Any) -> None:
     """Re-key every row's dimensions by dimension node id, each value {"v", "src"} (unified-systems-com/tap#711).
 
-    WORKAROUND(unified-systems-com/tap#1188): names resolve through the static vocabulary read from
-    the installed seed documents (tap_grid.dimension_vocabulary), not through Dimension rows, which
-    boot seeds only after migrate. `src` is `default` when the value equals what the row's type
+    Names resolve through the installed seed documents (:class:`_SeedVocabulary`), not through
+    Dimension rows, which boot imports only after migrate. `src` is `default` when the value equals what the row's type
     declares as its default for that key today, else `declared` (aws-build Q48b). A key no seed
     declares stops the migration before anything is rewritten, listing each such key and the types
     carrying it (aws-build Q50a): dimensions are declared, never minted (Q48a). Two names of one
@@ -46,6 +116,7 @@ def forwards(apps: Any, schema_editor: Any) -> None:
     Edge = apps.get_model("tap_grid", "Edge")
     alias = schema_editor.connection.alias
     edge_types = dict(Edge.objects.using(alias).values_list("entity_id", "edge_type"))
+    vocabulary = _vocabulary()
 
     undeclared: dict[str, set[str]] = {}
     collisions: list[str] = []
@@ -61,7 +132,7 @@ def forwards(apps: Any, schema_editor: Any) -> None:
             if isinstance(value, dict) and "v" in value:
                 new[key] = value  # already re-keyed (a re-run, or a row written by new code)
                 continue
-            dim_id = _declared_id(key)
+            dim_id = _declared_id(key, vocabulary)
             if dim_id is None:
                 undeclared.setdefault(key, set()).add(edge_type or entity_type)
                 continue
@@ -98,10 +169,9 @@ def forwards(apps: Any, schema_editor: Any) -> None:
 def backwards(apps: Any, schema_editor: Any) -> None:
     """Back to name keys and plain string values. A uuid no seed declares keeps its uuid key. If two
     stored keys of one row would land on one name, the reversal refuses, naming them, before writing."""
-    from tap_grid.dimension_names import name_of
-
     Entity = apps.get_model("tap_grid", "Entity")
     alias = schema_editor.connection.alias
+    name_of = _vocabulary().name_of
     rows = Entity.objects.using(alias).exclude(dimensions={}).values_list("id", "dimensions")
     rewrites: list[tuple[Any, dict[str, Any]]] = []
     collisions: list[str] = []
@@ -110,7 +180,7 @@ def backwards(apps: Any, schema_editor: Any) -> None:
             continue
         old: dict[str, Any] = {}
         for key, value in dims.items():
-            name = name_of(key) or key
+            name = name_of.get(key) or key
             if name in old:
                 collisions.append(f"{entity_id}: {name!r}")
                 continue

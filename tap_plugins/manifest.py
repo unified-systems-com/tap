@@ -497,7 +497,7 @@ def _parse_falsifiers(raw_falsifiers: Any, raw_models: Any, manifest_path: Path)
 
 def _parse_grift(raw_grift: Any, manifest_path: Path) -> list[GriftEntry]:
     """
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-grift@a63d69f5660f/bc89a1ffb4bf (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-grift@9f98ffd2bf77/bc89a1ffb4bf (derivation) — the
         bundle-name-to-file GRIFT declarations parse here.
     """
     if not isinstance(raw_grift, dict):

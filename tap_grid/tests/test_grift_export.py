@@ -83,7 +83,10 @@ def _snapshot() -> dict[str, Any]:
     """Capture the comparable state of the whole grid, keyed by entity id."""
     nodes: dict[str, Any] = {}
     node_counts: dict[str, int] = {}
-    for entity in Entity.objects.live().exclude(entity_type=Edge.ENTITY_TYPE).order_by("id"):
+    # The dimension vocabulary is on every grid (boot imports it; req-grid-dimension-reference-9):
+    # it is the import target's own, not the populated data under comparison.
+    live = Entity.objects.live().exclude(entity_type__in=(Edge.ENTITY_TYPE, "dimension"))
+    for entity in live.order_by("id"):
         try:
             model_cls = _model(entity.entity_type)
         except KeyError:
@@ -129,9 +132,12 @@ def _empty_the_grid() -> None:
     Direct ORM, deliberately: this is not setup of TAP behaviour but the
     destruction of the whole spine, which no service-layer verb offers and which
     the round trip needs in order to be a round trip at all.
+
+    An empty grid still holds its dimension vocabulary: boot imports it before
+    anything else, and names resolve from those rows (req-grid-dimension-reference-9).
     """
-    Entity.objects.all().delete()
-    assert Entity.objects.count() == 0
+    Entity.objects.exclude(entity_type="dimension").delete()
+    assert not Entity.objects.exclude(entity_type="dimension").exists()
     assert Edge.all_objects.count() == 0
 
 
@@ -221,14 +227,15 @@ def test_round_trip_export_into_an_empty_grid_reproduces_the_grid() -> None:
     captured_at = timezone.now()
     export = export_grid(captured_at=captured_at, name="round trip")
     assert export.issues == [], [(i.code, i.path, i.message) for i in export.issues]
-    assert export.node_counts == before["node_counts"]
+    vocabulary = export.node_counts.get("dimension", 0)  # the grid's own Dimension nodes travel too
+    assert {k: v for k, v in export.node_counts.items() if k != "dimension"} == before["node_counts"]
     assert export.edge_counts == before["edge_counts"]
 
     _empty_the_grid()
 
     result = grift_import(export.document, dangling_edge_mode="strict")
     assert result.success, [(i.code, i.path, i.message) for i in result.errors]
-    assert result.counts.nodes_imported == before["node_counts"][SOURCE] + before["node_counts"][TARGET]
+    assert result.counts.nodes_imported == before["node_counts"][SOURCE] + before["node_counts"][TARGET] + vocabulary
     assert result.counts.edges_imported == 3
     assert result.counts.edges_skipped == 0
 
@@ -420,7 +427,8 @@ def test_importing_into_a_populated_grid_upserts_in_place_and_mints_no_duplicate
     # Nothing new on the spine: every id already existed, so every write upserted.
     assert Entity.objects.exclude(entity_type="batch").count() == before
     assert source_model.objects.get(entity_id=created["alpha"].id).severity_score == 7
-    assert result.counts.entities_upserted == 7  # 4 nodes + 3 edges
+    vocabulary = export.node_counts.get("dimension", 0)  # the grid's Dimension nodes travel too
+    assert result.counts.entities_upserted == 7 + vocabulary  # 4 nodes + 3 edges, plus the vocabulary
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +506,7 @@ def test_an_empty_grid_exports_an_importable_empty_document() -> None:
     _empty_the_grid()
     export = export_grid()
     assert export.issues == []
-    assert export.node_total == 0
+    assert export.node_total == export.node_counts.get("dimension", 0)  # only the grid's own vocabulary
     assert export.edge_total == 0
     assert grift_import(export.document).success
     assert Batch.objects.filter(entity_id=export.batch_entity_id).exists()
@@ -565,7 +573,8 @@ def test_output_dash_emits_a_document_and_nothing_else_on_stdout() -> None:
 
     document = json.loads(out.getvalue())
     assert document["metadata"]["grift_version"] == "0"
-    assert len(document["batches"][0]["nodes"]) == 4
+    domain = [n for n in document["batches"][0]["nodes"] if n["entity"]["entity_type"] != "dimension"]
+    assert len(domain) == 4
     assert validate_grift_document(document) == []
 
     # The report is not lost — it went to the other stream.

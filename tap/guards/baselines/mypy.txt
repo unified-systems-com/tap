@@ -57,7 +57,6 @@ tap_grid/batch.py:attr-defined:7
 tap_grid/batch.py:misc:3
 tap_grid/batch.py:no-any-return:1
 tap_grid/batch.py:return-value:1
-tap_grid/grift/importer.py:arg-type:1
 tap_grid/grift/importer.py:attr-defined:1
 tap_grid/grift/importer.py:no-untyped-def:3
 tap_grid/grift/subgraph.py:attr-defined:2

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from django.apps import apps
@@ -163,4 +164,87 @@ def seed_plugin(
                 result=result,
             )
         )
+    return outcomes
+
+
+DIMENSION_BUNDLE = "dimension"
+"""The ``[grift]`` bundle name a plugin declares its Dimension nodes under (req-tap-plugin-manifest-v0-grift-11)."""
+
+
+@dataclass(frozen=True)
+class DimensionBundle:
+    """One dimension vocabulary bundle: who declares it, a label naming it, and its file."""
+
+    slug: str
+    label: str
+    path: Path
+
+
+def dimension_bundles() -> list[DimensionBundle]:
+    """The dimension vocabulary bundles, in import order: core's first, then each installed plugin's
+    ``[grift] dimension`` bundle in INSTALLED_APPS order (req-boot-phases-5). Installed means in
+    INSTALLED_APPS, whether or not a profile seeds the plugin."""
+    from tap_grid.live_dimensions import CORE_SEED
+
+    bundles = [DimensionBundle("tap_grid", "tap_grid/dimension (data/dimensions.grift.json)", CORE_SEED)]
+    for config in all_tap_plugins():
+        manifest = config.manifest
+        if manifest is None:
+            continue
+        for entry in manifest.grift:
+            if entry.name == DIMENSION_BUNDLE:
+                label = f"{manifest.slug}/{entry.name} ({entry.path})"
+                bundles.append(DimensionBundle(manifest.slug, label, Path(manifest.plugin_root) / entry.path))
+    return bundles
+
+
+def _not_only_dimensions(document: Any) -> str | None:
+    """Why a dimension bundle holds more than Dimension nodes, or None. It is imported on every grid,
+    whether or not the profile seeds its plugin, so anything else in it would land unasked."""
+    if not isinstance(document, dict):
+        return "not a GRIFT document object"
+    for index, batch in enumerate(document.get("batches") or []):
+        if not isinstance(batch, dict):
+            return f"batch {index} is not an object"
+        for section in ("edges", "deletes", "purges"):
+            if batch.get(section):
+                return f"batch {index} carries {section}; a dimension bundle declares Dimension nodes only"
+        for node in batch.get("nodes") or []:
+            entity_type = ((node or {}).get("entity") or {}).get("entity_type") if isinstance(node, dict) else None
+            if entity_type != "dimension":
+                return (
+                    f"batch {index} declares a {entity_type!r} node; a dimension bundle declares Dimension nodes only"
+                )
+    return None
+
+
+def seed_dimension_vocabulary(*, actor: Any, extra: list[DimensionBundle] | None = None) -> list[BundleOutcome]:
+    """Import every dimension vocabulary bundle (:func:`dimension_bundles`, then ``extra``) as ``actor``.
+
+    Stops at the first bundle that does not import, and returns the outcomes so far, the failing one
+    last: later bundles stamp the dimensions earlier ones declare (every Dimension node carries
+    core's ``tap.meta``). Each bundle's seed batch has a fixed id, so a re-run skips it and writes
+    nothing, and the plugin's own seed-plugin step later skips it the same way.
+    """
+    from tap_grid.grift import grift_import
+
+    outcomes: list[BundleOutcome] = []
+    for bundle in [*dimension_bundles(), *(extra or [])]:
+        outcome = BundleOutcome(slug=bundle.slug, bundle_name=bundle.label, bundle_path=str(bundle.path))
+        outcomes.append(outcome)
+        try:
+            with open(bundle.path, encoding="utf-8") as fh:
+                document = json.load(fh)
+        except (OSError, ValueError) as exc:
+            outcome.read_error = str(exc)
+            return outcomes
+        problem = _not_only_dimensions(document)
+        if problem is not None:
+            outcome.read_error = problem
+            return outcomes
+        outcome.result = grift_import(  # TAP-AUTHZ-COV: boot standup (actor=bootloader); not request-reachable
+            document, dangling_edge_mode="strict", actor=actor
+        )
+        if not outcome.ok:
+            return outcomes
     return outcomes

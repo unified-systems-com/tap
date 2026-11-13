@@ -1559,6 +1559,25 @@ class Dimension(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "tap_dimension"
 
+    def validate(self) -> None:
+        """Refuse malformed knobs and a name another live Dimension node carries (req-grid-dimension-
+        reference-9). Writes read the knobs from this row, so a wrong-typed one must never land, and a
+        name must mean one dimension. Checked against the live vocabulary, which includes the
+        Dimension nodes a running GRIFT import declares."""
+        from tap_grid.live_dimensions import DuplicateDimensionName, InvalidDimensionKnob, knob_problems, vocabulary
+
+        problems = knob_problems(self.name, self.values, self.usable_in_keys, self.empty_is_meaningful)
+        if problems:
+            raise InvalidDimensionKnob("InvalidDimensionKnob: " + "; ".join(problems))
+        # A create with a prespecified id (a GRIFT import) is validated before its spine row exists.
+        own = str(self.entity_id) if self.entity_id is not None else getattr(self, "_pending_entity_id", None)
+        others = [ident for ident in vocabulary().by_name.get(self.name, ()) if ident != own]
+        if others:
+            raise DuplicateDimensionName(
+                f"DuplicateDimensionName: {self.name!r} is already carried by live Dimension node(s) "
+                f"{', '.join(others)}; a name means one dimension (a renamed node keeps its id)"
+            )
+
     def is_bounded(self) -> bool:
         """True when the dimension declares its allowed values; an open dimension accepts any string."""
         return self.values is not None
