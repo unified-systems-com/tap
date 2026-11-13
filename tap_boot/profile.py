@@ -1,6 +1,6 @@
 """Boot-profile loading, schema validation, and parsing.
 
-TAP-IMPLEMENTS: req-boot-profile@2e6cdb1dcea3/3b12fcd21ace (derivation) — profile resolution,
+TAP-IMPLEMENTS: req-boot-profile@b598c0cd8f7c/3b12fcd21ace (derivation) — profile resolution,
     schema validation and parsing into the runtime model happen here.
 
 TAP-IMPLEMENTS: req-boot-required-secrets@823e36f75ade/3b12fcd21ace (derivation) — the

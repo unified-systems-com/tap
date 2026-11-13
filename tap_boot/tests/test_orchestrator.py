@@ -456,3 +456,75 @@ def test_missing_secret_under_continue_skips_the_fire(monkeypatch):
     with pytest.raises(BootError, match="1 failed step"):
         run_boot(profile)
     assert calls == []  # neither self-tested nor fired (req-boot-obs-preflight-5)
+
+
+@pytest.mark.spec("req-boot-phases-5")
+@pytest.mark.django_db
+class TestCoreVocabulary:
+    """aws-build Q63: every boot imports core's dimension vocabulary first, once per grid."""
+
+    CORE = {"tap.meta", "tap.graph", "tap_cares"}
+
+    def _core_rows(self) -> set[str]:
+        from tap_grid.models import Dimension
+
+        return set(Dimension.objects.live().filter(name__in=self.CORE).values_list("name", flat=True))  # type: ignore[misc]
+
+    def test_a_fresh_boot_leaves_core_dimension_rows(self) -> None:
+        run_boot(None)
+        assert self._core_rows() == self.CORE
+
+    def test_a_re_boot_does_not_re_import(self) -> None:
+        from tap_grid.models import Batch, Dimension
+
+        run_boot(None)
+        dimensions, batches = Dimension.objects.count(), Batch.objects.count()
+        lines: list[str] = []
+        run_boot(None, echo=lines.append)
+        assert (Dimension.objects.count(), Batch.objects.count()) == (dimensions, batches)
+        assert any("Core vocabulary: already present" in line for line in lines)
+
+    def test_it_runs_before_any_population_step(self, monkeypatch) -> None:
+        import tap_boot.orchestrator as orchestrator
+
+        order: list[str] = []
+        real = orchestrator._phase_core_vocabulary
+
+        def core(say: Any) -> None:
+            order.append("core")
+            real(say)
+
+        def population(*args: Any, **kwargs: Any) -> None:
+            order.append("population")
+
+        monkeypatch.setattr(orchestrator, "_phase_core_vocabulary", core)
+        monkeypatch.setattr(orchestrator, "_phase_population", population)
+        run_boot(_profile(SeedPluginStep(plugin="grid_fixtures", enabled=True)))
+        assert order == ["core", "population"]
+
+    def test_a_plugin_seed_stamped_tap_meta_still_imports(self) -> None:
+        import uuid
+
+        from tap_grid.grift import grift_import
+
+        run_boot(None)
+        node_id = str(uuid.uuid7())
+        doc = {
+            "metadata": {"grift_version": "0"},
+            "_reserved": {},
+            "batches": [
+                {
+                    "batch_entity": {"entity_id": str(uuid.uuid7()), "entity_type": "batch", "name": "plugin seed", "dimensions": {}},
+                    "batch_node": {"source": "plugins.example", "name": "plugin seed", "description": "d"},
+                    "nodes": [
+                        {
+                            "entity": {"entity_id": node_id, "entity_type": "dimension", "name": "tap.test.plugin-key", "dimensions": {"tap.meta": "dimension"}},
+                            "node": {"name": "tap.test.plugin-key", "description": "d"},
+                        }
+                    ],
+                    "edges": [],
+                }
+            ],
+        }
+        result = grift_import(doc)
+        assert result.success, [(i.code, i.path, i.message) for i in result.errors]

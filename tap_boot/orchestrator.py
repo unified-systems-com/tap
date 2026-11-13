@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/8e5b9322088c (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/8e86bf240664 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/8e5b9322088c (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@edbf125ca418/8e86bf240664 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -15,6 +15,10 @@ req-boot-spawn-bridge) and customer deployments. It runs the v0 phase order
   actor is resolved here, *after* `sync_auth` mints it (the v0 collapse of the
   fuller `bootstrap` pre-phase: nothing writes through the service layer before
   auth, so no earlier actor is needed — spec v0 Scope).
+- **core vocabulary** — bound `acting_as(tap_bootloader)`, on every boot including an
+  auth-only one: import core's Dimension nodes (`tap_grid/data/dimensions.grift.json`) through
+  the GRIFT importer, seed-once by batch id, before any population step (aws-build Q63,
+  req-boot-phases-5).
 - **population** — bound `acting_as(tap_bootloader)`: pre-resolve every enabled
   step against in-memory registries (unknown plugin/collector/bundle aborts before
   ANY grid mutation, req-boot-population-4), *then* reconcile collector grid nodes,
@@ -192,6 +196,12 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         with rec.phase("grid_infra"):
             _phase_grid_infra(say)
 
+        # Core's own dimension vocabulary, first, on every boot and for every profile: the seeds
+        # and collectors after it stamp tap.meta / tap.graph / tap_cares, and dimensions are
+        # declared, never minted (George, 2026-11-13, aws-build Q63; req-boot-phases-5).
+        with acting_as(get_builtin_actor(BOOTLOADER)), rec.phase("core_vocabulary"):
+            _phase_core_vocabulary(say)
+
         if profile is None or not profile.has_population:
             if profile is None:
                 logger.info("[f89d] boot: no population steps; auth-only standup complete")
@@ -332,6 +342,35 @@ def _phase_grid_infra(say: Echo) -> None:
     )
     logger.info("[0075] boot grid-infra: search role %s granted SELECT on %d tables", search_role_name(), len(tables))
     say(f"Grid-infra phase: provisioned {search_role_name()} (SELECT on {len(tables)} tables).")
+
+
+def _phase_core_vocabulary(say: Echo) -> None:
+    """core-vocabulary phase: import core's Dimension nodes (``tap_grid/data/dimensions.grift.json``).
+
+    Through the same GRIFT importer and seed-once semantics a plugin seed uses: the seed batch's
+    fixed id makes a re-boot skip it, so the rows land once and a re-boot writes nothing. Runs
+    before any population step, so a plugin seed's own Dimension nodes (stamped ``tap.meta``)
+    import onto a grid that already has core's. A failure aborts the boot, naming each issue.
+    """
+    import json
+
+    from tap_grid.dimension_vocabulary import CORE_SEED
+    from tap_grid.grift import grift_import
+
+    document = json.loads(CORE_SEED.read_text(encoding="utf-8"))
+    result = grift_import(  # TAP-AUTHZ-COV: boot standup population (actor=bootloader); not request-reachable
+        document, dangling_edge_mode="strict"
+    )
+    if not result.success:
+        detail = _import_failure_detail(result)
+        logger.error("[c0a1] boot core vocabulary failed: %s", detail)
+        raise BootError(f"Core dimension vocabulary did not import: {detail}")
+    imported, skipped = len(result.imported_batches), len(result.skipped_batches)
+    logger.info("[c0a2] boot core vocabulary: %d batch(es) imported, %d already present", imported, skipped)
+    say(
+        "Core vocabulary: "
+        + ("imported core's dimension nodes." if imported else "already present (seed batch seen), nothing written.")
+    )
 
 
 def _phase_web(profile: BootProfile | None, say: Echo, rec: NullBootRecord) -> None:
