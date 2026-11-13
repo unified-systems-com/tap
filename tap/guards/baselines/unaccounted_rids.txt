@@ -30,7 +30,6 @@ req-dev-playwright-refresh-restart
 req-dev-playwright-refresh-scope
 req-dev-playwright-refresh-script
 req-dev-workspace-model
-req-dev-workspace-release
 req-dev-workspace-spawn
 req-grid-db-permission-flaw.sec
 req-grid-db-role-concurrency.sec

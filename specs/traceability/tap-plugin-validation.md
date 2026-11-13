@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 18 |
+| mapped | 19 |
 | unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -30,3 +30,4 @@
 | `req-tap-plugin-validate-schema` | Implemented | Implemented | `ValidationResult.to_json` | — |
 | `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
 | `req-tap-plugin-validate-strict` | Implemented | Implemented | `validate_plugin` | — |
+| `req-tap-plugin-validate-version` | Implemented | Verified | `_check_plugin_version_form` | `req-tap-plugin-validate-version-1`, `req-tap-plugin-validate-version-2`, `req-tap-plugin-validate-version-3`, `req-tap-plugin-validate-version-4` |

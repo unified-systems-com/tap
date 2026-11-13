@@ -175,13 +175,29 @@ Unknown top-level keys are invalid.
 The top-level fields mean:
 
 - `manifest_version`: the version of the manifest schema understood by TAP
-- `plugin_version`: the version of the plugin itself
+- `plugin_version`: the version of the plugin itself, as the bare release number (`0.1.0`), never the `v`-prefixed tag form (see Version Forms below)
 - `slug`: the canonical TAP plugin slug
 - `name`: the human-readable plugin name
 - `description`: optional short human-readable description
 - `requires_tap`: optional PEP 440 core-version compatibility range
 
 In v0, `manifest_version` should be `"0"`.
+
+### Version Forms
+
+A release has one number and two spellings. The git tag carries a `v`; every version field in a manifest or
+a record is the bare number.
+
+| Where | Form | Example |
+| --- | --- | --- |
+| Git release tag | `v` + the number | `v0.1.0` |
+| Boot-record `rev` naming a release | the tag | `v0.1.0` |
+| Manifest `plugin_version`, and any other version field | the bare number | `0.1.0` |
+| Boot-record `commit` | the full 40-hex commit | |
+
+The bare number is `MAJOR.MINOR.PATCH` with an optional `-pre` or `+build` suffix. `validate_plugin` enforces the
+manifest row (`req-tap-plugin-validate-version`); the boot spec enforces the `rev` row
+(`req-boot-bootstrap-install-commit-pin`).
 
 ### Example
 
@@ -204,6 +220,7 @@ requires_tap = ">=0.1,<0.2"
 | req-tap-plugin-manifest-v0-top-4 | Unknown Top-Level Keys Rejected | Implemented | Unknown top-level keys are invalid. | |
 | req-tap-plugin-manifest-v0-top-5 | Manifest Version Fixed | Implemented | v0 manifests use `manifest_version = "0"`. | |
 | req-tap-plugin-manifest-v0-top-6 | Optional Compatibility Floor | Implemented | `requires_tap`, when present, is a PEP 440 core-version specifier; malformed values are rejected at parse time. Enforcement is `req-tap-plugin-extdev-compat-floor`. | |
+| req-tap-plugin-manifest-v0-top-7 | Plugin Version Form | Implemented | `plugin_version` is the bare release number (`MAJOR.MINOR.PATCH`, optional `-pre`/`+build` suffix), never the `v`-prefixed tag form; `validate_plugin` fails a manifest that carries a `v`. | Author time only: the manifest parser still accepts any string, so a published tag whose manifest carries a `v` keeps loading. |
 
 #### Future
 `requires_tap` (top-6) realizes the compatibility-range note below. Later versions may still add authorship, licensing, and capability flags. The grid-plugin *protocol* version (`req-tap-plugin-extdev-protocol`) is the deferred coarse wire-contract companion to `requires_tap`.
