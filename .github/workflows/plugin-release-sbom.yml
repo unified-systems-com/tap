@@ -172,7 +172,7 @@ jobs:
       # bytes (tap#507, SonarCloud S8541). No Actions cache: this job feeds a signing job.
       # uv's version from core's `required-version`; the plugin checkout at the workspace root
       # has none of its own, and unpinned setup-uv falls back to `latest` (tap#1008).
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
           version-file: _core/pyproject.toml
