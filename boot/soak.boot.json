@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
-          "rev": "v0.3.2",
-          "commit": "5dd91568360a0f26a7ce24a8be185aee336753a2"
+          "rev": "v0.3.3",
+          "commit": "17d649bbe2988b9fc4e7a5d950b6aedae913ab26"
         },
         "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the Gridkin corpus references by string. Migrated so the corpus has real types to query. No GRIFT seed, no cross-plugin deps. Listed before gryphon_playground, which depends_on it. Pulled at boot from its own PUBLIC repo \u2014 a public git source declares no `credential` (req-tap-plugin-arch-source-secret-5); the pinned rev is the `rev` field above \u2014 deliberately not restated here, because a prose copy of a pin goes stale the moment the pin is bumped."
       },
