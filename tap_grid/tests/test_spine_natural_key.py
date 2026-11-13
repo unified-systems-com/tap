@@ -562,6 +562,23 @@ class TestCatchUpAndDrift:
         assert "panel" in report.skipped and "undeclared" in report.skipped["panel"]
         assert not check(["panel"]).clean
 
+    def test_an_undeclared_type_already_recorded_is_still_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The changed-only short-circuit must not carry a once-recorded type past the undeclared
+        guard, and a skip alone (no stale recipe) keeps the check from being clean."""
+        from tap_grid.models import NaturalKeyRecipe
+
+        _panel("recorded-then-undeclared")
+        monkeypatch.setattr(Panel, "NATURAL_KEY", None)
+        # Record the fingerprint the undeclared type has now, so only the guard can catch it.
+        NaturalKeyRecipe.objects.update_or_create(
+            entity_type="panel", defaults={"fingerprint": recipe_fingerprint(Panel)}
+        )
+        report = sync(["panel"], changed_only=True)
+        assert "undeclared" in report.skipped.get("panel", "")
+        drift = check(["panel"])
+        assert drift.stale_recipes == []
+        assert "panel" in drift.skipped and not drift.clean
+
     def test_a_zero_row_sample_is_refused(self) -> None:
         from django.core.management import call_command
         from django.core.management.base import CommandError

@@ -179,10 +179,16 @@ def sync(
     set_spine = "UPDATE tap_entity SET natural_key = %s WHERE id = %s AND natural_key IS NOT DISTINCT FROM %s"
     for model in _registered_models(entity_types):
         entity_type = model.ENTITY_TYPE
+        # Undeclared first: a type that was once recorded in step must not ride the changed-only
+        # short-circuit past the guard (-5).
+        undeclared = _undeclared(model)
+        if undeclared is not None:
+            report.skipped[entity_type] = undeclared
+            continue
         fingerprint = recipe_fingerprint(model)
         if changed_only and recorded.get(entity_type) == fingerprint:
             continue
-        reason = _undeclared(model) or _readable(connection, model, tables)
+        reason = _readable(connection, model, tables)
         if reason is not None:
             report.skipped[entity_type] = reason
             continue
