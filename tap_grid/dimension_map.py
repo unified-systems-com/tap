@@ -54,9 +54,17 @@ class StampedDimensions(dict[str, dict[str, str]]):
     becomes declared and a forged `src: default` is refused (PR# 1196 - tap review).
     """
 
+    # Slotted, so no attribute can be added; the seal slot holds this module's private sentinel only
+    # when this module built the map, and `sealed` is a read-only view of it (PR# 1196 - tap review).
+    __slots__ = ("_seal",)
+
     def __init__(self, *args: Any, _seal: object = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.sealed = _seal is _SEAL
+        self._seal = _seal
+
+    @property
+    def sealed(self) -> bool:
+        return self._seal is _SEAL
 
 
 def _sealed(entries: Mapping[str, dict[str, str]] | None = None) -> StampedDimensions:
@@ -169,3 +177,25 @@ def rederive(stored: Mapping[str, Any] | None, derived_values: Mapping[str, str]
         if current is None or (isinstance(current, Mapping) and current.get("src") == SRC_DERIVED):
             out[dim_id] = entry
     return out
+
+
+def refuse_unstored_shape(stored: Any, *, where: str = "dimensions") -> None:
+    """Refuse a map that is not the stored shape (req-grid-dimension-reference-1): every key a
+    declared Dimension node id, every value exactly ``{"v": <string>, "src": declared|default|derived}``.
+    The structural backstop under every writer: ``Entity.save`` calls it, so a direct ORM write of a
+    name-keyed or malformed map fails instead of landing."""
+    from tap_grid.dimension_vocabulary import vocabulary
+
+    if not isinstance(stored, Mapping):
+        raise DimensionWriteError(f"{where}: dimensions must be a map, got {type(stored).__name__}")
+    table = vocabulary()
+    for key, entry in stored.items():
+        if key not in table.by_id:
+            raise DimensionWriteError(f"{where}: dimension key {key!r} is not a declared Dimension node id")
+        if not (
+            isinstance(entry, Mapping)
+            and set(entry) == {"v", "src"}
+            and isinstance(entry["v"], str)
+            and entry["src"] in SOURCES
+        ):
+            raise DimensionWriteError(f"{where}: dimension {key!r} must be {{\"v\": <string>, \"src\": declared|default|derived}}, got {entry!r}")

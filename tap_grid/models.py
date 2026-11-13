@@ -439,7 +439,11 @@ class Entity(models.Model):
     )
     dimensions = models.JSONField(
         default=dict,
-        help_text="Flat namespace dict for partitioning/scoping (e.g. {'tap.graph': 'web'}).",
+        help_text=(
+            "The entity's dimensions, keyed by Dimension node uuid, each value {\"v\": <string>, \"src\": "
+            "declared|default|derived} (req-grid-dimension-reference). Written through tap_grid.dimension_map; "
+            "Entity.save refuses any other shape."
+        ),
     )
     originating_grid_id = models.UUIDField(
         default=get_default_grid_id,
@@ -554,6 +558,11 @@ class Entity(models.Model):
             may_insert=_save_may_insert(self, kwargs),
             may_update=_save_may_update(kwargs),
         )
+        fields = kwargs.get("update_fields")
+        if fields is None or "dimensions" in fields:
+            from tap_grid.dimension_map import refuse_unstored_shape
+
+            refuse_unstored_shape(self.dimensions, where=f"{self.entity_type} {self.pk}")
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:

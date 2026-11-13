@@ -21,7 +21,6 @@ the seed document and redeploy.
 from __future__ import annotations
 
 import json
-import logging
 import threading
 import uuid
 from collections.abc import Iterable, Iterator
@@ -29,7 +28,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
 
 CORE_SEED = Path(__file__).resolve().parent / "data" / "dimensions.grift.json"
 
@@ -48,6 +46,13 @@ class DeclaredDimension:
     def accepts(self, value: str) -> bool:
         """Any string for an open dimension; a listed one for a bounded dimension (Q47)."""
         return self.values is None or value in self.values
+
+
+class MalformedDimensionSeed(RuntimeError):
+    """A seed document listed in core or an installed plugin's manifest cannot be read, or declares a
+    Dimension node without a valid id or a name (PR# 1196 - tap review). The table is the source of
+    truth for write-time knobs, so a broken seed fails the build instead of being skipped: skipping
+    would let an older, installed declaration of the same id stand in for the newer one."""
 
 
 class InvalidDimensionKnob(RuntimeError):
@@ -81,18 +86,18 @@ def _dimension_nodes(document: dict[str, Any]) -> Iterator[tuple[str, dict[str, 
                 yield batch_id, node
 
 
-def _declared(node: dict[str, Any], source: str) -> DeclaredDimension | None:
+def _declared(node: dict[str, Any], source: str) -> DeclaredDimension:
     entity = node.get("entity") or {}
     payload = node.get("node") or {}
     name = payload.get("name") or entity.get("name")
     try:
         ident = str(uuid.UUID(str(entity.get("entity_id"))))
     except ValueError:
-        logger.warning("[d1c4] dimension seed %s: a node has no valid entity_id; skipped", source)
-        return None
+        raise MalformedDimensionSeed(
+            f"dimension seed {source}: a Dimension node has no valid entity_id ({entity.get('entity_id')!r})"
+        ) from None
     if not isinstance(name, str) or not name:
-        logger.warning("[d1c5] dimension seed %s: node %s has no name; skipped", source, ident)
-        return None
+        raise MalformedDimensionSeed(f"dimension seed {source}: Dimension node {ident} has no name")
     values = payload.get("values")
     if values is not None and not (
         isinstance(values, list) and all(isinstance(v, str) and v for v in values) and len(set(values)) == len(values)
@@ -148,12 +153,11 @@ def build(files: Iterable[tuple[str, Path]] | None = None) -> Vocabulary:
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
-            logger.warning("[d1c6] dimension seed %s unreadable (%s); skipped", source, error)
-            continue
+            raise MalformedDimensionSeed(f"dimension seed {source} ({path}) cannot be read: {error}") from error
+        if not isinstance(document, dict):
+            raise MalformedDimensionSeed(f"dimension seed {source} ({path}) is not a GRIFT document object")
         for batch_id, node in _dimension_nodes(document):
             declared = _declared(node, source)
-            if declared is None:
-                continue
             seen = latest.get(declared.id)
             if seen is None or batch_id > seen[0]:
                 latest[declared.id] = (batch_id, declared)

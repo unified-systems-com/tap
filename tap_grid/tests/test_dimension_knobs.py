@@ -150,3 +150,28 @@ class TestARenamedNodeKeepsItsId:
             build([(source, path)])
         message = str(raised.value)
         assert "bad.json" in message and "tap.test.badknob" in message and knob in message
+
+    @pytest.mark.parametrize("breakage", ["unreadable", "not-json", "bad-id", "no-name", "missing"])
+    def test_a_malformed_seed_fails_the_build_naming_the_file(self, tmp_path: Path, breakage: str) -> None:
+        """PR# 1196 - tap round 3: no skip, so an older installed declaration cannot stand in."""
+        from tap_grid.dimension_vocabulary import MalformedDimensionSeed, build
+
+        older = self._seed(tmp_path, "older.json", "01a1d1d0-0000-7000-8000-000000000001", "tap.computing.cloud")
+        source, path = self._seed(tmp_path, "newer.json", "01a1d1d0-0000-7000-8000-000000000002", "tap.computing.cloud")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        node = doc["batches"][0]["nodes"][0]
+        if breakage == "unreadable":
+            path.write_bytes(b"\xff\xfe not utf-8")
+        elif breakage == "not-json":
+            path.write_text("{ not json", encoding="utf-8")
+        elif breakage == "bad-id":
+            node["entity"]["entity_id"] = "not-a-uuid"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+        elif breakage == "no-name":
+            node["entity"]["name"] = ""
+            node["node"]["name"] = ""
+            path.write_text(json.dumps(doc), encoding="utf-8")
+        else:
+            path.unlink()
+        with pytest.raises(MalformedDimensionSeed, match="newer.json"):
+            build([older, (source, path)])

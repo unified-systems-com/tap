@@ -17,4 +17,4 @@
 | `req-grid-dimension-knobs` | — | Tested | — | `req-grid-dimension-knobs-1`, `req-grid-dimension-knobs-2`, `req-grid-dimension-knobs-4` |
 | `req-grid-dimension-names` | — | Tested | — | `req-grid-dimension-names-1`, `req-grid-dimension-names-2`, `req-grid-dimension-names-3` |
 | `req-grid-dimension-query-form` | Implemented | Tested | — | `req-grid-dimension-query-form-1`, `req-grid-dimension-query-form-2`, `req-grid-dimension-query-form-3`, `req-grid-dimension-query-form-4` |
-| `req-grid-dimension-reference` | Implemented | Tested | — | `req-grid-dimension-reference-0`, `req-grid-dimension-reference-3`, `req-grid-dimension-reference-6`, `req-grid-dimension-reference-7` |
+| `req-grid-dimension-reference` | Implemented | Tested | — | `req-grid-dimension-reference-0`, `req-grid-dimension-reference-1`, `req-grid-dimension-reference-3`, `req-grid-dimension-reference-6`, `req-grid-dimension-reference-7` |

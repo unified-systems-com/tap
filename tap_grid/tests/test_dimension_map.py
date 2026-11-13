@@ -79,6 +79,18 @@ class TestTheWire:
         sealed = stamp({"tap.test.open": "x"}, None)
         assert supplied(sealed) is sealed and sealed[OPEN]["src"] == "default"
 
+    def test_the_seal_cannot_be_set_from_outside(self) -> None:
+        """PR# 1196 - tap round 3: `sealed` is read-only and the class takes no new attributes."""
+        from tap_grid.dimension_map import StampedDimensions
+
+        forged = StampedDimensions({OPEN: {"v": "x", "src": "derived"}})
+        with pytest.raises(AttributeError):
+            forged.sealed = True  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            forged.trusted = True  # type: ignore[attr-defined]
+        forged._seal = object()  # any object but the module's own sentinel
+        assert supplied(forged)[OPEN]["src"] == "declared"
+
     def test_a_value_object_holds_only_v_and_src(self) -> None:
         with pytest.raises(DimensionWriteError):
             supplied({"tap.test.open": {"v": "x", "extra": 1}})
@@ -139,3 +151,38 @@ class TestThroughTheServiceLayer:
         stored = Entity.objects.get(pk=node.entity_id).dimensions
         meta = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap.meta, core's seed
         assert stored == {meta: {"v": "dimension", "src": "default"}}
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-dimension-reference-1")
+class TestEntitySaveRefusesAnyOtherShape:
+    """PR# 1196 - tap round 3: the stored shape is structural, so a direct Entity write of a
+    name-keyed or malformed map fails instead of landing."""
+
+    META = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"
+
+    def _create(self, dims: object) -> object:
+        from tap_grid.models import Entity
+        from tap_grid.write_guard import unguarded_write
+
+        with unguarded_write():
+            return Entity.objects.create(entity_type="batch", name="shape", dimensions=dims)
+
+    @pytest.mark.parametrize(
+        "dims",
+        [
+            {"tap.meta": "dimension"},  # name-keyed (the old shape)
+            {"01a1d150-9999-7000-8000-000000000001": {"v": "x", "src": "declared"}},  # undeclared id
+            {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": "dimension"},  # plain value
+            {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": {"v": "dimension"}},  # no src
+            {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": {"v": "dimension", "src": "made-up"}},
+            {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": {"v": 3, "src": "declared"}},
+        ],
+    )
+    def test_a_wrong_shape_is_refused(self, dims: object) -> None:
+        with pytest.raises(DimensionWriteError):
+            self._create(dims)
+
+    def test_the_stored_shape_and_an_empty_map_are_accepted(self) -> None:
+        self._create({})
+        self._create({self.META: {"v": "dimension", "src": "default"}})

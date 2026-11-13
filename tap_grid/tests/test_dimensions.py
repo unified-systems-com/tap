@@ -11,6 +11,7 @@ from django.core.exceptions import ImproperlyConfigured
 from tap_plugin.grid_fixtures.models import ConstrainedSource, Unconstrained
 
 from tap.pytest_harness import batch_ctx, isolated_registry
+from tap_grid.dimension_map import stamp
 from tap_grid.dimension_names import view
 from tap_grid.constraints import (
     _edge_default_dimensions_registry,
@@ -37,12 +38,13 @@ class TestEntityDimensionsField:
 
     def test_dimensions_can_be_set_on_create(self):
         """Entity.objects.create() accepts explicit dimensions (em-1)."""
-        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"env": "staging"})
+        # The stored shape (req-grid-dimension-reference-1); Entity.save refuses a name-keyed map.
+        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions=stamp(None, {"env": "staging"}))
         assert view(entity.dimensions) == {"env": "staging"}
 
     def test_dimensions_persists_after_save(self):
         """Dimensions round-trip correctly through the DB (em-1)."""
-        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions={"tap.graph": "web", "env": "prod"})
+        entity = make_spine_entity("grid_fixtures__constrained_source", dimensions=stamp(None, {"tap.graph": "web", "env": "prod"}))
         entity.refresh_from_db()
         assert view(entity.dimensions) == {"tap.graph": "web", "env": "prod"}
 
