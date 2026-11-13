@@ -19,8 +19,10 @@ from tap.plugin_release import (
     PluginReleaseError,
     ProfileBump,
     bump_profiles,
+    BARE_VERSION_RE,
     find_consumers,
     normalize_tag,
+    normalize_version,
 )
 
 #: What the stub forge says a tag names, unless a test says otherwise.
@@ -95,6 +97,45 @@ def test_normalize_tag_accepts_and_canonicalizes(raw: str, expected: str) -> Non
 def test_normalize_tag_rejects_malformed(raw: str) -> None:
     with pytest.raises(PluginReleaseError):
         normalize_tag(raw)
+
+
+# --------------------------------------------------------------------------- normalize_version
+
+
+@pytest.mark.spec("req-dev-workspace-release-7")
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("0.2.0", "0.2.0"),
+        ("v0.2.0", "0.2.0"),
+        ("1.10.3", "1.10.3"),
+        ("v0.2.0-rc1", "0.2.0-rc1"),
+        ("2.0.0+build.5", "2.0.0+build.5"),
+    ],
+)
+def test_normalize_version_is_the_bare_number_whichever_form_is_given(raw: str, expected: str) -> None:
+    """A release writes this into plugin_version and tags `v` + it, so `0.2.0` and `v0.2.0` are one release."""
+    assert normalize_version(raw) == expected
+    assert normalize_tag(raw) == f"v{expected}"
+    assert BARE_VERSION_RE.match(normalize_version(raw))
+
+
+@pytest.mark.spec("req-dev-workspace-release-7")
+@pytest.mark.parametrize("raw", ["0.2", "v0", "1.2.3.4", "latest", "", "v0.2.0 ", "0.2.0a"])
+def test_normalize_version_rejects_what_normalize_tag_rejects(raw: str) -> None:
+    with pytest.raises(PluginReleaseError):
+        normalize_version(raw)
+
+
+@pytest.mark.spec("req-dev-workspace-release-7")
+def test_release_script_writes_the_bare_number_not_the_argument() -> None:
+    """Structural, not behavioral: the script's manifest rewrite and commit message take BARE (derived from
+    the normalized tag), never VERSION (as typed). The behavior itself is `normalize_version` above."""
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "release-plugin.sh").read_text(encoding="utf-8")
+    assert 'BARE="${TAG#v}"' in script
+    assert 'python3 - "$MANIFEST" "$BARE"' in script
+    assert 'plugin_version = $BARE' in script
+    assert '"$MANIFEST" "$VERSION"' not in script
 
 
 # --------------------------------------------------------------------------- bump_profiles
