@@ -24,6 +24,7 @@ Entities are the base node of the grid / graph and the place where data about a 
 | req-grid-dimension-node-identity | [Dimension Node Identity](#dimension-node-identity) | Approved for Development | A dimension's identity is an assigned UUIDv7; the dotted name becomes a mutable label. Extends `req-grid-dimension-dn` |
 | req-grid-dimension-no-edges | [Nothing Draws an Edge to a Dimension Node](#nothing-draws-an-edge-to-a-dimension-node) | Approved for Development | `INBOUND_EDGES = []` / `OUTBOUND_EDGES = []`. Supersedes the `req-grid-dimension-dn` Future note that allowed any edge |
 | req-grid-dimension-reference | [Entities Reference Dimensions by Id, With Provenance](#entities-reference-dimensions-by-id-with-provenance) | Proposed | PROVISIONAL map shape `{<uuid>: {v, src}}`. Amends `req-grid-dimension-em` (flat object / string values) |
+| req-grid-dimension-names | [Dimension Names at the Edges](#dimension-names-at-the-edges) | Implemented | One resolver maps a dimension name to its stored key and a stored map to a name-keyed view; every reader goes through it, so the storage flip changes no query text or payload |
 | req-grid-dimension-lifecycle | [Dimension Lifecycle Rides Node History](#dimension-lifecycle-rides-node-history) | Approved for Development | Rename and deprecation are the node's history; entity membership is the entity's history — two reads |
 | req-grid-dimension-tabled | [Deliberately Tabled Dimension Capabilities](#deliberately-tabled-dimension-capabilities) | Proposed | Records four decisions to defer — mandate, delete-by-dimension, namespace reservation, second map |
 
@@ -553,6 +554,40 @@ dotted grammar is ever enforced is that a name should not coincide with a namesp
 the `.` in `git.host` and the `.` in a value like `github.com` are the same character meaning
 two different things.
 
+
+### Dimension Names at the Edges
+----
+RID: `req-grid-dimension-names`
+
+Every surface that reads `Entity.dimensions` speaks dimension **names**: a Gryphon
+`n.dimensions["tap.cloud"]` predicate, an export selection (`export_grift --dimension k=v`), and a
+node's read envelope, which every return layer, the graph panel's `dimension_match` nesting and the
+table panel's `['dimensions', key]` field paths consume. Storage is moving from name keys to
+dimension-node uuids (`req-grid-dimension-reference`, unified-systems-com/tap#711). This
+requirement puts one resolver, `tap_grid.dimension_names`, between the two, so that move changes
+the resolver and nothing at the surfaces.
+
+**Today's shape.** The map is still name-keyed, so the resolver passes names through: the stored
+key is the name, the view is a copy of the stored map, and no lookup runs. Routing a reader through
+it changes no result.
+
+**After the storage flip.** A name resolves only to a **declared** Dimension node. Nodes are seeded,
+never created on demand (ruled 2026-11-12, aws-build Q48a), because minting on first sight is how a
+vocabulary fills with misspellings, exactly as tags do. A name with no node is refused, naming it;
+a name carried by two live nodes is refused, naming both (`Dimension.name` is not unique). The
+strict rule is not consulted on today's shape, because plugins' Dimension nodes are not all seeded
+yet, and refusing an unseeded name before the flip would break reads that work now.
+
+Declarations (`DEFAULT_DIMENSIONS`, an edge's `default_dimensions`) are names today and are read by
+name by the domain-article guard (`tap/domain_articles.py`), a static source scan with no database.
+When declarations may also carry uuids, that guard needs a uuid-to-name lookup from the plugins'
+seed documents; that lands with the storage flip.
+
+| RID | Name | Status | Notes | Trace |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-names-1 | One Resolver | Implemented | `tap_grid.dimension_names` is the only code that maps a dimension name to its stored key (`storage_key`), builds a containment fragment for a name and value (`containment`), or turns a stored map into `{name: value}` (`view`). Gryphon's dimension key compile, the GRIFT export selection and the read envelope's `dimensions` go through it. | `tap_grid/dimension_names.py`; `executor.py::_json_spine_inner_path`; `grift/exporter.py` selection; `grift/subgraph.py::build_spine_surface`. Tests in `tap_grid/tests/test_dimension_names.py`. |
+| req-grid-dimension-names-2 | Name-Keyed Shape Passes Through | Implemented | While `STORAGE_IS_NAME_KEYED` holds, `storage_key(name)` is `name`, `containment(k, v)` is `{k: v}` and `view(m)` is a copy of `m`, with no database query. | `tap_grid/tests/test_dimension_names.py`. |
+| req-grid-dimension-names-3 | Names Resolve to Declared Nodes Only | Implemented | `resolve(name)` returns the uuid of the one live Dimension node carrying the name; none raises `UnknownDimension`, several raise `AmbiguousDimension` naming every id. Nothing is minted. The storage flip routes `storage_key` through it. | `tap_grid/tests/test_dimension_names.py`. Ruled 2026-11-12 (aws-build Q48a). |
 
 ### Dimension Lifecycle Rides Node History
 ----

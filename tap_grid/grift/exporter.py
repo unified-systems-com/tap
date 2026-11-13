@@ -369,10 +369,13 @@ def _selected_node_ids(selection: ExportSelection) -> set[uuid.UUID] | None:
     if selection.dimensions:
         from django.db.models import Q
 
-        # JSON containment, not a key-path lookup: a key is data, never lookup syntax.
+        from tap_grid.dimension_names import containment
+
+        # JSON containment, not a key-path lookup: a key is data, never lookup syntax. The selector
+        # names the dimension; the resolver maps the name to its stored form (req-grid-dimension-names).
         by_dimension = Q()
         for key, value in selection.dimensions:
-            by_dimension |= Q(dimensions__contains={key: value})
+            by_dimension |= Q(dimensions__contains=containment(key, value))
         admitted.append(set(nodes.filter(by_dimension).values_list("id", flat=True)))
     if selection.batches:
         batch_ids = _resolve_batches(selection.batches)

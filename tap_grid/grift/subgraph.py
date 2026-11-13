@@ -91,10 +91,17 @@ def build_spine_surface(entity: Entity) -> dict[str, Any]:
     """
     from tap_grid.models import Entity as _Entity
 
+    from tap_grid.dimension_names import view
+
     result: dict[str, Any] = {}
     for serialized_name in _Entity.SPINE_FIELD_NAMES:
         django_name = _Entity.SPINE_DJANGO_NAME.get(serialized_name, serialized_name)
-        result[serialized_name] = json_safe(getattr(entity, django_name, None))
+        value = getattr(entity, django_name, None)
+        if serialized_name == "dimensions" and value is not None:
+            # Presented by name, whatever the stored shape (req-grid-dimension-names): every
+            # return layer, the graph panel's nesting and the table panel's field paths read this.
+            value = view(value)
+        result[serialized_name] = json_safe(value)
     return result
 
 
