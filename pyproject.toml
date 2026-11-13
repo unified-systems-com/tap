@@ -389,6 +389,14 @@ python_files = ["test_*.py", "*_test.py"]
 # virtual (non-installed) uv project, so a pytest11 entry point cannot register.
 # Guarded by tap/tests/test_pytest_harness_invocation.py (req-tap-test-fixtures-4).
 addopts = "-v --tb=short -m 'not live_fetch' --ignore=_dev-plugins -p tap.pytest_harness"
+# `tap_plugin` is a PEP 420 namespace (no `__init__.py`), so without this pytest
+# walks a plugin's `__init__.py` chain up only to `tap_plugin/<slug>/` and imports
+# its tests as `<slug>.tests...`. That double-imports every plugin package under a
+# second, bare name, and the bare name shadows any third-party package that shares
+# the slug: `tenable` hid pyTenable's `tenable` under plugin-ci lane 2
+# (`pytest --pyargs tap_plugin.tenable`). With it, tests import as
+# `tap_plugin.<slug>.tests...`, the one name the package actually has.
+consider_namespace_packages = true
 markers = [
     "no_registry_isolation: opt out of search runner registry isolation between tests",
     "spec: link a test to one or more spec acceptance criteria by ACID",
