@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/9da071833305 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/752b6a2d678a (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -11,6 +11,7 @@ Public API:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -18,6 +19,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
@@ -277,6 +279,43 @@ _NODE_REQUIRED = frozenset(["entity", "node"])
 _NODE_ALLOWED = frozenset(["entity", "node", "retirement"])
 _EDGE_REQUIRED = frozenset(["entity", "edge"])
 _EDGE_ALLOWED = frozenset(["entity", "edge", "retirement"])
+
+
+# A document's `src: derived` dimension values survive only inside this scope (req-grid-dimension-
+# reference-6; George 2026-11-12, aws-build Q54 D3); never from the document itself, the HTTP API
+# or a portable import, where a derived value is reset to declared.
+@contextlib.contextmanager
+def collector_derivation_scope() -> Iterator[None]:
+    """Imports inside this block may keep a document's `src: derived` dimension values.
+
+    In-process code is trusted by construction; this names the one trusted writer so a second one
+    cannot appear unnoticed (`tap_grid/tests/test_dimension_migration.py::TestTheTrustHatchHasOneCaller`).
+    Entered only by `tap_cares.collectors.base` around a collector run's import.
+    """
+    from tap_grid.dimension_map import _DERIVATION_TRUSTED
+
+    token = _DERIVATION_TRUSTED.set(True)
+    try:
+        yield
+    finally:
+        _DERIVATION_TRUSTED.reset(token)
+
+
+def _without_default_entries(raw: Any) -> Any:
+    """A document's map without its `src: default` entries (aws-build Q59 D4): the grid stamps its
+    own defaults, so an exported row re-imports cleanly instead of being refused for carrying one."""
+    if not isinstance(raw, dict):
+        return raw
+    return {k: v for k, v in raw.items() if not (isinstance(v, dict) and v.get("src") == "default")}
+
+
+def _settled_dimensions(raw: Any) -> Any:
+    """An envelope's dimensions in stored shape, provenance settled under this import's trust."""
+    from tap_grid.dimension_map import supplied
+
+    return supplied(_without_default_entries(raw or {}))
+
+
 _ENVELOPE_REQUIRED = frozenset(["entity_id", "entity_type", "dimensions"])
 # `entity_expected_version` is the optional OCC declaration on upsert
 # envelopes (req-grift-concurrency-version). The importer parses and
@@ -649,18 +688,25 @@ def _validate_envelope(
                 )
             )
         else:
-            for k, v in dims.items():
-                if not isinstance(k, str) or not isinstance(v, str):
-                    issues.append(
-                        _issue(
-                            "schema_validation_failed",
-                            f"dimensions must be string-to-string at {path}.dimensions",
-                            "schema",
-                            f"{path}.dimensions",
-                            batch_entity_id=batch_entity_id,
-                        )
+            # Keys are dimension names or node ids; a value is a string or {"v": <string>, "src": ...}
+            # (req-grid-dimension-reference-6). The provenance and vocabulary rules are the writer's
+            # (tap_grid.dimension_map): a src "default" entry is dropped (the grid re-stamps its own
+            # defaults, Q59 D4), src "derived" survives only under a trusted collector run, and an
+            # undeclared dimension or a value outside a bounded one is refused here, before any write.
+            from tap_grid.dimension_map import DimensionWriteError, supplied
+
+            try:
+                supplied(_without_default_entries(dims), where=f"{path}.dimensions")
+            except (DimensionWriteError, LookupError) as error:
+                issues.append(
+                    _issue(
+                        "schema_validation_failed",
+                        str(error),
+                        "schema",
+                        f"{path}.dimensions",
+                        batch_entity_id=batch_entity_id,
                     )
-                    break
+                )
 
     if "name" in envelope and envelope["name"] is not None:
         if not isinstance(envelope["name"], str) or not envelope["name"]:
@@ -2888,7 +2934,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/a8591b861a7a (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/57d1dbf2cee2 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3112,7 +3158,7 @@ def _execute_grift_batch(
                 node_entity_id = node_obj["entity"]["entity_id"]
                 entity_type = node_obj["entity"]["entity_type"]
                 envelope_name = node_obj["entity"].get("name")
-                envelope_dims = node_obj["entity"].get("dimensions") or {}
+                envelope_dims = _settled_dimensions(node_obj["entity"].get("dimensions"))
                 envelope_expected_version = node_obj["entity"].get("entity_expected_version")
                 payload = node_obj["node"]
                 node_path = f"{batch_path}.nodes[{node_idx}]"
@@ -3163,6 +3209,7 @@ def _execute_grift_batch(
                     replace_spine_intents.append(
                         {
                             "entity_id": node_entity_id,
+                            "entity_type": entity_type,
                             "envelope_name": envelope_name,
                             "envelope_dims": envelope_dims,
                         }
@@ -3192,7 +3239,7 @@ def _execute_grift_batch(
             for edge_idx, edge_obj in enumerate(batch_container.get("edges", [])):
                 edge_entity_id = edge_obj["entity"]["entity_id"]
                 edge = edge_obj["edge"]
-                envelope_dims = edge_obj["entity"].get("dimensions") or {}
+                envelope_dims = _settled_dimensions(edge_obj["entity"].get("dimensions"))
                 envelope_expected_version = edge_obj["entity"].get("entity_expected_version")
                 edge_path = f"{batch_path}.edges[{edge_idx}]"
 
@@ -4844,6 +4891,18 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
         entity_uuid = uuid.UUID(intent["entity_id"])
         envelope_name = intent.get("envelope_name")
         envelope_dims = intent.get("envelope_dims") or {}
+        # The envelope is authoritative for the caller's values on a replace, an empty one included:
+        # {} clears them (Issue# 608 - tap; aws-build Q46b). The type's defaults are re-merged under
+        # it, src default, as a create builds them, so a collector's run never wipes them (aws-build
+        # Q59 D6; req-grid-dimension-reference-7).
+        from tap_grid.dimension_map import stamp
+        from tap_grid.registry import get_model_class
+
+        try:
+            type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
+        except KeyError:
+            type_defaults = {}
+        stored_dims = stamp(type_defaults, envelope_dims)
 
         # Read the persisted spine values to decide whether anything needs to
         # change. A no-op update should not bump updated_at.
@@ -4855,8 +4914,8 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
         update_fields: dict[str, Any] = {}
         if envelope_name is not None and envelope_name != persisted["name"]:
             update_fields["name"] = envelope_name
-        if envelope_dims and envelope_dims != (persisted["dimensions"] or {}):
-            update_fields["dimensions"] = envelope_dims
+        if stored_dims != (persisted["dimensions"] or {}):
+            update_fields["dimensions"] = dict(stored_dims)
 
         if update_fields:
             update_fields["updated_at"] = now
@@ -5199,6 +5258,10 @@ def grift_import(
     purge: bool = False,
 ) -> GriftImportResult:
     """Authorize, then import a GRIFT v0 document (req-tap-auth-service-boundary).
+
+    A document's ``src: derived`` dimension values survive only inside
+    :func:`collector_derivation_scope` (req-grid-dimension-reference-6); every other import resets a
+    derived value to declared.
 
     GRIFT import requires `grid.import_grift`; a force-reimport `purge`
     additionally requires `grid.purge` (and DEBUG, enforced downstream). `actor`

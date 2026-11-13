@@ -22,6 +22,7 @@ from tap_grid.services import create_edge, delete_edge_by_entity
 from tap_web import navigation
 from tap_web.models import Page
 from tap_web.navigation import BreadcrumbSegment, build_breadcrumb, choose_explicit_parents, effective_path
+from tap_grid.dimension_names import view
 
 _MINIMAL_LAYOUT = {"columns": {"col-1": {"width": "1fr", "rows": {"row-1": {"panel-id": "x"}}}}}
 
@@ -104,7 +105,7 @@ class TestEdgeType:
     def test_page_to_page_is_accepted_with_web_dimension(self, vendor_pages):
         edge = _nest(vendor_pages["teleport"], vendor_pages["highbar"])
         assert edge.edge_type == "NESTS_UNDER"
-        assert edge.entity.dimensions == {"tap.graph": "web"}
+        assert view(edge.entity.dimensions) == {"tap.graph": "web"}
 
     def test_properties_are_refused(self, vendor_pages):
         with pytest.raises(EdgePropertyValidationError):

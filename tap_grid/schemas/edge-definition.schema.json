@@ -47,7 +47,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Dimensions applied to edges of this type on creation."
+      "description": "Dimensions applied to edges of this type on creation, stamped src default. Keys are dimension names or Dimension node ids of declared dimensions; values are strings."
     },
     "internal_only": {
       "type": "boolean",

@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from tap_cares.models import Collector
+from tap_grid.dimension_names import view
 
 
 def _kwargs(**overrides):
@@ -39,7 +40,7 @@ class TestCollectorIsEntity:
 
     def test_save_applies_default_dimension(self):
         c = Collector.objects.create(**_kwargs())
-        assert c.entity.dimensions == {"tap_cares": "collector"}
+        assert view(c.entity.dimensions) == {"tap_cares": "collector"}
 
 
 # ---------------------------------------------------------------------------

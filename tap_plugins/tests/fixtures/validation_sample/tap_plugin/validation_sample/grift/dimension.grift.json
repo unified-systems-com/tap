@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "grift_version": "0"
+  },
+  "_reserved": {},
+  "batches": [
+    {
+      "batch_entity": {
+        "entity_id": "01a1d2db-fead-711e-9523-152c4218b1e2",
+        "entity_type": "batch",
+        "name": "validation_sample dimension vocabulary v0.1.0",
+        "dimensions": {}
+      },
+      "batch_node": {
+        "source": "validation_sample",
+        "name": "validation_sample dimension vocabulary v0.1.0",
+        "description": "Dimension nodes for the keys the validation_sample fixture plugin stamps. Dimensions are declared, never created on demand (aws-build Q48a)."
+      },
+      "nodes": [
+        {
+          "entity": {
+            "entity_id": "01a1d2db-fead-711e-9523-152d3ea4555d",
+            "entity_type": "dimension",
+            "name": "tap.fixture",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "tap.fixture",
+            "description": "Which test-fixture plugin wrote a row. validation_sample stamps it (value `validation_sample`) on its SAMPLE_LINK edges through the edge type's default_dimensions. Fixture vocabulary only: no product plugin stamps it."
+          }
+        }
+      ],
+      "edges": []
+    }
+  ]
+}

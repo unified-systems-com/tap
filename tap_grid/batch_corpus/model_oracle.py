@@ -581,7 +581,9 @@ def _execute(
                 n["type"],
                 key=constituting(n["type"], n["props"]),
                 spine_name=_spine_name(n),
-                dims=declared_dims or None,  # {} on a create: the model's defaults, unasserted
+                # {} on a create: the model's defaults, unasserted. A declared map is stored over
+                # the type's defaults (req-grid-dimension-reference-3).
+                dims={**_type_defaults(n["type"]), **declared_dims} if declared_dims else None,
                 last_batch=bref,
                 props=dict(n["props"]),
             )
@@ -593,7 +595,9 @@ def _execute(
         # keep-absent: a field the document omits keeps its stored value; a carried one replaces whole.
         row.props = {**(row.props or {}), **n["props"]}
         if declared_dims is not None:
-            row.dims = declared_dims
+            # A replace re-merges the type's defaults under the incoming map; {} clears the caller's
+            # values and the defaults return (aws-build Q59 D6, req-grid-dimension-reference-7).
+            row.dims = {**_type_defaults(n["type"]), **declared_dims}
         if n.get("name") or n["props"].get("name"):
             row.spine_name = _spine_name(n)
     for j, e in enumerate(edges):
@@ -775,3 +779,13 @@ def _lock_targets(
     if hard:
         raise _BatchFailed(hard)
     return deletes, purges
+
+
+def _type_defaults(type_slug: str) -> dict[str, str]:
+    """The type's declared DEFAULT_DIMENSIONS: declaration data the model restates, not importer code."""
+    from tap_grid.registry import get_model_class
+
+    try:
+        return dict(getattr(get_model_class(type_slug), "DEFAULT_DIMENSIONS", {}) or {})
+    except KeyError:
+        return {}

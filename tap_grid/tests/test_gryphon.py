@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from django.core.exceptions import ValidationError
 
+from tap_grid.dimension_map import stamp
 from tap_grid.exceptions import SearchExecutionError
 from tap_grid.gryphon.ast_nodes import (
     AndPred,
@@ -758,7 +759,7 @@ class TestGryphonDimensionsMultiStep:
         results = []
         for name, region in (("Frodo", "shire"), ("Sam", "shire"), ("Aragorn", "gondor")):
             entity = Entity.objects.create(
-                entity_type="grid_fixtures__constrained_source", name=name, dimensions={"region": region}
+                entity_type="grid_fixtures__constrained_source", name=name, dimensions=stamp(None, {"region": region})
             )
             results.append(ConstrainedSource.objects.create(entity=entity, name=name, description=""))
         return results
@@ -795,7 +796,7 @@ class TestGryphonDimensionsMultiStep:
         entity = Entity.objects.create(
             entity_type="grid_fixtures__constrained_source",
             name="Gollum",
-            dimensions={"tap.graph": "web"},
+            dimensions=stamp(None, {"tap.graph": "web"}),
         )
         ConstrainedSource.objects.create(entity=entity, name="Gollum", description="")
 
@@ -850,7 +851,7 @@ class TestGryphonDimensionsMultiStep:
         entity = Entity.objects.create(
             entity_type="grid_fixtures__constrained_source",
             name="Smaug",
-            dimensions={"dcom": "design", "tap.cloud": "aws"},
+            dimensions=stamp(None, {"dcom": "design", "tap.cloud": "aws"}),
         )
         ConstrainedSource.objects.create(entity=entity, name="Smaug", description="")
 
@@ -1004,7 +1005,10 @@ class TestGryphonDimensionsMultiStep:
         captured = self._capture(
             'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions["tap.cloud"] = "aws" RETURN c.entity_id'
         )
-        assert any("tap.cloud" in params for _stage, _sql, params in captured), captured
+        from tap_grid.dimension_names import storage_key
+
+        # The name compiles to the declared node's id (req-grid-dimension-names), then the value.
+        assert any(storage_key("tap.cloud") in params for _stage, _sql, params in captured), captured
 
 
 # ---------------------------------------------------------------------------
@@ -4762,7 +4766,7 @@ class TestGryphonBareDimensionsMultiStep:
                     verb="create_node",
                     type_slug="grid_fixtures__node",
                     payload={"name": "flat-dimension-target", "kind": "fixture"},
-                    dimensions={"tap.cloud": "aws", "dcom": "design"},
+                    dimensions=stamp(None, {"tap.cloud": "aws", "dcom": "design"}),
                 )
             ],
             batch_name="Gryphon bare dimension regression",

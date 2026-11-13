@@ -156,7 +156,7 @@ A boot profile is a single config-as-code document composed of named sections.
 | req-boot-profile-1 | Named Sections | Proposed | A profile is a document of named sections, not a flat list. | |
 | req-boot-profile-2 | Supersedes Flat Profile | Proposed | The collector-only profile is absorbed as the population fire-collector steps. | |
 | req-boot-profile-3 | References Not Secrets | Proposed | Profiles contain only declarative state and secret references. | |
-| req-boot-profile-4 | Opt-In Outbound | Implemented | An explicit `--allow-empty` (no profile) is an auth-only standup that reaches out to nothing. | |
+| req-boot-profile-4 | Opt-In Outbound | Implemented | An explicit `--allow-empty` (no profile) is an auth-only standup that reaches out to nothing. Its only grid write is core's dimension vocabulary (`req-boot-phases-5`), a local import. | |
 | req-boot-profile-5 | Profile Required By Default | Implemented | Boot requires an explicit profile by default; a missing profile fails loud (single escape hatch: `--allow-empty`), never a silent empty-but-healthy start. No inverted `--require-profile` flag. | |
 | req-boot-profile-6 | Step-Less Profile Reconciles Collectors | Implemented | A profile with no population steps still reconciles collector grid nodes for every registered collector, as the bootloader, and fires none. `--allow-empty` writes no collector node. | |
 
@@ -504,6 +504,7 @@ Boot runs sections in a fixed, code-defined phase order. Profiles cannot reorder
 | req-boot-phases-2 | Auth Before Population | Proposed | Auth (capabilities, built-in actors, grants) is applied before any actor-attributed population work. | |
 | req-boot-phases-3 | Bootstrap Actor First | Proposed | A `bootstrap` pre-phase resolves the `tap_bootloader` actor before identity; all boot writes run as it, so no boot write is `User=None`. | |
 | req-boot-phases-4 | Least-Privilege Boot Actor | Proposed | `tap_bootloader` is granted an explicit least-privilege boot-capability bundle (no `grid.purge`/`grid.delete`), not full admin — bounding the blast radius of boot bugs. | |
+| req-boot-phases-5 | Core Vocabulary Before Population | Implemented | Every boot, for every profile and for an auth-only (`--allow-empty`) standup, imports core's dimension vocabulary (`tap_grid/data/dimensions.grift.json`: `tap.meta`, `tap.graph`, `tap_cares`) as the first grid write after `grid_infra` and before any population step, through the GRIFT importer as the bootloader. The seed batch's fixed id makes it import once: a re-boot skips it and writes nothing. A failure aborts the boot, naming each import issue. Intrinsic to the orchestrator, not a profile step, so no profile can omit or reorder it. Ruled 2026-11-13 (aws-build Q63). | `tap_boot/orchestrator.py::_phase_core_vocabulary`; `tap_boot/tests/test_orchestrator.py::TestCoreVocabulary`. |
 
 ---
 

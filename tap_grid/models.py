@@ -439,7 +439,11 @@ class Entity(models.Model):
     )
     dimensions = models.JSONField(
         default=dict,
-        help_text="Flat namespace dict for partitioning/scoping (e.g. {'tap.graph': 'web'}).",
+        help_text=(
+            "The entity's dimensions, keyed by Dimension node uuid, each value {\"v\": <string>, \"src\": "
+            "declared|default|derived} (req-grid-dimension-reference). Written through tap_grid.dimension_map; "
+            "Entity.save refuses any other shape."
+        ),
     )
     originating_grid_id = models.UUIDField(
         default=get_default_grid_id,
@@ -554,6 +558,11 @@ class Entity(models.Model):
             may_insert=_save_may_insert(self, kwargs),
             may_update=_save_may_update(kwargs),
         )
+        fields = kwargs.get("update_fields")
+        if fields is None or "dimensions" in fields:
+            from tap_grid.dimension_map import refuse_unstored_shape
+
+            refuse_unstored_shape(self.dimensions, where=f"{self.entity_type} {self.pk}")
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
@@ -1319,13 +1328,16 @@ class BaseModel(models.Model):
 
         if self.entity_id is None:
             with transaction.atomic():
+                # Defaults stamped src: default, the caller's values over them (req-grid-dimension-reference-3).
+                from tap_grid.dimension_map import stamp
+
                 base_dims = dict(getattr(self.__class__, "DEFAULT_DIMENSIONS", {}))
-                caller_dims: dict[str, str] = getattr(self, "_initial_dimensions", {})
+                caller_dims: Any = getattr(self, "_initial_dimensions", {})
                 self.entity = Entity.objects.create(
                     entity_type=entity_type,
                     name=self.get_name(),
                     natural_key=natural_key,
-                    dimensions={**base_dims, **caller_dims},
+                    dimensions=stamp(base_dims, caller_dims, where=f"{entity_type} dimensions"),
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1465,9 +1477,11 @@ class Edge(BaseModel):
             # Apply edge type's own default dimensions (req-grid-dimension-dc-4)
             from tap_grid.constraints import get_edge_default_dimensions
 
+            from tap_grid.dimension_map import stamp
+
             edge_defaults = get_edge_default_dimensions(self.edge_type)
-            caller_dims: dict[str, str] = getattr(self, "_initial_dimensions", {})
-            merged = {**edge_defaults, **caller_dims}
+            caller_dims: Any = getattr(self, "_initial_dimensions", {})
+            merged = stamp(edge_defaults, caller_dims, where=f"{self.edge_type} dimensions")
             if merged:
                 self._initial_dimensions = merged
 
@@ -1504,14 +1518,55 @@ class Dimension(BaseModel):
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
         "description": {"type": "string"},
+        # Knobs are named fields, one per knob (George, 2026-11-12, aws-build Q51/Q52a).
+        "values": {
+            "type": ["array", "null"],
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+        },
+        "usable_in_keys": {"type": "boolean"},
+        "empty_is_meaningful": {"type": "boolean"},
     }
     CREATE_REQUIRED: ClassVar[list[str]] = ["name"]
 
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
+    values = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The dimension's allowed values. A list makes the dimension bounded: only these values are "
+            "accepted. Null makes it open: any string is accepted (req-grid-dimension-knobs, aws-build Q47)."
+        ),
+    )
+    usable_in_keys = models.BooleanField(
+        default=False,
+        help_text=(
+            "Whether a type may name this dimension in its NATURAL_KEY (req-grid-dimension-knobs, aws-build "
+            "Q52a). Declares eligibility only; immutability on rows is a separate rule (tap#1186)."
+        ),
+    )
+
+    empty_is_meaningful = models.BooleanField(
+        default=False,
+        help_text=(
+            "Whether an empty value means something for this dimension (observed empty). When false, an "
+            "empty value is refused on write (req-grid-dimension-knobs-4, aws-build Q59 D5)."
+        ),
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "tap_dimension"
+
+    def is_bounded(self) -> bool:
+        """True when the dimension declares its allowed values; an open dimension accepts any string."""
+        return self.values is not None
+
+    def accepts(self, value: str) -> bool:
+        """Whether ``value`` is an allowed value: any string for an open dimension, a listed one for a
+        bounded dimension."""
+        return self.values is None or value in self.values
 
     def get_name(self) -> str:
         return self.name

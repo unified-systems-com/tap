@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
-          "rev": "v0.3.2",
-          "commit": "5dd91568360a0f26a7ce24a8be185aee336753a2"
+          "rev": "v0.3.3",
+          "commit": "17d649bbe2988b9fc4e7a5d950b6aedae913ab26"
         },
         "note": "Fixture: the neutral grid_fixtures__* vocabulary the core suites build fixtures from (tap.plugin_testing.BASELINE_PLUGIN_SLUGS)."
       },
@@ -21,8 +21,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/gryphon-playground-tap",
-          "rev": "v0.6.3",
-          "commit": "b83427dff05f0b8835c35a81047bb2eb875eebb1"
+          "rev": "647679caabd7e8025c3fb04b01af21442b5391c8",
+          "commit": "647679caabd7e8025c3fb04b01af21442b5391c8"
         },
         "note": "Fixture: the Gridkin scenario corpus + harness that exercise the Gryphon query language; owns no types, depends_on grid_fixtures."
       },

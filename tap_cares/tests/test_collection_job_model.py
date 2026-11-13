@@ -14,6 +14,7 @@ import pytest
 from django.core.exceptions import ValidationError
 
 from tap_cares.models import CollectionJob, CollectionJobStatus, Collector
+from tap_grid.dimension_names import view
 
 
 def _job_kwargs(**overrides):
@@ -53,7 +54,7 @@ class TestCollectionJobIsEntity:
 
     def test_save_applies_default_dimension(self):
         j = CollectionJob.objects.create(**_job_kwargs())
-        assert j.entity.dimensions == {"tap_cares": "collection_job"}
+        assert view(j.entity.dimensions) == {"tap_cares": "collection_job"}
 
 
 # ---------------------------------------------------------------------------

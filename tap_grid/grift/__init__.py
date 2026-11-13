@@ -25,6 +25,7 @@ from tap_grid.grift.importer import (
     GriftImportResult,
     GriftIssue,
     GriftSkippedBatch,
+    collector_derivation_scope,
     grift_import,
     validate_grift_document,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "GriftImportResult",
     "GriftIssue",
     "GriftSkippedBatch",
+    "collector_derivation_scope",
     "grift_import",
     "validate_grift_document",
     # Envelope parse / write-path

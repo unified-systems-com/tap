@@ -14,4 +14,6 @@ SAMPLE_LINK__validation_sample = "edges/SAMPLE_LINK.edge.json"
 # contract suite's GRIFT round-trip, validate_plugin's runs level) imports a real plugin bundle
 # from a fixture rather than a product plugin (tap#638).
 [grift]
+# Declares tap.fixture, the key SAMPLE_LINK stamps: dimensions are declared, never minted (aws-build Q48a).
+dimension = "grift/dimension.grift.json"
 seed = "grift/seed.grift.json"

@@ -1,0 +1,196 @@
+"""The declared dimension vocabulary, read from seed documents (req-grid-dimension-reference-8).
+
+WORKAROUND(unified-systems-com/tap#1188): a dimension name resolves to its node's uuid through a
+static table built from every installed plugin's and core's GRIFT seed documents, with no database.
+Plugin Dimension nodes reach a grid only through boot's seed-plugin step, which runs after
+``migrate`` and only for plugins a profile seeds, so a lookup against Dimension rows would find
+nothing during the data migration and before boot. Reading the declarations from the seed files
+gives the same answer without that ordering problem (George, 2026-11-12, aws-build Q54 D1). A
+stored uuid may therefore exist briefly before its node row lands. Nothing is ever minted: a name
+that no seed declares is unknown (Q48a).
+
+The table is built once, lazily, after every app is ready (plugin manifests load in their
+``ready()``), and never touched per write.
+
+Until #1188 retires this table, the **seed files are the source of truth for every write-time knob**
+(``values``, ``empty_is_meaningful``, ``usable_in_keys``): writes read them from here, never from the
+Dimension rows. Editing a Dimension row's knobs on a grid changes nothing a write enforces; change
+the seed document and redeploy.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import uuid
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+CORE_SEED = Path(__file__).resolve().parent / "data" / "dimensions.grift.json"
+
+
+@dataclass(frozen=True)
+class DeclaredDimension:
+    """One Dimension node as a seed document declares it."""
+
+    id: str
+    name: str
+    values: tuple[str, ...] | None
+    usable_in_keys: bool
+    source: str
+    empty_is_meaningful: bool = False
+
+    def accepts(self, value: str) -> bool:
+        """Any string for an open dimension; a listed one for a bounded dimension (Q47)."""
+        return self.values is None or value in self.values
+
+
+class MalformedDimensionSeed(RuntimeError):
+    """A seed document listed in core or an installed plugin's manifest cannot be read, or declares a
+    Dimension node without a valid id or a name (PR# 1196 - tap review). The table is the source of
+    truth for write-time knobs, so a broken seed fails the build instead of being skipped: skipping
+    would let an older, installed declaration of the same id stand in for the newer one."""
+
+
+class InvalidDimensionKnob(RuntimeError):
+    """A seed declares a knob with the wrong type (PR# 1196 - tap review). Seeds are the source of
+    truth for write-time enforcement, so a malformed knob fails the table's build rather than reading
+    as "open" or "true" and weakening what writes enforce."""
+
+
+class DuplicateDimensionName(RuntimeError):
+    """Two seed declarations give one dimension name to different node ids (PR# 1196 - tap review):
+    every name must mean one dimension, or a name-keyed view and a name lookup silently pick one."""
+
+
+@dataclass(frozen=True)
+class Vocabulary:
+    by_id: dict[str, DeclaredDimension]
+    by_name: dict[str, tuple[str, ...]]  # name -> every distinct id declaring it
+
+
+_lock = threading.Lock()
+_table: Vocabulary | None = None
+
+
+def _dimension_nodes(document: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Each Dimension node with its seed batch's id (a UUIDv7, so later batches sort later)."""
+    for batch in document.get("batches") or []:
+        batch_id = str((batch.get("batch_entity") or {}).get("entity_id") or "")
+        for node in batch.get("nodes") or []:
+            entity = node.get("entity") or {}
+            if entity.get("entity_type") == "dimension":
+                yield batch_id, node
+
+
+def _declared(node: dict[str, Any], source: str) -> DeclaredDimension:
+    entity = node.get("entity") or {}
+    payload = node.get("node") or {}
+    name = payload.get("name") or entity.get("name")
+    try:
+        ident = str(uuid.UUID(str(entity.get("entity_id"))))
+    except ValueError:
+        raise MalformedDimensionSeed(
+            f"dimension seed {source}: a Dimension node has no valid entity_id ({entity.get('entity_id')!r})"
+        ) from None
+    if not isinstance(name, str) or not name:
+        raise MalformedDimensionSeed(f"dimension seed {source}: Dimension node {ident} has no name")
+    values = payload.get("values")
+    if values is not None and not (
+        isinstance(values, list) and all(isinstance(v, str) and v for v in values) and len(set(values)) == len(values)
+    ):
+        raise InvalidDimensionKnob(
+            f"dimension seed {source}: {name!r} knob 'values' must be a list of unique non-empty strings or null, got {values!r}"
+        )
+    flags: dict[str, bool] = {}
+    for knob in ("usable_in_keys", "empty_is_meaningful"):
+        raw = payload.get(knob, False)
+        if not isinstance(raw, bool):
+            raise InvalidDimensionKnob(f"dimension seed {source}: {name!r} knob {knob!r} must be true or false, got {raw!r}")
+        flags[knob] = raw
+    return DeclaredDimension(
+        id=ident,
+        name=name,
+        values=tuple(values) if values is not None else None,
+        usable_in_keys=flags["usable_in_keys"],
+        source=source,
+        empty_is_meaningful=flags["empty_is_meaningful"],
+    )
+
+
+def _seed_files() -> Iterator[tuple[str, Path]]:
+    yield ("tap_grid", CORE_SEED)
+    from django.apps import apps
+
+    from tap_plugins.base import TapPluginConfig
+
+    for config in apps.get_app_configs():
+        if not isinstance(config, TapPluginConfig) or config.manifest is None:
+            continue
+        manifest = config.manifest
+        for entry in manifest.grift:
+            yield (f"{manifest.slug}:{entry.path}", Path(manifest.plugin_root) / entry.path)
+
+
+def build(files: Iterable[tuple[str, Path]] | None = None) -> Vocabulary:
+    """Read every seed document and index its Dimension nodes by id and by name.
+
+    A node keeps its uuid when it is renamed or moves to another plugin's seed (George, 2026-11-12,
+    aws-build Q56: ``tap.cloud`` became ``tap.computing.cloud`` and moved from aws_core's seed to
+    computing_core's). So one id declared under two names is one dimension, not a duplicate: its
+    current name is the one from the latest seed batch (batch ids are UUIDv7, ordered by time), and
+    every name it was declared under still resolves to it while both seeds are installed. Two
+    different ids under one name are refused here, loudly (:class:`DuplicateDimensionName`), so a
+    name always means one dimension.
+    """
+    latest: dict[str, tuple[str, DeclaredDimension]] = {}
+    names: dict[str, list[str]] = {}
+    sources: dict[tuple[str, str], str] = {}
+    for source, path in files if files is not None else _seed_files():
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise MalformedDimensionSeed(f"dimension seed {source} ({path}) cannot be read: {error}") from error
+        if not isinstance(document, dict):
+            raise MalformedDimensionSeed(f"dimension seed {source} ({path}) is not a GRIFT document object")
+        for batch_id, node in _dimension_nodes(document):
+            declared = _declared(node, source)
+            seen = latest.get(declared.id)
+            if seen is None or batch_id > seen[0]:
+                latest[declared.id] = (batch_id, declared)
+            ids = names.setdefault(declared.name, [])
+            if declared.id not in ids:
+                ids.append(declared.id)
+            sources.setdefault((declared.name, declared.id), source)
+    clashes = {name: ids for name, ids in names.items() if len(ids) > 1}
+    if clashes:
+        listed = "; ".join(
+            f"{name!r} on " + ", ".join(f"{ident} ({sources[(name, ident)]})" for ident in ids)
+            for name, ids in sorted(clashes.items())
+        )
+        raise DuplicateDimensionName(
+            "a dimension name is declared under more than one node id; fix the seeds so each name "
+            f"means one dimension (a renamed node keeps its id): {listed}"
+        )
+    by_id = {ident: declared for ident, (_batch, declared) in latest.items()}
+    return Vocabulary(by_id=by_id, by_name={name: tuple(ids) for name, ids in names.items()})
+
+
+def vocabulary() -> Vocabulary:
+    """The table, built once on first use after the app registry is ready."""
+    global _table
+    if _table is None:
+        with _lock:
+            if _table is None:
+                _table = build()
+    return _table
+
+
+def reset(table: Vocabulary | None = None) -> None:
+    """Replace (or drop, to rebuild on next use) the table. For tests and plugin reloads."""
+    global _table
+    with _lock:
+        _table = table
