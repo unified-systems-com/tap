@@ -526,6 +526,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "tap_web.context_processors.branding",
                 "tap_web.navigation.breadcrumb",
+                "tap_web.navigation.nav_tree",
             ],
         },
     },

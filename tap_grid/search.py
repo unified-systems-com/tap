@@ -137,6 +137,10 @@ def execute_search(
 # ---------------------------------------------------------------------------
 
 
+FILTER_PARAM_PREFIX = "f."
+"""Query prefix of a table filter (``?f.status=open``); the same name as a search input feeds that input."""
+
+
 def inputs_from_query(search: Search, params: Mapping[str, str], *, reserved: Iterable[str] = ("limit", "offset", "page_size")) -> dict[str, Any]:
     """Pick a search's declared inputs out of a query string and coerce them by its own schema.
 
@@ -162,11 +166,26 @@ def inputs_from_query(search: Search, params: Mapping[str, str], *, reserved: It
         return {}
     out: dict[str, Any] = {}
     for key, sub in properties.items():
-        if key in reserved or key not in params:
+        if key in reserved:
             continue
-        raw = params[key]
         kind = sub.get("type") if isinstance(sub, dict) else None
         kinds = kind if isinstance(kind, list) else [kind]
+        # A table filter (`f.<key>`, req-web-stdpanel-table-filters-4) reaches a declared input when it
+        # selects exactly one value; several values are the panel's to OR, not the search's.
+        filter_key = FILTER_PARAM_PREFIX + key
+        if filter_key in params:
+            getlist = getattr(params, "getlist", None)
+            values = [v for v in (getlist(filter_key) if getlist else [params[filter_key]]) if str(v).strip()]
+            if len(values) != 1:
+                continue
+            raw = values[0]
+        elif key in params:
+            raw = params[key]
+            # A blank value for a nullable input is absent, so the schema's null default applies.
+            if not str(raw).strip() and "null" in kinds:
+                continue
+        else:
+            continue
         value: Any = raw
         try:
             if "integer" in kinds:

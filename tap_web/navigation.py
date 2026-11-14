@@ -21,6 +21,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from django.http import HttpRequest
 
 logger = logging.getLogger(__name__)
 
@@ -284,16 +288,116 @@ def build_breadcrumb(url: str, explicit_parents: Mapping[str, str] | None = None
     return segments
 
 
-def breadcrumb(request) -> dict[str, list[BreadcrumbSegment]]:
+def breadcrumb(request: HttpRequest) -> dict[str, list[BreadcrumbSegment]]:
     """Context processor: expose the request's breadcrumb to every template.
 
     The chrome in `tap_web/templates/tap_web/base.html` consumes `breadcrumb`
     to render the header. Per req-web-nav-chrome-budget, this is the only
     navigation chrome the platform exposes.
 
-    TAP-IMPLEMENTS: req-web-nav-chrome-read-free@89552760a99b/6c67a5e4aa22 (derivation) —
+    TAP-IMPLEMENTS: req-web-nav-chrome-read-free@89552760a99b/f3f91576694e (derivation) —
         chrome renders on every response because this processor derives the
         breadcrumb from the request path alone; no grid read stands between an
         anonymous or capability-less render and its header.
     """
     return {"breadcrumb": build_breadcrumb(request.path)}
+
+
+@dataclass
+class NavNode:
+    """One Page in the structural sidebar tree."""
+
+    name: str
+    url: str
+    weight: int
+    children: list[NavNode]
+    is_current: bool = False
+    """True for the current page, or its nearest listed ancestor when the current page is not listed."""
+
+    is_open: bool = False
+    """True when this node is the current page or one of its ancestors (its children start expanded)."""
+
+    @property
+    def initial(self) -> str:
+        """The first letter shown on the collapsed icon rail."""
+        return (self.name.strip()[:1] or "?").upper()
+
+
+def assemble_nav_tree(
+    pages: Iterable[tuple[str, str, int]],
+    explicit_parents: Mapping[str, str],
+    current_path: str,
+) -> list[NavNode]:
+    """Arrange discoverable pages into the sidebar tree and mark the current page.
+
+    Each page row is ``(slug, name, nav_weight)``. A page's parent is the nearest
+    level of its effective path (:func:`effective_path`) that is itself listed; a
+    page with none sits at the top. The home page ``/`` is the product mark, not a
+    sidebar item. Siblings sort by ``nav_weight`` (higher first), then name.
+    """
+    listed = {slug: (name, weight) for slug, name, weight in pages if slug and slug != "/"}
+    nodes = {slug: NavNode(name=name, url=slug, weight=weight or 0, children=[]) for slug, (name, weight) in listed.items()}
+    roots: list[NavNode] = []
+    for slug, node in nodes.items():
+        ancestors = effective_path(slug, explicit_parents)[:-1]
+        parent = next((nodes[a] for a in reversed(ancestors) if a in nodes), None)
+        (parent.children if parent else roots).append(node)
+
+    def order(items: list[NavNode]) -> None:
+        items.sort(key=lambda n: (-n.weight, n.name.lower()))
+        for item in items:
+            order(item.children)
+
+    order(roots)
+
+    path = current_path.rstrip("/") or "/"
+    trail = [level for level in effective_path(path, explicit_parents) if level in nodes]
+    if trail:
+        nodes[trail[-1]].is_current = True
+        for level in trail:
+            nodes[level].is_open = True
+    return roots
+
+
+def build_nav_tree(current_path: str) -> list[NavNode]:
+    """Read the discoverable pages and NESTS_UNDER edges, and assemble the sidebar tree.
+
+    TAP-IMPLEMENTS: req-web-nav-sidebar@0fa45c3eca71/f1b4a27d02cd (derivation) — the sidebar's one
+        source: the nav index's own page set (discoverable, nav_weight order) and parent
+        resolution (effective_path), so the rail and /__nav-index.json cannot disagree.
+
+    Returns an empty tree for a caller without ``grid.read`` (req-web-nav-chrome-read-free).
+    """
+    from tap_grid.read_guard import caller_can_read
+    from tap_web.models import Page
+
+    if not caller_can_read():
+        return []
+    rows = Page.objects.filter(discoverable=True).values_list("slug", "name", "nav_weight")  # type: ignore[misc]
+    return assemble_nav_tree(rows, load_explicit_parents(), current_path)
+
+
+def nav_tree(request: HttpRequest) -> dict[str, object]:
+    """Context processor: the structural sidebar tree, built only when a template reads it.
+
+    Panel fragments render through the same processors and never show the sidebar, so the
+    two queries run lazily, on first use by ``base.html``.
+    """
+    from django.utils.functional import SimpleLazyObject
+
+    from tap_grid.read_guard import caller_can_read
+
+    return {
+        "nav_tree": SimpleLazyObject(lambda: build_nav_tree(request.path)),
+        "grid_readable": SimpleLazyObject(lambda: _Flag(caller_can_read())),
+    }
+
+
+class _Flag:
+    """A boolean a ``SimpleLazyObject`` can wrap (it proxies ``__bool__``, and ``bool`` cannot be subclassed)."""
+
+    def __init__(self, value: bool) -> None:
+        self.value = value
+
+    def __bool__(self) -> bool:
+        return self.value

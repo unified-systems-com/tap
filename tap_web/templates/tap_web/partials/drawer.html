@@ -1,0 +1,103 @@
+{# Resource drawer body (spec-web-drawer.md): one entity, seven derived categories. A fragment, swapped into #tap-drawer. #}
+<header class="tap-drawer-head" data-tap-drawer-entity="{{ drawer_entity_id }}" data-tap-drawer-type="{{ drawer_entity_type }}" data-tap-drawer-url="{{ drawer_url }}">
+    <div class="tap-drawer-ident">
+        {% if drawer_icon_url %}<img class="tap-drawer-icon" src="{{ drawer_icon_url }}" alt="">{% endif %}
+        <div class="tap-drawer-titles">
+            <h2 id="tap-drawer-title" class="tap-drawer-title" tabindex="-1">{{ drawer_name }}</h2>
+            <div class="tap-drawer-type">{{ drawer_type_name }}</div>
+        </div>
+    </div>
+    <div class="tap-drawer-actions">
+        <a class="tap-drawer-open" href="{{ drawer_page_url }}">Open full page</a>
+        <button type="button" class="tap-drawer-close" data-tap-drawer-close aria-label="Close details">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+    </div>
+</header>
+
+<nav class="tap-drawer-tabs" aria-label="Sections">
+    <a href="#tap-dr-overview">Overview</a>
+    <a href="#tap-dr-findings">Findings <span class="tap-drawer-count">{{ drawer_findings_total }}</span></a>
+    <a href="#tap-dr-relationships">Relationships <span class="tap-drawer-count">{{ drawer_relationships_total }}</span></a>
+    <a href="#tap-dr-configuration">Configuration</a>
+    <a href="#tap-dr-tags">Tags <span class="tap-drawer-count">{{ drawer_tags|length }}</span></a>
+    <a href="#tap-dr-provenance">Provenance</a>
+    <a href="#tap-dr-raw">Raw</a>
+</nav>
+
+<div class="tap-drawer-scroll" data-tap-drawer-scroll>
+    <section class="tap-drawer-section" id="tap-dr-overview" data-tap-drawer-category="overview" aria-labelledby="tap-dr-overview-h">
+        <h3 id="tap-dr-overview-h">Overview</h3>
+        <dl class="tap-drawer-dl">
+            <dt>Type</dt><dd>{{ drawer_type_name }}</dd>
+            <dt>Entity id</dt><dd class="tap-drawer-mono">{{ drawer_entity_id }}</dd>
+            {% for row in drawer_overview %}<dt>{{ row.label }}</dt><dd>{{ row.text }}</dd>{% endfor %}
+            {% if drawer_declared_in %}<dt>Declared in</dt><dd class="tap-drawer-mono">{{ drawer_declared_in }}</dd>{% endif %}
+        </dl>
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-findings" data-tap-drawer-category="findings" aria-labelledby="tap-dr-findings-h">
+        <h3 id="tap-dr-findings-h">Findings <span class="tap-drawer-count">{{ drawer_findings_total }}</span></h3>
+        {% for group in drawer_findings %}
+            {% include "tap_web/partials/drawer_edge_group.html" %}
+        {% empty %}
+            <p class="tap-drawer-empty">No findings point at this {{ drawer_type_name }}. Looked for incoming “concerns resource” edges and finding holders.</p>
+        {% endfor %}
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-relationships" data-tap-drawer-category="relationships" aria-labelledby="tap-dr-relationships-h">
+        <h3 id="tap-dr-relationships-h">Relationships <span class="tap-drawer-count">{{ drawer_relationships_total }}</span></h3>
+        {% for group in drawer_relationships %}
+            {% include "tap_web/partials/drawer_edge_group.html" %}
+        {% empty %}
+            <p class="tap-drawer-empty">No edges connect this {{ drawer_type_name|lower }} to anything else in the grid.</p>
+        {% endfor %}
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-configuration" data-tap-drawer-category="configuration" aria-labelledby="tap-dr-configuration-h">
+        <h3 id="tap-dr-configuration-h">Configuration</h3>
+        {% for label, rows in drawer_configuration %}
+            <h4 class="tap-drawer-subhead">{{ label }}</h4>
+            <dl class="tap-drawer-dl">
+                {% for row in rows %}
+                    <dt>{{ row.label }}</dt>
+                    <dd>{% if row.is_block %}<details><summary>Show value</summary><pre class="tap-drawer-pre">{{ row.text }}</pre></details>{% else %}{{ row.text|default:"—" }}{% endif %}</dd>
+                {% endfor %}
+            </dl>
+        {% empty %}
+            <p class="tap-drawer-empty">This {{ drawer_type_name|lower }} has no fields beyond its overview.</p>
+        {% endfor %}
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-tags" data-tap-drawer-category="tags" aria-labelledby="tap-dr-tags-h">
+        <h3 id="tap-dr-tags-h">Tags <span class="tap-drawer-count">{{ drawer_tags|length }}</span></h3>
+        {% if drawer_tags %}
+            <dl class="tap-drawer-dl tap-drawer-tags">
+                {% for key, value in drawer_tags %}<dt>{{ key }}</dt><dd>{{ value|default:"—" }}</dd>{% endfor %}
+            </dl>
+        {% else %}
+            <p class="tap-drawer-empty">No tags recorded. A <code>deployed_from</code> tag here would name the code that declares this resource.</p>
+        {% endif %}
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-provenance" data-tap-drawer-category="provenance" aria-labelledby="tap-dr-provenance-h">
+        <h3 id="tap-dr-provenance-h">Provenance <span class="tap-drawer-count">{{ drawer_flip_rows|length }}</span></h3>
+        {% if drawer_flip_rows %}
+            <table class="tap-drawer-table">
+                <thead><tr><th scope="col">Field</th><th scope="col">Source</th><th scope="col">Written</th></tr></thead>
+                <tbody>
+                    {% for row in drawer_flip_rows %}
+                        <tr><td>{{ row.field }}</td><td>{{ row.source|default:"—" }}</td><td>{{ row.started_at|default:"—" }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="tap-drawer-empty">No field-level provenance is tracked for this {{ drawer_type_name|lower }}.</p>
+        {% endif %}
+    </section>
+
+    <section class="tap-drawer-section" id="tap-dr-raw" data-tap-drawer-category="raw" aria-labelledby="tap-dr-raw-h">
+        <h3 id="tap-dr-raw-h">Raw</h3>
+        <details><summary>Show JSON</summary><pre class="tap-drawer-pre">{{ drawer_raw }}</pre></details>
+    </section>
+</div>

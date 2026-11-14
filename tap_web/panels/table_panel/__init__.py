@@ -31,6 +31,7 @@ from django.core.exceptions import ValidationError
 
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
 from tap_web.panels.row_url import ROW_URL_TEMPLATE_PATTERN, fill_row_url, is_same_origin_template
+from tap_web.panels.table_panel.filters import apply_selection, build_bar, read_selection, resolve_group
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -145,12 +146,25 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # section by matching a field value against ordered {prefix, label}
         # rules; non-matches fall into default_label. Section order follows rule
         # order. Keeps the section taxonomy in the consumer's config, not in JS.
+        # `mode: value` groups by the exact value instead (largest group first), and
+        # `choices` offers a Group-by control over those fields (req-web-stdpanel-table-filters-6).
         "group_by": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["field", "rules"],
+            "required": ["field"],
+            "if": {"not": {"properties": {"mode": {"const": "value"}}, "required": ["mode"]}},
+            "then": {"required": ["rules"]},
             "properties": {
                 "field": {"type": "string", "minLength": 1},
+                "mode": {"type": "string", "enum": ["prefix", "value"]},
+                "initial": {"type": "string", "enum": ["field", "none"]},
+                "choices": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
                 "rules": {
                     "type": "array",
                     "minItems": 1,
@@ -165,6 +179,57 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                     },
                 },
                 "default_label": {"type": "string", "minLength": 1},
+            },
+        },
+        # The filter bar (req-web-stdpanel-table-filters): value chips with counts, a contains box,
+        # or a numeric range per declared field; state is the URL's `f.<field>` parameters.
+        "filters": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["field"],
+                "properties": {
+                    "field": {"type": "string", "minLength": 1, "pattern": r"^[A-Za-z0-9_.]+$"},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                    "kind": {"type": "string", "enum": ["enum", "text", "range"]},
+                    "max_chips": {"type": "integer", "minimum": 2, "maximum": 30},
+                    "order": {"type": "array", "maxItems": 30, "items": {"type": "string"}},
+                },
+            },
+        },
+        # Named filter presets shown as tabs before the bar; "All" (no filters) always comes first.
+        "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["label", "filters"],
+                "properties": {
+                    "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                    "filters": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                    },
+                    "group_by": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+        # A plain row click opens the resource drawer (spec-web-drawer) instead of navigating.
+        # Node mode needs nothing; projection rows name the alias holding the entity id and either
+        # a fixed entity type or the alias holding it.
+        "drawer": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "id_field": {"type": "string", "minLength": 1},
+                "type_field": {"type": "string", "minLength": 1},
+                "entity_type": {"type": "string", "minLength": 1},
             },
         },
     },
@@ -406,6 +471,16 @@ def _entity_type_catalog(slugs: set[str]) -> dict[str, dict[str, str]]:
     }
 
 
+def _column_titles(columns: list[dict[str, Any]] | None) -> dict[str, str]:
+    """``{field: title}`` over leaf columns, groups included, for labelling filters and group choices."""
+    titles: dict[str, str] = {}
+    for col in columns or []:
+        for leaf in col.get("columns", [col]):
+            if leaf.get("field") and leaf.get("title"):
+                titles[leaf["field"]] = leaf["title"]
+    return titles
+
+
 def _with_entity_types(columns: list[dict[str, Any]] | None, rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     """Fill ``formatter_params.types`` on every ``entityType`` column from the entity-type catalog.
 
@@ -550,6 +625,8 @@ class TablePanelType:
             # inputs, coerced by the search's own schema — the same path the
             # graph panel takes, so a page can host both over one URL.
             inputs = inputs_from_query(search, request.GET)
+            filter_specs = config.get("filters") or []
+            selection = read_selection(filter_specs, request.GET)
             result = execute_search(search, inputs or None, limit=effective_limit, offset=offset, layer="extended")
         except Exception as exc:  # noqa: BLE001
             logger.exception("[87dd] Table panel search execution failed for panel %s", panel.entity_id)
@@ -576,6 +653,8 @@ class TablePanelType:
             # which is 0 for a projection (tap#299).
             table_mode = "raw"
             page_limit = result["limit"] if "results" in result else None
+            facet_rows = projection
+            projection = apply_selection(projection, selection)
             total_count: int = len(projection)
             nodes: list[dict[str, Any]] = (
                 projection[offset : offset + page_limit] if page_limit is not None else projection[offset:]
@@ -589,6 +668,13 @@ class TablePanelType:
         else:
             nodes = result.get("nodes", [])
             total_count = result.get("info", {}).get("total_count", len(nodes))
+        if table_mode == "node":
+            # A node page: filters the Search did not take as inputs narrow the loaded rows only.
+            facet_rows = nodes
+            filters_partial = bool(filter_specs) and total_count > len(nodes)
+            nodes = apply_selection(nodes, selection)
+        else:
+            filters_partial = False
 
         showing = len(nodes)
         page_size_options = _build_page_size_options(total_count, page_size, show_all=show_all)
@@ -604,12 +690,27 @@ class TablePanelType:
             "next_offset": offset + (page_limit or 0),
         }
 
-        group_by = config.get("group_by")
+        group_by = resolve_group(config.get("group_by"), request.GET)
+        filter_bar = None
+        group_choices = (config.get("group_by") or {}).get("choices") or []
+        if filter_specs or config.get("views") or group_choices:
+            filter_bar = build_bar(
+                facet_rows,
+                filter_specs,
+                config.get("views") or [],
+                group_choices,
+                group_by.get("field") if group_by else None,
+                request.GET,
+                _column_titles(custom_columns),
+            )
+            filter_bar["partial"] = filters_partial
         return {
             "table_nodes": nodes,
             "table_mode": table_mode,
             "table_meta": meta,
             "table_search": search,
+            "table_filter_bar": filter_bar,
+            "table_drawer": config.get("drawer"),
             "table_columns": _with_entity_types(custom_columns, nodes),
             "table_height": config.get("height"),
             "table_striped": bool(config.get("striped")),

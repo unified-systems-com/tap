@@ -110,6 +110,11 @@
   // declarative (no inline JS in grift); the JS owns the rendering.
   // ---------------------------------------------------------------------
   function _safeStr(v) { return v == null ? "" : String(v); }
+  function _groupHeader(value, count) {
+    return '<span role="rowheader">' + _escapeHtml(_safeStr(value)) +
+      ' <span class="tap-group-count">(' + count + ')</span></span>';
+  }
+
   function _escapeHtml(v) {
     return _safeStr(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -940,7 +945,23 @@
     var fixedHeight = parseInt(mountEl.getAttribute("data-tap-table-height") || "", 10);
     if (fixedHeight > 0) tableOptions.height = fixedHeight;
 
-    if (groupSpec && Array.isArray(groupSpec.rules) && groupSpec.rules.length > 0) {
+    if (groupSpec && groupSpec.mode === "value" && groupSpec.field) {
+      // Exact-value grouping (req-web-stdpanel-table-filters-6): one section per value, largest first.
+      var valueField = groupSpec.field;
+      var valueOf = function (rowData) { return _safeStr(_getPath(rowData, valueField)) || "(none)"; };
+      var sizes = {};
+      rows.forEach(function (r) { var v = valueOf(r); sizes[v] = (sizes[v] || 0) + 1; });
+      rows.sort(function (a, b) {
+        var va = valueOf(a), vb = valueOf(b);
+        if (sizes[va] !== sizes[vb]) return sizes[vb] - sizes[va];
+        return va < vb ? -1 : va > vb ? 1 : 0;
+      });
+      tableOptions.groupBy = valueOf;
+      tableOptions.groupValues = [Object.keys(sizes).sort(function (a, b) {
+        return sizes[b] - sizes[a] || (a < b ? -1 : a > b ? 1 : 0);
+      })];
+      tableOptions.groupHeader = _groupHeader;
+    } else if (groupSpec && Array.isArray(groupSpec.rules) && groupSpec.rules.length > 0) {
       var groupRules = groupSpec.rules;
       var groupField = groupSpec.field;
       var defaultLabel = groupSpec.default_label || "Other";
@@ -966,56 +987,86 @@
         return av < bv ? -1 : av > bv ? 1 : 0;
       });
       tableOptions.groupBy = classify;
-      tableOptions.groupHeader = function (value, count) {
-        return _safeStr(value) +
-          ' <span style="color:rgb(var(--tap-gray-500));font-weight:400;margin-left:8px">(' + count + ')</span>';
-      };
+      tableOptions.groupHeader = _groupHeader;
     }
 
     // Node-mode rows navigate to the object viewer on click (req-web-stdpanel-table-row-nav).
     // Use rowFormatter to attach the click handler directly on the DOM element — Tabulator v6
     // removed rowClick as a constructor option in favour of table.on().
+    // With config.drawer (req-web-stdpanel-table-row-nav-5) a plain click opens the resource drawer
+    // through a `tap:row-activate` event; Cmd/Ctrl/middle click opens the row's page in a new tab, and
+    // Shift click follows it here. Drawer rows are focusable and open on Enter.
+    var drawerSpec = mountEl.hasAttribute("data-tap-table-drawer")
+      ? {
+          idField: mountEl.getAttribute("data-tap-drawer-id-field") || "",
+          typeField: mountEl.getAttribute("data-tap-drawer-type-field") || "",
+          entityType: mountEl.getAttribute("data-tap-drawer-entity-type") || "",
+        }
+      : null;
+
+    function drawerEntity(data) {
+      if (!drawerSpec) return null;
+      var id = drawerSpec.idField ? _getPath(data, drawerSpec.idField) : data.entity_id;
+      var type = drawerSpec.entityType || (drawerSpec.typeField ? _getPath(data, drawerSpec.typeField) : data.entity_type);
+      return id && type ? { entityId: String(id), entityType: String(type) } : null;
+    }
+
+    function wireRow(row, el, pageUrl) {
+      var entity = drawerEntity(row.getData());
+      if (!entity && !pageUrl) return;
+      if (entity || mode === "raw") el.classList.add("tap-row--clickable");
+      if (entity) {
+        el.setAttribute("data-tap-row-entity", entity.entityId);
+        el.setAttribute("tabindex", "0");
+        el.setAttribute("aria-label", "Show details: " + _safeStr((row.getData() || {}).name || entity.entityId));
+      }
+      function go(ev) {
+        if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return; // an in-cell link's click is the link's
+        var newTab = ev && (ev.metaKey || ev.ctrlKey || ev.button === 1);
+        if (entity && !newTab && !(ev && ev.shiftKey)) {
+          el.dispatchEvent(new CustomEvent("tap:row-activate", {
+            bubbles: true,
+            detail: { entityId: entity.entityId, entityType: entity.entityType, opener: el },
+          }));
+          return;
+        }
+        if (!pageUrl) return;
+        if (newTab) { window.open(pageUrl, "_blank", "noopener"); return; }
+        saveScrollForReturn();
+        window.location.href = pageUrl;
+      }
+      el.addEventListener("click", go);
+      el.addEventListener("auxclick", function (ev) { if (ev.button === 1) go(ev); });
+      if (entity) {
+        el.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" && ev.target === el) { ev.preventDefault(); go(ev); }
+        });
+      }
+    }
+
     if (mode === "node") {
       tableOptions.rowFormatter = function (row) {
+        var data = row.getData();
+        var entityType = data.entity_type || "";
+        var entityId = data.entity_id || "";
+        var urlId = ((data.display || {}).tap_viz || {}).url_id || "";
+        if (!entityType) return;
+        var perType = PER_TYPE_DETAIL_URL[entityType];
+        var pageUrl = perType && entityId ? perType(entityId, data) : urlId ? "/object/" + entityType + "/" + urlId + "/" : "";
         var el = row.getElement();
         el.style.cursor = "pointer";
-        el.addEventListener("click", function (ev) {
-          // A click on an in-cell link (link / externalLink formatters) is the
-          // link's, not the row's — otherwise one click opens two pages.
-          if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
-          var data = row.getData();
-          var entityType = data.entity_type || "";
-          var entityId = data.entity_id || "";
-          var urlId = ((data.display || {}).tap_viz || {}).url_id || "";
-          if (!entityType) return;
-          // Save scroll position so the back-button restoration can return
-          // the user to where they were on this page.
-          saveScrollForReturn();
-          var perType = PER_TYPE_DETAIL_URL[entityType];
-          if (perType && entityId) {
-            window.location.href = perType(entityId, data);
-          } else if (urlId) {
-            window.location.href = "/object/" + entityType + "/" + urlId + "/";
-          }
-        });
+        wireRow(row, el, pageUrl);
       };
     } else if (mode === "raw") {
       // Raw-mode rows are self-sourced (the panel emits the JSON). A row may
       // carry a `_url` string; if present the row becomes a clickable
-      // navigation to that URL. Rows without `_url` stay inert.
+      // navigation to that URL. Rows without `_url` stay inert unless the drawer names their entity.
       tableOptions.rowFormatter = function (row) {
         var url = row.getData()._url || "";
         // A row's URL can be built from data; only absolute http(s) and
         // same-origin paths navigate (the link formatter's rule).
-        if (!url || !_safeHref(url)) return;
-        var el = row.getElement();
-        el.classList.add("tap-row--clickable");
-        el.addEventListener("click", function (ev) {
-          // An in-cell link's click is the link's, not the row's.
-          if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
-          saveScrollForReturn();
-          window.location.href = url;
-        });
+        if (url && !_safeHref(url)) url = "";
+        wireRow(row, row.getElement(), url);
       };
     }
 
@@ -1036,6 +1087,15 @@
     }
     var table = new Tabulator(mountEl, tableOptions);
     mountEl.setAttribute("data-tap-table-mounted", "true");
+
+    // Grid semantics Tabulator leaves invalid: its scroll holder is focusable inside the grid (rows
+    // are the focus stops), and a group header is a rowgroup holding no rows. Make the header a row
+    // whose label is a rowheader.
+    table.on("renderComplete", function () {
+      var holder = mountEl.querySelector(".tabulator-tableholder");
+      if (holder) holder.removeAttribute("tabindex");
+      mountEl.querySelectorAll(".tabulator-group").forEach(function (g) { g.setAttribute("role", "row"); });
+    });
 
     // Optional quick-filter search box (panel.config.quick_filter). Live-filters
     // the loaded rows across all displayed columns; group headers re-count as the
@@ -1229,13 +1289,85 @@
     var panelEl = footer.closest(".tap-panel--table");
     if (!panelEl) return;
 
-    var url = "/panel/" + slug + "--" + panelId + "/?page_size=" + pageSize + "&offset=0";
+    // Keep the page's own parameters (filters, views, group) across a page-size change.
+    var params = new URLSearchParams(window.location.search);
+    params.delete("drawer");
+    params.delete("drawer_type");
+    params.set("page_size", pageSize);
+    params.set("offset", "0");
+    var url = "/panel/" + slug + "--" + panelId + "/?" + params.toString();
 
     /* global htmx */
     if (typeof htmx !== "undefined") {
       htmx.ajax("GET", url, { target: panelEl, swap: "outerHTML" });
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Filter bar (req-web-stdpanel-table-filters). Each chip, view tab and
+  // group choice is a real `?query` link (and each text/range box a GET form),
+  // so the bar works without JS. Here a click instead updates the page URL
+  // (history.replaceState: a filtered board is a link, not a history trail)
+  // and re-fetches just this panel with the new query.
+  // ---------------------------------------------------------------------
+  function _panelQuery(search) {
+    var params = new URLSearchParams(search);
+    params.delete("drawer");
+    params.delete("drawer_type");
+    return params.toString();
+  }
+
+  function applyFilterQuery(bar, search) {
+    var panelEl = bar.closest(".tap-panel--table");
+    var base = bar.getAttribute("data-tap-panel-url");
+    if (!panelEl || !base || typeof htmx === "undefined") return false;
+    var pageParams = new URLSearchParams(search);
+    var keep = new URLSearchParams(window.location.search);
+    ["drawer", "drawer_type"].forEach(function (k) { if (keep.has(k)) pageParams.set(k, keep.get(k)); });
+    var query = pageParams.toString();
+    window.history.replaceState(window.history.state, "", window.location.pathname + (query ? "?" + query : ""));
+    // Start from the slot's own query (it carries the slot's fixed inputs), swap in the new filter state.
+    var slot = panelEl.closest("[hx-get]");
+    var panelParams = new URLSearchParams(slot ? (slot.getAttribute("hx-get").split("?")[1] || "") : "");
+    Array.from(panelParams.keys()).forEach(function (k) {
+      if (k.indexOf("f.") === 0 || k === "group" || k === "offset") panelParams.delete(k);
+    });
+    new URLSearchParams(_panelQuery(search)).forEach(function (v, k) {
+      if (k.indexOf("f.") === 0 || k === "group") panelParams.append(k, v);
+    });
+    htmx.ajax("GET", base + "?" + panelParams.toString(), { target: panelEl, swap: "outerHTML" });
+    return true;
+  }
+
+  document.addEventListener("click", function (ev) {
+    var link = ev.target.closest && ev.target.closest("[data-tap-filterbar] [data-tap-filter-link]");
+    if (!link || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var bar = link.closest("[data-tap-filterbar]");
+    var href = new URL(link.getAttribute("href"), window.location.href);
+    if (applyFilterQuery(bar, href.search)) ev.preventDefault();
+  });
+
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target.closest && ev.target.closest("[data-tap-filterbar] [data-tap-filter-form]");
+    if (!form) return;
+    var params = new URLSearchParams();
+    new FormData(form).forEach(function (value, key) {
+      if (String(value).trim() !== "") params.append(key, String(value));
+    });
+    if (applyFilterQuery(form.closest("[data-tap-filterbar]"), "?" + params.toString())) ev.preventDefault();
+  });
+
+  // The row whose entity the resource drawer shows is marked, and unmarked when it closes.
+  document.addEventListener("tap:drawer-change", function (ev) {
+    var id = (ev.detail || {}).entityId || "";
+    document.querySelectorAll(".tap-row--drawer-active").forEach(function (el) {
+      el.classList.remove("tap-row--drawer-active");
+    });
+    if (!id) return;
+    document.querySelectorAll("[data-tap-row-entity]").forEach(function (el) {
+      if (el.getAttribute("data-tap-row-entity") === id) el.classList.add("tap-row--drawer-active");
+    });
+  });
 
   // Initial mount for page-size selectors.
   if (document.readyState === "loading") {

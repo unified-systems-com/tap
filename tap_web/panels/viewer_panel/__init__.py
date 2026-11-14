@@ -113,9 +113,29 @@ def _model_field_pairs(obj: Any) -> list[tuple[str, str, bool]]:
         seen.add(field.name)
         value = getattr(obj, field.name, None)
         text, is_block = _format_value(value)
-        label = str(field.verbose_name or field.name).replace("_", " ").title()
+        label = field_label(field)
         pairs.append((label, text, is_block))
     return pairs
+
+
+ACRONYMS = frozenset(
+    "acl af api arn aws az cidr cpu cve dns ec2 ecr eks iam id ip kms mfa ou rds s3 scp sg ssm ttl url uuid vpc".split()
+)
+
+
+def field_label(field: Any) -> str:
+    """A field's reader-facing label: words capitalised, acronyms upper-cased ("private_ip" -> "Private IP")."""
+    words = str(field.verbose_name or field.name).replace("_", " ").split()
+
+    def word(w: str) -> str:
+        low = w.lower()
+        if low in ACRONYMS:
+            return w.upper()
+        if low.endswith("s") and low[:-1] in ACRONYMS:
+            return low[:-1].upper() + "s"
+        return w[:1].upper() + w[1:]
+
+    return " ".join(word(w) for w in words)
 
 
 def _get_viewer_context(entity_id: str, entity_type: str) -> dict[str, Any]:

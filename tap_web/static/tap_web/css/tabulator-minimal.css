@@ -17,8 +17,11 @@
 .tabulator .tabulator-row.tabulator-row-even { border: none; border-bottom: 1px solid rgb(var(--tap-slate-100)); background: rgb(var(--tap-white)); }
 .tabulator .tabulator-row:hover { background: rgb(var(--tap-slate-50)); }
 .tabulator .tabulator-cell { border: none; padding: 0.3rem 0.5rem; color: rgb(var(--tap-slate-900)); }
-.tabulator .tabulator-row.tabulator-group { background: rgb(var(--tap-slate-100)); border: none; border-bottom: 1px solid rgb(var(--tap-slate-200)); color: rgb(var(--tap-slate-700)); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.3rem 0.5rem; }
+.tabulator .tabulator-row.tabulator-group { background: rgb(var(--tap-slate-100)); border: none; border-bottom: 1px solid rgb(var(--tap-slate-200)); color: rgb(var(--tap-slate-700)); font-weight: 700; font-size: 0.78rem; padding: 0.3rem 0.5rem; }
 .tabulator .tabulator-row.tabulator-group:hover { background: rgb(var(--tap-slate-200)); }
+.tabulator .tabulator-tableholder .tabulator-placeholder .tabulator-placeholder-contents { color: rgb(var(--tap-slate-600)); font-size: 0.8125rem; font-weight: 400; padding: 1rem; }
+.tabulator .tabulator-row.tabulator-group span[role="rowheader"] { color: inherit; margin-left: 0; }
+.tabulator .tabulator-row.tabulator-group .tap-group-count { color: rgb(var(--tap-slate-600)); font-weight: 400; margin-left: 0.5rem; }
 .tabulator .tabulator-col .tabulator-col-sorter { color: rgb(var(--tap-slate-300)); }
 /* Link affordance (req-web-stdpanel-table-config-16, -17): a cell link is accent-coloured and always
    underlined, with a visible keyboard focus ring, and a row that navigates through `row_url_template`
@@ -56,6 +59,7 @@
 .tabulator .tabulator-cell .tap-cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Wrapping text column (columns[].wrap, req-web-stdpanel-table-config-31): the span stops cutting and flows onto as
    many lines as it needs, so the row grows; an unbroken word breaks rather than overflowing the cell. */
+.tabulator .tabulator-cell.tap-col-wrap { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
 .tabulator .tabulator-cell.tap-col-wrap .tap-cell-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
 /* Plain links (formatter_params.style "plain", req-web-stdpanel-table-config-26): the link reads as the cell's own
    text, with no underline and no hover highlight, but it is still an anchor: it stays clickable (the pointer cursor

@@ -99,3 +99,14 @@ class TestUrlIdGrammar:
         so the UUID (which never contains ``--``) always wins the split."""
         url_id = build_url_id("a--tricky--slug", "0198c2f0-0000-7000-8000-000000000002")
         assert parse_panel_url_id(url_id) == "0198c2f0-0000-7000-8000-000000000002"
+
+    @pytest.mark.spec("req-web-panel-obj-9")
+    def test_a_name_with_slashes_reverses_to_a_routable_url(self):
+        from django.urls import reverse
+
+        uuid = "0198c2f0-0000-7000-8000-000000000003"
+        url_id = build_url_id("arn:aws-us-gov:iam::123456789012:role/Ops Role", uuid)
+        assert "/" not in url_id and " " not in url_id
+        assert parse_panel_url_id(url_id) == uuid
+        path = reverse("object-view", kwargs={"entity_type": "aws-iam-role", "object_url_id": url_id})
+        assert path.endswith(f"--{uuid}/")

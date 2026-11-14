@@ -29,6 +29,7 @@ The first version should optimize for predictable behavior over maximum flexibil
 | req-web-stdpanel-table-edit | [Table Panel Editor](#table-panel-editor) | Proposed | Standard editor configures linked search and table behavior flags |
 | req-web-stdpanel-table-row-nav | [Row Navigation](#row-navigation) | Implemented | Clicking a node-mode table row navigates to the TAP object viewer for that entity |
 | req-web-stdpanel-table-rows | [Projection Rows](#projection-rows) | Implemented | A Gryphon search that RETURNs aliases renders its `rows`: aliases are the columns, `columns[]` applies, the total is the true row count |
+| req-web-stdpanel-table-filters | [Filter Bar And Views](#filter-bar-and-views) | Implemented | Declared `filters` render as chips with value counts; state lives in the URL (`?f.<field>=`); a filter the bound search declares as an input runs server-side; `views` are named presets; `group_by.mode: value` groups by exact value |
 
 ---
 
@@ -563,13 +564,41 @@ Row navigation is a read-only entrypoint to the object viewer. It must not inter
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-stdpanel-table-row-nav-1 | Row Click Navigates In Node Mode | Implemented | Clicking a node-mode row navigates to `/object/{entity_type}/{url_id}/`. | `rowClick` in `panel-table.js` |
+| req-web-stdpanel-table-row-nav-1 | Row Click Navigates In Node Mode | Implemented | Clicking a node-mode row navigates to `/object/{entity_type}/{url_id}/`, unless the table has a `drawer` config: then a plain click opens the resource drawer for the row's entity (`req-web-drawer-open`), and a modifier click (Cmd, Ctrl, Shift) or middle click still navigates. | `rowFormatter` in `panel-table.js`; revised 2026-11 for the drawer |
+| req-web-stdpanel-table-row-nav-5 | Drawer Row Activation | Implemented | With `drawer: {id_field}` (projection mode) or `drawer: {}` (node mode), a plain row click dispatches a `tap:row-activate` event carrying the entity id and opens the drawer instead of navigating; a row without an id keeps its normal behaviour. | `tap_web/tests/test_drawer.py`; browser QA |
 | req-web-stdpanel-table-row-nav-2 | Edge Mode Rows Do Not Navigate | Implemented | Clicking a row in edge mode does not trigger viewer navigation. | |
 | req-web-stdpanel-table-row-nav-3 | Cursor Signals Clickability | Implemented | Node-mode rows display a pointer cursor. | `rowFormatter` in `panel-table.js` |
 | req-web-stdpanel-table-row-nav-4 | URL ID In Node Payload | Implemented | Every serialized node carries a `url_id` field usable as the viewer URL segment. | Cross-ref `req-viz-panel-node-nav-2` |
 
 #### Future
 If multi-select row actions (bulk view, comparison) are added later, define them as an extension rather than redefining the single-click navigation contract.
+
+### Filter Bar And Views
+----
+RID: `req-web-stdpanel-table-filters`
+
+Status: `Implemented`
+
+A board's reader narrows a list by the few fields they act on (status, product, host, severity), switches between named slices of the same list, and groups it by the axis they fix. Security consoles present this as a filter bar with value chips, saved views and a Group-by control; this requirement is TAP's data-declared form of it.
+
+#### Implementation
+- **`filters`**: a list of `{field, label, kind, max_chips}` (`kind` is `enum`, the default, `text` or `range`). An `enum` filter renders one chip per distinct value with its row count (selected first, then the filter's optional `order` of values, such as severities worst first, then most rows; `max_chips`, default 12, and a "+N more" note). An `enum` filter with fewer than two values among the rows the other filters keep is left out of the bar unless one of its values is selected: a chip that cannot narrow is noise. A `text` filter renders a contains box; a `range` filter renders min and max boxes over a number. Selecting chips in one filter ORs them; filters AND together. Each chip's count is faceted: rows the *other* active filters keep.
+- **URL state**: every active filter is `?f.<field>=<value>` (repeated for several values; `f.<field>.min` / `.max` for a range), and `?group=<field>` the group choice. Every chip, tab and choice is a real link and every box a GET form, so the bar works without JavaScript; with it, a click writes the URL with `history.replaceState` and re-fetches only the panel. A blank value is the same as absent.
+- **Where the filter runs**: projection rows are the search's whole result, so the panel filters them in Python before paging, and counts are true totals (`tap_web.panels.table_panel.filters`). When the bound Search declares `<field>` in its `input_schema`, a single selected value is also forwarded as that input (`tap_grid.search.inputs_from_query` reads `f.<field>`; several values stay the panel's to OR), so a node-mode Search filters every row. Otherwise a node-mode filter narrows the loaded page only and the bar says so.
+- **`views`**: a list of `{label, filters: {field: [values]}, group_by}`, rendered as tabs before the bar; choosing one replaces the active filters (and the group choice when it names one). The first tab is always "All".
+- **`group_by.mode`**: `prefix` (default, existing rules) or `value`: group by the exact value of `group_by.field`, largest group first, count in the header. `group_by.choices` (list of fields) adds a Group-by control; "None" is always offered. With choices, `group_by.initial: none` renders ungrouped until the reader picks an axis, for a list whose order is the answer.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-stdpanel-table-filters-1 | Filters Validate | Implemented | `filters`, `views` and `group_by.mode` / `choices` validate against the schema; an unknown kind or key is rejected. | `tap_web/tests/test_table_filters.py` |
+| req-web-stdpanel-table-filters-2 | Chips With Counts | Implemented | An enum filter renders one chip per distinct value with its faceted count, and the rows shown are the ones every active filter keeps. | `tap_web/tests/test_table_filters.py` |
+| req-web-stdpanel-table-filters-3 | URL State | Implemented | Active filters are read from `?f.<field>=` on render and each control links to the toggled query; in the browser a click updates the URL and reloading restores the filters. | `tap_web/tests/test_table_filters.py` + browser QA (`qa-page`) |
+| req-web-stdpanel-table-filters-4 | Server-Side When Declared | Implemented | `f.<field>` reaches a Search that declares `<field>` as an input; a blank value reaches it as absent (null default), not `""`. | `tap_web/tests/test_table_filters.py`, `tap_grid` search tests |
+| req-web-stdpanel-table-filters-5 | Views Are Presets | Implemented | A view tab links to the view's filters (replacing the active ones) and is marked current when they are the active set. | `tap_web/tests/test_table_filters.py` |
+| req-web-stdpanel-table-filters-6 | Exact-Value Grouping | Implemented | `group_by.mode: value` groups rows by exact value, largest group first; `?group=` picks one of `choices`, `none` turns grouping off. | `tap_web/tests/test_table_filters.py` + browser QA |
+| req-web-stdpanel-table-filters-7 | Quiet Defaults | Implemented | An unselected `enum` filter with fewer than two values is not rendered; `group_by.initial: none` with `choices` renders ungrouped until `?group=` names an axis. A filter's `order` sorts its chips before row counts do. | `tap_web/tests/test_table_filters.py` |
 
 
 ## Status Vocabulary
