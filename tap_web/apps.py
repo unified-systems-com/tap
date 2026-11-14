@@ -15,10 +15,10 @@ class TapWebConfig(AppConfig):
     # Top-level URL prefixes this app mounts, reserved against Page slugs
     # (req-web-page-slug-sanitize.sec). Collected across all apps by
     # tap_web.reserved.get_reserved_url_prefixes(); see tap_web/reserved.py.
-    # tap_web owns /panel and /object (see tap_web/urls.py); /admin and /auth
+    # tap_web owns /panel, /object and /plugins (see tap_web/urls.py); /admin and /auth
     # are project-level and declared in tap_web.reserved; /api and /viz are
     # declared by tap_api and tap_viz respectively.
-    reserved_url_prefixes: list[str] = ["/panel", "/object"]
+    reserved_url_prefixes: list[str] = ["/panel", "/object", "/plugins"]
 
     # Same format as TapPluginConfig.edge_types.
     # Processed by register_edge_types_from_list() on startup.
