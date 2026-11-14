@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.5](https://github.com/unified-systems-com/tap/compare/v0.3.4...v0.3.5) (2026-11-14)
+
+
+### Features
+
+* **boot:** import core's dimension vocabulary first on every boot ([818d1bc](https://github.com/unified-systems-com/tap/commit/818d1bcec17e840110296f70514d99cefafa821e))
+* **grid:** Dimension knobs (values, usable_in_keys); core dimension seed ([1207d5c](https://github.com/unified-systems-com/tap/commit/1207d5cc16306be0d5c385eb421e8a9335da5b58))
+* **grid:** dimensions keyed by node id with provenance (the storage flip) [via aws-build] ([c7bc5b1](https://github.com/unified-systems-com/tap/commit/c7bc5b1ae6d6bba094af36f5ddc926447ae54464))
+* **grid:** dimensions keyed by node id with provenance; the storage flip ([4852287](https://github.com/unified-systems-com/tap/commit/485228735beb5b85272d84a118535ad9fc75b738))
+* **grid:** one resolver for dimension names at the read edges (+ spine-key undeclared fix) [via aws-build] ([5e2f7ab](https://github.com/unified-systems-com/tap/commit/5e2f7abfa3f413c33e8f5cc3a84d5385cd457beb))
+* **grid:** replace re-merges defaults; documents' default entries dropped; empty_is_meaningful ([fa9b8bb](https://github.com/unified-systems-com/tap/commit/fa9b8bbebc7c249930e7c2399ecdc48301c9b221))
+* **validate:** plugin_version is the bare number; the release writes it that way ([cb0c58f](https://github.com/unified-systems-com/tap/commit/cb0c58f0910cea601b999d41eb205dbf1be2d57d))
+
+
+### Bug Fixes
+
+* **docker:** start the queue workers before the Codespace boot ([83e9002](https://github.com/unified-systems-com/tap/commit/83e90029e163741a358caeff562abb403538aefe))
+* **docker:** start the queue workers before the Codespace boot [via fedramp-20x-vdr] ([08da7d3](https://github.com/unified-systems-com/tap/commit/08da7d3956cb1dbcb5b3a10920d9883addabaad3))
+* **grid:** migration for Entity.dimensions' new help text ([7df98bb](https://github.com/unified-systems-com/tap/commit/7df98bb5dc5d70d3a78f906d816a0a0f4cff1c5e))
+* **grid:** PR 1196 round 1 and red CI: one name per id, a named trust scope, refusals ([eafd615](https://github.com/unified-systems-com/tap/commit/eafd61533cd7b51d94f90ccb3a7222b8f0b9841f))
+* **grid:** PR 1196 round 2: refuse {} on replace, fail closed on knobs, seal settled maps ([38c9311](https://github.com/unified-systems-com/tap/commit/38c9311eb17b476ec5e18f5dbd4658914c0c1293))
+* **grid:** PR 1196 round 3: seeds fail closed, an unforgeable seal, a structural stored shape ([6cc6e74](https://github.com/unified-systems-com/tap/commit/6cc6e74cc94043577269c6f26af57f504a795e95))
+* **grid:** the undeclared guard runs before the changed-only short-circuit ([1464274](https://github.com/unified-systems-com/tap/commit/146427462f31fec935b371bd9059bb10cd32a032))
+* **plugins:** validation_sample declares tap.fixture ([d2ba6b2](https://github.com/unified-systems-com/tap/commit/d2ba6b206de27e3a93b5a3e1987200a3b190a7b9))
+* **test:** import plugin tests under their real tap_plugin.&lt;slug&gt; name ([f250e51](https://github.com/unified-systems-com/tap/commit/f250e51156995dd1c8a0cba82c409985e59f08bf))
+* **test:** import plugin tests under their real tap_plugin.&lt;slug&gt; name [via tenable] ([60336b2](https://github.com/unified-systems-com/tap/commit/60336b2abca6618fa8c581f0e0c2184d076bef12))
+
 ## [0.3.4](https://github.com/unified-systems-com/tap/compare/v0.3.3...v0.3.4) (2026-11-12)
 
 
