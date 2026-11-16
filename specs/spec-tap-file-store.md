@@ -549,10 +549,11 @@ Grants follow the registry's existing rules, and no capability implies another:
 - `tap_admin` holds every capability, as it does today.
 - `tap_viewer` receives `files.read` (ruled 2026-11-16). A person who can see the grid can download
   any stored file whose node they can see. There is no narrower download role in this release.
-- The collector program actor needs `files.create`, `files.update` and `files.read` for a collector
-  to hold a file. Today one program actor runs every collector, so a plain grant would let every
-  collector write files. The maintainer has asked for this to be scoped per collector; how is an
-  open decision (Open Decisions, 4).
+- The collector program actor receives `files.create`, `files.update` and `files.read`. One program
+  actor runs every collector today, so this grant is global: any installed collector can store a
+  file. That is accepted for this release (ruled 2026-11-16) and is the same interim position the
+  actor's delete grant is in. Scoping it to the collectors that declare they need it is designed
+  separately and does not block the store: Issue# 1205 - tap, under the epic Issue# 1204 - tap.
 - The bootloader and scheduler actors receive none. Initialising the store at boot happens below the
   gateway and needs no capability.
 
@@ -562,6 +563,7 @@ Grants follow the registry's existing rules, and no capability implies another:
 | --- | --- | :---: | --- | --- |
 | req-tap-files-capabilities-1 | Registered With Descriptions | Proposed | The four capabilities are present in the registry file with a description and a risk, and the file validates against its schema. | |
 | req-tap-files-capabilities-2 | Grid Read Is Not Enough | Proposed | An actor holding `grid.read` and not `files.read` can read a file's node and is refused its bytes. | |
+| req-tap-files-capabilities-5 | Collector Actor Can Write | Proposed | The collector program actor holds `files.create`, `files.update` and `files.read`, and the roles file's description of that grant names it as global and interim. | Per-collector scoping: Issue# 1205 - tap. |
 | req-tap-files-capabilities-4 | Viewer Can Read | Proposed | The `tap_viewer` role holds `files.read` and none of the other three. | |
 | req-tap-files-capabilities-3 | No Implication | Proposed | Holding `files.update` does not permit a create, and holding `files.create` does not permit a read. | |
 
@@ -897,10 +899,9 @@ Decisions this draft makes that the maintainer has not ruled on.
 | 1 | Whether the repository's own compose files enable the store | They do | Ruled 2026-11-16: the store is optional, enabled by the setting being set, and required only by a plugin that declares it. What the repository's compose files do by default was not discussed; the draft enables it so development sessions and CI exercise the store. |
 | 2 | Where the code lives | A new core app. The name `tap_files` is proposed and not ruled | Ruled 2026-11-16: a new app. It owns the setting, the `/files` prefix, the health probe, the service gateway and the management command. A new app means the architecture document's subsystem table changes in the implementing change, and this document moves under the app's own `specs/` directory when the app exists. |
 | 3 | The form of the object identifier | The bare UUID | OCFL says an identifier should be a URI, so a strict validator warns. `urn:uuid:<uuid>` removes the warning, and then the layout extension percent-encodes the colons, so the directory is no longer named by the plain identifier, which the ruling asked for. |
-| 4 | How the collector's file capabilities are scoped to one collector | Not chosen | `tap_viewer` reading is ruled. For writing, one program actor runs every collector, so a grant to it is global. The proposal on the table: a collector declares that it stores files, and the collector runtime runs each collector with the file capabilities removed unless it declared; the existing per-collector reconcile switch is the precedent for an operator-armed variant. |
-| 5 | The download's content type | Always `application/octet-stream` | Sending the type recorded on the node would let a browser label the saved file better. It also makes safety depend on a field a writer supplied. The fixed type is the conservative choice. |
-| 6 | The size ceiling's default | Left to be set; a setting exists | The first consumers' files are about 1 MB to 10 MB. A default near 100 MiB covers them tenfold; verification reads each file twice, so the ceiling also bounds read cost. |
-| 7 | Names | `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`, `manage.py files` | Proposed for consistency with existing names; none is ruled. |
+| 4 | The download's content type | Always `application/octet-stream` | Sending the type recorded on the node would let a browser label the saved file better. It also makes safety depend on a field a writer supplied. The fixed type is the conservative choice. |
+| 5 | The size ceiling's default | Left to be set; a setting exists | The first consumers' files are about 1 MB to 10 MB. A default near 100 MiB covers them tenfold; verification reads each file twice, so the ceiling also bounds read cost. |
+| 6 | Names | `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`, `manage.py files` | Proposed for consistency with existing names; none is ruled. |
 
 ## What This Settles Elsewhere
 
