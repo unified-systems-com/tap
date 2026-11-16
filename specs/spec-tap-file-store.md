@@ -132,12 +132,18 @@ Status: `Proposed`
 
 The store lives under one root named by one core setting.
 
-- **Setting.** `settings.TAP_FILES_ROOT`, projected from the environment variable `TAP_FILES_ROOT` in
-  `tap/settings.py`, default container path `/var/lib/tap/files`. Every consumer reads the setting;
-  the variable and the literal appear nowhere else. The rule is the one the secrets root arrived at
-  (`req-tap-cares-secrets-root-resolution`).
-- **Its own volume.** The compose files mount a named volume at the root in every service that runs
-  store code. It is a different volume from the plugin data volume (ruled 2026-11-16). The reason is
+- **Setting, and what it means to be enabled** (ruled 2026-11-16). `settings.TAP_FILES_ROOT`,
+  projected from the environment variable `TAP_FILES_ROOT` in `tap/settings.py`, with **no default**.
+  Unset or empty means the file store is not enabled on this instance. Set means the operator has
+  provided a volume for it, and from then on that volume must be usable. Every consumer reads the
+  setting; the variable is read nowhere else. The rule is the one the secrets root arrived at
+  (`req-tap-cares-secrets-root-resolution`), and the plugin data root works the same way.
+- **An instance without the store.** The store is optional for an instance. Where it is not
+  enabled, every gateway operation fails with one clear error, `FileStoreNotEnabled`, the download
+  route answers not found, and nothing else in TAP is affected. A plugin that cannot work without the
+  store says so (`req-tap-files-mount-gate`).
+- **Its own volume.** The compose files in this repository enable the store: they mount a named volume
+  in every service that runs store code and set the variable to its path. It is a different volume from the plugin data volume (ruled 2026-11-16). The reason is
   disk-full: plugin caches can grow by gigabytes, and on a shared disk a runaway cache would stop a
   compliance document being written. Separate roots also let a backup treat the two differently.
 - **Layout under the root.** Core owns everything under the root:
@@ -161,10 +167,11 @@ The store lives under one root named by one core setting.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-root-1 | One Setting | Proposed | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only, and its default path appears in Python only there. | Guard-pinned. |
-| req-tap-files-root-2 | Compose Mounts A Named Volume | Proposed | Every compose file that defines a service running store code mounts a named volume at the root and sets the variable; that volume is not the plugin data volume. | |
+| req-tap-files-root-1 | One Setting, No Default | Proposed | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned. |
+| req-tap-files-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines a service running store code mounts a named volume and sets the variable to that mount path; that volume is not the plugin data volume. | |
+| req-tap-files-root-5 | Not Enabled Is One Clear Error | Proposed | With the variable unset, each gateway operation raises `FileStoreNotEnabled` and touches no path, and the download route answers not found. | |
 | req-tap-files-root-3 | Nothing Foreign Under The OCFL Root | Proposed | After any sequence of store operations, including interrupted ones, `ocfl/` contains only the storage-root marker, the layout declaration, the extensions directory and object hierarchy, with no empty directory. | OCFL section 4.1. |
-| req-tap-files-root-4 | Roots Do Not Overlap | Proposed | The mount gate fails when the file store root and the plugin data root are the same path or one contains the other. | |
+| req-tap-files-root-4 | Roots Do Not Overlap | Proposed | When both are set, the mount gate fails if the file store root and the plugin data root are the same path or one contains the other. | |
 
 ### Mount Gate And Initialisation
 ----
@@ -172,21 +179,41 @@ RID: `req-tap-files-mount-gate`
 
 Status: `Proposed`
 
-**Gate.** Boot refuses to proceed unless the root is a mounted, writable volume: the path exists and
-is a directory and not a symbolic link; it is on a different device from the container's root
-filesystem; and a real write, `fsync`, rename and remove succeeds in `staging/`. The refusal is a
-standup abort (`req-boot-abort-signal`) in the `boot` domain naming the root and the failed check.
-The test is one function, shared with the health probe, and is the same test the plugin data
-directory uses (`req-tap-plugin-datadir-mount-gate`); the two share an implementation, not a copy.
+**Gate** (ruled 2026-11-16). The store is optional, a plugin declares when it needs it, and boot
+fails only when a need cannot be met or a configured volume is broken.
 
-The failure being prevented is the one Docker does nothing to signal: the volume is not mounted, the
-path exists inside the container's own disk, files are written there, and they are gone when the
-container is recreated.
+|  | No installed plugin requires the store | An installed plugin requires the store |
+| --- | --- | --- |
+| **Store not enabled** | Boots. Store operations fail with `FileStoreNotEnabled`. | Boot aborts, naming the plugin. |
+| **Store enabled and usable** | Boots. | Boots. |
+| **Store enabled but not usable** | Boot aborts. | Boot aborts. |
 
-In this draft the gate always applies, because the store is a core capability with no declaration
-to key a condition on. That is an open decision (Open Decisions, 1).
+- **How a plugin says it requires the store.** One optional table in `tap-plugin.toml`:
 
-**Initialisation.** After the gate passes:
+  ```toml
+  [file_store]
+  required = true
+  ```
+
+  `file_store` joins the manifest's allowed top-level keys; `required` is a boolean and is the only
+  key; unknown keys are rejected. A plugin that uses the store when it is there and works without it
+  declares nothing. Because unknown top-level keys are rejected by older cores, a plugin that
+  declares the table raises its `requires_tap` floor to the first core release that carries the
+  store.
+- **What "usable" means.** The path exists and is a directory and not a symbolic link; it is on a
+  different device from the container's root filesystem; and a real write, `fsync`, rename and remove
+  succeeds in `staging/`. The test is one function, shared with the health probe, and is the same
+  test the plugin data directory uses (`req-tap-plugin-datadir-mount-gate`); the two share an
+  implementation, not a copy.
+- **An abort** is a standup abort (`req-boot-abort-signal`) in the `boot` domain naming the root, the
+  failed check and, where one caused it, the plugin.
+
+The failure being prevented is the one Docker does nothing to signal: an operator configured a
+volume, it is not mounted, the path exists inside the container's own disk, files are written there,
+and they are gone when the container is recreated. A configured store is therefore never optional,
+whoever is installed.
+
+**Initialisation.** When the store is enabled and the gate has passed:
 
 - A root that is completely empty is initialised: the four directories are created, and `ocfl/`
   receives the OCFL storage-root marker `0=ocfl_1.1`, an `ocfl_layout.json` naming the layout
@@ -201,7 +228,10 @@ to key a condition on. That is an open decision (Open Decisions, 1).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-mount-gate-1 | Unmounted Root Aborts | Proposed | With the root path present on the same device as `/`, boot exits non-zero after one `ABORT` record whose reason says the root is not a mounted volume. | |
+| req-tap-files-mount-gate-1 | Unmounted Configured Root Aborts | Proposed | With the setting naming a path on the same device as `/`, boot exits non-zero after one `ABORT` record whose reason says the root is not a mounted volume, whether or not any plugin requires the store. | |
+| req-tap-files-mount-gate-6 | Required But Not Enabled Aborts | Proposed | With the setting unset and an installed plugin declaring `[file_store] required = true`, boot aborts and the reason names that plugin. | |
+| req-tap-files-mount-gate-7 | Not Enabled, Not Required, Boots | Proposed | With the setting unset and no installed plugin requiring the store, boot succeeds and creates nothing. | |
+| req-tap-files-mount-gate-8 | Manifest Table Strict | Proposed | A `[file_store]` table with a non-boolean `required` or any other key fails the manifest load. | |
 | req-tap-files-mount-gate-2 | Empty Root Initialised | Proposed | Booting against an empty mounted root leaves a storage root that a conformant OCFL validator accepts as a valid, empty storage root. | |
 | req-tap-files-mount-gate-3 | Foreign Content Refused | Proposed | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
 | req-tap-files-mount-gate-4 | Idempotent | Proposed | A second boot against an initialised root changes no file under `ocfl/`. | |
@@ -514,9 +544,17 @@ pull every document off the instance.
 There is no access control finer than these four in this release: an actor with `files.read` can
 read any stored file whose node it can see.
 
-Grants follow the registry's existing rules: `tap_admin` receives each capability explicitly, and no
-capability implies another. Which other built-in roles and program actors receive which is an open
-decision (Open Decisions, 4).
+Grants follow the registry's existing rules, and no capability implies another:
+
+- `tap_admin` holds every capability, as it does today.
+- `tap_viewer` receives `files.read` (ruled 2026-11-16). A person who can see the grid can download
+  any stored file whose node they can see. There is no narrower download role in this release.
+- The collector program actor needs `files.create`, `files.update` and `files.read` for a collector
+  to hold a file. Today one program actor runs every collector, so a plain grant would let every
+  collector write files. The maintainer has asked for this to be scoped per collector; how is an
+  open decision (Open Decisions, 4).
+- The bootloader and scheduler actors receive none. Initialising the store at boot happens below the
+  gateway and needs no capability.
 
 #### Acceptance Criteria
 
@@ -524,6 +562,7 @@ decision (Open Decisions, 4).
 | --- | --- | :---: | --- | --- |
 | req-tap-files-capabilities-1 | Registered With Descriptions | Proposed | The four capabilities are present in the registry file with a description and a risk, and the file validates against its schema. | |
 | req-tap-files-capabilities-2 | Grid Read Is Not Enough | Proposed | An actor holding `grid.read` and not `files.read` can read a file's node and is refused its bytes. | |
+| req-tap-files-capabilities-4 | Viewer Can Read | Proposed | The `tap_viewer` role holds `files.read` and none of the other three. | |
 | req-tap-files-capabilities-3 | No Implication | Proposed | Holding `files.update` does not permit a create, and holding `files.create` does not permit a read. | |
 
 ### Service Gateway
@@ -555,8 +594,9 @@ the store is format-blind and type-blind, and writing nodes is the job of the se
 caller already uses.
 
 **Writers in this release are programs** (ruled 2026-11-16): collectors and other processes running
-inside the instance, through this gateway. That covers a file fetched from an outside source and a
-file TAP produced itself. There is no path by which a browser adds a file
+inside the instance, through this gateway. That covers a file fetched from an outside source, a
+file TAP produced itself, and the raw responses a collector records from a source it talks to, which
+are stored as files here and not kept in a plugin's own directory (ruled 2026-11-16). There is no path by which a browser adds a file
 (`req-tap-files-upload`).
 
 #### Acceptance Criteria
@@ -696,7 +736,7 @@ RID: `req-tap-files-health`
 
 Status: `Proposed`
 
-One health probe reports the store as usable or not: the mount test's verdict and reason, the
+One health probe reports the store. Where the store is not enabled it reports healthy and says so, unless an installed plugin requires it, in which case it is unhealthy. Where the store is enabled it reports it as usable or not: the mount test's verdict and reason, the
 presence and validity of the storage-root marker and layout declaration, the filesystem type, and
 free bytes and free inodes on the volume. It reads no object and walks nothing, and it does not touch
 the database, so it answers truthfully when the database is down.
@@ -711,7 +751,8 @@ the Validation Map (`req-dev-validation-map`).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-health-1 | Unmounted Is Unhealthy | Proposed | With the mount test failing, the probe is unhealthy and its detail carries the reason. | |
+| req-tap-files-health-1 | Unmounted Is Unhealthy | Proposed | With the store enabled and its test failing, the probe is unhealthy and its detail carries the reason. | |
+| req-tap-files-health-4 | Not Enabled Is Healthy | Proposed | With the store not enabled and no installed plugin requiring it, the probe is healthy and its context says the store is not enabled. | |
 | req-tap-files-health-2 | Missing Marker Is Unhealthy | Proposed | With the storage-root marker removed from an initialised root, the probe is unhealthy. | |
 | req-tap-files-health-3 | Quarantine Is Reported, Not Failed | Proposed | With one item in `quarantine/` the probe is healthy and its context gives the count. | |
 
@@ -853,10 +894,10 @@ Decisions this draft makes that the maintainer has not ruled on.
 
 | # | Decision | What the draft says | Why it is open |
 | :---: | --- | --- | --- |
-| 1 | When the mount gate applies | Always | The ruling to fail hard at boot was given for plugin directories, where a manifest declaration says whether the volume is needed. The store has no such declaration. The alternative is to gate only once something has been stored, which hides a missing volume until the first write. |
+| 1 | Whether the repository's own compose files enable the store | They do | Ruled 2026-11-16: the store is optional, enabled by the setting being set, and required only by a plugin that declares it. What the repository's compose files do by default was not discussed; the draft enables it so development sessions and CI exercise the store. |
 | 2 | Where the code lives | A new core app. The name `tap_files` is proposed and not ruled | Ruled 2026-11-16: a new app. It owns the setting, the `/files` prefix, the health probe, the service gateway and the management command. A new app means the architecture document's subsystem table changes in the implementing change, and this document moves under the app's own `specs/` directory when the app exists. |
 | 3 | The form of the object identifier | The bare UUID | OCFL says an identifier should be a URI, so a strict validator warns. `urn:uuid:<uuid>` removes the warning, and then the layout extension percent-encodes the colons, so the directory is no longer named by the plain identifier, which the ruling asked for. |
-| 4 | Who holds the capabilities | `tap_admin` all four; nothing else stated | A collector must hold `files.create` to store what it fetched, and today one program actor runs every collector, so granting it there is global. Which human roles hold `files.read` decides who can download. |
+| 4 | How the collector's file capabilities are scoped to one collector | Not chosen | `tap_viewer` reading is ruled. For writing, one program actor runs every collector, so a grant to it is global. The proposal on the table: a collector declares that it stores files, and the collector runtime runs each collector with the file capabilities removed unless it declared; the existing per-collector reconcile switch is the precedent for an operator-armed variant. |
 | 5 | The download's content type | Always `application/octet-stream` | Sending the type recorded on the node would let a browser label the saved file better. It also makes safety depend on a field a writer supplied. The fixed type is the conservative choice. |
 | 6 | The size ceiling's default | Left to be set; a setting exists | The first consumers' files are about 1 MB to 10 MB. A default near 100 MiB covers them tenfold; verification reads each file twice, so the ceiling also bounds read cost. |
 | 7 | Names | `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`, `manage.py files` | Proposed for consistency with existing names; none is ruled. |

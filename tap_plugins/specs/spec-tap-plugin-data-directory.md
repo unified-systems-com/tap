@@ -13,7 +13,8 @@ container was recreated, nothing in core knew the directory existed, and every p
 do I put my stuff" a different way. Issue# 456 - tap recorded this as a pattern to standardise once it
 had appeared twice. It has now appeared more than twice.
 
-This specification gives every plugin one answer. Core owns one mounted root. A plugin declares in its
+This specification gives every plugin one answer. Core owns the place, on a mounted volume when the
+operator enabled one. A plugin declares in its
 manifest that it needs a directory and says what kind of data it holds. Core creates
 `<root>/<slug>/`, hands the plugin the path, and reports what is there. Inside its directory the plugin
 uses ordinary file calls and structures things however it likes.
@@ -104,7 +105,7 @@ No node represents a plugin data directory, and no node represents anything insi
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-datadir-scope-1 | No Grid Type | Proposed | No TAP-managed node or edge type represents a plugin data directory or its contents; provisioning, reporting and purging create no grid write. | |
-| req-tap-plugin-datadir-scope-2 | Separate From The File Store | Proposed | The plugin data root and the file store root are different settings resolving to different directories; core refuses to start the mount gate's check as passed when the two resolve to the same path or one contains the other. | Two volumes, ruled 2026-11-16. |
+| req-tap-plugin-datadir-scope-2 | Separate From The File Store | Proposed | The plugin data root and the file store root are different settings resolving to different directories; when both are set, the mount gate fails if the two resolve to the same path or one contains the other. | Two volumes, ruled 2026-11-16. |
 
 ### The Root
 ----
@@ -112,39 +113,53 @@ RID: `req-tap-plugin-datadir-root`
 
 Status: `Proposed`
 
-All plugin data directories live under one root, named by one core setting.
+Plugin data directories live under one of two roots. Which one a directory lands under is decided by
+whether the operator enabled a volume and by what the plugin declared
+(`req-tap-plugin-datadir-mount-gate`).
+
+**The volume root, which is optional** (ruled 2026-11-16).
 
 - **Setting.** `settings.TAP_PLUGIN_DATA_ROOT`, projected from the environment variable
-  `TAP_PLUGIN_DATA_ROOT` in `tap/settings.py` in the house style, with the container path
-  `/var/lib/tap/plugin-data` as its default. Every consumer reads the setting; none reads the
-  environment variable or restates the default. This follows the rule the secrets root arrived at
-  after five independent resolutions were found (`req-tap-cares-secrets-root-resolution`).
-- **No settings-free lookup yet.** The secrets root has a second, settings-free lookup because
-  pre-boot and host tools need it before Django exists. Nothing settings-free needs the plugin data
-  root today, so there is one lookup. If a settings-free caller appears it gets a stdlib-only leaf
-  beside `tap/secrets_root.py`, tagged as a known duplicate, and not an inline read.
-- **Volume.** The compose files mount a named volume at the root in the `web` service. A named volume
-  belongs to one compose project, so each development session has its own plugin data and tearing a
-  session down destroys it. Sharing one plugin data volume across sessions is not supported: it would
-  put several writers on directories whose locks and staged swaps assume one.
-- **Image.** The image creates the root directory owned by the runtime user in the same way it
-  prepares the other runtime-owned paths, so a new empty named volume starts with usable ownership.
-- **Local filesystem.** The root must be a local filesystem. A host directory shared into a container
-  through a network or virtualised file-sharing layer is not supported, because SQLite's write-ahead
-  mode and POSIX file locks are not reliable there. The report names the filesystem type so an
-  operator can see what they have (`req-tap-plugin-datadir-report`).
-- **One process family.** Only code running in a container that mounts the volume can reach a plugin
-  directory. Today that is the `web` service, which also runs the scheduler. A future worker service
-  that runs plugin code must mount the same volume.
+  `TAP_PLUGIN_DATA_ROOT` in `tap/settings.py`. It has **no default**. Unset or empty means the plugin
+  data volume is not enabled on this instance. Set means the operator has said "this is my volume",
+  and from then on it must be usable. Every consumer reads the setting; none reads the environment
+  variable. This follows the rule the secrets root arrived at (`req-tap-cares-secrets-root-resolution`),
+  and its absence of a default follows the injection-first stores that spec surveyed: no setting, no
+  store.
+- **Why no default.** A built-in default path makes "the operator did not configure a volume" and
+  "the operator configured one and it is broken" look the same. With no default they are two
+  different states, and only the second is an error.
+- **Compose.** The compose files in this repository enable the volume: they mount a named volume in
+  the `web` service and set the variable to its path. A named volume belongs to one compose project,
+  so each development session has its own plugin data and tearing a session down destroys it. An
+  operator who does not want the volume removes both lines. Sharing one plugin data volume across
+  sessions is not supported: it would put several writers on directories whose locks and staged swaps
+  assume one.
+- **Image.** The image creates the conventional mount path owned by the runtime user, so a new empty
+  named volume mounted there starts with usable ownership.
+- **Local filesystem.** The volume must be a local filesystem. A host directory shared into a
+  container through a network or virtualised file-sharing layer is not supported, because SQLite's
+  write-ahead mode and POSIX file locks are not reliable there. The report names the filesystem type
+  (`req-tap-plugin-datadir-report`).
+
+**The ephemeral root, which always exists.** A fixed, core-owned directory inside the container's own
+filesystem, under the runtime user's data directory. Core creates it when it is first needed.
+Everything in it is lost when the container is recreated, and that is its stated contract. Only
+directories declared `"cache"` are ever placed there, and only when the volume is not enabled.
+
+**One process family.** Only code running in a container that mounts the volume can reach a
+directory on it. Today that is the `web` service, which also runs the scheduler. A future worker
+service that runs plugin code must mount the same volume.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-root-1 | One Setting | Proposed | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only, and the default container path appears in Python only there. | Guard-pinned, as the secrets root is. |
-| req-tap-plugin-datadir-root-2 | Compose Mounts A Named Volume | Proposed | Every compose file that defines the `web` service mounts a named volume at the root's container path and sets the environment variable to that path. | Includes the CI and Codespaces overlays. |
-| req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Proposed | In the built image the root path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
-| req-tap-plugin-datadir-root-4 | Core Never Creates The Root | Proposed | No core code creates the root directory itself; a missing root is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. |
+| req-tap-plugin-datadir-root-1 | One Setting, No Default | Proposed | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned, as the secrets root is. |
+| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. |
+| req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Proposed | In the built image the conventional mount path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
+| req-tap-plugin-datadir-root-4 | Core Never Creates The Volume Root | Proposed | No core code creates the volume root directory; a configured root that is missing is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. Core does create the ephemeral root. |
+| req-tap-plugin-datadir-root-5 | Ephemeral Root Is Fixed | Proposed | The ephemeral root's location is one constant in core, is not configurable by a plugin, and is not on the configured volume. | |
 
 ### Manifest Declaration
 ----
@@ -166,8 +181,25 @@ max_bytes = 2147483648
 | `purpose` | Yes | One sentence saying what the plugin keeps there. Shown to operators. Non-empty, at most 255 characters, no control characters. |
 | `durability` | Yes | `"cache"`: everything in the directory can be fetched or rebuilt, and losing it costs time only. `"state"`: something in the directory cannot be rebuilt and must survive. A directory holding both is `"state"`. |
 | `max_bytes` | Yes | The largest size the author expects the directory to reach, in bytes, as a positive integer. A declared convention in this release: core records and reports it and does nothing else with it (`req-tap-plugin-datadir-size-use`). |
+| `executes` | No | `true` when the plugin runs programs from its directory, such as a tool it downloads. Default `false`. |
 
 The table is absent for a plugin that needs no directory, and such a plugin gets none.
+
+**Durability decides where the directory may live** (ruled 2026-11-16). There is no separate field
+for "ephemeral or persistent", because the durability already answers it: `"state"` must be on the
+volume, and `"cache"` is on the volume when the operator enabled one and under the ephemeral root
+when not (`req-tap-plugin-datadir-mount-gate`). A plugin that only wants scratch space that is never
+kept uses the system temporary directory and declares nothing.
+
+**Running programs** (ruled 2026-11-16). A plugin that executes anything from its directory declares
+`executes = true`. The convention that goes with it:
+
+- the plugin sets the executable bit on exactly the files it runs, and on nothing else;
+- a plugin that did not declare `executes` sets the executable bit on no file in its directory;
+- core tests at boot that execution is possible where the directory lives
+  (`req-tap-plugin-datadir-mount-gate`), and the report lists the executable files it finds
+  (`req-tap-plugin-datadir-report`), so an executable file in a directory that did not declare is
+  visible. Core reports it and does not change it.
 
 `data_directory` joins the manifest's allowed top-level keys, and unknown keys inside the table are
 rejected, consistent with `req-tap-plugin-manifest-v0-validation`. Because unknown top-level keys are
@@ -186,6 +218,7 @@ so with its own subdirectories and declares `"state"`.
 | req-tap-plugin-datadir-manifest-3 | Durability Is One Of Two | Proposed | Any `durability` other than `"cache"` or `"state"` fails the load. | |
 | req-tap-plugin-datadir-manifest-4 | Size Is A Positive Integer | Proposed | A `max_bytes` that is zero, negative, a float, a string or a boolean fails the load. | TOML booleans are not integers. |
 | req-tap-plugin-datadir-manifest-5 | Unknown Keys Rejected | Proposed | An unrecognised key inside the table fails the load and the error names it. | |
+| req-tap-plugin-datadir-manifest-7 | Executes Is A Boolean | Proposed | `executes` absent parses as false; any value other than a TOML boolean fails the load. | |
 | req-tap-plugin-datadir-manifest-6 | Validator Reports It | Proposed | `validate_plugin` reports the declared directory (durability, purpose, declared size) in its output, and reports a plugin whose code calls the accessor without declaring the table. | The second half is a static check and may be best-effort; say so in the report. |
 
 ### Provisioning
@@ -196,7 +229,7 @@ Status: `Proposed`
 
 Core, not the plugin, creates a declared directory.
 
-- **Where.** `<root>/<slug>/`. A slug matches `[a-z0-9_]+` (`tap.plugin_identity.SLUG_ALPHABET_PATTERN`),
+- **Where.** `<root>/<slug>/`, where the root is the volume root or the ephemeral root as the mount gate decided. A slug matches `[a-z0-9_]+` (`tap.plugin_identity.SLUG_ALPHABET_PATTERN`),
   so it contains no path separator, no dot and no upper case, and is safe as a single directory name
   on a case-insensitive filesystem. Core validates the slug with `valid_slug` before joining it to
   the root and does not rely on the manifest loader having done so.
@@ -210,7 +243,7 @@ Core, not the plugin, creates a declared directory.
   and the fact found. Core does not follow the link, replace the file or change ownership.
 - **Description file.** Core writes `.tap-plugin-dir.json` in the directory: the slug, the declared
   durability and purpose, the declared maximum size, the plugin version that first caused the
-  directory to be created, the creation time, and a format version. It is rewritten when the
+  directory to be created, the creation time, whether the plugin declared `executes`, whether the directory is on the volume or ephemeral, and a format version. It is rewritten when the
   declaration changes and is otherwise left alone. It ships with a JSON Schema and is validated
   against it when read. Its purpose is that a directory found on a volume, with no instance running,
   says what it is.
@@ -239,20 +272,38 @@ RID: `req-tap-plugin-datadir-mount-gate`
 
 Status: `Proposed`
 
-The failure this gate exists to prevent: the volume is not mounted, the path exists anyway inside the
-container's writable layer, the plugin writes there happily, and everything is lost when the
-container is recreated. Docker does nothing to signal this case.
+The failure this gate exists to prevent: an operator believes plugin data is on a volume, the volume
+is not actually mounted, the path exists anyway inside the container's writable layer, the plugin
+writes there happily, and everything is lost when the container is recreated. Docker does nothing to
+signal this case.
 
-**Rule (ruled 2026-11-16).** When at least one installed plugin declares a data directory, boot
-refuses to proceed unless the root is a mounted, writable volume. The refusal is a standup abort
-(`req-boot-abort-signal`) in the `boot` domain, with a reason naming the root and the check that
-failed. There is no fallback to another location.
+**The rule** (ruled 2026-11-16). During boot, core reads every installed plugin's declaration and
+compares what the plugins need with what the instance provides:
 
-An instance in which no installed plugin declares a directory boots without the volume. This
-condition is the specification author's reading of the ruling and is listed under Open Decisions.
+|  | No plugin declares a directory | A plugin declares `"cache"` | A plugin declares `"state"` |
+| --- | --- | --- | --- |
+| **Volume not enabled** | Boots. | Boots. The directory is under the ephemeral root and is reported as ephemeral. | Boot aborts, naming the plugin. |
+| **Volume enabled and usable** | Boots. | Boots. The directory is on the volume. | Boots. The directory is on the volume. |
+| **Volume enabled but not usable** | Boot aborts. | Boot aborts. | Boot aborts. |
 
-**What "mounted and writable" means.** One function decides it, and boot, the health probe and the
-report all call that function:
+Three things follow.
+
+- **State needs the volume.** A plugin that declared `"state"` has said its data cannot be rebuilt.
+  Placing it where it will be thrown away would break that, so boot refuses.
+- **A cache does not force a volume.** An operator who enables no volume still gets a working
+  instance, with caches that are refilled after a recreate. That is how plugins with their own home
+  directories behave today, made explicit and visible.
+- **A configured volume is never optional.** If the setting is set, the volume must be usable,
+  whoever is installed. An operator who configured a volume and did not get one must hear about it.
+
+An abort is a standup abort (`req-boot-abort-signal`) in the `boot` domain, with a reason naming the
+root, the check that failed and, where one caused it, the plugin.
+
+**No silent fallback.** A `"cache"` directory goes to the ephemeral root only when the volume is not
+enabled. It never goes there because an enabled volume failed its test.
+
+**What "usable" means.** One function decides it, and boot, the health probe and the report all call
+that function:
 
 1. The root path exists and is a directory, not a symbolic link.
 2. The root is on a different device from the container's root filesystem: `st_dev` of the root
@@ -263,6 +314,12 @@ report all call that function:
 `os.path.ismount` is not used as the test. Python documents that it cannot reliably detect a bind
 mount on the same filesystem, and the device comparison in step 2 answers the question that matters
 here, which is whether the data would land in the container's own disk.
+
+**Running programs from a directory.** For each plugin that declares `executes = true`
+(`req-tap-plugin-datadir-manifest`), boot also proves that the place its directory lives allows
+execution: it writes a small script under a core-reserved name, marks it executable, runs it, and
+removes it. A volume mounted so that nothing on it can run fails this, and boot aborts naming the
+plugin, in place of the plugin failing in the middle of its work.
 
 **Why boot and not process start.** Refusing at `django.setup()` would crash-loop the instance and
 take away `manage.py`, the health command and a shell, which are the tools an operator needs to
@@ -275,12 +332,14 @@ was started without running boot.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-mount-gate-1 | Missing Root Aborts | Proposed | With a declaring plugin installed and the root path absent, boot exits non-zero after emitting one `ABORT` record whose reason names the root. | |
-| req-tap-plugin-datadir-mount-gate-2 | Unmounted Root Aborts | Proposed | With a declaring plugin installed and the root present on the same device as `/`, boot aborts the same way and the reason says the root is not a mounted volume. | The case the gate exists for. |
-| req-tap-plugin-datadir-mount-gate-3 | Unwritable Root Aborts | Proposed | With the root mounted but the write probe failing, boot aborts and the reason carries the operating-system error. | |
-| req-tap-plugin-datadir-mount-gate-4 | No Declaring Plugin, No Gate | Proposed | With no installed plugin declaring a directory, boot succeeds whether or not the root exists. | Open Decision 1. |
-| req-tap-plugin-datadir-mount-gate-5 | One Decision Function | Proposed | Boot, the health probe and the report obtain the verdict from the same function; no second implementation of the mount test exists. | |
-| req-tap-plugin-datadir-mount-gate-6 | No Fallback Path | Proposed | No code path provisions or returns a plugin directory outside the configured root. | |
+| req-tap-plugin-datadir-mount-gate-1 | State Without A Volume Aborts | Proposed | With the setting unset and an installed plugin declaring `"state"`, boot exits non-zero after one `ABORT` record whose reason names that plugin. | |
+| req-tap-plugin-datadir-mount-gate-2 | Cache Without A Volume Boots Ephemeral | Proposed | With the setting unset and an installed plugin declaring `"cache"`, boot succeeds, the plugin's directory is under the ephemeral root, and the report marks it ephemeral. | |
+| req-tap-plugin-datadir-mount-gate-3 | Unmounted Configured Root Aborts | Proposed | With the setting naming a path on the same device as `/`, boot aborts and the reason says the root is not a mounted volume, whether or not any plugin declares a directory. | The case the gate exists for. |
+| req-tap-plugin-datadir-mount-gate-4 | Unwritable Configured Root Aborts | Proposed | With the setting naming a mounted root whose write probe fails, boot aborts and the reason carries the operating-system error. | |
+| req-tap-plugin-datadir-mount-gate-5 | Nothing Needed, Nothing Required | Proposed | With the setting unset and no installed plugin declaring a directory, boot succeeds. | |
+| req-tap-plugin-datadir-mount-gate-6 | One Decision Function | Proposed | Boot, the health probe and the report obtain the verdict from the same function; no second implementation of the test exists. | |
+| req-tap-plugin-datadir-mount-gate-7 | No Fallback From A Failed Volume | Proposed | With the setting set and the volume unusable, no directory is provisioned under the ephemeral root. | |
+| req-tap-plugin-datadir-mount-gate-8 | Execution Proven At Boot | Proposed | With a plugin declaring `executes = true` and its directory on a volume mounted to forbid execution, boot aborts naming the plugin; with execution allowed, the probe file is gone after boot. | |
 
 ### The Accessor
 ----
@@ -293,8 +352,11 @@ A plugin learns its directory by calling one function, `tap_plugins.data_dir(slu
 
 - It returns the canonical real path of `<root>/<slug>`. Handing out one canonical spelling matters
   for SQLite, which treats two different path names to one database as two databases.
+- It returns the directory wherever the mount gate placed it, on the volume or under the ephemeral
+  root. A plugin does not need to know which; `tap_plugins.data_dir_is_ephemeral(slug)` tells one that
+  wants to.
 - It raises `PluginDataDirectoryError` when the slug is not a valid slug, when no installed plugin
-  with that slug declares a directory, when the mount test fails, or when the directory has not been
+  with that slug declares a directory, when a configured volume fails its test, or when the directory has not been
   provisioned. The message says which.
 - It does not create anything. Provisioning is boot's job, so that a missing directory is noticed.
 - It is cheap: the mount verdict is computed once per process and reused, and the write probe is
@@ -351,7 +413,7 @@ Status: `Proposed`
 Nothing in a plugin data directory is ever deleted by core on its own initiative. Not on boot, not on
 plugin removal, not when a directory is over its declared size, and not for a cache.
 
-- **Orphans.** A directory under the root is an orphan when no installed plugin with that slug
+- **Orphans.** A directory under the volume root is an orphan when no installed plugin with that slug
   declares a directory. This covers a removed plugin, a plugin whose slug changed (a new slug is a
   new directory; the old one stays), and a plugin that dropped its declaration. Orphans are listed
   in the report and by a management command. They are not touched.
@@ -395,13 +457,15 @@ Per plugin:
 
 - whether a directory is declared, and the declaration (purpose, durability, declared maximum size);
 - the path, whether it exists, and whether its owner and mode are as provisioned;
+- whether it is on the volume or ephemeral, and whether the plugin declared `executes`;
+- the executable files found in it, by relative path, capped like the listing;
 - measured size in allocated bytes, entry count, the time the measurement was taken and how long it
   took, or the reason no measurement is available;
 - a bounded listing of the directory's top level: for each entry its name, kind (file, directory,
   link, other), size and modification time, capped at a fixed number of entries with a flag saying
   the listing was cut.
 
-Once, for the root: the configured path, the mount verdict with its reason, the filesystem type, free
+Once, for the instance: whether the volume is enabled; when it is, the configured path, the verdict with its reason, the filesystem type, free
 bytes and free inodes on the volume, and the lists of orphans and strays.
 
 **Measuring.** Size is measured by walking the directory without following symbolic links and
@@ -427,6 +491,8 @@ Reading the report requires the capability it already requires. No new capabilit
 | req-tap-plugin-datadir-report-4 | Bounded Listing | Proposed | A directory with more top-level entries than the cap yields exactly the cap and a flag saying the listing was cut. | |
 | req-tap-plugin-datadir-report-5 | Orphans And Strays Listed | Proposed | A directory under the root with no declaring plugin appears as an orphan, and a top-level file under the root appears as a stray. | |
 | req-tap-plugin-datadir-report-6 | Schema Carries It | Proposed | A report containing these fields validates against the published plugin report schema, and the schema version is higher than before this change. | |
+| req-tap-plugin-datadir-report-8 | Ephemeral Is Said | Proposed | A directory under the ephemeral root is marked ephemeral in the report, and the report says the volume is not enabled. | |
+| req-tap-plugin-datadir-report-9 | Undeclared Executables Shown | Proposed | An executable file in a directory whose plugin did not declare `executes` appears in that plugin's executable list. | Reported, not changed. |
 | req-tap-plugin-datadir-report-7 | Budget Respected | Proposed | A walk given a budget it cannot meet returns within a small multiple of that budget with a partial figure marked as partial. | |
 
 ### Health Probe
@@ -438,8 +504,10 @@ Status: `Proposed`
 `tap_plugins` registers one health probe for plugin data, alongside its existing probe.
 
 - With no declaring plugin installed it reports healthy and says there is nothing to check.
-- With a declaring plugin installed it reports unhealthy when the mount test fails, naming the
-  reason, and unhealthy when any declared directory is missing, is a symbolic link, has the wrong
+- With the volume not enabled and only `"cache"` directories declared, it reports healthy and says
+  those directories are ephemeral.
+- With a declaring plugin installed it reports unhealthy when a configured volume fails its test, or
+  a `"state"` directory has no volume, naming the reason, and unhealthy when any declared directory is missing, is a symbolic link, has the wrong
   owner, or fails a write probe, naming each directory and the fact found.
 - Orphans and strays do not make the probe unhealthy. They are reported in the probe's context so an
   operator sees them.
@@ -456,7 +524,8 @@ rows to the Validation Map (`req-dev-validation-map`).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-health-1 | Healthy When Unused | Proposed | With no declaring plugin the probe is healthy whether or not the root exists. | |
+| req-tap-plugin-datadir-health-1 | Healthy When Unused | Proposed | With no declaring plugin and the volume not enabled the probe is healthy. | |
+| req-tap-plugin-datadir-health-5 | Ephemeral Caches Are Healthy | Proposed | With the volume not enabled and one plugin declaring `"cache"`, the probe is healthy and its context lists that directory as ephemeral. | |
 | req-tap-plugin-datadir-health-2 | Unmounted Is Unhealthy | Proposed | With a declaring plugin and a failing mount test the probe is unhealthy and its detail carries the mount test's reason. | |
 | req-tap-plugin-datadir-health-3 | Each Bad Directory Named | Proposed | A missing, linked, wrongly owned or unwritable declared directory makes the probe unhealthy and appears by slug in its context. | |
 | req-tap-plugin-datadir-health-4 | Orphans Do Not Fail It | Proposed | An orphan directory leaves the verdict healthy and appears in the context. | |
@@ -567,11 +636,15 @@ before the specification is approved.
 
 | # | Decision | What the draft says | Why it is open |
 | :---: | --- | --- | --- |
-| 1 | When the mount gate applies | Only when at least one installed plugin declares a directory | The ruling was "hard fail on boot if plugin dir is not mounted / mountable"; the condition is the author's reading. The alternative is to require the volume always. |
-| 2 | Whether a plugin declares that it runs files from its directory | Not in this draft | A plugin that downloads and runs a binary will fail at run time on a host that mounts data volumes so nothing on them can execute. A declared `executes = true` and a boot-time test would turn that into a clear boot failure. Raised 2026-11-16, not ruled. |
-| 3 | The default container path | `/var/lib/tap/plugin-data` | No existing convention for TAP-owned read-write state under `/var/lib`; the secrets root is under `/run`. |
-| 4 | Names: the setting, the manifest table, the accessor, the command | `TAP_PLUGIN_DATA_ROOT`, `[data_directory]`, `tap_plugins.data_dir`, `manage.py plugin_data` | Proposed for consistency with existing names; none is ruled. |
-| 5 | Whether `max_bytes` is required | Required | The ruling was to declare the maximum now as a convention. Required makes every declaring plugin state one; optional would let authors skip it. |
+| 1 | Where the ephemeral root is | A fixed core-owned directory under the runtime user's data directory in the container | The ruling is that a cache may be ephemeral when no volume is enabled. Where exactly it sits was not discussed. Plugins that keep a private home directory today use a path under the runtime user's home. |
+| 2 | Names | `TAP_PLUGIN_DATA_ROOT`, `[data_directory]`, `executes`, `tap_plugins.data_dir`, `manage.py plugin_data` | Proposed for consistency with existing names; none is ruled. |
+| 3 | Whether `max_bytes` is required | Required | The ruling was to declare the maximum now as a convention. Required makes every declaring plugin state one; optional would let authors skip it. |
+| 4 | Whether the repository's own compose files enable the volume | They do | The ruling makes the volume optional for an instance. Development sessions benefit from keeping caches across restarts, so the draft enables it there and lets an operator remove it. |
+
+Ruled since the first draft, 2026-11-16, and now in the requirements above: the volume is optional
+and is enabled by the setting being set, with no default path; durability decides whether a plugin
+needs the volume, with no separate field; a configured volume that is unusable always aborts boot; a
+plugin declares `executes` and marks only the files it runs.
 
 ## What This Settles Elsewhere
 
