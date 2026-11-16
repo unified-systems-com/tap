@@ -678,7 +678,7 @@ them as attachments with a fixed type is what makes that safe to do from the ins
 nothing a stored file contains is ever interpreted by the browser as part of TAP.
 
 Sending every file as `application/octet-stream` and not as the type recorded on its node is this
-draft's choice and an open decision (Open Decisions, 5).
+draft's choice and an open decision (Open Decisions, 4).
 
 #### Acceptance Criteria
 
