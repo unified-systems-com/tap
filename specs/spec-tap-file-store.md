@@ -306,30 +306,43 @@ should be a URI, and this is one (ruled 2026-11-16: follow the standard).
 
 **The object directory is derived from the identifier alone** (ruled 2026-11-16). OCFL requires "a
 deterministic mapping from an object identifier to a unique storage path"; a name and a digest can
-both change, so neither may take part. The store uses the OCFL community layout extension
-`0007-n-tuple-omit-prefix-storage-layout`, which exists for identifiers that carry a prefix, with
-these parameters:
+both change, so neither may take part.
+
+**The tree is for programs, not people** (ruled 2026-11-16). Only TAP, OCFL libraries and automated
+tools read the directory tree, so the layout is chosen for what suits them: the layout the most tools
+understand, an even spread of objects whatever order they arrive in, and the identifier recoverable
+from a path. That is the OCFL community layout extension `0003-hash-and-id-n-tuple-storage-layout`,
+used with its defaults:
 
 | Parameter | Value | Effect |
 | --- | --- | --- |
-| `delimiter` | `":"` | Everything up to and including the last colon is dropped, leaving the bare UUID. |
-| `tupleSize` | `3` | Each level of the hierarchy is three characters. |
+| `digestAlgorithm` | `sha256` | The identifier is hashed with SHA-256, the digest used everywhere else in the store. |
+| `tupleSize` | `3` | Each level of the hierarchy is three characters of the hash. |
 | `numberOfTuples` | `3` | Three levels. |
-| `zeroPadding` | `"left"` | Never applies: a UUID is longer than nine characters. |
-| `reverseObjectRoot` | `true` | The levels are cut from the end of the UUID, which is its random part, so objects spread evenly. |
 
-The last level is the bare UUID, not reversed:
+The last level is the identifier itself, percent-encoded as the extension specifies, because a colon
+is not safe in a directory name on every filesystem:
 
 ```
-urn:uuid:0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d
-ocfl/d9c/8b7/a5e/0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d/
+urn:uuid:01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d
+ocfl/568/a1f/6b7/urn%3auuid%3a01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d/
 ```
 
-So the identifier is a standard URI, the layout is a published one that other OCFL tools can read
-from the store's own declaration, and the directory is still named by the plain UUID, so a person
-holding a node's identifier can find its directory. The layout's configuration is written once, at
-initialisation, to `ocfl/extensions/0007-n-tuple-omit-prefix-storage-layout/config.json`, and
-`ocfl_layout.json` names the extension.
+Why this layout and not another published one:
+
+- **It is the most widely read.** Of six maintained OCFL tools surveyed on 2026-11-16, all six read
+  this layout; the plain hashed layout (`0004`) is read by five and the prefix-omitting layout
+  (`0007`) by four.
+- **It spreads evenly by construction.** The levels come from a hash, so a collector that stores a
+  thousand files in one run does not put them in one directory, and the spread does not depend on
+  the form of the identifier.
+- **A path gives the identifier back.** In `0004` the last level is the hash, and the only way to
+  learn which object a directory holds is to open its inventory. Here a tool walking the tree reads
+  identifiers from paths.
+
+The layout's configuration is written once, at initialisation, to
+`ocfl/extensions/0003-hash-and-id-n-tuple-storage-layout/config.json`, and `ocfl_layout.json` names
+the extension, so another OCFL tool learns the layout from the store itself.
 
 **The stored filename** carries four things, so a file copied out of the store still says what it is:
 
@@ -364,7 +377,8 @@ store does not silently repair a logical name.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-naming-1 | Directory From Identifier Only | Proposed | Two objects with the same logical name and identical bytes live in different directories, and renaming or re-versioning an object never moves its directory. | |
-| req-tap-files-naming-2 | Layout Matches The Extension | Proposed | The store reproduces the `0007` extension's own published examples when given their configurations, and with this section's parameters maps `urn:uuid:0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d` to `d9c/8b7/a5e/0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d`. | The extension's examples are the conformance test for the algorithm. |
+| req-tap-files-naming-2 | Layout Matches The Extension | Proposed | The store maps the extension's own published example identifier `object-01` to `3c0/ff4/240/object-01`, and maps `urn:uuid:01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d` to `568/a1f/6b7/urn%3auuid%3a01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d`. | The extension's example is the conformance test for the algorithm. |
+| req-tap-files-naming-7 | Layout Declared In The Store | Proposed | An initialised store's `ocfl_layout.json` names the `0003` extension and its `config.json` carries the three parameters above. | |
 | req-tap-files-naming-6 | Identifier Is A URN | Proposed | Every object's inventory `id` is `urn:uuid:` followed by a canonical lower-case UUID, and equals the URN of the entity identifier it was stored under. | |
 | req-tap-files-naming-3 | Name Carries All Four | Proposed | Every content file's name parses from the right into a digest equal to the SHA-256 of its bytes, a version equal to its version directory, and an identifier equal to its object's. | |
 | req-tap-files-naming-4 | Hostile Names Are Safe | Proposed | Logical names containing `../`, a leading dot, a NUL, a newline, a `+`, a 300-character stem and a reserved device name each either produce a stored filename inside the object's own `content` directory or are refused; none writes anywhere else. | |
@@ -935,15 +949,12 @@ Status: `Proposed`
 
 ## Open Decisions
 
-One choice in this draft is the author's and has not been ruled on.
-
-| # | Decision | What the draft says | Why it is open |
-| :---: | --- | --- | --- |
-| 1 | Which end of the UUID the directory levels are cut from | The end (`reverseObjectRoot = true`) | The ruling is to use a standard identifier and a standard layout. The end of a version 7 UUID is random, which spreads objects evenly. Cutting from the start instead would group objects by creation time, which is friendlier to a person browsing and to incremental backup, and puts a hyphen inside a level name. |
+None. Every choice this specification makes has been ruled on.
 
 Ruled 2026-11-16 and now in the requirements above: the store is a new core app, named `tap_files`;
 the store is optional and enabled by its setting being set, with no default path; this repository's
-compose files enable it; the object identifier is a `urn:uuid:` URN; a download carries the media
+compose files enable it; the object identifier is a `urn:uuid:` URN; the directory tree is for programs and uses the
+`0003` hash-and-identifier layout; a download carries the media
 type recorded on the node and is always an attachment; there is no file size limit in this release;
 the names `TAP_FILES_ROOT`, `files.*`, `/files` and `manage.py files`; the collector actor's grant is global for now, with per-collector scoping
 tracked in Issue# 1205 - tap.
