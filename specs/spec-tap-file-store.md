@@ -84,6 +84,7 @@ which postpones that problem instead of solving it.
 | req-tap-files-check | [Report-Only Check](#report-only-check) | Proposed | A command that validates the store and lists what does not match the grid |
 | req-tap-files-health | [Health Probe](#health-probe) | Proposed | A probe that reports the root as usable or not |
 | req-tap-files-history | [History Stays Possible](#history-stays-possible) | Proposed | Nothing in this release prevents reading any earlier version |
+| req-tap-files-size-limit | [File Size Limit](#file-size-limit) | Backlog | A ceiling on the size of one stored file |
 | req-tap-files-retention | [Deletion And Retention](#deletion-and-retention) | Backlog | Removing content, retention periods, and what a tombstone means for bytes |
 | req-tap-files-backends | [Other Backends](#other-backends) | Backlog | How a contributed backend is discovered and what it must guarantee |
 | req-tap-files-upload | [Browser Upload](#browser-upload) | Backlog | A person adding a file through the web interface |
@@ -455,31 +456,24 @@ A write never leaves a partly written file where a reader can find it.
    Writers do not wait indefinitely; a write that cannot take the lock within a short bound fails
    with a busy error.
 2. **Stream to staging while hashing.** Bytes are copied in bounded chunks into a new directory under
-   `staging/`, with the SHA-256 computed as they pass. The whole file is never held in memory.
-3. **Enforce the size ceiling as bytes arrive.** A write that exceeds the ceiling is abandoned at
-   that point, its staging directory removed, and the operation refused. There are two ceilings and
-   the lower one applies:
-   - `settings.TAP_FILES_MAX_BYTES`, the instance-wide ceiling, default 2 GiB. It exists to stop a
-     runaway or hostile source filling the volume, not to police ordinary files: the largest
-     datasets any current plugin handles are a little over 1 GB, and the default sits above them on
-     purpose. An operator raises or lowers it.
-   - a limit the caller passes with the write. A collector knows roughly how big the thing it is
-     fetching should be, and states it, so a 5 MB document that arrives as 500 MB is refused long
-     before the instance ceiling.
-4. **Check the caller's digest, when given.** A caller that knows the digest it expects passes it,
+   `staging/`, with the SHA-256 computed as they pass. The whole file is never held in memory, so the
+   store has no built-in limit on a file's size (`req-tap-files-size-limit`). A write that runs out
+   of disk fails like any other failed write: nothing is moved into place and the staging directory
+   is removed.
+3. **Check the caller's digest, when given.** A caller that knows the digest it expects passes it,
    and a mismatch refuses the write. A collector that has verified a document elsewhere uses this to
    prove the store kept the same bytes.
-5. **Build the complete result in staging.** For a create, the whole object directory. For a new
+4. **Build the complete result in staging.** For a create, the whole object directory. For a new
    version, the version directory and the new root inventory and sidecar.
-6. **Make it durable.** `fsync` each file and its directory.
-7. **Move into place.**
+5. **Make it durable.** `fsync` each file and its directory.
+6. **Move into place.**
    - A create renames the staged object directory to its place under `ocfl/`, creating the hashed
      parent levels first. The rename is atomic, so the object either exists whole or not at all.
    - A new version renames the staged version directory into the object, then replaces the root
      inventory, then its sidecar, each by an atomic rename. The inventory is replaced last because an
      object whose root inventory does not mention a version directory is recoverable, and one whose
      inventory names content that is not there is not.
-8. **Log, release the lock, return** the digest, size and version.
+7. **Log, release the lock, return** the digest, size and version.
 
 **Order against the grid.** Bytes are stored before the node that names them is written, and a
 caller whose grid write then fails is left with a stored object and no node. That is the safe
@@ -501,8 +495,7 @@ Recovery never changes an object's inventory and never removes content.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-write-1 | Bytes Exact | Proposed | The stored content file's bytes equal the bytes supplied, and the returned digest equals their SHA-256. | |
-| req-tap-files-write-2 | Ceiling Enforced Mid-Stream | Proposed | A stream longer than the applicable ceiling is refused after at most the ceiling plus one chunk has been read, and leaves nothing under `ocfl/` or `staging/`. | |
-| req-tap-files-write-9 | Lower Ceiling Wins | Proposed | A write whose caller passed a limit below the instance ceiling is refused at the caller's limit; a caller's limit above the instance ceiling does not raise it. | |
+| req-tap-files-write-2 | Disk Full Fails Cleanly | Proposed | A write that fails because the volume is full raises an error, leaves nothing under `ocfl/` for that write, and leaves `staging/` empty. | |
 | req-tap-files-write-3 | Declared Digest Checked | Proposed | A create given an expected digest that does not match is refused and stores nothing. | |
 | req-tap-files-write-4 | Interrupted Create Leaves No Object | Proposed | A create killed at any step before the final rename leaves no object for its identifier, and after the next boot `ocfl/` validates and the remains are in `quarantine/`. | Test by injecting a failure at each step. |
 | req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Proposed | An `add_version` killed at any step leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
@@ -522,7 +515,7 @@ file, compares it with the inventory's digest, and only then returns a stream.
 
 Verification completes before the first byte is released. A stream that verifies as it goes cannot
 take back what it has already sent, and a caller that has received half a corrupted file has no way
-to know. The cost is reading the file twice, which the size ceiling bounds.
+to know. The cost is reading the file twice.
 
 A failure is one error, `FileIntegrityError`, whatever the cause: the content does not match its
 digest, the inventory does not match its sidecar, the inventory is not valid, or the content file is
@@ -816,6 +809,26 @@ is written.
 | req-tap-files-history-1 | Every Version Named In The Inventory | Proposed | After any number of versions and renames, the root inventory lists every version with its time, actor, logical name and digest. | |
 | req-tap-files-history-2 | Past Bytes Retrievable | Proposed | Given a digest and file version taken from a node's history entry, the store returns bytes with that digest. | Exercised with the first node type that represents a file. |
 
+### File Size Limit
+----
+RID: `req-tap-files-size-limit`
+
+Status: `Backlog`
+
+This release puts no ceiling on the size of a stored file (ruled 2026-11-16: no case calls for one
+yet, and choosing a number now is premature). What is recorded for when one is wanted:
+
+- **What a ceiling is for.** Stopping a runaway or hostile source from filling the volume. It is not
+  for policing ordinary files, so it belongs above everything legitimately stored. The largest
+  datasets any current plugin handles are a little over 1 GB.
+- **Two levels were sketched.** An instance-wide ceiling an operator sets, and a tighter limit a
+  caller passes with a write because it knows roughly how big the thing it is fetching should be. The
+  lower applies, and a caller cannot raise the instance ceiling.
+- **Enforced as bytes arrive**, not after, so an oversized stream is abandoned without being stored.
+- **What it interacts with.** Verification reads a file twice before releasing it
+  (`req-tap-files-read`), so a ceiling also bounds read cost; and what actually prevents a full disk
+  in the systems surveyed is a floor on free space for the whole volume, which is a separate idea.
+
 ### Deletion And Retention
 ----
 RID: `req-tap-files-retention`
@@ -895,6 +908,7 @@ RID: `req-tap-files-nongoals`
 Status: `Proposed`
 
 - **No deletion, retention or garbage collection.** `req-tap-files-retention`.
+- **No limit on the size of a file.** `req-tap-files-size-limit`.
 - **No browser upload.** `req-tap-files-upload`.
 - **No backend but the local filesystem.** `req-tap-files-backends`.
 - **No reading inside files and no HTTP range.** `req-tap-files-slices`.
@@ -930,9 +944,8 @@ One choice in this draft is the author's and has not been ruled on.
 Ruled 2026-11-16 and now in the requirements above: the store is a new core app, named `tap_files`;
 the store is optional and enabled by its setting being set, with no default path; this repository's
 compose files enable it; the object identifier is a `urn:uuid:` URN; a download carries the media
-type recorded on the node and is always an attachment; the instance ceiling defaults to 2 GiB and a
-caller may pass a lower one; the names `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`
-and `manage.py files`; the collector actor's grant is global for now, with per-collector scoping
+type recorded on the node and is always an attachment; there is no file size limit in this release;
+the names `TAP_FILES_ROOT`, `files.*`, `/files` and `manage.py files`; the collector actor's grant is global for now, with per-collector scoping
 tracked in Issue# 1205 - tap.
 
 ## What This Settles Elsewhere
