@@ -631,20 +631,15 @@ Status: `Proposed`
 
 ## Open Decisions
 
-Decisions this draft makes that the maintainer has not ruled on. Each is small and each is reversible
-before the specification is approved.
+None. Every choice this specification makes has been ruled on.
 
-| # | Decision | What the draft says | Why it is open |
-| :---: | --- | --- | --- |
-| 1 | Where the ephemeral root is | A fixed core-owned directory under the runtime user's data directory in the container | The ruling is that a cache may be ephemeral when no volume is enabled. Where exactly it sits was not discussed. Plugins that keep a private home directory today use a path under the runtime user's home. |
-| 2 | Names | `TAP_PLUGIN_DATA_ROOT`, `[data_directory]`, `executes`, `tap_plugins.data_dir`, `manage.py plugin_data` | Proposed for consistency with existing names; none is ruled. |
-| 3 | Whether `max_bytes` is required | Required | The ruling was to declare the maximum now as a convention. Required makes every declaring plugin state one; optional would let authors skip it. |
-| 4 | Whether the repository's own compose files enable the volume | They do | The ruling makes the volume optional for an instance. Development sessions benefit from keeping caches across restarts, so the draft enables it there and lets an operator remove it. |
-
-Ruled since the first draft, 2026-11-16, and now in the requirements above: the volume is optional
-and is enabled by the setting being set, with no default path; durability decides whether a plugin
-needs the volume, with no separate field; a configured volume that is unusable always aborts boot; a
-plugin declares `executes` and marks only the files it runs.
+Ruled 2026-11-16 and in the requirements above: the volume is optional and is enabled by the setting
+being set, with no default path; durability decides whether a plugin needs the volume, with no
+separate field; a configured volume that is unusable always aborts boot; a plugin declares `executes`
+and marks only the files it runs; the ephemeral root is a fixed core-owned directory under the
+runtime user's data directory; `max_bytes` is a required key; this repository's compose files enable
+the volume; and the names `TAP_PLUGIN_DATA_ROOT`, `[data_directory]`, `executes`,
+`tap_plugins.data_dir` and `manage.py plugin_data`.
 
 ## What This Settles Elsewhere
 

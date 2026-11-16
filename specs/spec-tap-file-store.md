@@ -109,7 +109,7 @@ A file's meaning belongs to the plugin that understands its format, on a node of
 type. The store imports no plugin.
 
 **The join between grid and store.** A stored file's identifier is the entity identifier of the node
-that represents it. The node carries the file's name, size, digest and file version; the store holds
+that represents it, written as a URN (`req-tap-files-naming`). The node carries the file's name, size, digest and file version; the store holds
 the bytes under the same identifier. Neither side needs a path field to find the other.
 
 **Not for working data.** A database updated in place, a version-control clone or a cache of fetched
@@ -288,7 +288,7 @@ store reads is validated against it before it is trusted.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-ocfl-1 | Validator Finds No Errors | Proposed | After creating objects, adding versions and renaming, a conformant OCFL 1.1 validator run over `ocfl/` reports zero errors. | Run in CI against at least one independent validator; which one is a build-time choice needing dependency approval if it is not a standalone tool. |
-| req-tap-files-ocfl-2 | Only Expected Warnings | Proposed | The same run reports no warning other than the ones this section accepts by name: the SHA-512 recommendation, and the identifier form if Open Decision 3 keeps the bare identifier. | A new warning is a finding. |
+| req-tap-files-ocfl-2 | Only Expected Warnings | Proposed | The same run reports no warning other than the ones this section accepts by name: the SHA-512 recommendation. | A new warning is a finding. |
 | req-tap-files-ocfl-3 | Sidecar Matches | Proposed | For every inventory file in the store, the adjacent sidecar holds the SHA-256 of that inventory's bytes. | |
 | req-tap-files-ocfl-4 | Inventory Schema | Proposed | Every inventory written validates against the shipped schema; an inventory on disk that fails it makes the object unreadable through the store and is reported by the check. | |
 | req-tap-files-ocfl-5 | Readable Cold | Proposed | Given only a copy of `ocfl/`, a script using nothing but the standard library can list every object's identifier, logical name, versions and digests, and verify every content file. | The test of Goal 3. |
@@ -299,21 +299,36 @@ RID: `req-tap-files-naming`
 
 Status: `Proposed`
 
-**The object identifier** is the UUID of the node that represents the file, in its canonical
-lower-case hyphenated form.
+**The object identifier** is the URN form of the UUID of the node that represents the file:
+`urn:uuid:` followed by the UUID in its canonical lower-case hyphenated form. OCFL says an identifier
+should be a URI, and this is one (ruled 2026-11-16: follow the standard).
 
 **The object directory is derived from the identifier alone** (ruled 2026-11-16). OCFL requires "a
 deterministic mapping from an object identifier to a unique storage path"; a name and a digest can
-both change, so neither may take part. The store uses the registered OCFL layout extension
-`0003-hash-and-id-n-tuple-storage-layout` with its defaults: the SHA-256 of the identifier, cut into
-three three-character levels, then the identifier itself as the last level.
+both change, so neither may take part. The store uses the OCFL community layout extension
+`0007-n-tuple-omit-prefix-storage-layout`, which exists for identifiers that carry a prefix, with
+these parameters:
+
+| Parameter | Value | Effect |
+| --- | --- | --- |
+| `delimiter` | `":"` | Everything up to and including the last colon is dropped, leaving the bare UUID. |
+| `tupleSize` | `3` | Each level of the hierarchy is three characters. |
+| `numberOfTuples` | `3` | Three levels. |
+| `zeroPadding` | `"left"` | Never applies: a UUID is longer than nine characters. |
+| `reverseObjectRoot` | `true` | The levels are cut from the end of the UUID, which is its random part, so objects spread evenly. |
+
+The last level is the bare UUID, not reversed:
 
 ```
-ocfl/839/e6c/5a9/0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d/
+urn:uuid:0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d
+ocfl/d9c/8b7/a5e/0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d/
 ```
 
-The hashed levels keep any one directory from holding millions of entries; the last level is the
-identifier, so a person holding a node's identifier can find its directory.
+So the identifier is a standard URI, the layout is a published one that other OCFL tools can read
+from the store's own declaration, and the directory is still named by the plain UUID, so a person
+holding a node's identifier can find its directory. The layout's configuration is written once, at
+initialisation, to `ocfl/extensions/0007-n-tuple-omit-prefix-storage-layout/config.json`, and
+`ocfl_layout.json` names the extension.
 
 **The stored filename** carries four things, so a file copied out of the store still says what it is:
 
@@ -326,7 +341,8 @@ vdr-2026-11-16+0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d+v1+9f86d0…0f00a08.json
   keeps letters, digits, `.`, `_` and `-`, replaces every other character with `_`, drops leading
   dots, and is cut to 100 characters. The extension is the logical name's final suffix when it is 1
   to 16 letters or digits, and is otherwise omitted along with its dot.
-- `<identifier>` is the object identifier.
+- `<identifier>` is the bare UUID, without the `urn:uuid:` prefix, because a colon is not safe in a
+  file name on every filesystem.
 - `v<N>` is the OCFL version in whose directory the file sits. It is OCFL's number, not any counter
   from the grid (ruled 2026-11-16), so the name and the path always agree.
 - `<sha256>` is the full digest of the bytes, lower-case hex. It is not truncated, so a file can be
@@ -347,7 +363,8 @@ store does not silently repair a logical name.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-naming-1 | Directory From Identifier Only | Proposed | Two objects with the same logical name and identical bytes live in different directories, and renaming or re-versioning an object never moves its directory. | |
-| req-tap-files-naming-2 | Layout Matches The Extension | Proposed | For a known identifier the object directory equals the path the `0003` extension's own algorithm and published example produce with default parameters. | |
+| req-tap-files-naming-2 | Layout Matches The Extension | Proposed | The store reproduces the `0007` extension's own published examples when given their configurations, and with this section's parameters maps `urn:uuid:0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d` to `d9c/8b7/a5e/0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d`. | The extension's examples are the conformance test for the algorithm. |
+| req-tap-files-naming-6 | Identifier Is A URN | Proposed | Every object's inventory `id` is `urn:uuid:` followed by a canonical lower-case UUID, and equals the URN of the entity identifier it was stored under. | |
 | req-tap-files-naming-3 | Name Carries All Four | Proposed | Every content file's name parses from the right into a digest equal to the SHA-256 of its bytes, a version equal to its version directory, and an identifier equal to its object's. | |
 | req-tap-files-naming-4 | Hostile Names Are Safe | Proposed | Logical names containing `../`, a leading dot, a NUL, a newline, a `+`, a 300-character stem and a reserved device name each either produce a stored filename inside the object's own `content` directory or are refused; none writes anywhere else. | |
 | req-tap-files-naming-5 | Logical Name Kept Exactly | Proposed | A valid logical name containing spaces and non-ASCII letters is returned unchanged by a read and appears unchanged in the inventory. | |
@@ -439,9 +456,16 @@ A write never leaves a partly written file where a reader can find it.
    with a busy error.
 2. **Stream to staging while hashing.** Bytes are copied in bounded chunks into a new directory under
    `staging/`, with the SHA-256 computed as they pass. The whole file is never held in memory.
-3. **Enforce the size ceiling as bytes arrive.** A write that exceeds `settings.TAP_FILES_MAX_BYTES`
-   is abandoned at that point, its staging directory removed, and the operation refused. The ceiling
-   bounds what a faulty or hostile source can make the store accept.
+3. **Enforce the size ceiling as bytes arrive.** A write that exceeds the ceiling is abandoned at
+   that point, its staging directory removed, and the operation refused. There are two ceilings and
+   the lower one applies:
+   - `settings.TAP_FILES_MAX_BYTES`, the instance-wide ceiling, default 2 GiB. It exists to stop a
+     runaway or hostile source filling the volume, not to police ordinary files: the largest
+     datasets any current plugin handles are a little over 1 GB, and the default sits above them on
+     purpose. An operator raises or lowers it.
+   - a limit the caller passes with the write. A collector knows roughly how big the thing it is
+     fetching should be, and states it, so a 5 MB document that arrives as 500 MB is refused long
+     before the instance ceiling.
 4. **Check the caller's digest, when given.** A caller that knows the digest it expects passes it,
    and a mismatch refuses the write. A collector that has verified a document elsewhere uses this to
    prove the store kept the same bytes.
@@ -477,7 +501,8 @@ Recovery never changes an object's inventory and never removes content.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-write-1 | Bytes Exact | Proposed | The stored content file's bytes equal the bytes supplied, and the returned digest equals their SHA-256. | |
-| req-tap-files-write-2 | Ceiling Enforced Mid-Stream | Proposed | A stream longer than the ceiling is refused after at most the ceiling plus one chunk has been read, and leaves nothing under `ocfl/` or `staging/`. | |
+| req-tap-files-write-2 | Ceiling Enforced Mid-Stream | Proposed | A stream longer than the applicable ceiling is refused after at most the ceiling plus one chunk has been read, and leaves nothing under `ocfl/` or `staging/`. | |
+| req-tap-files-write-9 | Lower Ceiling Wins | Proposed | A write whose caller passed a limit below the instance ceiling is refused at the caller's limit; a caller's limit above the instance ceiling does not raise it. | |
 | req-tap-files-write-3 | Declared Digest Checked | Proposed | A create given an expected digest that does not match is refused and stores nothing. | |
 | req-tap-files-write-4 | Interrupted Create Leaves No Object | Proposed | A create killed at any step before the final rename leaves no object for its identifier, and after the next boot `ocfl/` validates and the remains are in `quarantine/`. | Test by injecting a failure at each step. |
 | req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Proposed | An `add_version` killed at any step leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
@@ -664,8 +689,13 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
 - **What is sent.** The verified bytes (`req-tap-files-read`), with:
   - `Content-Disposition: attachment` carrying the logical name, encoded as RFC 6266 describes, so
     the file is saved and never rendered in the page's origin;
-  - `Content-Type: application/octet-stream` and `X-Content-Type-Options: nosniff`, so the browser
-    does not guess a type and act on it;
+  - `Content-Type` set to the media type recorded on the file's node (ruled 2026-11-16), and
+    `X-Content-Type-Options: nosniff`, so the browser uses the stated type and does not guess
+    another. The route reads the node's `media_type` field through the same generic read it uses to
+    check that the user may see the node; it needs to know the field's name and nothing else about
+    the node's type. The value is used only when it is a well-formed media type of plain token
+    characters; when the field is absent, empty or malformed, the type sent is
+    `application/octet-stream`;
   - `Content-Length`, and an `ETag` that is the digest;
   - cache headers that keep the response out of shared caches.
 - **What is refused, and how.** No session: the login wall's ordinary response. No capability, or a
@@ -674,18 +704,17 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
   finding logged.
 
 The files served here may have been written by a third party and fetched by a collector. Serving
-them as attachments with a fixed type is what makes that safe to do from the instance's own origin:
-nothing a stored file contains is ever interpreted by the browser as part of TAP.
-
-Sending every file as `application/octet-stream` and not as the type recorded on its node is this
-draft's choice and an open decision (Open Decisions, 4).
+every one as an attachment is what makes that safe to do from the instance's own origin: whatever
+type is stated, the browser saves the file and never renders it as part of TAP. The recorded type
+makes the saved file open in the right program; it is not what the safety rests on.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-download-1 | Bytes And Digest | Proposed | A permitted user receives bytes whose SHA-256 equals the `ETag` and the digest on the file's node. | Closes the done-test of Issue# 1035 - tap. |
-| req-tap-files-download-2 | Always An Attachment | Proposed | Every successful response carries `Content-Disposition: attachment`, `Content-Type: application/octet-stream` and `X-Content-Type-Options: nosniff`, for a stored HTML file as for any other. | |
+| req-tap-files-download-2 | Always An Attachment | Proposed | Every successful response carries `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, for a file recorded as `text/html` as for any other. | |
+| req-tap-files-download-9 | Recorded Type Sent, Safely | Proposed | The `Content-Type` equals the node's `media_type` when that is a well-formed media type, and is `application/octet-stream` when the field is absent, empty, or contains a space, a control character, a newline or a semicolon. | The last cases are header injection attempts. |
 | req-tap-files-download-3 | Login Required | Proposed | An unauthenticated request receives the login wall's response and no bytes, and the route is absent from the login-exempt prefixes. | |
 | req-tap-files-download-4 | Capability Required | Proposed | A logged-in user without `files.read` is refused, and the response is the same whether or not the identifier exists. | |
 | req-tap-files-download-5 | Tombstoned Not Served | Proposed | After the file's node is tombstoned, the route refuses and the object is still present in the store. | |
@@ -892,16 +921,19 @@ Status: `Proposed`
 
 ## Open Decisions
 
-Decisions this draft makes that the maintainer has not ruled on.
+One choice in this draft is the author's and has not been ruled on.
 
 | # | Decision | What the draft says | Why it is open |
 | :---: | --- | --- | --- |
-| 1 | Whether the repository's own compose files enable the store | They do | Ruled 2026-11-16: the store is optional, enabled by the setting being set, and required only by a plugin that declares it. What the repository's compose files do by default was not discussed; the draft enables it so development sessions and CI exercise the store. |
-| 2 | Where the code lives | A new core app. The name `tap_files` is proposed and not ruled | Ruled 2026-11-16: a new app. It owns the setting, the `/files` prefix, the health probe, the service gateway and the management command. A new app means the architecture document's subsystem table changes in the implementing change, and this document moves under the app's own `specs/` directory when the app exists. |
-| 3 | The form of the object identifier | The bare UUID | OCFL says an identifier should be a URI, so a strict validator warns. `urn:uuid:<uuid>` removes the warning, and then the layout extension percent-encodes the colons, so the directory is no longer named by the plain identifier, which the ruling asked for. |
-| 4 | The download's content type | Always `application/octet-stream` | Sending the type recorded on the node would let a browser label the saved file better. It also makes safety depend on a field a writer supplied. The fixed type is the conservative choice. |
-| 5 | The size ceiling's default | Left to be set; a setting exists | The first consumers' files are about 1 MB to 10 MB. A default near 100 MiB covers them tenfold; verification reads each file twice, so the ceiling also bounds read cost. |
-| 6 | Names | `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`, `manage.py files` | Proposed for consistency with existing names; none is ruled. |
+| 1 | Which end of the UUID the directory levels are cut from | The end (`reverseObjectRoot = true`) | The ruling is to use a standard identifier and a standard layout. The end of a version 7 UUID is random, which spreads objects evenly. Cutting from the start instead would group objects by creation time, which is friendlier to a person browsing and to incremental backup, and puts a hyphen inside a level name. |
+
+Ruled 2026-11-16 and now in the requirements above: the store is a new core app, named `tap_files`;
+the store is optional and enabled by its setting being set, with no default path; this repository's
+compose files enable it; the object identifier is a `urn:uuid:` URN; a download carries the media
+type recorded on the node and is always an attachment; the instance ceiling defaults to 2 GiB and a
+caller may pass a lower one; the names `TAP_FILES_ROOT`, `TAP_FILES_MAX_BYTES`, `files.*`, `/files`
+and `manage.py files`; the collector actor's grant is global for now, with per-collector scoping
+tracked in Issue# 1205 - tap.
 
 ## What This Settles Elsewhere
 
