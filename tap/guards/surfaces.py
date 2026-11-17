@@ -455,6 +455,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Boot gate — file store volume, initialisation and recovery",
+        rid="req-tap-files-mount-gate",
+        cadence="Per-boot (`manage.py boot`, the `files` phase directly after `plugin_data`) + per-commit (`pytest`)",
+        status=(
+            "Gate-guarded (fail-closed) — a configured store root must pass the shared mount test and hold either "
+            "nothing or this store's own OCFL storage root; an empty root is initialised and every object recovered. "
+            "Inert until the compose files set TAP_FILES_ROOT (req-tap-files-root-2); an independent OCFL validator "
+            "is Backlog (req-tap-files-ocfl-validation)"
+        ),
+        enforced_by=(
+            "`tap_boot/orchestrator.py::_phase_files` → `tap_files/boot.py::run_gate`, deciding with "
+            "`tap/volume_mount.py::check_volume`; `tap_files/tests/test_store.py`"
+        ),
+    ),
+    DeclaredSurface(
         surface="Plugin data health probe",
         rid="req-tap-plugin-datadir-health",
         cadence="Per-commit (`pytest`) + per-spawn and per-120s in-container (the readiness set it joins)",

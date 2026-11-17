@@ -71,14 +71,14 @@ which postpones that problem instead of solving it.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-files-scope | [Scope](#scope) | Proposed | One on-grid byte store in core; what it knows and what it leaves to plugins |
-| req-tap-files-root | [The Root](#the-root) | Proposed | One setting, one mounted local volume, separate from plugin data |
-| req-tap-files-mount-gate | [Mount Gate And Initialisation](#mount-gate-and-initialisation) | Proposed | Boot refuses an unmounted root; an empty root is initialised; unknown content is never adopted |
-| req-tap-files-ocfl | [On-Disk Format](#on-disk-format) | Proposed | A conformant OCFL 1.1 storage root, one object per stored file |
-| req-tap-files-naming | [Object And File Naming](#object-and-file-naming) | Proposed | Object directory from the identifier alone; stored filename carries name, identifier, version and digest |
-| req-tap-files-immutable | [Immutability And Versions](#immutability-and-versions) | Proposed | Write-once bytes; a change is a new version; nothing is deleted |
-| req-tap-files-interface | [Store Interface](#store-interface) | Proposed | Whole-file operations behind a backend protocol; local filesystem is the only backend |
-| req-tap-files-write | [Write Path](#write-path) | Proposed | Stream, hash, limit, stage, verify, move into place; recovery after a crash |
-| req-tap-files-read | [Read Path](#read-path) | Proposed | Verify the digest before releasing any byte |
+| req-tap-files-root | [The Root](#the-root) | In Development | One setting, one mounted local volume, separate from plugin data |
+| req-tap-files-mount-gate | [Mount Gate And Initialisation](#mount-gate-and-initialisation) | In Development | Boot refuses an unmounted root; an empty root is initialised; unknown content is never adopted |
+| req-tap-files-ocfl | [On-Disk Format](#on-disk-format) | Implemented | A conformant OCFL 1.1 storage root, one object per stored file |
+| req-tap-files-naming | [Object And File Naming](#object-and-file-naming) | Implemented | Object directory from the identifier alone; stored filename carries name, identifier, version and digest |
+| req-tap-files-immutable | [Immutability And Versions](#immutability-and-versions) | Implemented | Write-once bytes; a change is a new version; nothing is deleted |
+| req-tap-files-interface | [Store Interface](#store-interface) | Implemented | Whole-file operations behind a backend protocol; local filesystem is the only backend |
+| req-tap-files-write | [Write Path](#write-path) | Implemented | Stream, hash, limit, stage, verify, move into place; recovery after a crash |
+| req-tap-files-read | [Read Path](#read-path) | Implemented | Verify the digest before releasing any byte |
 | req-tap-files-capabilities | [Capabilities](#capabilities) | Proposed | `files.create`, `files.read`, `files.update`, `files.delete` in the core registry |
 | req-tap-files-gateway | [Service Gateway](#service-gateway) | Proposed | The gated operations programs call; the identifier a file node shares with its object |
 | req-tap-files-node | [The Grid File](#the-grid-file) | Proposed | `tap_file`, a core type: every held file's node, found again by its directory and name |
@@ -89,13 +89,14 @@ which postpones that problem instead of solving it.
 | req-tap-files-download | [Download Route](#download-route) | Proposed | A logged-in user with `files.read` downloads a file as an attachment |
 | req-tap-files-check | [Report-Only Check](#report-only-check) | Proposed | A command that validates the store and lists where it and the grid's file nodes disagree, both ways |
 | req-tap-files-health | [Health Probe](#health-probe) | Proposed | A probe that reports the root as usable or not |
-| req-tap-files-history | [History Stays Possible](#history-stays-possible) | Proposed | Nothing in this release prevents reading any earlier version |
+| req-tap-files-history | [History Stays Possible](#history-stays-possible) | Implemented | Nothing in this release prevents reading any earlier version |
 | req-tap-files-size-limit | [File Size Limit](#file-size-limit) | Backlog | A ceiling on the size of one stored file |
 | req-tap-files-retention | [Deletion And Retention](#deletion-and-retention) | Backlog | Removing content, retention periods, and what a tombstone means for bytes |
 | req-tap-files-backends | [Other Backends](#other-backends) | Backlog | How a contributed backend is discovered and what it must guarantee |
 | req-tap-files-upload | [Browser Upload](#browser-upload) | Backlog | A person adding a file through the web interface |
 | req-tap-files-slices | [Reading Inside Files](#reading-inside-files) | Backlog | Searching stored files and returning addressed parts of them |
 | req-tap-files-version-download | [Downloading An Earlier Version](#downloading-an-earlier-version) | Backlog | A browser surface for a version the node's history once recorded |
+| req-tap-files-ocfl-validation | [Independent OCFL Validation](#independent-ocfl-validation) | Backlog | Running a third-party OCFL validator over the store |
 | req-tap-files-dimensions | [Dimensions For Files And Directories](#dimensions-for-files-and-directories) | Backlog | Which dimensions held files and directories should carry |
 | req-tap-files-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this specification deliberately does not do |
 
@@ -142,7 +143,7 @@ sub-grid and has a different volume.
 ----
 RID: `req-tap-files-root`
 
-Status: `Proposed`
+Status: `In Development`
 
 The store lives under one root named by one core setting.
 
@@ -185,17 +186,17 @@ The store lives under one root named by one core setting.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-root-1 | One Setting, No Default | Proposed | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned. |
+| req-tap-files-root-1 | One Setting, No Default | Implemented | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned. |
 | req-tap-files-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines a service running store code mounts a named volume and sets the variable to that mount path; that volume is not the plugin data volume. | |
-| req-tap-files-root-5 | Not Enabled Is One Clear Error | Proposed | With the variable unset, each gateway operation raises `FileStoreNotEnabled` and touches no path, and the download route answers not found. | |
-| req-tap-files-root-3 | Nothing Foreign Under The OCFL Root | Proposed | After any sequence of store operations, including interrupted ones, `ocfl/` contains only the storage-root marker, the layout declaration, the extensions directory and object hierarchy, with no empty directory. | OCFL section 4.1. |
-| req-tap-files-root-4 | Roots Do Not Overlap | Proposed | When both are set, the mount gate fails if the file store root and the plugin data root are the same path or one contains the other. | |
+| req-tap-files-root-5 | Not Enabled Is One Clear Error | Implemented | With the variable unset, each gateway operation raises `FileStoreNotEnabled` and touches no path, and the download route answers not found. | |
+| req-tap-files-root-3 | Nothing Foreign Under The OCFL Root | Implemented | After any sequence of store operations, including interrupted ones, `ocfl/` contains only the storage-root marker, the layout declaration, the extensions directory and object hierarchy, with no empty directory. | OCFL section 4.1. |
+| req-tap-files-root-4 | Roots Do Not Overlap | Implemented | When both are set, the mount gate fails if the file store root and the plugin data root are the same path or one contains the other. | |
 
 ### Mount Gate And Initialisation
 ----
 RID: `req-tap-files-mount-gate`
 
-Status: `Proposed`
+Status: `In Development`
 
 **Gate** (ruled 2026-11-16). The store is optional, a plugin declares when it needs it, and boot
 fails only when a need cannot be met or a configured volume is broken.
@@ -220,7 +221,7 @@ fails only when a need cannot be met or a configured volume is broken.
   store.
 - **What "usable" means.** The path exists and is a directory and not a symbolic link; it is on a
   different device from the container's root filesystem; and a real write, `fsync`, rename and remove
-  succeeds in `staging/`. The test is one function, shared with the health probe, and is the same
+  succeeds under the root, by a core-reserved name that is gone when the test ends. The test is one function, shared with the health probe, and is the same
   test the plugin data directory uses (`req-tap-plugin-datadir-mount-gate`); the two share an
   implementation, not a copy.
 - **An abort** is a standup abort (`req-boot-abort-signal`) in the `boot` domain naming the root, the
@@ -246,23 +247,26 @@ whoever is installed.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-mount-gate-1 | Unmounted Configured Root Aborts | Proposed | With the setting naming a path on the same device as `/`, boot exits non-zero after one `ABORT` record whose reason says the root is not a mounted volume, whether or not any plugin requires the store. | |
+| req-tap-files-mount-gate-1 | Unmounted Configured Root Aborts | Implemented | With the setting naming a path on the same device as `/`, boot exits non-zero after one `ABORT` record whose reason says the root is not a mounted volume, whether or not any plugin requires the store. | |
 | req-tap-files-mount-gate-6 | Required But Not Enabled Aborts | Proposed | With the setting unset and an installed plugin declaring `[file_store] required = true`, boot aborts and the reason names that plugin. | |
-| req-tap-files-mount-gate-7 | Not Enabled, Not Required, Boots | Proposed | With the setting unset and no installed plugin requiring the store, boot succeeds and creates nothing. | |
+| req-tap-files-mount-gate-7 | Not Enabled, Not Required, Boots | Implemented | With the setting unset and no installed plugin requiring the store, boot succeeds and creates nothing. | |
 | req-tap-files-mount-gate-8 | Manifest Table Strict | Proposed | A `[file_store]` table with a non-boolean `required` or any other key fails the manifest load. | |
-| req-tap-files-mount-gate-2 | Empty Root Initialised | Proposed | Booting against an empty mounted root leaves a storage root that a conformant OCFL validator accepts as a valid, empty storage root. | |
-| req-tap-files-mount-gate-3 | Foreign Content Refused | Proposed | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
-| req-tap-files-mount-gate-4 | Idempotent | Proposed | A second boot against an initialised root changes no file under `ocfl/`. | |
-| req-tap-files-mount-gate-5 | Shared Mount Test | Proposed | The file store and the plugin data directory obtain their mount verdicts from one implementation of the test. | |
+| req-tap-files-mount-gate-2 | Empty Root Initialised | Implemented | Booting against an empty mounted root leaves the four directories, and under `ocfl/` exactly the OCFL 1.1 storage-root marker, `ocfl_layout.json` naming the `0003` extension, and that extension's configuration. | An independent validator's verdict is `req-tap-files-ocfl-validation` (Backlog, ruled 2026-11-17). |
+| req-tap-files-mount-gate-3 | Foreign Content Refused | Implemented | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
+| req-tap-files-mount-gate-4 | Idempotent | Implemented | A second boot against an initialised root changes no file under `ocfl/`. | |
+| req-tap-files-mount-gate-5 | Shared Mount Test | Implemented | The file store and the plugin data directory obtain their mount verdicts from one implementation of the test. | |
 
 ### On-Disk Format
 ----
 RID: `req-tap-files-ocfl`
 
-Status: `Proposed`
+Status: `Implemented`
 
 `ocfl/` is a conformant OCFL 1.1 storage root, and each stored file is one OCFL object (ruled
-2026-11-16). Conformant means a third-party OCFL validator reports no errors against it.
+2026-11-16). Conformant means a third-party OCFL validator reports no errors against it. Running
+such a validator is not part of this release (ruled 2026-11-17, `req-tap-files-ocfl-validation`);
+until it is, conformance rests on the store's own structural checks below and on the check command's
+`verify` (`req-tap-files-check`).
 
 An object's directory holds exactly what OCFL allows:
 
@@ -309,17 +313,17 @@ store reads is validated against it before it is trusted.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-ocfl-1 | Validator Finds No Errors | Proposed | After creating objects, adding versions and renaming, a conformant OCFL 1.1 validator run over `ocfl/` reports zero errors. | Run in CI against at least one independent validator; which one is a build-time choice needing dependency approval if it is not a standalone tool. |
-| req-tap-files-ocfl-2 | Only Expected Warnings | Proposed | The same run reports no warning other than the ones this section accepts by name: the SHA-512 recommendation. | A new warning is a finding. |
-| req-tap-files-ocfl-3 | Sidecar Matches | Proposed | For every inventory file in the store, the adjacent sidecar holds the SHA-256 of that inventory's bytes. | |
-| req-tap-files-ocfl-4 | Inventory Schema | Proposed | Every inventory written validates against the shipped schema; an inventory on disk that fails it makes the object unreadable through the store and is reported by the check. | |
-| req-tap-files-ocfl-5 | Readable Cold | Proposed | Given only a copy of `ocfl/`, a script using nothing but the standard library can list every object's identifier, logical name, versions and digests, and verify every content file. | The test of Goal 3. |
+| req-tap-files-ocfl-1 | Validator Finds No Errors | Backlog | After creating objects, adding versions and renaming, a conformant OCFL 1.1 validator run over `ocfl/` reports zero errors. | Backlog (ruled 2026-11-17): `req-tap-files-ocfl-validation`. |
+| req-tap-files-ocfl-2 | Only Expected Warnings | Backlog | The same run reports no warning other than the ones this section accepts by name: the SHA-512 recommendation. | A new warning is a finding. Backlog with `-ocfl-1`. |
+| req-tap-files-ocfl-3 | Sidecar Matches | Implemented | For every inventory file in the store, the adjacent sidecar holds the SHA-256 of that inventory's bytes. | |
+| req-tap-files-ocfl-4 | Inventory Schema | Implemented | Every inventory written validates against the shipped schema; an inventory on disk that fails it makes the object unreadable through the store and is reported by the check. | |
+| req-tap-files-ocfl-5 | Readable Cold | Implemented | Given only a copy of `ocfl/`, a script using nothing but the standard library can list every object's identifier, logical name, versions and digests, and verify every content file. | The test of Goal 3. |
 
 ### Object And File Naming
 ----
 RID: `req-tap-files-naming`
 
-Status: `Proposed`
+Status: `Implemented`
 
 **The object identifier** is the URN form of the UUID of the node that represents the file:
 `urn:uuid:` followed by the UUID in its canonical lower-case hyphenated form. OCFL says an identifier
@@ -401,20 +405,20 @@ store does not silently repair a logical name.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-naming-1 | Directory From Identifier Only | Proposed | Two objects with the same logical name and identical bytes live in different directories, and renaming or re-versioning an object never moves its directory. | |
-| req-tap-files-naming-2 | Layout Matches The Extension | Proposed | The store maps the extension's own published example identifier `object-01` to `3c0/ff4/240/object-01`, and maps `urn:uuid:01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d` to `568/a1f/6b7/urn%3auuid%3a01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d`. | The extension's example is the conformance test for the algorithm. |
-| req-tap-files-naming-7 | Layout Declared In The Store | Proposed | An initialised store's `ocfl_layout.json` names the `0003` extension and its `config.json` carries the three parameters above. | |
-| req-tap-files-naming-6 | Identifier Is A URN | Proposed | Every object's inventory `id` is `urn:uuid:` followed by a canonical lower-case UUID, and equals the URN of the entity identifier it was stored under. | |
-| req-tap-files-naming-3 | Name Carries All Four | Proposed | Every content file's name parses from the right into a digest equal to the SHA-256 of its bytes, a version equal to its version directory, and an identifier equal to its object's. | |
-| req-tap-files-naming-4 | Hostile Names Are Safe | Proposed | Logical names containing `../`, a leading dot, a NUL, a newline, a `+`, a 300-character stem and a reserved device name each either produce a stored filename inside the object's own `content` directory or are refused; none writes anywhere else. | |
-| req-tap-files-naming-8 | Stored Name Fits One Path Element | Proposed | For the logical names `"é" * 100 + ".json"`, `"a" * 255` and a 100-character stem with a 16-character extension, the stored filename is ASCII, at most 255 bytes, and the write succeeds; the logical name is still kept exactly. | Raised by the AI review on PR# 1213 - tap. |
-| req-tap-files-naming-5 | Logical Name Kept Exactly | Proposed | A valid logical name containing spaces and non-ASCII letters is returned unchanged by a read and appears unchanged in the inventory. | |
+| req-tap-files-naming-1 | Directory From Identifier Only | Implemented | Two objects with the same logical name and identical bytes live in different directories, and renaming or re-versioning an object never moves its directory. | |
+| req-tap-files-naming-2 | Layout Matches The Extension | Implemented | The store maps the extension's own published example identifier `object-01` to `3c0/ff4/240/object-01`, and maps `urn:uuid:01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d` to `568/a1f/6b7/urn%3auuid%3a01a1e3b1-25c0-7d4a-9b1c-2f6e5a7b8c9d`. | The extension's example is the conformance test for the algorithm. |
+| req-tap-files-naming-7 | Layout Declared In The Store | Implemented | An initialised store's `ocfl_layout.json` names the `0003` extension and its `config.json` carries the three parameters above. | |
+| req-tap-files-naming-6 | Identifier Is A URN | Implemented | Every object's inventory `id` is `urn:uuid:` followed by a canonical lower-case UUID, and equals the URN of the entity identifier it was stored under. | |
+| req-tap-files-naming-3 | Name Carries All Four | Implemented | Every content file's name parses from the right into a digest equal to the SHA-256 of its bytes, a version equal to its version directory, and an identifier equal to its object's. | |
+| req-tap-files-naming-4 | Hostile Names Are Safe | Implemented | Logical names containing `../`, a leading dot, a NUL, a newline, a `+`, a 300-character stem and a reserved device name each either produce a stored filename inside the object's own `content` directory or are refused; none writes anywhere else. | |
+| req-tap-files-naming-8 | Stored Name Fits One Path Element | Implemented | For the logical names `"é" * 100 + ".json"`, `"a" * 255` and a 100-character stem with a 16-character extension, the stored filename is ASCII, at most 255 bytes, and the write succeeds; the logical name is still kept exactly. | Raised by the AI review on PR# 1213 - tap. |
+| req-tap-files-naming-5 | Logical Name Kept Exactly | Implemented | A valid logical name containing spaces and non-ASCII letters is returned unchanged by a read and appears unchanged in the inventory. | |
 
 ### Immutability And Versions
 ----
 RID: `req-tap-files-immutable`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Stored bytes are write-once (ruled 2026-11-16).
 
@@ -446,18 +450,18 @@ for nodes (`req-grid-service-batch-occ`).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-immutable-1 | Earlier Versions Untouched | Proposed | After adding a version, every file under the earlier version directories is byte-identical and has an unchanged modification time. | |
-| req-tap-files-immutable-2 | Rename Stores No Bytes | Proposed | A rename raises the head version by one, adds no content file, and leaves the digest unchanged. The new version's directory exists, holds an inventory and its sidecar, and has no `content` directory. | |
-| req-tap-files-immutable-3 | No Delete Operation | Proposed | The backend protocol and the service gateway expose no operation that removes an object, a version or content, and no code path under the store unlinks a file inside `ocfl/`. | Recovery moves incomplete content to quarantine; it does not unlink. |
-| req-tap-files-immutable-4 | Stale Writer Refused | Proposed | Adding a version or renaming with an expected version that is not the head is refused with a conflict error carrying both numbers, and changes nothing. | |
-| req-tap-files-immutable-5 | Create Is Put-If-Absent | Proposed | Creating an object whose identifier already exists is refused and the existing object is unchanged. | |
-| req-tap-files-immutable-6 | Content Is Read-Only | Proposed | After a create and after a new version, every content file under `ocfl/` has mode `0444`, and no code path under the store opens a content file for writing once it is placed. | |
+| req-tap-files-immutable-1 | Earlier Versions Untouched | Implemented | After adding a version, every file under the earlier version directories is byte-identical and has an unchanged modification time. | |
+| req-tap-files-immutable-2 | Rename Stores No Bytes | Implemented | A rename raises the head version by one, adds no content file, and leaves the digest unchanged. The new version's directory exists, holds an inventory and its sidecar, and has no `content` directory. | |
+| req-tap-files-immutable-3 | No Delete Operation | Implemented | The backend protocol and the service gateway expose no operation that removes an object, a version or content, and no code path under the store unlinks a file inside `ocfl/`. | Recovery moves incomplete content to quarantine; it does not unlink. |
+| req-tap-files-immutable-4 | Stale Writer Refused | Implemented | Adding a version or renaming with an expected version that is not the head is refused with a conflict error carrying both numbers, and changes nothing. | |
+| req-tap-files-immutable-5 | Create Is Put-If-Absent | Implemented | Creating an object whose identifier already exists is refused and the existing object is unchanged. | |
+| req-tap-files-immutable-6 | Content Is Read-Only | Implemented | After a create and after a new version, every content file under `ocfl/` has mode `0444`, and no code path under the store opens a content file for writing once it is placed. | |
 
 ### Store Interface
 ----
 RID: `req-tap-files-interface`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Callers reach the store through a backend protocol of whole-file operations (ruled 2026-11-16: a
 thin abstraction, local filesystem the only target).
@@ -485,15 +489,15 @@ keep the protocol's guarantees its own way.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-interface-1 | Callers Use The Protocol | Proposed | Outside the local backend's module, no code opens, lists or stats a path under the file store root. | |
-| req-tap-files-interface-2 | A Second Backend Satisfies The Tests | Proposed | The store's behavioural tests run against the protocol, and an in-memory backend written for the tests passes the same suite as the local backend. | The proof the interface is the contract. |
-| req-tap-files-interface-3 | Unknown Backend Refused | Proposed | A backend setting other than the local value fails at startup with an error naming the accepted value. | |
+| req-tap-files-interface-1 | Callers Use The Protocol | Implemented | Outside the local backend's module, no code opens, lists or stats a path under the file store root. | |
+| req-tap-files-interface-2 | A Second Backend Satisfies The Tests | Implemented | The store's behavioural tests run against the protocol, and an in-memory backend written for the tests passes the same suite as the local backend. | The proof the interface is the contract. |
+| req-tap-files-interface-3 | Unknown Backend Refused | Implemented | A backend setting other than the local value fails at startup with an error naming the accepted value. | |
 
 ### Write Path
 ----
 RID: `req-tap-files-write`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A write never leaves a partly written file where a reader can find it.
 
@@ -581,25 +585,25 @@ Recovery never authors an inventory and never removes content.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-write-1 | Bytes Exact | Proposed | The stored content file's bytes equal the bytes supplied, and the returned digest equals their SHA-256. | |
-| req-tap-files-write-2 | Disk Full Fails Cleanly | Proposed | A write that fails because the volume is full raises an error, leaves nothing under `ocfl/` for that write, and leaves `staging/` empty. | |
-| req-tap-files-write-3 | Declared Digest Checked | Proposed | A create given an expected digest that does not match is refused and stores nothing. | |
-| req-tap-files-write-4 | Interrupted Create Leaves No Object | Proposed | A create killed at any step before the final rename leaves no object for its identifier, and after the next boot `ocfl/` validates and the remains are in `quarantine/`. | Test by injecting a failure at each step. |
-| req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Proposed | An `add_version` killed at any step before the commit point leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
-| req-tap-files-write-6 | One Writer Per Object | Proposed | Two concurrent creates for one identifier yield exactly one success; two concurrent `add_version` calls with the same expected version yield one success and one conflict. | Across processes, not only threads. |
-| req-tap-files-write-7 | Constant Memory | Proposed | Writing a file many times larger than the chunk size does not raise the process's memory use by more than a small multiple of the chunk size. | |
-| req-tap-files-write-8 | Recovery Removes No Content | Proposed | After recovery, every content file that existed under `ocfl/` before it still exists and is unchanged, under `ocfl/` or under `quarantine/`. | |
-| req-tap-files-write-9 | Every Interruption Point Recovers | Proposed | An `add_version` and a rename are each killed after every single step of the move into place, including between the root inventory's replacement and the root sidecar's. After recovery the object validates, is readable, and is at the old head when the kill came before the commit point and at the new head when it came after. | The case the first draft could not recover from. |
-| req-tap-files-write-10 | Root Pair Restored From A Version | Proposed | With the root sidecar altered, recovery rewrites it from the matching version directory and the object reads again; with the root inventory altered, recovery restores both files from the highest valid version directory and logs a finding; with no valid version inventory it changes nothing and the object is reported invalid. | |
-| req-tap-files-write-11 | Recovery Spares A Live Write | Proposed | With a writer in another process holding an object's lock, mid-write, recovery run at each step of that write moves nothing of that object's, and the write then completes and reads back correctly. | Covers the staging directory and the version directory placed before its commit point. |
-| req-tap-files-write-12 | Destination Directories Synced | Proposed | Each rename into `ocfl/` is followed by an `fsync` of the directory that received the entry, and a create also syncs each parent level it made. | Asserted by recording the calls in a test. |
-| req-tap-files-write-13 | Retry After A Failed Grid Write | Proposed | After a stored version whose grid write was refused, repeating the write with the earlier expected version is a conflict; `stat` then shows the head, and a retry that offers the same bytes is told the version that already holds them and stores nothing new. | |
+| req-tap-files-write-1 | Bytes Exact | Implemented | The stored content file's bytes equal the bytes supplied, and the returned digest equals their SHA-256. | |
+| req-tap-files-write-2 | Disk Full Fails Cleanly | Implemented | A write that fails because the volume is full raises an error, leaves nothing under `ocfl/` for that write, and leaves `staging/` empty. | |
+| req-tap-files-write-3 | Declared Digest Checked | Implemented | A create given an expected digest that does not match is refused and stores nothing. | |
+| req-tap-files-write-4 | Interrupted Create Leaves No Object | Implemented | A create killed at any step before the final rename leaves no object for its identifier, and after the next boot `ocfl/` validates and the remains are in `quarantine/`. | Test by injecting a failure at each step. |
+| req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Implemented | An `add_version` killed at any step before the commit point leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
+| req-tap-files-write-6 | One Writer Per Object | Implemented | Two concurrent creates for one identifier yield exactly one success; two concurrent `add_version` calls with the same expected version yield one success and one conflict. | Across processes, not only threads. |
+| req-tap-files-write-7 | Constant Memory | Implemented | Writing a file many times larger than the chunk size does not raise the process's memory use by more than a small multiple of the chunk size. | |
+| req-tap-files-write-8 | Recovery Removes No Content | Implemented | After recovery, every content file that existed under `ocfl/` before it still exists and is unchanged, under `ocfl/` or under `quarantine/`. | |
+| req-tap-files-write-9 | Every Interruption Point Recovers | Implemented | An `add_version` and a rename are each killed after every single step of the move into place, including between the root inventory's replacement and the root sidecar's. After recovery the object validates, is readable, and is at the old head when the kill came before the commit point and at the new head when it came after. | The case the first draft could not recover from. |
+| req-tap-files-write-10 | Root Pair Restored From A Version | Implemented | With the root sidecar altered, recovery rewrites it from the matching version directory and the object reads again; with the root inventory altered, recovery restores both files from the highest valid version directory and logs a finding; with no valid version inventory it changes nothing and the object is reported invalid. | |
+| req-tap-files-write-11 | Recovery Spares A Live Write | Implemented | With a writer in another process holding an object's lock, mid-write, recovery run at each step of that write moves nothing of that object's, and the write then completes and reads back correctly. | Covers the staging directory and the version directory placed before its commit point. |
+| req-tap-files-write-12 | Destination Directories Synced | Implemented | Each rename into `ocfl/` is followed by an `fsync` of the directory that received the entry, and a create also syncs each parent level it made. | Asserted by recording the calls in a test. |
+| req-tap-files-write-13 | Retry After A Failed Grid Write | Implemented | After a stored version whose grid write was refused, repeating the write with the earlier expected version is a conflict; `stat` then shows the head, and a retry that offers the same bytes is told the version that already holds them and stores nothing new. | |
 
 ### Read Path
 ----
 RID: `req-tap-files-read`
 
-Status: `Proposed`
+Status: `Implemented`
 
 No byte leaves the store unverified. `open` reads the object's root inventory, checks the inventory
 against its sidecar, locates the requested version's content file, computes the SHA-256 of the whole
@@ -639,14 +643,14 @@ error.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-read-1 | Altered Content Refused | Proposed | With one byte of a content file changed on disk, `open` raises `FileIntegrityError` and returns no stream. | |
-| req-tap-files-read-2 | Altered Inventory Refused | Proposed | With the root inventory edited and its sidecar left alone, `open` raises the same error. | |
-| req-tap-files-read-3 | Missing Content Is Integrity, Missing Object Is Not Found | Proposed | A deleted content file yields `FileIntegrityError`; an unknown identifier yields the not-found error. | |
-| req-tap-files-read-4 | Verified Before First Byte | Proposed | For a file whose last byte is corrupt, no byte is delivered to the caller before the error. | |
-| req-tap-files-read-5 | Any Version Readable | Proposed | After two further versions are added, `open` with version 1 returns version 1's bytes and name. | |
-| req-tap-files-read-7 | No False Alarm During A Write | Proposed | Reads of an object issued continuously while another process adds versions to it never raise `FileIntegrityError` and never emit `CONCERN`. | |
-| req-tap-files-read-6 | Finding Raised | Proposed | Each integrity failure produces one log record and one `CONCERN` record naming the identifier and the failure kind. | |
-| req-tap-files-read-8 | The Verified Descriptor Is Delivered | Proposed | `open` opens the content file exactly once, and the stream it returns is that same descriptor, positioned at the first byte. | Asserted by recording the opens in a test. Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-read-1 | Altered Content Refused | Implemented | With one byte of a content file changed on disk, `open` raises `FileIntegrityError` and returns no stream. | |
+| req-tap-files-read-2 | Altered Inventory Refused | Implemented | With the root inventory edited and its sidecar left alone, `open` raises the same error. | |
+| req-tap-files-read-3 | Missing Content Is Integrity, Missing Object Is Not Found | Implemented | A deleted content file yields `FileIntegrityError`; an unknown identifier yields the not-found error. | |
+| req-tap-files-read-4 | Verified Before First Byte | Implemented | For a file whose last byte is corrupt, no byte is delivered to the caller before the error. | |
+| req-tap-files-read-5 | Any Version Readable | Implemented | After two further versions are added, `open` with version 1 returns version 1's bytes and name. | |
+| req-tap-files-read-7 | No False Alarm During A Write | Implemented | Reads of an object issued continuously while another process adds versions to it never raise `FileIntegrityError` and never emit `CONCERN`. | |
+| req-tap-files-read-6 | Finding Raised | Implemented | Each integrity failure produces one log record and one `CONCERN` record naming the identifier and the failure kind. | |
+| req-tap-files-read-8 | The Verified Descriptor Is Delivered | Implemented | `open` opens the content file exactly once, and the stream it returns is that same descriptor, positioned at the first byte. | Asserted by recording the opens in a test. Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 
 ### Capabilities
 ----
@@ -1146,7 +1150,7 @@ the Validation Map (`req-dev-validation-map`).
 ----
 RID: `req-tap-files-history`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The maintainer's requirement is that this release leaves the door open for history tracking. Two
 mechanisms carry it, and neither is new.
@@ -1168,8 +1172,8 @@ is written.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-history-1 | Every Version Named In The Inventory | Proposed | After any number of versions and renames, the root inventory lists every version with its time, actor, logical name and digest. | |
-| req-tap-files-history-2 | Past Bytes Retrievable | Proposed | Given a digest and file version taken from a `tap_file`'s history entry, the store returns bytes with that digest. | |
+| req-tap-files-history-1 | Every Version Named In The Inventory | Implemented | After any number of versions and renames, the root inventory lists every version with its time, actor, logical name and digest. | |
+| req-tap-files-history-2 | Past Bytes Retrievable | Implemented | Given a digest and file version taken from a `tap_file`'s history entry, the store returns bytes with that digest. | |
 
 ### File Size Limit
 ----
@@ -1279,6 +1283,19 @@ node's grid history once recorded that file version with that digest. Checking i
 node's history from core without knowing the node's type, and whether the service layer offers
 that read is not yet known. The data to answer it already exists (`req-tap-files-history`): the
 grid keeps each earlier state of the node, and the store keeps every version.
+
+### Independent OCFL Validation
+----
+RID: `req-tap-files-ocfl-validation`
+
+Status: `Backlog`
+
+Running a third-party OCFL 1.1 validator over `ocfl/` after creates, new versions and renames, and
+failing on any error or any warning beyond the accepted SHA-512 recommendation
+(`req-tap-files-ocfl-1`, `-ocfl-2`). Not needed at this time (ruled 2026-11-17). When it is taken up,
+the choices to settle are which validator, and how it runs: the reference validator is a Java tool,
+which is a new dependency needing the maintainer's approval, while the OCFL project's published
+conformance fixtures could instead be vendored as data and read by the store's own reader.
 
 ### Dimensions For Files And Directories
 ----

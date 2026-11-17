@@ -49,7 +49,7 @@ _IMAGE_USER = "nonroot"
 #: Mount targets the container writes at runtime. Each is a named volume, and a fresh
 #: named volume inherits the ownership of the image directory at its mount path — so a
 #: target the image does not prepare comes out root-owned and unwritable.
-_PREPARED_MOUNT_TARGETS = ("/app/.venv", "/home/nonroot/.cache/uv", "/opt/tailwind", "/var/lib/tap/plugin-data")
+_PREPARED_MOUNT_TARGETS = ("/app/.venv", "/home/nonroot/.cache/uv", "/opt/tailwind", "/var/lib/tap/plugin-data", "/var/lib/tap/files")
 
 
 def _stages() -> dict[str, list[str]]:
