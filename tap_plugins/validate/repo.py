@@ -26,11 +26,15 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from tap_plugins.validate.service import CheckResult, ValidationResult
+
+if TYPE_CHECKING:
+    from packaging.specifiers import SpecifierSet
 
 #: Every reusable workflow core publishes lives under this prefix. The pin rule is about the
 #: prefix, not about one file: `plugin-release-sbom.yml` decides what gets attested and signed,
@@ -117,7 +121,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@e2433873c476/1c164745b08c (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@9bc74297e036/1c164745b08c (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -2003,9 +2007,12 @@ PYPROJECT = "pyproject.toml"
 #: an annotation and does not fail on. Measured 2026-11-17 across the 32 unarchived `*-tap`
 #: repositories: 5 float (`anchore-tap` requests, `aws-core-tap` boto3, `github-core-tap` PyYAML,
 #: `sigstore-core-tap` sigstore, `stackarmor-vdr-tap` nh3), 2 already pin, 25 declare no third-party
-#: dependency. Flip to ``True`` once the fleet measures zero floating — the same warn-then-fail ratchet
-#: `repo-workflows` took for the nightly lane at 24 of 24 — and the check refuses instead. One reviewed
-#: line, rather than a date in the code that reddens a lane on a morning nobody chose.
+#: dependency. Three of the five are ranges on libraries tap's lock pins and pass under
+#: req-tap-plugin-validate-pins-7, and `aws-core-tap` has since pinned, which leaves
+#: `sigstore-core-tap`. Flip to ``True`` once the fleet measures zero floating — the same
+#: warn-then-fail ratchet `repo-workflows` took for the nightly lane at 24 of 24 — and the check
+#: refuses instead. One reviewed line, rather than a date in the code that reddens a lane on a
+#: morning nobody chose.
 DEPENDENCY_PINS_ENFORCED = False
 
 #: The two PEP 440 operators that admit exactly one release. `===` (arbitrary equality) is a plain
@@ -2029,42 +2036,350 @@ def is_first_party_distribution(name: str) -> bool:
     return slug_for_dist_name(name) is not None
 
 
-def requirement_pin_problem(raw: str) -> tuple[str | None, str | None]:
-    """Classify one ``[project].dependencies`` entry: ``(name, problem)``.
+#: tap's own lockfile, at the root of the tree this validator runs from. The validator is workflow
+#: logic that always runs from a full checkout of core: ``/app/uv.lock`` in the image, and
+#: ``_tooling/uv.lock`` in plugin-ci's conformance and repo-scope jobs (both put ``_tooling`` on
+#: ``PYTHONPATH`` and sync it ``--no-install-project``, so no installed ``tap`` distribution exists
+#: there to read metadata from). A copy of this package with no lock beside it is the strict
+#: fallback, never a pass (req-tap-plugin-validate-pins-7).
+CORE_LOCK_PATH = Path(__file__).resolve().parents[2] / "uv.lock"
 
-    ``problem`` is None when the entry is an exact pin or a first-party plugin distribution, and
-    otherwise says why the entry floats. ``name`` is None only when the entry does not parse, in
-    which case ``problem`` says so: an entry that cannot be read is not shown to be pinned.
+#: The root package of tap's lock, whose declarations define "a library tap itself declares".
+CORE_LOCK_ROOT = "tap"
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/ff6c7e5adcab (derivation) — the one
+#: uv's default dependency groups when the root ``pyproject.toml`` sets no
+#: ``[tool.uv].default-groups``. The image (``uv sync --frozen --all-packages``) and the entrypoint
+#: (``uv sync --all-packages``) both install the default groups, so a library in one of them is in
+#: the environment every plugin is installed into.
+UV_DEFAULT_GROUPS: tuple[str, ...] = ("dev",)
+
+
+class PinVerdict(NamedTuple):
+    """How one ``[project].dependencies`` entry fares in ``repo-dependency-pins``.
+
+    ``kind`` is the ``check.details`` bucket: ``pinned``, ``first_party``, ``core_locked`` (a range on
+    a library tap's lock pins, admitting the locked version) or ``floating`` (reported). ``name`` is
+    None only for an entry that does not parse. ``problem`` and ``fix`` are None unless reported.
+    """
+
+    kind: str
+    name: str | None
+    problem: str | None = None
+    fix: str | None = None
+
+
+def _core_default_groups(pyproject: Path, available: list[str]) -> tuple[str, ...]:
+    """The dependency groups a boot's ``uv sync`` installs, from tap's root ``pyproject.toml``.
+
+    ``[tool.uv].default-groups`` when set (``"all"`` meaning every group the lock records), uv's own
+    default (``dev``) when not. A pyproject that cannot be read, or a value of the wrong shape,
+    yields NO groups: the narrower set, so a library reachable only through a group is held to the
+    exact pin rather than accepted on a guess.
+    """
+    import tomllib
+
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
+        return ()
+    tool = data.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else None
+    if not isinstance(uv, dict):
+        return ()
+    if "default-groups" not in uv:
+        return UV_DEFAULT_GROUPS
+    value = uv["default-groups"]
+    if value == "all":
+        return tuple(sorted(available))
+    if isinstance(value, list) and all(isinstance(g, str) for g in value):
+        return tuple(value)
+    return ()
+
+
+def core_locked_versions(lock_path: Path | None = None) -> tuple[dict[str, tuple[str, ...]] | None, str | None]:
+    """The third-party libraries tap itself declares, each with the version(s) tap's lock pins.
+
+    Returns ``(versions, None)``, keyed by canonical name, or ``(None, reason)`` when the lock cannot
+    be read; the caller then falls back to requiring an exact pin for everything.
+
+    "Declares" is the root ``tap`` package's own ``dependencies`` plus the dependency groups a boot
+    installs (``_core_default_groups``: ``dev`` today, which is how ``pyyaml`` gets in). It is NOT
+    every package in the lock: a transitive (``urllib3``, ``idna``) is there because something tap
+    declares needs it today, and leaves the lock when that changes without any decision about
+    plugins. ``ci-tooling`` is not counted either — a bare CI runner installs it, a boot never does.
+    Any shape the reader does not expect is a reason, not a guess: fail closed.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@815bf940ab20/0d10f507b71e (derivation) — the one source of "a
+        library tap declares, and the version tap's lock pins": the root package's dependencies and
+        boot-installed groups in tap's own uv.lock, never a hand-kept list.
+    """
+    import tomllib
+
+    from packaging.utils import canonicalize_name
+    from packaging.version import InvalidVersion, Version
+
+    path = lock_path if lock_path is not None else CORE_LOCK_PATH
+    try:
+        lock = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"tap's lock is not present at {path}"
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        return None, f"tap's lock at {path} cannot be read ({exc})"
+    packages = lock.get("package")
+    if not isinstance(packages, list):
+        return None, f"tap's lock at {path} records no `[[package]]` entries"
+
+    locked: dict[str, set[str]] = {}
+    roots: list[dict[str, Any]] = []
+    for pkg in packages:
+        if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str):
+            return None, f"tap's lock at {path} has a `[[package]]` entry without a name"
+        name = canonicalize_name(pkg["name"])
+        if name == CORE_LOCK_ROOT:
+            roots.append(pkg)
+            continue
+        version = pkg.get("version")
+        if version is None:
+            continue  # a source-tree package with no version (an editable path); never a third-party pin
+        if not isinstance(version, str):
+            return None, f"tap's lock at {path} records a non-string version for `{name}`"
+        try:
+            Version(version)
+        except InvalidVersion:
+            return None, f"tap's lock at {path} records `{name}` at `{version}`, which is not a PEP 440 version"
+        locked.setdefault(name, set()).add(version)
+    if len(roots) != 1:
+        return None, f"tap's lock at {path} records {len(roots)} `{CORE_LOCK_ROOT}` packages, not one"
+    root = roots[0]
+
+    dev_groups = root.get("dev-dependencies", {})
+    if not isinstance(dev_groups, dict):
+        return None, f"tap's lock at {path} records `dev-dependencies` that are not a table"
+    declared = root.get("dependencies", [])
+    if not isinstance(declared, list):
+        return None, f"tap's lock at {path} records `{CORE_LOCK_ROOT}` dependencies that are not a list"
+    declared = list(declared)
+    for group in _core_default_groups(path.parent / "pyproject.toml", list(dev_groups)):
+        members = dev_groups.get(group, [])
+        if not isinstance(members, list):
+            return None, f"tap's lock at {path} records dependency group `{group}` that is not a list"
+        declared.extend(members)
+
+    versions: dict[str, tuple[str, ...]] = {}
+    for entry in declared:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            return None, f"tap's lock at {path} records a `{CORE_LOCK_ROOT}` dependency without a name"
+        name = canonicalize_name(entry["name"])
+        if name not in locked:
+            return None, f"tap's lock at {path} declares `{name}` but records no version for it"
+        versions[name] = tuple(sorted(locked[name], key=Version))
+    return versions, None
+
+
+def _exact_pin_problem(specifier: SpecifierSet) -> str | None:
+    """Why a version specifier is not one exact release, or None when it is."""
+    clauses = list(specifier)
+    if not clauses:
+        return "names no version at all, so any release satisfies it"
+    if len(clauses) > 1:
+        return f"has {len(clauses)} version clauses (`{specifier}`); an exact pin is one `==` clause"
+    clause = clauses[0]
+    if clause.operator not in EXACT_PIN_OPERATORS:
+        return f"uses `{clause.operator}`, which admits releases nobody has tested yet"
+    if clause.operator == "==" and clause.version.endswith(".*"):
+        return f"uses the wildcard `=={clause.version}`, which admits every matching release"
+    return None
+
+
+def _pin_fix(target: str) -> str:
+    """The fix for a library held to the exact pin, naming *target* as the requirement to write."""
+    return (
+        f"Pin it: {target}, the release this plugin's tests last passed on. Renovate then proposes each new "
+        'release as a pull request (`rangeStrategy: "pin"`), so the update runs CI before it lands instead of '
+        "arriving overnight. Plugin distributions (`<slug>-tap`) are exempt and keep their ranges"
+    )
+
+
+def requirement_pin_problem(raw: str, core_lock: Mapping[str, tuple[str, ...]] | None = None) -> PinVerdict:
+    """Classify one ``[project].dependencies`` entry.
+
+    *core_lock* is ``core_locked_versions()``'s mapping, or None when tap's lock could not be read
+    (every third-party library is then held to the exact pin). A library tap declares keeps a RANGE
+    that admits every version tap's lock pins (req-tap-plugin-validate-pins-7): pre-boot's per-plugin
+    install keeps an installed release that satisfies a range and replaces one to satisfy a pin
+    (tap#1220), so the range lets tap's lock decide. An exact pin of such a library is reported even
+    when it equals the locked version, because it moves on the plugin's schedule rather than tap's.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@815bf940ab20/95987e09ec88 (derivation) — the one
         rule for "is this requirement an exact pin": a single `==` (no wildcard) or `===` clause,
         environment markers and extras ignored, first-party plugin distributions exempt
-        from the version rule but never from the direct-reference refusal.
+        from the version rule but never from the direct-reference refusal, and a library tap's
+        lock pins held to a range admitting the locked version instead of to the pin.
     """
     from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+    from packaging.version import Version
 
     try:
         req = Requirement(raw)
     except InvalidRequirement as exc:
-        return None, f"does not parse as a PEP 508 requirement ({exc})"
-    # A direct reference is refused BEFORE the first-party exemption: the exemption is for a plugin
-    # distribution's version range, not for an alternate source, and a plugin-shaped name alone must
-    # not let `evil-tap @ git+https://...` through.
+        return PinVerdict(
+            "floating",
+            None,
+            f"does not parse as a PEP 508 requirement ({exc})",
+            _pin_fix("an exact `name==<version>` requirement"),
+        )
+    pin_fix = _pin_fix(f"`{req.name}==<version>`")
+    # A direct reference is refused BEFORE either exemption: the exemptions are for a version range,
+    # not for an alternate source, and a plugin-shaped (or core-locked) name alone must not let
+    # `evil-tap @ git+https://...` through.
     if req.url:
-        return req.name, "is a direct reference (`name @ url`), not a released version from the index"
+        return PinVerdict(
+            "floating", req.name, "is a direct reference (`name @ url`), not a released version from the index", pin_fix
+        )
     if is_first_party_distribution(req.name):
-        return req.name, None
-    clauses = list(req.specifier)
-    if not clauses:
-        return req.name, "names no version at all, so any release satisfies it"
-    if len(clauses) > 1:
-        return req.name, f"has {len(clauses)} version clauses (`{req.specifier}`); an exact pin is one `==` clause"
-    clause = clauses[0]
-    if clause.operator not in EXACT_PIN_OPERATORS:
-        return req.name, f"uses `{clause.operator}`, which admits releases nobody has tested yet"
-    if clause.operator == "==" and clause.version.endswith(".*"):
-        return req.name, f"uses the wildcard `=={clause.version}`, which admits every matching release"
-    return req.name, None
+        return PinVerdict("first_party", req.name)
+    locked = core_lock.get(canonicalize_name(req.name)) if core_lock is not None else None
+    if locked is None:
+        problem = _exact_pin_problem(req.specifier)
+        return PinVerdict("pinned", req.name) if problem is None else PinVerdict("floating", req.name, problem, pin_fix)
+
+    shown = " and ".join(locked)
+    range_fix = (
+        f"Declare a range that admits tap's locked {shown} instead, such as `{req.name}>={locked[0]}`: tap's "
+        "lock then decides the version and this plugin's range only bounds it. Renovate leaves the core-locked "
+        'libraries as ranges (`rangeStrategy: "replace"`)'
+    )
+    if _exact_pin_problem(req.specifier) is None:
+        if all(req.specifier.contains(Version(v), prereleases=True) for v in locked):
+            problem = (
+                f"pins `{req.name}`, which tap's own lock pins at {shown}. They agree today, but this pin moves on "
+                f"this plugin's schedule and tap's lock on tap's; the day they differ, pre-boot replaces core's "
+                f"{req.name} to satisfy the pin (tap#1220)"
+            )
+        else:
+            problem = (
+                f"pins `{req.name}` to a release tap's lock does not hold (tap pins {shown}), so installing this "
+                f"plugin replaces core's {req.name} (tap#1220)"
+            )
+        return PinVerdict("floating", req.name, problem, range_fix)
+    if all(req.specifier.contains(Version(v), prereleases=True) for v in locked):
+        return PinVerdict("core_locked", req.name)
+    problem = (
+        f"is a range on `{req.name}`, which tap's own lock pins at {shown}, and the range excludes it, so "
+        f"installing this plugin replaces core's {req.name} (tap#1220)"
+    )
+    return PinVerdict("floating", req.name, problem, range_fix)
+
+
+#: Rollout phase of the first-party SOURCE half of `repo-dependency-pins`
+#: (req-tap-plugin-validate-pins-8). Its own switch rather than ``DEPENDENCY_PINS_ENFORCED``: the two
+#: halves measure different things across the fleet and clear on different days, and one flag would
+#: hold either ratchet hostage to the other's stragglers. ``False``: an unverified plugin-shaped
+#: dependency WARNS; ``True``: it fails the check. Measured 2026-11-17 across the 32 unarchived
+#: `*-tap` repositories: 31 plugin-shaped dependencies in 13 repositories, all installed from the org
+#: by their CI records, none flagged.
+FIRST_PARTY_SOURCES_ENFORCED = False
+
+#: The organisation whose repositories are the org's own plugins, as a source-URL prefix. Taken from
+#: ``REUSABLE_PREFIX`` (the org that publishes core's reusable workflows) so the org is named once
+#: in this module.
+FIRST_PARTY_ORG_URL = f"https://github.com/{REUSABLE_PREFIX.split('/', 1)[0]}/"
+
+#: Where a plugin repository ships its own CI boot record (req-boot-bootstrap-ci-record), relative to
+#: the repository root, by the slug of the distribution the repository declares.
+CI_RECORD_TEMPLATE = "tap_plugin/{slug}/boot/ci.boot.json"
+
+
+def first_party_source_slug(url: object) -> str | None:
+    """The plugin slug a CI-record git URL names, when it is a repository of the org; else None.
+
+    ``https://github.com/<org>/<repo>`` with an optional ``.git`` or trailing slash, one path
+    component, and a repository name ``slug_for_dist_name`` accepts. The repository's slug, not its
+    exact name, is compared with the dependency's, so a legacy ``tap-plugin-<slug>`` repository still
+    answers for ``<slug>-tap``.
+    """
+    from tap.plugin_identity import slug_for_dist_name
+
+    if not isinstance(url, str) or not url.startswith(FIRST_PARTY_ORG_URL):
+        return None
+    repo = url[len(FIRST_PARTY_ORG_URL) :].removesuffix("/").removesuffix(".git")
+    if not repo or "/" in repo or not repo.isprintable():
+        return None
+    return slug_for_dist_name(repo)
+
+
+def ci_record_plugin_sources(repo_root: Path, project_name: object) -> tuple[dict[str, list[str]] | None, str]:
+    """``({slug: [source description, ...]}, record path)`` from the repository's own CI record.
+
+    The slug comes from the distribution the repository declares (``[project].name``). Returns
+    ``(None, reason)`` when there is no such record or it cannot be read: a dependency it would have
+    vouched for is then unverifiable, which is reported, never passed. Each install entry's source is
+    described as the org-repository slug it names (``org:<slug>``) or as what it is otherwise.
+    """
+    import json
+
+    from tap.plugin_identity import slug_for_dist_name
+
+    own_slug = slug_for_dist_name(project_name) if isinstance(project_name, str) else None
+    if own_slug is None:
+        return None, (
+            f"`[project].name` ({project_name!r}) is not a plugin distribution name, so this repository's CI "
+            "record cannot be located"
+        )
+    rel = CI_RECORD_TEMPLATE.format(slug=own_slug)
+    try:
+        data = json.loads((repo_root / rel).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"there is no CI record at {rel}"
+    except (OSError, ValueError) as exc:
+        return None, f"the CI record at {rel} cannot be read ({exc})"
+    install = data.get("install") if isinstance(data, dict) else None
+    plugins = install.get("plugins") if isinstance(install, dict) else None
+    if not isinstance(plugins, list):
+        return None, f"the CI record at {rel} has no `install.plugins` list"
+    sources: dict[str, list[str]] = {}
+    for entry in plugins:
+        if not isinstance(entry, dict) or not isinstance(entry.get("slug"), str):
+            continue
+        source = entry.get("source")
+        source = source if isinstance(source, dict) else {}
+        org_slug = first_party_source_slug(source.get("url")) if source.get("type") == "git" else None
+        described = f"org:{org_slug}" if org_slug else f"{source.get('type')!r} source {source.get('url')!r}"
+        sources.setdefault(entry["slug"], []).append(described)
+    return sources, rel
+
+
+def first_party_source_problem(name: str, sources: dict[str, list[str]] | None, where: str) -> str | None:
+    """Why the plugin-shaped dependency *name* is not shown to be one of the org's plugins, or None.
+
+    Shown when the repository's CI record installs the dependency's slug, and every entry for that
+    slug is a git source from a repository of the org carrying the same slug. The record is where
+    the repository already says, offline and hash-declared, where its plugin dependencies come from
+    (it must close over ``depends_on``), so it needs no list kept here.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@815bf940ab20/2debfa7379cc (derivation) — the one rule for "is this
+        plugin-shaped dependency the org's own": an entry in the repository's own CI record whose
+        slug matches and whose every source is a git repository of the org with that slug.
+    """
+    from tap.plugin_identity import slug_for_dist_name
+
+    slug = slug_for_dist_name(name)
+    if sources is None:
+        return f"cannot be shown to be one of the org's plugins: {where}"
+    entries = sources.get(slug or "", [])
+    if not entries:
+        return (
+            f"carries the plugin naming convention, but the CI record at {where} installs no `{slug}`, so nothing "
+            f"shows it comes from {FIRST_PARTY_ORG_URL} rather than being a stranger's package on the index"
+        )
+    elsewhere = [e for e in entries if e != f"org:{slug}"]
+    if elsewhere:
+        return (
+            f"carries the plugin naming convention, but the CI record at {where} installs `{slug}` from "
+            f"{', '.join(elsewhere)}, not from a repository under {FIRST_PARTY_ORG_URL} named for `{slug}`"
+        )
+    return None
 
 
 def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
@@ -2079,15 +2394,25 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
 
     Reads ``[project].dependencies`` from the repository-root ``pyproject.toml``. Each third-party
     entry must be a single ``==`` clause (no wildcard) or ``===``; markers and extras are allowed.
-    The org's plugin distributions are exempt (``is_first_party_distribution``) and keep ranges.
+    The org's plugin distributions are exempt (``is_first_party_distribution``) and keep ranges, once
+    the repository's own CI record shows each is installed from the org (aws-build Q77a,
+    req-tap-plugin-validate-pins-8, ``first_party_source_problem``; its own switch,
+    ``FIRST_PARTY_SOURCES_ENFORCED``).
+    A library tap itself declares (``core_locked_versions``) keeps a range that admits tap's locked
+    version instead (aws-build Q76a, req-tap-plugin-validate-pins-7); when tap's lock cannot be
+    read, that exemption is withdrawn and the finding says why.
     ``[project.optional-dependencies]`` and dependency groups are not read: an extra is not
     installed by the boot, and a dev group never reaches a deployment.
 
-    A WARNING while ``DEPENDENCY_PINS_ENFORCED`` is False, a failure after; see that constant for
-    the measurement the flip waits on.
+    ``check.details`` sorts every entry into ``pinned``, ``first_party``, ``first_party_unverified``,
+    ``core_locked`` and ``floating`` (every other reported entry). A WARNING while
+    ``DEPENDENCY_PINS_ENFORCED`` is False, a failure after; see that constant for the measurement the
+    flip waits on.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/bffabe9304d6 (enforcement) — reads the
-        repository's declared requirements, reports each floating one with its fix, and applies the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@815bf940ab20/44f3b9ad1167 (enforcement) — reads the
+        repository's declared requirements, reports each floating one with its fix, withdraws the
+        core-locked exemption when tap's lock cannot be read, withholds the plugin exemption from a
+        dependency the CI record does not source from the org, and applies each half's
         warn-then-fail phase.
     """
     check = CheckResult(id="repo-dependency-pins", name="Third-party dependencies are pinned to exact versions")
@@ -2134,33 +2459,60 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    pinned: list[str] = []
-    first_party: list[str] = []
-    floating: list[str] = []
+    core_lock, lock_problem = core_locked_versions()
+    # Fail closed: without tap's lock no range is shown to defer to it, so every finding carries the
+    # reason the core-locked exemption (req-tap-plugin-validate-pins-7) was not applied.
+    fallback = (
+        f" ({lock_problem}, so no range is accepted here even for a library tap itself declares; "
+        "the check falls back to requiring an exact pin)"
+        if lock_problem
+        else ""
+    )
+    report_source = check.fail if FIRST_PARTY_SOURCES_ENFORCED else check.warn
+    record_sources: tuple[dict[str, list[str]] | None, str] | None = None  # read once, on first need
+    buckets: dict[str, list[str]] = {
+        "pinned": [],
+        "first_party": [],
+        "first_party_unverified": [],
+        "core_locked": [],
+        "floating": [],
+    }
     for raw in dependencies:
         if not isinstance(raw, str):
             report(f"`[project].dependencies` entry {raw!r} is not a requirement string", path=PYPROJECT)
             continue
-        name, problem = requirement_pin_problem(raw)
-        if problem is None:
-            (first_party if name is not None and is_first_party_distribution(name) else pinned).append(raw)
+        verdict = requirement_pin_problem(raw, core_lock)
+        if verdict.kind == "first_party" and verdict.name is not None:
+            # The name earns the range exemption only once the repository's own CI record shows the
+            # dependency comes from the org (req-tap-plugin-validate-pins-8).
+            if record_sources is None:
+                record_sources = ci_record_plugin_sources(repo_root, project.get("name"))
+            source_problem = first_party_source_problem(verdict.name, *record_sources)
+            if source_problem is not None:
+                buckets["first_party_unverified"].append(raw)
+                where = record_sources[1] if record_sources[0] is not None else PYPROJECT
+                report_source(
+                    f"`{raw}` {source_problem}. If it is one of the org's plugins, install it in this repository's "
+                    f"CI record from its {FIRST_PARTY_ORG_URL}<repository> (the record must close over "
+                    "`depends_on` anyway); if it is not, it is a third-party library and must be pinned like one",
+                    path=where,
+                )
+                continue
+        buckets[verdict.kind].append(raw)
+        if verdict.kind != "floating":
             continue
-        floating.append(raw)
-        target = f"`{name}==<version>`" if name else "an exact `name==<version>` requirement"
-        report(
-            f"`{raw}` {problem}. Pin it: {target}, the release this plugin's tests last passed on. "
-            'Renovate then proposes each new release as a pull request (`rangeStrategy: "pin"`), so the '
-            "update runs CI before it lands instead of arriving overnight. Plugin distributions "
-            "(`<slug>-tap`) are exempt and keep their ranges",
-            path=PYPROJECT,
-        )
+        report(f"`{raw}` {verdict.problem}. {verdict.fix}{fallback}", path=PYPROJECT)
 
-    check.details = {"pinned": pinned, "first_party": first_party, "floating": floating}
-    if not floating and check.status == "pass":
-        if pinned or first_party:
+    check.details = buckets
+    if lock_problem:
+        check.info(f"{lock_problem}; ranges on libraries tap declares are not accepted (strict fallback)")
+    if not buckets["floating"] and check.status == "pass":
+        if buckets["pinned"] or buckets["first_party"] or buckets["core_locked"]:
             check.info(
-                f"{len(pinned)} third-party requirement(s) pinned exactly; "
-                f"{len(first_party)} plugin requirement(s) exempt"
+                f"{len(buckets['pinned'])} third-party requirement(s) pinned exactly; "
+                f"{len(buckets['first_party'])} plugin requirement(s) exempt, each installed from the org in "
+                "this repository's CI record; "
+                f"{len(buckets['core_locked'])} range(s) on a library tap's lock pins, admitting the locked version"
             )
         else:
             check.info("no `[project].dependencies` — nothing to pin")
