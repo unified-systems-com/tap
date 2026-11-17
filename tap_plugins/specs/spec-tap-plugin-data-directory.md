@@ -237,8 +237,10 @@ Core, not the plugin, creates a declared directory.
   on a case-insensitive filesystem. Core validates the slug with `valid_slug` before joining it to
   the root and does not rely on the manifest loader having done so.
 - **When.** During boot, after the mount gate passes, for every installed plugin that declares a
-  directory. Provisioning is idempotent: an existing directory with the right owner is left exactly
-  as it is.
+  directory. Provisioning is idempotent: an existing directory with the right owner is left as it
+  is, except that a mode other than `0700` is reset to `0700` and the reset logged (ruled
+  2026-11-17, in answer to the AI review on PR# 1224 - tap: a loose mode would expose the plugin's
+  data, and refusing boot over it would stop the instance for one `chmod`).
 - **Mode.** Created `0700` and then explicitly set to `0700`, because the process umask applies to
   creation.
 - **What core refuses.** If `<root>/<slug>` exists and is a symbolic link, or is not a directory, or
@@ -263,6 +265,7 @@ Core, not the plugin, creates a declared directory.
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-datadir-provision-1 | Created Private | Implemented | After boot, each declared directory exists, is a real directory, is owned by the runtime user and has mode `0700`. | |
 | req-tap-plugin-datadir-provision-2 | Idempotent | Implemented | A second boot changes no byte and no timestamp inside an existing, correctly owned directory other than core's own files when the declaration changed. | |
+| req-tap-plugin-datadir-provision-8 | Loose Mode Reset | Implemented | An existing, correctly owned directory with mode `0777` has mode `0700` after boot, its contents are unchanged, and one log record names the directory and the old mode. | Ruled 2026-11-17 in answer to the AI review on PR# 1224 - tap. |
 | req-tap-plugin-datadir-provision-3 | Symlink Refused | Implemented | When `<root>/<slug>` is a symbolic link, provisioning fails, names the path, and creates or changes nothing at the link's target. | |
 | req-tap-plugin-datadir-provision-4 | Wrong Owner Refused | Implemented | When the directory exists under a different owner, provisioning fails and performs no `chown`. | |
 | req-tap-plugin-datadir-provision-5 | Description File Valid | Implemented | Every provisioned directory holds a `.tap-plugin-dir.json` that validates against its published schema and agrees with the manifest. | |

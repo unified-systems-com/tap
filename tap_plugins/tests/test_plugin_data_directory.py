@@ -301,6 +301,24 @@ def test_a_second_boot_changes_nothing_unless_the_declaration_changed(pd: Any) -
     assert described and described["max_bytes"] == 8192
 
 
+@pytest.mark.spec("req-tap-plugin-datadir-provision-8")
+def test_a_loose_mode_is_reset_and_logged(pd: Any, caplog: pytest.LogCaptureFixture) -> None:
+    pd.enable()
+    (pd.volume / "alpha").mkdir()
+    (pd.volume / "alpha" / "data.db").write_bytes(b"kept")
+    (pd.volume / "alpha").chmod(0o777)
+    pd.declare("alpha")
+    caplog.set_level(logging.WARNING, logger="tap_plugins.datadir._provision")
+    run_gate()
+    assert stat.S_IMODE((pd.volume / "alpha").stat().st_mode) == 0o700
+    assert (pd.volume / "alpha" / "data.db").read_bytes() == b"kept"
+    resets = [r for r in caplog.records if "reset" in r.getMessage()]
+    assert len(resets) == 1 and "0777" in resets[0].getMessage() and "alpha" in resets[0].getMessage()
+    caplog.clear()
+    run_gate()
+    assert not [r for r in caplog.records if "reset" in r.getMessage()]
+
+
 @pytest.mark.spec("req-tap-plugin-datadir-provision-3")
 def test_a_symbolic_link_is_refused_and_its_target_untouched(pd: Any, tmp_path: Path) -> None:
     pd.enable()
@@ -751,7 +769,7 @@ def test_links_are_measured_by_their_own_size(pd: Any, tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("req-tap-plugin-datadir-report-4")
-def test_the_listing_is_cut_at_the_cap(pd: Any) -> None:
+def test_the_listing_is_cut_at_the_cap(pd: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     pd.enable()
     pd.declare("alpha")
     run_gate()
@@ -759,6 +777,28 @@ def test_the_listing_is_cut_at_the_cap(pd: Any) -> None:
         (pd.volume / "alpha" / f"f{i:03d}").write_text("x")
     listing = _report.plugin_section("alpha", pd.declared["alpha"][0])["listing"]
     assert len(listing["entries"]) == _facts.LISTING_CAP and listing["cut"] is True
+    # Bounded: no more than cap + 1 names are read, however many there are.
+    read: list[str] = []
+    real_scandir = os.scandir
+
+    class Counting:
+        def __init__(self, target: Any) -> None:
+            self._it = real_scandir(target)
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._it.close()
+
+        def __iter__(self) -> Any:
+            for entry in self._it:
+                read.append(entry.name)
+                yield entry
+
+    monkeypatch.setattr(os, "scandir", Counting)
+    _facts.listing(pd.volume / "alpha")
+    assert len(read) == _facts.LISTING_CAP + 1
     assert {e["kind"] for e in listing["entries"]} <= {"file", "directory", "link", "other"}
 
 

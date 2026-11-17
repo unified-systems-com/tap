@@ -10,6 +10,7 @@ the fact found, and core does not follow the link, replace the file or change ow
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import stat
@@ -35,6 +36,8 @@ CACHE_TAG_CONTENT = (
     b'# declared "cache": everything here can be fetched or rebuilt.\n'
     b"# For information about cache directory tags, see https://bford.info/cachedir/\n"
 )
+
+logger = logging.getLogger(__name__)
 
 EXEC_PROBE_PREFIX = RESERVED_PREFIX + "exec-probe-"
 _EXEC_PROBE_TIMEOUT_S = 10
@@ -71,7 +74,7 @@ def provision(
 ) -> Path:
     """Create or confirm ``<root>/<slug>`` for one declaring plugin and return its path.
 
-    TAP-IMPLEMENTS: req-tap-plugin-datadir-provision@fb0b9fcdca09/df9e0773ae14 (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-provision@1e659b121f6b/2bbdd17d2844 (derivation) — the one
         place a plugin data directory is created and its core-owned files are written.
 
     The caller has already passed the mount gate for *root* and holds the plugin's shared lock.
@@ -91,6 +94,13 @@ def provision(
         problem = describe(path)
         if problem:
             raise PluginDataDirectoryError(f"cannot provision plugin data directory {path}: it {problem}") from None
+        # An existing directory is left as it is, except that a loose mode is reset (ruled
+        # 2026-11-17): a 0777 directory would hand the plugin's state to anyone who can reach
+        # the root, and refusing boot over it would stop the instance for a chmod.
+        mode = stat.S_IMODE(os.lstat(path).st_mode)
+        if mode != 0o700:
+            os.chmod(path, stat.S_IRWXU)
+            logger.warning("[e070] plugin data: reset %s from mode %04o to 0700", path, mode)
     _write_description(path, slug, declaration, plugin_version, ephemeral=ephemeral)
     _apply_cache_tag(path, declaration.durability)
     return path

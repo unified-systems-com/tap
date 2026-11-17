@@ -107,14 +107,24 @@ def measure(path: Path, *, budget_s: float = WALK_BUDGET_S) -> dict[str, Any]:
 
 
 def listing(path: Path, *, cap: int = LISTING_CAP) -> dict[str, Any]:
-    """The directory's top level: name, kind, size and modification time, cut at *cap* entries."""
+    """The directory's top level: name, kind, size and modification time, cut at *cap* entries.
+
+    Bounded: it reads at most *cap* + 1 names, in the order the filesystem returns them, and sorts
+    only those, so a directory with a million entries costs what one with *cap* does. The entries
+    shown are therefore the first *cap* the filesystem lists, not the first *cap* by name.
+    """
+    names: list[str] = []
     try:
         with os.scandir(path) as iterator:
-            names = sorted(entry.name for entry in iterator)
+            for entry in iterator:
+                names.append(entry.name)
+                if len(names) > cap:
+                    break
     except OSError as exc:
         return {"entries": [], "cut": False, "reason": f"{type(exc).__name__}: {exc}"}
+    cut = len(names) > cap
     shown: list[dict[str, Any]] = []
-    for name in names[:cap]:
+    for name in sorted(names[:cap]):
         try:
             st = os.lstat(path / name)
         except OSError:
@@ -127,7 +137,7 @@ def listing(path: Path, *, cap: int = LISTING_CAP) -> dict[str, Any]:
                 "modified_at": datetime.fromtimestamp(st.st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         )
-    return {"entries": shown, "cut": len(names) > cap}
+    return {"entries": shown, "cut": cut}
 
 
 def ownership(path: Path) -> dict[str, Any]:
