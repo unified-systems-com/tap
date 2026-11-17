@@ -25,7 +25,7 @@
 | `req-tap-plugin-validate-loads` | Implemented | Implemented | `_run_loads_checks` | — |
 | `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
-| `req-tap-plugin-validate-pins` | In Development | Verified | `requirement_pin_problem`, `_check_dependency_pins` | `req-tap-plugin-validate-pins-1`, `req-tap-plugin-validate-pins-2`, `req-tap-plugin-validate-pins-3`, `req-tap-plugin-validate-pins-4`, `req-tap-plugin-validate-pins-5`, `req-tap-plugin-validate-pins-6` |
+| `req-tap-plugin-validate-pins` | In Development | Verified | `core_locked_versions`, `requirement_pin_problem`, `first_party_source_problem`, `_check_dependency_pins` | `req-tap-plugin-validate-pins-1`, `req-tap-plugin-validate-pins-2`, `req-tap-plugin-validate-pins-3`, `req-tap-plugin-validate-pins-4`, `req-tap-plugin-validate-pins-5`, `req-tap-plugin-validate-pins-6`, `req-tap-plugin-validate-pins-7`, `req-tap-plugin-validate-pins-8` |
 | `req-tap-plugin-validate-repo` | In Development | Implemented | `run_repo_checks` | — |
 | `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
 | `req-tap-plugin-validate-schema` | Implemented | Implemented | `ValidationResult.to_json` | — |

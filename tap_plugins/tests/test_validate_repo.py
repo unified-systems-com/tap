@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1888,20 +1889,119 @@ class TestReleasePleasePair:
 # ---------------------------------------------------------------------------
 
 
-def _pins_repo(tmp_path: Path, dependencies: list[str] | None, *, raw: str | None = None) -> Path:
+_ORG_URL = "https://github.com/unified-systems-com/"
+_CI_RECORD = "tap_plugin/shell_sample/boot/ci.boot.json"
+
+
+def _org_sources(dependencies: list[str] | None) -> dict[str, str]:
+    """Each plugin-shaped dependency's slug, sourced from the org repository of the same name."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
+    from tap.plugin_identity import slug_for_dist_name
+
+    sources: dict[str, str] = {}
+    for raw in dependencies or []:
+        try:
+            name = Requirement(raw).name
+        except InvalidRequirement:
+            continue
+        slug = slug_for_dist_name(name)
+        if slug is not None:
+            sources[slug] = _ORG_URL + canonicalize_name(name)
+    return sources
+
+
+def _ci_record(sources: dict[str, str]) -> str:
+    """A CI record installing *sources* (slug -> git url), plus the plugin itself."""
+    plugins = [{"slug": slug, "source": {"type": "git", "url": url, "rev": "v1.0.0"}} for slug, url in sources.items()]
+    plugins.append({"slug": "shell_sample", "source": {"type": "git", "url": _ORG_URL + "shell-sample-tap"}})
+    return json.dumps({"version": 1, "install": {"plugins": plugins}})
+
+
+def _pins_repo(
+    tmp_path: Path,
+    dependencies: list[str] | None,
+    *,
+    raw: str | None = None,
+    ci_sources: dict[str, str] | None = None,
+    ci_record: bool = True,
+) -> Path:
     """A conformant shell whose pyproject declares *dependencies* (None: no dependencies key).
 
     The array is written with `json.dumps`: a JSON array of ASCII strings is also a TOML array,
-    which keeps markers carrying both quote styles exactly as given."""
+    which keeps markers carrying both quote styles exactly as given. Unless *ci_record* is False the
+    repository ships a CI record installing *ci_sources*, by default every plugin-shaped dependency
+    from the org repository of the same name (req-tap-plugin-validate-pins-8)."""
     if raw is None:
         raw = '[project]\nname = "shell-sample-tap"\nversion = "0.1.0"\n'
         if dependencies is not None:
             raw += f"dependencies = {json.dumps(dependencies)}\n"
-    return _make_repo(tmp_path, extra_files={"pyproject.toml": raw})
+    files = {"pyproject.toml": raw}
+    if ci_record:
+        files[_CI_RECORD] = _ci_record(_org_sources(dependencies) if ci_sources is None else ci_sources)
+    return _make_repo(tmp_path, extra_files=files)
 
 
-def _pins(tmp_path: Path, dependencies: list[str] | None, *, raw: str | None = None) -> CheckResult:
-    return _check(validate_plugin(_pins_repo(tmp_path, dependencies, raw=raw), repo_scope=True), "repo-dependency-pins")
+def _pins(tmp_path: Path, dependencies: list[str] | None, *, raw: str | None = None, **record: Any) -> CheckResult:
+    repo = _pins_repo(tmp_path, dependencies, raw=raw, **record)
+    return _check(validate_plugin(repo, repo_scope=True), "repo-dependency-pins")
+
+
+#: A fixture of tap's lock in uv's format, cut down to what `core_locked_versions` reads. Written
+#: to a temporary directory by each test rather than committed as a `uv.lock` file: a lockfile in
+#: the tree is something uv and Renovate would each try to own. `{groups}` is the root package's
+#: dependency-group table.
+_CORE_LOCK = """\
+version = 1
+revision = 5
+requires-python = "==3.14.*"
+
+[[package]]
+name = "nh3"
+version = "0.3.7"
+source = {{ registry = "https://pypi.org/simple" }}
+
+[[package]]
+name = "pyyaml"
+version = "6.0.3"
+source = {{ registry = "https://pypi.org/simple" }}
+
+[[package]]
+name = "requests"
+version = "2.34.2"
+source = {{ registry = "https://pypi.org/simple" }}
+dependencies = [{{ name = "urllib3" }}]
+
+[[package]]
+name = "urllib3"
+version = "2.8.0"
+source = {{ registry = "https://pypi.org/simple" }}
+
+[[package]]
+name = "tap"
+version = "0.3.4"
+source = {{ virtual = "." }}
+dependencies = [
+    {{ name = "nh3" }},
+    {{ name = "requests" }},
+]
+
+[package.dev-dependencies]
+{groups}
+"""
+
+_CORE_GROUPS = 'ci-tooling = [{ name = "pyyaml" }]\ndev = [{ name = "pyyaml" }]\n'
+
+
+def _core_lock(directory: Path, *, groups: str = _CORE_GROUPS, pyproject: str | None = "[project]\n") -> Path:
+    """Write the fixture lock (and, unless None, a root pyproject beside it) and return the lock."""
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = directory / "uv.lock"
+    lock.write_text(_CORE_LOCK.format(groups=groups), encoding="utf-8")
+    if pyproject is not None:
+        (directory / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    return lock
 
 
 class TestDependencyPins:
@@ -1909,7 +2009,20 @@ class TestDependencyPins:
 
     Run in the warn phase (`DEPENDENCY_PINS_ENFORCED = False`, the shipped value) unless a test
     flips it, so every reported case is asserted as `warn` and the enforced case separately as
-    `fail` — a check only ever seen to warn has not been shown to refuse."""
+    `fail` — a check only ever seen to warn has not been shown to refuse.
+
+    Every test here reads a tap lock that declares NO third-party library, so the exact-pin rule is
+    observed on its own; the core-locked exemption (`-7`) has its own class below."""
+
+    @pytest.fixture(autouse=True)
+    def _a_core_lock_declaring_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        lock = tmp_path / "core" / "uv.lock"
+        lock.parent.mkdir()
+        lock.write_text(
+            'version = 1\n\n[[package]]\nname = "tap"\nversion = "0.3.4"\nsource = { virtual = "." }\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
 
     @pytest.mark.spec("req-tap-plugin-validate-pins-1")
     @pytest.mark.parametrize(
@@ -1926,7 +2039,13 @@ class TestDependencyPins:
     def test_an_exact_pin_passes(self, tmp_path: Path, requirement: str) -> None:
         check = _pins(tmp_path, [requirement])
         assert check.status == "pass", _messages(check)
-        assert check.details == {"pinned": [requirement], "first_party": [], "floating": []}
+        assert check.details == {
+            "pinned": [requirement],
+            "first_party": [],
+            "first_party_unverified": [],
+            "core_locked": [],
+            "floating": [],
+        }
 
     @pytest.mark.spec("req-tap-plugin-validate-pins-1")
     def test_a_marker_does_not_rescue_a_floor(self, tmp_path: Path) -> None:
@@ -1991,7 +2110,13 @@ class TestDependencyPins:
     def test_a_plugin_distribution_keeps_its_range(self, tmp_path: Path, requirement: str) -> None:
         check = _pins(tmp_path, [requirement])
         assert check.status == "pass", _messages(check)
-        assert check.details == {"pinned": [], "first_party": [requirement], "floating": []}
+        assert check.details == {
+            "pinned": [],
+            "first_party": [requirement],
+            "first_party_unverified": [],
+            "core_locked": [],
+            "floating": [],
+        }
 
     @pytest.mark.spec("req-tap-plugin-validate-pins-3")
     @pytest.mark.parametrize("requirement", ["tap-plugin-foo-tap>=1", "untapped>=1", "tap>=0.1"])
@@ -2084,3 +2209,304 @@ class TestDependencyPins:
         repo = _pins_repo(tmp_path, ["boto3>=1.43.9"])
         assert [c for c in validate_plugin(repo).checks if c.id == "repo-dependency-pins"] == []
         assert _check(validate_plugin(repo, repo_scope=True), "repo-dependency-pins").status == "warn"
+
+
+class TestCoreLockedRanges:
+    """A library tap itself declares keeps a range that admits tap's locked version (`-7`).
+
+    Pre-boot's per-plugin install keeps an installed release that satisfies a range and replaces one
+    to satisfy a pin (tap#1220), so for a library core's lock already pins, the range is what lets
+    tap's lock decide. Read from a fixture lock; the real one is asserted once, at the end."""
+
+    @pytest.fixture(autouse=True)
+    def _the_fixture_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", _core_lock(tmp_path / "core"))
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    @pytest.mark.parametrize(
+        "requirement",
+        [
+            "requests>=2.34.2,<3",  # anchore-tap
+            "nh3>=0.3.7",  # stackarmor-vdr-tap
+            "PyYAML>=6.0.2",  # github-core-tap: pyyaml arrives through tap's dev group
+            "requests[socks]~=2.34",
+            'nh3>=0.3; python_version >= "3.14"',
+            "requests",
+            "requests==2.*",
+        ],
+    )
+    def test_a_range_admitting_the_locked_version_passes(self, tmp_path: Path, requirement: str) -> None:
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "pass", _messages(check)
+        assert check.details == {
+            "pinned": [],
+            "first_party": [],
+            "first_party_unverified": [],
+            "core_locked": [requirement],
+            "floating": [],
+        }
+        assert "1 range(s) on a library tap's lock pins" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    @pytest.mark.parametrize(
+        ("requirement", "locked"),
+        [("requests<2.30", "2.34.2"), ("nh3>=0.4", "0.3.7"), ("PyYAML!=6.0.3", "6.0.3")],
+    )
+    def test_a_range_excluding_the_locked_version_warns_naming_it(
+        self, tmp_path: Path, requirement: str, locked: str
+    ) -> None:
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        text = _messages(check)
+        assert f"`{requirement}`" in text
+        assert f"pins at {locked}, and the range excludes it" in text
+        assert "tap#1220" in text
+        assert check.details is not None and check.details["floating"] == [requirement]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    @pytest.mark.parametrize("requirement", ["boto3>=1.43.9", "urllib3>=2", "sigstore~=4.2"])
+    def test_a_range_on_a_library_tap_does_not_declare_still_warns(self, tmp_path: Path, requirement: str) -> None:
+        """`urllib3` is in tap's lock only as a transitive of `requests`: locked is not declared."""
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        assert "==<version>" in _messages(check)
+        assert check.details is not None and check.details["core_locked"] == []
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_ci_tooling_alone_does_not_make_a_library_core_locked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bare CI runner installs `ci-tooling`; a boot installs only the default groups."""
+        lock = _core_lock(tmp_path / "core2", groups='ci-tooling = [{ name = "pyyaml" }]\ndev = []\n')
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
+        assert _pins(tmp_path, ["PyYAML>=6.0.2"]).status == "warn"
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_declared_default_groups_are_honoured(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        lock = _core_lock(tmp_path / "core2", pyproject='[tool.uv]\ndefault-groups = ["ci-tooling"]\n')
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
+        versions, problem = repo_module.core_locked_versions()
+        assert problem is None and versions is not None
+        assert "pyyaml" in versions
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_an_unreadable_root_pyproject_counts_no_groups(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The narrower set: a group-only library is held to the pin rather than accepted on a guess."""
+        lock = _core_lock(tmp_path / "core2", pyproject=None)
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
+        versions, problem = repo_module.core_locked_versions()
+        assert problem is None and versions == {"nh3": ("0.3.7",), "requests": ("2.34.2",)}
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    @pytest.mark.parametrize("requirement", ["requests==2.34.2", "nh3===0.3.7", "PyYAML==6.0.3"])
+    def test_an_exact_pin_equal_to_the_lock_warns_to_follow_it(self, tmp_path: Path, requirement: str) -> None:
+        """Equal today, it moves on the plugin's schedule; the day it differs it replaces core's copy."""
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        text = _messages(check)
+        assert "They agree today" in text
+        assert "Declare a range that admits tap's locked" in text
+        assert check.details is not None and check.details["floating"] == [requirement]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_an_exact_pin_off_the_lock_warns_naming_the_locked_version(self, tmp_path: Path) -> None:
+        check = _pins(tmp_path, ["requests==2.30.0"])
+        assert check.status == "warn", _messages(check)
+        text = _messages(check)
+        assert "a release tap's lock does not hold (tap pins 2.34.2)" in text
+        assert "`requests>=2.34.2`" in text
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_a_core_locked_direct_reference_is_still_refused(self, tmp_path: Path) -> None:
+        check = _pins(tmp_path, ["requests @ git+https://example.invalid/requests.git@main"])
+        assert check.status == "warn", _messages(check)
+        assert "direct reference" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    def test_enforced_a_core_locked_range_still_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_module, "DEPENDENCY_PINS_ENFORCED", True)
+        check = _pins(tmp_path, ["requests>=2.34.2,<3", "boto3>=1.43.9"])
+        assert check.status == "fail"
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        assert len(errors) == 1 and "`boto3>=1.43.9`" in errors[0]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-7")
+    @pytest.mark.parametrize(
+        ("content", "why"),
+        [
+            (None, "not present"),
+            ("version = [\n", "cannot be read"),
+            ("version = 1\n", "no `[[package]]`"),
+            ('version = 1\n[[package]]\nname = "requests"\nversion = "2.34.2"\n', "0 `tap` packages"),
+            (
+                'version = 1\n[[package]]\nname = "tap"\nversion = "0.3.4"\ndependencies = [{ name = "requests" }]\n',
+                "records no version for it",
+            ),
+            (
+                'version = 1\n[[package]]\nname = "requests"\nversion = "not-a-version"\n'
+                '[[package]]\nname = "tap"\nversion = "0.3.4"\n',
+                "not a PEP 440 version",
+            ),
+        ],
+    )
+    def test_an_unreadable_lock_falls_back_to_the_exact_pin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None, why: str
+    ) -> None:
+        """Fail closed: a range is never accepted on a lock nobody could read, and the finding says why."""
+        lock = tmp_path / "broken" / "uv.lock"
+        lock.parent.mkdir()
+        if content is not None:
+            lock.write_text(content, encoding="utf-8")
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
+        check = _pins(tmp_path, ["requests>=2.34.2,<3", "nh3==0.3.7"])
+        assert check.status == "warn", _messages(check)
+        warnings = [m.text for m in check.messages if m.severity == "warning"]
+        assert len(warnings) == 1
+        assert "`requests==<version>`" in warnings[0]
+        assert why in warnings[0]
+        assert "falls back to requiring an exact pin" in warnings[0]
+        assert check.details is not None
+        assert check.details["pinned"] == ["nh3==0.3.7"] and check.details["core_locked"] == []
+        assert "strict fallback" in _messages(check)
+
+
+@pytest.mark.spec("req-tap-plugin-validate-pins-7")
+def test_the_real_lock_declares_requests_and_nh3() -> None:
+    """tap's own `uv.lock`, read from where the validator reads it in the image and in plugin-ci —
+    outside the fixture-lock classes, so nothing has patched `CORE_LOCK_PATH`."""
+    assert repo_module.CORE_LOCK_PATH.name == "uv.lock"
+    versions, problem = repo_module.core_locked_versions()
+    assert problem is None, problem
+    assert versions is not None
+    assert {"requests", "nh3"} <= set(versions)
+
+
+class TestFirstPartySources:
+    """A plugin-shaped dependency is exempt from the pin only when the repository's own CI record
+    installs it from a repository of the org (`-8`): the name alone would exempt `evil-tap>=1`.
+
+    The fixture lock declares nothing, as in `TestDependencyPins`."""
+
+    @pytest.fixture(autouse=True)
+    def _a_core_lock_declaring_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        lock = tmp_path / "core" / "uv.lock"
+        lock.parent.mkdir()
+        lock.write_text(
+            'version = 1\n\n[[package]]\nname = "tap"\nversion = "0.3.4"\nsource = { virtual = "." }\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(repo_module, "CORE_LOCK_PATH", lock)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    @pytest.mark.parametrize(
+        "url",
+        [
+            _ORG_URL + "computing-core-tap",
+            _ORG_URL + "computing-core-tap.git",
+            _ORG_URL + "computing-core-tap/",
+            _ORG_URL + "tap-plugin-computing-core",  # the legacy repository name carries the same slug
+        ],
+    )
+    def test_an_org_sourced_plugin_passes(self, tmp_path: Path, url: str) -> None:
+        check = _pins(tmp_path, ["computing-core-tap>=0.9,<0.11"], ci_sources={"computing_core": url})
+        assert check.status == "pass", _messages(check)
+        assert check.details is not None and check.details["first_party"] == ["computing-core-tap>=0.9,<0.11"]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_an_index_only_lookalike_warns(self, tmp_path: Path) -> None:
+        """`evil-tap>=1` from the index: nothing in the CI record installs `evil`."""
+        check = _pins(
+            tmp_path,
+            ["evil-tap>=1", "computing-core-tap"],
+            ci_sources={"computing_core": _ORG_URL + "computing-core-tap"},
+        )
+        assert check.status == "warn", _messages(check)
+        warnings = [m for m in check.messages if m.severity == "warning"]
+        assert len(warnings) == 1
+        assert "`evil-tap>=1`" in warnings[0].text and "installs no `evil`" in warnings[0].text
+        assert warnings[0].path == _CI_RECORD
+        assert check.details is not None
+        assert check.details["first_party_unverified"] == ["evil-tap>=1"]
+        assert check.details["first_party"] == ["computing-core-tap"]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://github.com/someone-else/computing-core-tap",
+            "https://github.com/unified-systems-com.evil.example/computing-core-tap",
+            _ORG_URL + "other-plugin-tap",  # an org repository, but for a different slug
+            _ORG_URL + "computing-core-tap/extra",
+            "https://gitlab.com/unified-systems-com/computing-core-tap",
+        ],
+    )
+    def test_a_record_pointing_off_the_org_warns(self, tmp_path: Path, url: str) -> None:
+        check = _pins(tmp_path, ["computing-core-tap>=0.9"], ci_sources={"computing_core": url})
+        assert check.status == "warn", _messages(check)
+        assert "not from a repository under https://github.com/unified-systems-com/" in _messages(check)
+        assert check.details is not None and check.details["first_party_unverified"] == ["computing-core-tap>=0.9"]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_a_non_git_source_is_not_verified(self, tmp_path: Path) -> None:
+        repo = _pins_repo(tmp_path, ["computing-core-tap"])
+        record = {
+            "install": {
+                "plugins": [
+                    {"slug": "computing_core", "source": {"type": "path", "url": _ORG_URL + "computing-core-tap"}}
+                ]
+            }
+        }
+        (repo / _CI_RECORD).write_text(json.dumps(record))
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-dependency-pins")
+        assert check.status == "warn", _messages(check)
+        assert "'path' source" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_no_ci_record_is_unverifiable_not_passed(self, tmp_path: Path) -> None:
+        check = _pins(tmp_path, ["computing-core-tap>=0.9"], ci_record=False)
+        assert check.status == "warn", _messages(check)
+        text = _messages(check)
+        assert "cannot be shown to be one of the org's plugins" in text
+        assert f"there is no CI record at {_CI_RECORD}" in text
+        assert check.details is not None and check.details["first_party_unverified"] == ["computing-core-tap>=0.9"]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    @pytest.mark.parametrize(
+        ("content", "why"), [("{not json", "cannot be read"), ('{"install": {}}', "no `install.plugins`")]
+    )
+    def test_an_unreadable_ci_record_is_unverifiable(self, tmp_path: Path, content: str, why: str) -> None:
+        """Called directly: the package-scope `ci-record` check hashes the record before reading it
+        and raises on malformed JSON, so a full validator run is not where this check's verdict shows."""
+        repo = _pins_repo(tmp_path, ["computing-core-tap"])
+        (repo / _CI_RECORD).write_text(content)
+        result = ValidationResult(ok=True, level="structure", plugin_path=str(repo), strict=False)
+        repo_module._check_dependency_pins(repo, result)
+        check = _check(result, "repo-dependency-pins")
+        assert check.status == "warn", _messages(check)
+        assert why in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_a_repository_not_named_as_a_plugin_cannot_locate_its_record(self, tmp_path: Path) -> None:
+        raw = '[project]\nname = "not-a-plugin"\ndependencies = ["computing-core-tap"]\n'
+        check = _pins(tmp_path, None, raw=raw)
+        assert check.status == "warn", _messages(check)
+        assert "is not a plugin distribution name" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_the_shipped_phase_warns(self) -> None:
+        assert repo_module.FIRST_PARTY_SOURCES_ENFORCED is False
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-8")
+    def test_enforced_an_unverified_plugin_refuses_on_its_own_switch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Its own switch: the pin half stays a warning while the source half refuses."""
+        monkeypatch.setattr(repo_module, "FIRST_PARTY_SOURCES_ENFORCED", True)
+        check = _pins(tmp_path, ["evil-tap>=1", "boto3>=1.43.9"], ci_sources={})
+        assert check.status == "fail"
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        warnings = [m.text for m in check.messages if m.severity == "warning"]
+        assert len(errors) == 1 and "`evil-tap>=1`" in errors[0]
+        assert len(warnings) == 1 and "`boto3>=1.43.9`" in warnings[0]
