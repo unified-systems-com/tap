@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/e18eb3bf269f (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/1218a03bc047 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@df69091268ef/e18eb3bf269f (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@d47336d3b06e/1218a03bc047 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -196,6 +196,12 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         with rec.phase("plugin_data"):
             _phase_plugin_data(say)
 
+        # The file store next, for the same reasons: no database needed, and a configured volume
+        # that is not really mounted must stop the standup before anything is stored
+        # (req-tap-files-mount-gate).
+        with rec.phase("files"):
+            _phase_files(say)
+
         with rec.phase("auth"):
             _phase_auth(profile, say)
 
@@ -306,6 +312,21 @@ def _phase_plugin_data(say: Echo) -> None:
         run_gate(say)
     except PluginDataGateError as exc:
         raise BootError(f"plugin data: {exc}", detail={"failed_step": "plugin_data"}) from exc
+
+
+def _phase_files(say: Echo) -> None:
+    """files phase: the file store's mount gate, initialisation of an empty root, then recovery.
+
+    Runs for every profile and for no profile; does nothing when the store is not enabled
+    (`specs/spec-tap-file-store.md`, `req-tap-files-mount-gate`).
+    """
+    from tap_files.boot import FileStoreGateError, run_gate
+
+    logger.info("[745e] boot files phase: file store gate, initialisation and recovery")
+    try:
+        run_gate(say)
+    except FileStoreGateError as exc:
+        raise BootError(f"file store: {exc}", detail={"failed_step": "files"}) from exc
 
 
 def _phase_auth(profile: BootProfile | None, say: Echo) -> None:

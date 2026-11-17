@@ -377,13 +377,17 @@ COPY --from=js-vendor /opt/tap-static-vendor /opt/tap-static-vendor
 # (tap#1207): spawn and the lean-boot gate run the PUBLISHED image, so the compose half can only
 # follow once an image carrying this path has been published.
 #
+# `/var/lib/tap/files` is the file store volume's mount path (specs/spec-tap-file-store.md,
+# req-tap-files-root), prepared for the same reason and landing the same way: image first, compose
+# after the image is published (tap#1208).
+#
 # `/run/tap` holds the persisted TAP_PLUGINS set. It is a directory in the image's
 # writable layer — NOT a tmpfs, despite what the entrypoint comment used to say — so it
 # is fresh per container either way, and it has to be prepared here because `/run` itself
 # is root-owned and a non-root process cannot create a path in it.
-RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap /var/lib/tap/plugin-data \
- && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data \
- && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data
+RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files \
+ && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files \
+ && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files
 
 # HOME is declared, not inherited: under the dev `user:` override the runtime uid has no
 # /etc/passwd entry, so Docker would hand it HOME=/ and uv, git and anything else reaching

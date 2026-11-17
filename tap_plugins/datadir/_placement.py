@@ -72,11 +72,12 @@ def _overlap_with_file_store(root: Path) -> VolumeVerdict | None:
     Two volumes by ruling (req-tap-plugin-datadir-scope-2): a backup treats them differently and an
     operator may size them apart, which one directory inside the other would silently defeat.
     """
-    from django.conf import settings
+    from tap_files.store import configured_root
 
-    raw = getattr(settings, "TAP_FILES_ROOT", "") or ""
-    if not raw:
+    files_root = configured_root()
+    if files_root is None:
         return None
+    raw = str(files_root)
     mine, theirs = Path(os.path.realpath(root)), Path(os.path.realpath(raw))
     if mine == theirs or mine.is_relative_to(theirs) or theirs.is_relative_to(mine):
         return VolumeVerdict(

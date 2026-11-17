@@ -337,6 +337,15 @@ TAP_SECRETS_ROOT = os.environ.get("TAP_SECRETS_ROOT", "/run/tap-secrets")
 # plugin-data-root-resolution). The repository's compose files set it to the named volume's mount.
 TAP_PLUGIN_DATA_ROOT = os.environ.get("TAP_PLUGIN_DATA_ROOT") or ""
 
+# File store root (specs/spec-tap-file-store.md, req-tap-files-root). NO default, for the same reason
+# as the plugin data root: unset or empty means the file store is not enabled and every store
+# operation raises FileStoreNotEnabled; set means the operator provided a volume, and boot's mount
+# gate then requires it to be usable. Read here and nowhere else (guard: files-root-resolution).
+TAP_FILES_ROOT = os.environ.get("TAP_FILES_ROOT") or ""
+# The store's backend. "local" (an OCFL 1.1 storage root on the local filesystem) is the only
+# accepted value in this release (req-tap-files-interface-3).
+TAP_FILES_BACKEND = os.environ.get("TAP_FILES_BACKEND") or "local"
+
 # =============================================================================
 # Application Definition
 # =============================================================================
@@ -395,6 +404,9 @@ INSTALLED_APPS = [
     # (req-tap-auth-app, req-tap-auth-user-model-6).
     "tap_auth",
     "tap_grid",
+    # tap_files — the core file store (specs/spec-tap-file-store.md): whole files kept in an OCFL
+    # storage root on its own volume. Imports no plugin; optional per instance (TAP_FILES_ROOT).
+    "tap_files",
     "tap_plugins",
     # tap_cares — runtime plumbing for collectors/receivers/emitters/actions/schedules.
     # Loaded before plugins so collector_registry exists when plugin AppConfigs ready().
