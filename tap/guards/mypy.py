@@ -1,6 +1,6 @@
 """Static-typing (mypy) ceiling ratchet — freeze the baseline, block new errors.
 
-TAP-IMPLEMENTS: req-dev-validation-mypy-ratchet@fa630990c5bc/09ec6f90dc32 (enforcement) —
+TAP-IMPLEMENTS: req-dev-validation-mypy-ratchet@2b2393dde768/6095eebb9da1 (enforcement) —
     the per-file+error-code ceiling ratchet over the strict-mode baseline.
 
 `strict = true` is set in pyproject but nothing gated on it, so mypy drifted to
@@ -18,6 +18,13 @@ teeth). Known limitation (named, per the honest-risk discipline): fixing one err
 introducing another of the *same code in the same file* leaves the count unchanged and
 is not caught — an acceptable blind spot given the surface is ~all noise. Regenerate
 the baseline with `manage.py guards --sync-mypy` (see the command) after a real change.
+
+Measured from a fresh, private cache every run (req-dev-validation-mypy-ratchet-4). The worktree's
+`.mypy_cache` is a mutable shared input (see `.gitignore`): an ad-hoc path-scoped run or a branch
+move can leave entries that change the canonical error set, and on a Linux stack the container's
+uid cannot even create it in the bind-mounted tree (tap#1214), so the guard crashed rc=2 before
+measuring anything. A temporary directory is always writable and never stale; the cost is a cold
+run, which is seconds.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import ClassVar
@@ -40,17 +48,18 @@ _ERROR_LINE = re.compile(r"^(?P<path>[^:]+):(?:\d+:)?(?:\d+:)? error: .*?(?:\[(?
 
 
 def mypy_error_counts() -> dict[str, int]:
-    """Run `mypy .` and aggregate errors to `{f"{path}:{code}": count}`.
+    """Run `mypy .` against a fresh cache and aggregate errors to `{f"{path}:{code}": count}`.
 
     Raises if mypy could not run (rc >= 2 — e.g. a config/resolution crash), so a
     broken run fails loudly instead of measuring an empty set that reads as "all fixed".
     """
-    proc = subprocess.run(
-        [sys.executable, "-m", "mypy", "."],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="tap-mypy-guard-") as cache_dir:
+        proc = subprocess.run(
+            [sys.executable, "-m", "mypy", "--cache-dir", cache_dir, "."],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
     if proc.returncode >= 2:
         raise AssertionError(
             f"mypy did not complete (rc={proc.returncode}) — a config or resolution error, not a type "

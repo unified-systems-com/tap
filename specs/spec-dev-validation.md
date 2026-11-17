@@ -410,6 +410,7 @@ Status: `Implemented`
 | req-dev-validation-mypy-ratchet-1 | Strict mypy is gated | Implemented | A per-commit guard runs `mypy .` and fails on any error outside the committed baseline. | `tap/guards/mypy.py::MypyRatchet` via `tap/tests/test_guards.py`. |
 | req-dev-validation-mypy-ratchet-2 | Line-drift-proof key | Implemented | The baseline keys each entry by `path:error-code:count`, not line number, so unrelated edits do not churn it; a new error of the same code bumps the count and fails. | Known blind spot: fix+regress of the same code in the same file leaves the count unchanged (acceptable — the surface is noise). |
 | req-dev-validation-mypy-ratchet-3 | Debt is audited and honest | Implemented | The baselined errors are recorded as audited debt (django-stubs friction + test fixture cascade), and the ratchet only moves down; a reviewed typing change re-baselines via one command. | `manage.py guards --sync-mypy`. |
+| req-dev-validation-mypy-ratchet-4 | Measured from a fresh cache | Implemented | The guard runs mypy against a private temporary cache directory, never the worktree's `.mypy_cache`, so a stale or ad-hoc cache cannot change the measured error set and an unwritable worktree cannot stop the measurement. | tap#1214: on a Linux stack the container uid could not create `.mypy_cache` in the bind-mounted tree and the guard crashed rc=2. The cost is a cold run. |
 
 ### Suite Tiering & Performance
 ----
