@@ -38,7 +38,9 @@
 #   repo-scope    — always. `validate_plugin --repo`, NOT strict, over the repository shell
 #                   (CODEOWNERS, lanes, reusable-workflow pins, nightly shape, waiver ledger).
 #                   Warnings are reported; a failed `repo-*` check fails the job.
-#   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
+#   boot-and-test — opt-in (a `boot_profile` was passed). Loads the web image core published
+#                   for the harness SHA once its provenance verifies, else builds it
+#                   (req-tap-plugin-extdev-repo-ci-15). Boots the caller's profile in a real
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage):
 #                   first the tests it marks `@pytest.mark.ci_fast`, during the boot's migrate,
 #                   failing the job there; then the whole suite under pytest-xdist
@@ -522,43 +524,79 @@ jobs:
             --dev-plugins "$PLUGIN_SLUG" \
             --worktree .
 
-      - name: Prepare secrets root
-        run: |
-          rm -f tap_secrets
-          mkdir -p tap_secrets/tap_plugins
-
-      # If the profile git-installs private sibling plugins, wire the read-only PAT
-      # inline (github_pat kind, data.token) — the free-runner path, distinct from the
-      # internal CodeBuild AWS-Secrets-Manager routing.
+      # PULL BEFORE BUILD (aws-build Q78c, 2026-11-17). The web image is dependency substrate:
+      # compose bind-mounts this checkout over /app (entrypoint included), so nothing the plugin
+      # adds to the build context reaches the running container through the image, and the image
+      # for a harness SHA is the same whichever plugin asks. publish-images.yml already publishes
+      # it for every core main commit as `tap-web:sha-<short>`, SLSA-attested, and every release
+      # tag is a main commit — so the image for a plugin's floor already exists. Building it here
+      # instead cost 10m23s on a cold cache (aws-core-tap run 44008279359: 5m11s of OpenSSL FIPS
+      # compile, 70s loading the image, 3m33s exporting the layer cache), and the GitHub Actions
+      # cache cannot be shared between plugin repositories, is scoped per branch, and evicts at
+      # 10 GB; the registry `buildcache-amd64` holds only core main's tip, never an older floor.
       #
-      # The skip is decided in SHELL, not in a step-level `if:`. The `secrets` context
-      # is NOT available to `if:` (allowed there: github/needs/env/inputs/steps/...), and
-      # referencing it is a workflow-PARSE error — "Unrecognized named-value: 'secrets'".
-      # That is fatal to the whole FILE, not just this step: GitHub then cannot compile
-      # the workflow at all, so it registers it by path instead of `name:` and emits a
-      # jobless failed run on every push. This workflow had never once compiled because
-      # of exactly that. Read the secret into `env` (where `secrets` IS legal) and test
-      # the env var instead.
-      - name: Wire read-only plugins PAT
+      # The tag is only a lookup. It is resolved ONCE to the index digest, the provenance of THAT
+      # digest must verify as publish-images.yml on core's main at exactly the harness SHA, on a
+      # GitHub-hosted runner, and the pull is by that digest — so the bytes loaded are the bytes
+      # attested (req-cicd-supply-chain-provenance-1). Anything else — a fork harness, a SHA with
+      # no published image, a backfilled image whose certificate names another commit, a
+      # verification that cannot run — builds exactly as before. A miss is never a failure, and
+      # the summary records which road was taken and why. No caller grant is needed: the package
+      # and its attestations are public, and gh only needs some token to start.
+      - name: Pull the published web image for the harness SHA (provenance-verified)
+        id: prebuilt
         env:
-          PLUGINS_RO_PAT: ${{ secrets.plugins_ro_pat }}
+          HARNESS_REPO: ${{ inputs.harness_repo }}
+          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$PLUGINS_RO_PAT" ]; then
-            echo "No plugins_ro_pat supplied — skipping (the profile must not git-install private siblings)."
-            exit 0
+          set -uo pipefail
+          image="ghcr.io/unified-systems-com/tap-web"
+          pulled=false
+          why=""
+          if [ "$HARNESS_REPO" != "unified-systems-com/tap" ]; then
+            why="the harness is $HARNESS_REPO; only unified-systems-com/tap publishes this image"
+          elif ! printf '%s' "$HARNESS_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            why="the harness SHA is not a full commit SHA"
+          elif ! grep -Eq '^ARG TAP_FIPS=1[[:space:]]*$' Dockerfile; then
+            # A build here takes the Dockerfile default; publish-images always builds TAP_FIPS=1.
+            why="this harness's Dockerfile does not default to TAP_FIPS=1, the only posture published"
+          else
+            tag="$image:sha-${HARNESS_SHA:0:7}"
+            # The digest is hashed here from the manifest bytes the registry served, not read
+            # off a printed field, so it cannot name anything but those bytes.
+            raw="$RUNNER_TEMP/web-index.json"
+            index=""
+            if docker buildx imagetools inspect --raw "$tag" > "$raw" 2>/dev/null && [ -s "$raw" ]; then
+              index="sha256:$(sha256sum "$raw" | cut -d' ' -f1)"
+            fi
+            if [ -z "$index" ]; then
+              why="no image is published as $tag"
+            elif ! gh attestation verify "oci://$image@$index" \
+                --repo unified-systems-com/tap \
+                --signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml \
+                --source-ref refs/heads/main \
+                --source-digest "$HARNESS_SHA" \
+                --predicate-type https://slsa.dev/provenance/v1 \
+                --deny-self-hosted-runners > "$RUNNER_TEMP/attestation.log" 2>&1; then
+              tail -n 5 "$RUNNER_TEMP/attestation.log"
+              why="the provenance of $image@$index does not verify as publish-images on main at $HARNESS_SHA"
+            elif ! docker pull --quiet "$image@$index"; then
+              why="pulling $image@$index failed"
+            elif ! docker tag "$image@$index" tap-web:ci; then
+              why="tagging $image@$index as tap-web:ci failed"
+            else
+              pulled=true
+              echo "- web image: pulled \`$image@$index\` ($tag), provenance verified as publish-images on main at \`$HARNESS_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
-          cat > tap_secrets/tap_plugins/github-plugins-ro.secret.json <<JSON
-          {
-            "scope": "tap_plugins.source",
-            "key": "github-plugins-ro",
-            "kind": "github_pat",
-            "description": "Read-only GitHub PAT for git-installing private sibling plugins in per-repo CI.",
-            "data": { "token": "${PLUGINS_RO_PAT}" },
-            "metadata": {}
-          }
-          JSON
-
+          if [ "$pulled" != true ]; then
+            echo "::notice::Building the web image: $why"
+            echo "- web image: built here — $why" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "pulled=$pulled" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        if: steps.prebuilt.outputs.pulled != 'true'
       # Older harness tags build a stage FROM public.ecr.aws/docker/library/<image>@sha256:…,
       # and ECR Public's anonymous rate cap (429) fails those builds even with the retry below.
       # ECR's docker/library is a copy of Docker Hub's official images, so the SAME digest is
@@ -570,6 +608,7 @@ jobs:
       # script, because this workflow builds old harness tags that would not contain one.
       - name: Map digest-pinned ECR Public base images to mirror.gcr.io
         id: mirror
+        if: steps.prebuilt.outputs.pulled != 'true'
         shell: python
         run: |
           import os, re, secrets
@@ -593,6 +632,7 @@ jobs:
       # is written to the job summary so a flaky registry stays visible.
       - name: Build web image (GHA layer cache), attempt 1
         id: build1
+        if: steps.prebuilt.outputs.pulled != 'true'
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
@@ -643,9 +683,49 @@ jobs:
             type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
           cache-to: type=gha,mode=max
 
+      # The secrets root is written only AFTER the image exists. The build context is this
+      # whole tree and the Dockerfile's `COPY . .` honours only `.dockerignore`, which does not
+      # exclude tap_secrets/: a PAT written before the build would be baked into an image layer
+      # and exported to the repository's GitHub Actions cache by `cache-to: type=gha,mode=max`.
+      - name: Prepare secrets root
+        run: |
+          rm -f tap_secrets
+          mkdir -p tap_secrets/tap_plugins
 
-      # This lane BUILDS the web image, so it is running the one that declares
-      # `USER nonroot`. The container writes into the `.:/app` bind mount and the uv-cache
+      # If the profile git-installs private sibling plugins, wire the read-only PAT
+      # inline (github_pat kind, data.token) — the free-runner path, distinct from the
+      # internal CodeBuild AWS-Secrets-Manager routing.
+      #
+      # The skip is decided in SHELL, not in a step-level `if:`. The `secrets` context
+      # is NOT available to `if:` (allowed there: github/needs/env/inputs/steps/...), and
+      # referencing it is a workflow-PARSE error — "Unrecognized named-value: 'secrets'".
+      # That is fatal to the whole FILE, not just this step: GitHub then cannot compile
+      # the workflow at all, so it registers it by path instead of `name:` and emits a
+      # jobless failed run on every push. This workflow had never once compiled because
+      # of exactly that. Read the secret into `env` (where `secrets` IS legal) and test
+      # the env var instead.
+      - name: Wire read-only plugins PAT
+        env:
+          PLUGINS_RO_PAT: ${{ secrets.plugins_ro_pat }}
+        run: |
+          if [ -z "$PLUGINS_RO_PAT" ]; then
+            echo "No plugins_ro_pat supplied — skipping (the profile must not git-install private siblings)."
+            exit 0
+          fi
+          cat > tap_secrets/tap_plugins/github-plugins-ro.secret.json <<JSON
+          {
+            "scope": "tap_plugins.source",
+            "key": "github-plugins-ro",
+            "kind": "github_pat",
+            "description": "Read-only GitHub PAT for git-installing private sibling plugins in per-repo CI.",
+            "data": { "token": "${PLUGINS_RO_PAT}" },
+            "metadata": {}
+          }
+          JSON
+
+
+      # This lane builds (or pulls, for its harness SHA) the web image, so it is running the one
+      # that declares `USER nonroot`. The container writes into the `.:/app` bind mount and the uv-cache
       # host bind, and on Linux those writes are refused unless the container uid owns the
       # path. Compose defaults the override to EMPTY on purpose, so stacks pulling the older
       # published image still work; a lane on a freshly-built image has to opt in.
