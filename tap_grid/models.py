@@ -19,9 +19,8 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import models, transaction
 from django.db.models.functions import Left
 from django.utils import timezone
-from simple_history.models import HistoricalRecords
 
-from tap_grid.history import _get_history_user
+from tap_grid.history import TapHistoricalRecords, _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
     PREFIX_INDEX_CHARS,
@@ -947,17 +946,24 @@ class BaseModel(models.Model):
     HOTLINKS: ClassVar[list[dict]] = []
     DEFAULT_DISPLAY: ClassVar[dict[str, Any]] = {}
     INTERNAL_ONLY: ClassVar[bool] = False
+    # History scope (req-grid-history-optout). Default ON: a type that says nothing gets a
+    # Historical<Type> model and table exactly as before. A type that declares False gets
+    # neither — no table, no `history` manager, no history row on save or delete — and
+    # every history consumer degrades explicitly (tap_grid.history.HistoryNotTracked).
+    # Inherited like the other ClassVars, so an abstract intermediate can set it for a
+    # subtree. Flipping it on an existing type drops (False) or creates an empty (True)
+    # history table in the owning app's next migration: recorded history is lost.
+    TRACK_HISTORY: ClassVar[bool] = True
 
     objects = LiveManager()
     all_objects = AllObjectsManager()
 
-    # History tracking — enabled by default for all concrete BaseModel subclasses.
-    # DSH creates a separate HistoricalX table per concrete model in each app.
-    # V1 default: all objects tracked, no retention limits.
-    # Future: History Scope Configuration (per-model / per-app / grid-wide) is
-    # backlogged — design that mechanism before implementing it; it will affect
-    # migrations.
-    history = HistoricalRecords(get_user=_get_history_user, inherit=True)
+    # History tracking — enabled by default for every concrete BaseModel subclass; DSH
+    # creates a separate HistoricalX table per concrete model in each app. A subclass
+    # opts out with TRACK_HISTORY = False (req-grid-history-optout; TapHistoricalRecords
+    # skips it). No retention limits yet: retention policy and per-app / grid-wide scope
+    # remain backlogged under req-grid-history-scope.
+    history = TapHistoricalRecords(get_user=_get_history_user, inherit=True)
 
     entity = models.OneToOneField(
         Entity,
@@ -994,6 +1000,14 @@ class BaseModel(models.Model):
                 f"{cls.__name__} declares GRID_TABLE_ROLE; grid-table classification "
                 "is inherited from BaseModel and may never be declared by a subclass "
                 "(req-grid-table-classification.sec)."
+            )
+
+        # TRACK_HISTORY must be a real bool (req-grid-history-optout-3): it decides whether a
+        # table exists, so a truthy string or None typed by mistake must not pass silently.
+        if not isinstance(getattr(cls, "TRACK_HISTORY", True), bool):
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.TRACK_HISTORY must be True or False, got "
+                f"{cls.TRACK_HISTORY!r} (req-grid-history-optout)."
             )
 
         # FIELD_VALIDATION_SCHEMA invariants run first — before any registry side effects.
