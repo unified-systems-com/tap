@@ -2049,7 +2049,7 @@ def requirement_pin_problem(raw: str) -> tuple[str | None, str | None]:
         return None, f"does not parse as a PEP 508 requirement ({exc})"
     # A direct reference is refused BEFORE the first-party exemption: the exemption is for a plugin
     # distribution's version range, not for an alternate source, and a plugin-shaped name alone must
-    # not let `evil-tap @ git+https://...` through (PR 1222 review, Codex).
+    # not let `evil-tap @ git+https://...` through.
     if req.url:
         return req.name, "is a direct reference (`name @ url`), not a released version from the index"
     if is_first_party_distribution(req.name):
@@ -2086,7 +2086,7 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
     A WARNING while ``DEPENDENCY_PINS_ENFORCED`` is False, a failure after; see that constant for
     the measurement the flip waits on.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/1f2284dd7799 (enforcement) — reads the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/bffabe9304d6 (enforcement) — reads the
         repository's declared requirements, reports each floating one with its fix, and applies the
         warn-then-fail phase.
     """
@@ -2107,10 +2107,14 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    raw_project = data.get("project")
-    project: dict[str, Any] = raw_project if isinstance(raw_project, dict) else {}
+    raw_project = data.get("project", {})
+    if not isinstance(raw_project, dict):
+        report(f"`[project]` in {PYPROJECT} is not a table, so its dependencies cannot be read", path=PYPROJECT)
+        result.checks.append(check)
+        return
+    project: dict[str, Any] = raw_project
     # A missing key and a present-but-malformed value differ: only the first means "none". A falsy
-    # malformed value (`""`, `{}`) must not read as an empty list (PR 1222 review, Codex).
+    # malformed value (`""`, `{}`) must not read as an empty list.
     dynamic = project.get("dynamic", [])
     if not isinstance(dynamic, list):
         report(f"`[project].dynamic` in {PYPROJECT} is not a list of field names", path=PYPROJECT)

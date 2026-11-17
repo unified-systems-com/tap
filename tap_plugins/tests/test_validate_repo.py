@@ -2007,7 +2007,7 @@ class TestDependencyPins:
     )
     def test_a_plugin_shaped_direct_reference_is_still_refused(self, tmp_path: Path, requirement: str) -> None:
         """The exemption covers a plugin distribution's version range, never an alternate source:
-        a plugin-shaped name alone must not let a remote reference through (PR 1222 review)."""
+        a plugin-shaped name alone must not let a remote reference through."""
         check = _pins(tmp_path, [requirement])
         assert check.status == "warn", _messages(check)
         assert "direct reference" in _messages(check)
@@ -2039,7 +2039,7 @@ class TestDependencyPins:
             ('[project]\nname = "shell-sample-tap"\ndynamic = ["dependencies"]\n', "dynamic"),
             ('[project]\nname = "shell-sample-tap"\ndependencies = "boto3==1"\n', "not a list"),
             ('[project]\nname = "shell-sample-tap"\ndependencies = [1]\n', "not a requirement string"),
-            # Falsy but malformed is not "none" (PR 1222 review): only a missing key means no dependencies.
+            # Falsy but malformed is not "none": only a missing key means no dependencies.
             ('[project]\nname = "shell-sample-tap"\ndependencies = ""\n', "not a list"),
             ('[project]\nname = "shell-sample-tap"\ndependencies = {}\n', "not a list"),
             ('[project]\nname = "shell-sample-tap"\ndynamic = ""\n', "not a list of field names"),
@@ -2049,6 +2049,17 @@ class TestDependencyPins:
         check = _pins(tmp_path, None, raw=raw)
         assert check.status == "warn", _messages(check)
         assert why in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    def test_a_project_that_is_not_a_table_is_reported(self, tmp_path: Path) -> None:
+        """Called directly: a non-table `[project]` also trips older package checks before this one
+        runs, so the full validator run is not the place to observe this check's own verdict."""
+        repo = _pins_repo(tmp_path, None, raw="project = []\n")
+        result = ValidationResult(ok=True, level="structure", plugin_path=str(repo), strict=False)
+        repo_module._check_dependency_pins(repo, result)
+        check = _check(result, "repo-dependency-pins")
+        assert check.status == "warn", _messages(check)
+        assert "not a table" in _messages(check)
 
     @pytest.mark.spec("req-tap-plugin-validate-pins-5")
     def test_the_shipped_phase_warns(self) -> None:
