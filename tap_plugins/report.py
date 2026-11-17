@@ -29,11 +29,12 @@ from tap import plugin_deps
 from tap.jsonfiles import validate_json
 from tap.plugin_identity import dist_name_for_slug, installed_plugin_dist_name
 from tap.preboot import direct_url_vcs_rev
+from tap_plugins.datadir import _report as datadir_report
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "plugin-report.schema.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _provenance(dist_name: str) -> dict[str, Any]:
@@ -200,6 +201,9 @@ def build_report() -> dict[str, Any]:
                     "searches": _surface_counts(n_searches, None),
                     "grift": _surface_counts(n_grift, None),
                 },
+                "data_directory": datadir_report.plugin_section(
+                    slug, getattr(manifest, "data_directory", None) if manifest is not None else None
+                ),
                 "dependencies": {
                     "depends_on": depends_on,
                     "required_by": sorted(required_by.get(slug, [])),
@@ -218,7 +222,13 @@ def build_report() -> dict[str, Any]:
             }
         )
 
-    report = {"schema_version": SCHEMA_VERSION, "plugin_count": len(plugins), "plugins": plugins}
+    declared_dirs = {p["slug"] for p in plugins if p["data_directory"]["declared"]}
+    report = {
+        "schema_version": SCHEMA_VERSION,
+        "plugin_count": len(plugins),
+        "plugins": plugins,
+        "plugin_data": datadir_report.instance_section(declared_dirs),
+    }
     validate_json(report, SCHEMA_PATH, source="plugin-report")
     return report
 

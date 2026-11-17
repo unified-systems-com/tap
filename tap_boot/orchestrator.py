@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/8e86bf240664 (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/e18eb3bf269f (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@edbf125ca418/8e86bf240664 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@df69091268ef/e18eb3bf269f (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -190,6 +190,12 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         with rec.phase("posture"):
             _phase_posture(say)
 
+        # Plugin data next: it needs no database, and a plugin whose data would land on storage
+        # that is thrown away must stop the standup before anything is written
+        # (req-tap-plugin-datadir-mount-gate).
+        with rec.phase("plugin_data"):
+            _phase_plugin_data(say)
+
         with rec.phase("auth"):
             _phase_auth(profile, say)
 
@@ -284,6 +290,22 @@ def _phase_posture(say: Echo) -> None:
         check_deploy_posture(say)
     except DeployPostureError as exc:
         raise BootError(f"deploy posture: {exc}") from exc
+
+
+def _phase_plugin_data(say: Echo) -> None:
+    """plugin_data phase: the mount gate, then provisioning of every declared plugin data directory.
+
+    Runs for every profile and for no profile. A configured volume that is unusable aborts whoever
+    is installed; a ``"state"`` declaration with no volume aborts naming the plugin
+    (`tap_plugins/specs/spec-tap-plugin-data-directory.md`).
+    """
+    from tap_plugins.datadir import PluginDataGateError, run_gate
+
+    logger.info("[e3ae] boot plugin_data phase: mount gate and provisioning")
+    try:
+        run_gate(say)
+    except PluginDataGateError as exc:
+        raise BootError(f"plugin data: {exc}", detail={"failed_step": "plugin_data"}) from exc
 
 
 def _phase_auth(profile: BootProfile | None, say: Echo) -> None:

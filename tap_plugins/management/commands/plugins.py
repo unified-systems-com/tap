@@ -67,3 +67,19 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.ERROR(f"      UNDECLARED imports: {', '.join(deps['undeclared_imports'])}")
                 )
+            data_dir = p["data_directory"]
+            if data_dir["declared"]:
+                where = data_dir["path"] or f"not placed: {data_dir['placement_refusal']}"
+                self.stdout.write(f"      data_directory: {data_dir['durability']} at {where} ({data_dir['location']})")
+        plugin_data = report["plugin_data"]
+        if plugin_data["volume_enabled"]:
+            verdict = plugin_data["verdict"]
+            state = "usable" if verdict["usable"] else f"UNUSABLE ({verdict['reason']})"
+            self.stdout.write(f"plugin data volume: {plugin_data['volume_root']} — {state}")
+        else:
+            self.stdout.write("plugin data volume: not enabled")
+        if plugin_data["orphans"] or plugin_data["strays"]:
+            self.stdout.write(
+                f"  orphans: {', '.join(plugin_data['orphans']) or '(none)'}; "
+                f"strays: {', '.join(plugin_data['strays']) or '(none)'} — see manage.py plugin_data list"
+            )

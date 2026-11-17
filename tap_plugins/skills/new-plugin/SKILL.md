@@ -350,6 +350,40 @@ grype-tap, `specs/spec-grype-v0.md` `req-grype-binary` and `req-grype-database`,
 release yet). If a second plugin takes route B, extract those modules into `tap_plugins` instead of copying
 them again, and say so in the PR.
 
+## Step 6c: A directory on disk the plugin keeps (when it needs one)
+
+A SQLite database updated in place, a bare clone, a downloaded tool, a cache of fetched datasets: none of that
+is graph data, and none of it goes in an environment variable or a directory under the runtime user's home.
+Core owns the place (`tap_plugins/specs/spec-tap-plugin-data-directory.md`). Declare it:
+
+```toml
+[data_directory]
+purpose = "Local copies of public datasets, refreshed hourly."   # one sentence, shown to operators
+durability = "cache"        # "cache": all of it can be re-fetched; "state": something cannot be rebuilt
+max_bytes = 2147483648      # the largest you expect; recorded and reported, not enforced
+# executes = true           # only if the plugin runs programs from the directory
+```
+
+Then ask for the path, every time, and never build it: `tap_plugins.data_dir("<slug>")` returns the canonical
+real path, and `tap_plugins.data_dir_is_ephemeral("<slug>")` says whether it is lost on a container recreate.
+Do not read `TAP_PLUGIN_DATA_ROOT` and do not keep your own variable for the location. Core creates the
+directory at boot; the accessor never does, and it raises `PluginDataDirectoryError` when the plugin did not
+declare the table. Raise `requires_tap` to the first core release with the table, because an older core
+rejects the unknown key.
+
+- **`"state"` needs the volume.** An instance with no plugin data volume refuses to boot with a plugin that
+  declares state. A plugin that only wants scratch space it never keeps uses the system temporary directory
+  and declares nothing.
+- **Names beginning `.tap-`, and `CACHEDIR.TAG`, are core's.** Do not create, change or delete them.
+- **With `executes = true`, set the executable bit on exactly the files you run.** Without it, set it on none.
+  The report lists every executable file it finds.
+- **Another plugin's data is reached through that plugin's interface, never its files.** If you need what a
+  plugin keeps, call a read function it publishes; do not open its directory. And **only the owning plugin
+  writes its directory**: every lock and staged swap a plugin builds assumes it is the only writer. Nothing
+  enforces either half, which is why both are stated here (`req-tap-plugin-datadir-sharing`).
+- **Nothing is deleted for you.** Clear your own cache when you like. Removing the plugin leaves its directory
+  as an orphan until an operator runs `manage.py plugin_data purge <slug>`.
+
 ## Step 7: GRIFT seed data
 
 Per `spec-grift-v0.md`; validate against `tap_grid/schemas/grift-document.schema.json`. Entity ids from
