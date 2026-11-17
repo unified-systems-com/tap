@@ -294,8 +294,11 @@ def import_dimension_vocabulary(*, actor: Any) -> VocabularySummary:
         if not outcome.ok:
             detail = outcome.read_error if outcome.read_error is not None else import_failure_detail(outcome.result)
             raise DimensionVocabularyError(outcome.bundle_name, detail)
-        result = outcome.result  # set: an ok outcome imported
-        assert result is not None
+        result = outcome.result
+        if result is None:
+            # An ok outcome always carries its import result; refuse rather than assume (an assert
+            # is stripped under -O, Codacy/Bandit B101).
+            raise DimensionVocabularyError(outcome.bundle_name, "imported with no import result to count")
         imported += len(result.imported_batches)
         skipped += len(result.skipped_batches)
     return VocabularySummary(bundles=len(outcomes), imported=imported, skipped=skipped)
