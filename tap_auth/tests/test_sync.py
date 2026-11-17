@@ -115,8 +115,11 @@ class TestSyncGroupsAndActors:
         keys = set(ProtectedGroup.objects.values_list("builtin_key", flat=True))
         assert keys == {"tap_admin", "tap_viewer", "tap_bootloader", "tap_cares.scheduler", "tap_cares.collector"}
         assert Group.objects.get(name="tap_admin").permissions.count() == len(ALL_CAPABILITY_NAMES)
-        # tap_viewer is the human-only read role: grid.read and nothing else.
-        assert set(Group.objects.get(name="tap_viewer").permissions.values_list("codename", flat=True)) == {"grid_read"}
+        # tap_viewer is the human-only read role: grid.read, and files.read to download what it can see.
+        assert set(Group.objects.get(name="tap_viewer").permissions.values_list("codename", flat=True)) == {
+            "grid_read",
+            "files_read",
+        }
         collector_caps = set(
             Group.objects.get(name="tap_cares.collector").permissions.values_list("codename", flat=True)
         )
@@ -128,6 +131,9 @@ class TestSyncGroupsAndActors:
             "grid_delete",
             "cares_run_collectors",
             "cares_self_test_collectors",
+            "files_create",
+            "files_update",
+            "files_read",
         }
 
     def test_group_bundle_is_hard_synced(self):

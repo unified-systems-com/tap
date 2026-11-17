@@ -1,38 +1,21 @@
-"""The file store's entry point: whether it is enabled, and the one backend instance.
+"""The file store's backend instance, built from the configured root (`tap_files.config`).
 
-`specs/spec-tap-file-store.md`, `req-tap-files-root` and `req-tap-files-interface`. The only reader of
-the `TAP_FILES_ROOT` setting outside `tap/settings.py` (guard: files-root-resolution). Callers outside
-this package reach the store through the gateway (tap#1209), never by building a path.
+`specs/spec-tap-file-store.md`, `req-tap-files-root` and `req-tap-files-interface`. Only the gateway
+(`tap_files.services`), boot's initialisation and recovery, and the check command import this package
+(`req-tap-files-gateway-5`, guard: files-backend-reach); everything else calls the gateway.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from tap_files.config import ACCEPTED_BACKENDS, configured_backend, configured_root
 from tap_files.store.errors import FileStoreNotEnabled
 from tap_files.store.local import LocalBackend
-
-ACCEPTED_BACKENDS = ("local",)
-
-
-def configured_root() -> Path | None:
-    """The configured store root, or ``None`` when the file store is not enabled."""
-    from django.conf import settings
-
-    raw = getattr(settings, "TAP_FILES_ROOT", "") or ""
-    return Path(raw) if raw else None
-
-
-def configured_backend() -> str:
-    from django.conf import settings
-
-    return str(getattr(settings, "TAP_FILES_BACKEND", "local") or "local")
 
 
 def get_store() -> LocalBackend:
     """The store's backend, or :class:`FileStoreNotEnabled` when no root is configured.
 
-    TAP-IMPLEMENTS: req-tap-files-root@1c946c69db7b/4d9645409e81 (derivation) — enabled exactly when the
+    TAP-IMPLEMENTS: req-tap-files-root@5d8973c4f0c3/4d9645409e81 (derivation) — enabled exactly when the
         setting is set; unset raises one clear error and touches no path.
     """
     root = configured_root()
@@ -44,4 +27,4 @@ def get_store() -> LocalBackend:
     return LocalBackend(root)
 
 
-__all__ = ["ACCEPTED_BACKENDS", "FileStoreNotEnabled", "configured_backend", "configured_root", "get_store"]
+__all__ = ["FileStoreNotEnabled", "get_store"]

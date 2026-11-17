@@ -61,6 +61,14 @@ TAP_TEST_MODE = True
 # turning it back on.
 DEPLOY_POSTURE_ENFORCED = False
 
+# THE TEST RUNNER NEVER OPENS A REAL FILE STORE. docker-compose.yml sets TAP_FILES_ROOT for the
+# web service, so without this every `run_boot` test would initialise and recover the container's
+# own store, as whichever uid runs pytest, and fail wherever that uid cannot read the 0700/0440
+# store a different uid created. Stored files are permanent, so no test writes to one it did not
+# make: a test that needs a store points the setting at its own temporary root
+# (specs/spec-tap-file-store.md, req-tap-files-root).
+TAP_FILES_ROOT = ""
+
 # The least-privilege search role (req-grid-search-readonly-role.sec) is provisioned at boot in
 # dev/prod, where the search_readonly connection authenticates as it. The test runner does not
 # run boot, so the suite keeps search_readonly on the app role — the whole corpus does not run

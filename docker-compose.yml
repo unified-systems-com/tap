@@ -268,6 +268,13 @@ services:
       # volume, remove this line AND TAP_PLUGIN_DATA_ROOT below: caches then go to an ephemeral
       # root, and a plugin declaring "state" stops boot. Remove only one and boot aborts.
       - plugin_data:/var/lib/tap/plugin-data
+      # File store volume — the core file store's root (specs/spec-tap-file-store.md,
+      # req-tap-files-root). Its own named volume, never the plugin data volume: boot refuses
+      # two roots where one contains the other. Per compose project, like plugin_data, and
+      # `dc down -v` destroys every stored file with it. The image creates this path owned by
+      # the runtime user, so a fresh volume inherits usable ownership. To run without the
+      # store, remove this line AND TAP_FILES_ROOT below; remove only one and boot aborts.
+      - files:/var/lib/tap/files
 
     # RAM-backed home for gunicorn's worker heartbeat files (worker_tmp_dir).
     #
@@ -445,6 +452,12 @@ services:
       # mounted, writable volume (req-tap-plugin-datadir-mount-gate).
       TAP_PLUGIN_DATA_ROOT: /var/lib/tap/plugin-data
 
+      # File store root, backed by the files named volume above. No default in settings: set
+      # means "this is my volume", and boot's mount gate then requires it to be a mounted,
+      # writable volume (req-tap-files-mount-gate). Every program reaches it through the gated
+      # gateway, tap_files.services (req-tap-files-gateway).
+      TAP_FILES_ROOT: /var/lib/tap/files
+
       # Dev boot profile: which boot/<id>.json the `fire_boot_collectors`
       # command fires after seeding. Empty by default (no-op — boot collection
       # is never implicit); chosen explicitly per session via spawn's positional
@@ -512,3 +525,4 @@ volumes:
   uv_cache:       # Stores uv's downloaded wheels + extracted archives. Per-project.
   tailwind_bin:   # Stores the on-demand tailwindcss CLI binary at /opt/tailwind. Per-project.
   plugin_data:    # Plugin data directories at /var/lib/tap/plugin-data. Per-project.
+  files:          # The core file store's OCFL root at /var/lib/tap/files. Per-project.

@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/2796df1feb00 (enforcement)
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/d26ea8dd4097 (enforcement)
     — the strict raise-on-unknown parse discipline is module-wide here.
 
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
@@ -40,6 +40,7 @@ _ALLOWED_TOP_KEYS = {
     "boot",
     "fips",
     "data_directory",
+    "file_store",
 }
 _DEPENDS_ON_KEYS = {"slug", "min_version", "optional", "note"}
 _BOOT_RECORD_KEYS = {"name", "description", "sha256"}
@@ -49,6 +50,7 @@ _DATA_DIRECTORY_KEYS = {"purpose", "durability", "max_bytes", "executes"}
 _DATA_DIRECTORY_REQUIRED = ("purpose", "durability", "max_bytes")
 DATA_DIRECTORY_DURABILITIES = ("cache", "state")
 _PURPOSE_MAX = 255
+_FILE_STORE_KEYS = {"required"}
 _REQUIRED_TOP_KEYS = {"manifest_version", "plugin_version", "slug", "name"}
 
 _EDGE_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "tap_grid" / "schemas" / "edge-definition.schema.json"
@@ -197,13 +199,25 @@ class DataDirectoryDeclaration:
     executes: bool
 
 
+@dataclass(frozen=True)
+class FileStoreDeclaration:
+    """A plugin's ``[file_store]`` table (``req-tap-files-mount-gate``).
+
+    ``required = true`` says the plugin cannot work without the core file store, so boot aborts,
+    naming the plugin, when the store is not enabled. A plugin that uses the store when it is there
+    and works without it declares nothing.
+    """
+
+    required: bool
+
+
 @dataclass
 class PluginManifest:
     """Parsed and validated contents of a tap-plugin.toml file.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@a38a1d4a1fc2/46238d11f654 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@a38a1d4a1fc2/74c0acf2f96c (derivation) — the
         v0 top-level manifest shape IS this model.
-    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/46238d11f654 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/74c0acf2f96c (derivation) — the
         declared surfaces (models, edges, editors, searches, grift) are exactly this
         model's collections; a capability not declared here is not published.
     """
@@ -225,12 +239,13 @@ class PluginManifest:
     fips: FipsDeclaration | None
     plugin_root: Path
     data_directory: DataDirectoryDeclaration | None = None
+    file_store: FileStoreDeclaration | None = None
 
 
 def load_manifest(plugin_root: Path) -> PluginManifest:
     """Load, parse, and validate tap-plugin.toml at *plugin_root*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/55fe9a39318e (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/662fbf067a2e (derivation) — the
         fixed-name TOML manifest loads exactly here.
 
     Args:
@@ -265,6 +280,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
     boot_records = _parse_boot_records(raw.get("boot", {}), manifest_path)
     fips = _parse_fips(raw.get("fips"), manifest_path)
     data_directory = _parse_data_directory(raw.get("data_directory"), manifest_path)
+    file_store = _parse_file_store(raw.get("file_store"), manifest_path)
 
     manifest = PluginManifest(
         manifest_version=raw["manifest_version"],
@@ -284,6 +300,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
         fips=fips,
         plugin_root=plugin_root,
         data_directory=data_directory,
+        file_store=file_store,
     )
 
     _validate_convention_dirs(manifest)
@@ -677,6 +694,27 @@ def _parse_data_directory(raw_value: Any, manifest_path: Path) -> DataDirectoryD
     return DataDirectoryDeclaration(purpose=purpose, durability=durability, max_bytes=max_bytes, executes=executes)
 
 
+def _parse_file_store(raw_value: Any, manifest_path: Path) -> FileStoreDeclaration | None:
+    """Parse the optional ``[file_store]`` table (``req-tap-files-mount-gate``).
+
+    TAP-IMPLEMENTS: req-tap-files-mount-gate@58499b9fbc79/bfb5dba13311 (enforcement) — the table's one
+        key and its type are refused here, at manifest load.
+
+    ``required`` is the only key and must be a TOML boolean; any other key is refused by name.
+    """
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, dict):
+        raise PluginManifestError(f"'file_store' must be a table in {manifest_path}")
+    unknown = set(raw_value) - _FILE_STORE_KEYS
+    if unknown:
+        raise PluginManifestError(f"file_store table has unknown keys {sorted(unknown)} in {manifest_path}")
+    required = raw_value.get("required")
+    if not isinstance(required, bool):
+        raise PluginManifestError(f"file_store.required must be a boolean in {manifest_path}")
+    return FileStoreDeclaration(required=required)
+
+
 # ---------------------------------------------------------------------------
 # Directory and path validators
 # ---------------------------------------------------------------------------
@@ -722,7 +760,7 @@ def _validate_grift_paths(manifest: PluginManifest) -> None:
         full_path = manifest.plugin_root / entry.path
         if not full_path.exists():
             raise PluginManifestError(
-                f"Declared GRIFT path '{entry.path}' not found at {full_path} " f"(plugin '{manifest.slug}')"
+                f"Declared GRIFT path '{entry.path}' not found at {full_path} (plugin '{manifest.slug}')"
             )
 
 
@@ -788,7 +826,7 @@ def _validate_editor_classes(manifest: PluginManifest) -> None:
 
         if not isinstance(instance, EditorDescriptor):
             raise PluginManifestError(
-                f"Editor class '{entry.class_path}' is not an EditorDescriptor subclass " f"in plugin '{manifest.slug}'"
+                f"Editor class '{entry.class_path}' is not an EditorDescriptor subclass in plugin '{manifest.slug}'"
             )
 
         if instance.entity_type != entry.entity_type:

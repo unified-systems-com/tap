@@ -9,7 +9,7 @@ from django.core.checks import Error, register
 
 @register()
 def check_backend(app_configs: Any = None, **kwargs: Any) -> list[Error]:
-    from tap_files.store import ACCEPTED_BACKENDS, configured_backend
+    from tap_files.config import ACCEPTED_BACKENDS, configured_backend
 
     backend = configured_backend()
     if backend not in ACCEPTED_BACKENDS:

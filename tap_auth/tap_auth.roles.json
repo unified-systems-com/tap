@@ -11,9 +11,10 @@
       ]
     },
     "tap_viewer": {
-      "description": "Read-only human role: grid.read and nothing else. The least-privilege bundle for an invited guest / viewer — an early adopter who should see the grid but never mutate it, run collectors, or administer. Human-only: granted by email via auth.initial_grants; never a program actor's bundle. Holds no write/import/admin/cares capability.",
+      "description": "Read-only human role: grid.read, plus files.read so a person who can see a stored file's node can download it (req-tap-files-capabilities-4; there is no narrower download role in this release). The least-privilege bundle for an invited guest / viewer — an early adopter who should see the grid but never mutate it, run collectors, or administer. Human-only: granted by email via auth.initial_grants; never a program actor's bundle. Holds no write/import/admin/cares capability, and no file-store write.",
       "capabilities": [
-        "grid.read"
+        "grid.read",
+        "files.read"
       ],
       "assignable_to": [
         "human"
@@ -38,7 +39,7 @@
       ]
     },
     "tap_cares.collector": {
-      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only. Holds grid.reconcile so the run's final phase can reconcile; the per-collector reconcile_authority switch (off by default) is the operator's control, and collector code never calls a delete verb (req-grid-reconcile-verb-1/-2). Also holds grid.delete so a collector's GRIFT batch may carry a `deletes` section and retire its own superseded edges; a `deletes` section is data, not a verb call. Interim and deliberately global: replace this grant with per-collector / plugin permission sets (req-tap-auth-program-users and the per-collector actor split) once a second or third case justifies them.",
+      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only. Holds grid.reconcile so the run's final phase can reconcile; the per-collector reconcile_authority switch (off by default) is the operator's control, and collector code never calls a delete verb (req-grid-reconcile-verb-1/-2). Also holds grid.delete so a collector's GRIFT batch may carry a `deletes` section and retire its own superseded edges; a `deletes` section is data, not a verb call. Interim and deliberately global: replace this grant with per-collector / plugin permission sets (req-tap-auth-program-users and the per-collector actor split) once a second or third case justifies them. Also holds files.create, files.update and files.read so a collector can store the files it fetches through the file store's gateway; that grant is likewise global and interim — any installed collector can store a file — until per-collector scoping replaces it (Issue# 1205 - tap, req-tap-files-capabilities-5).",
       "capabilities": [
         "grid.read",
         "grid.write",
@@ -46,7 +47,10 @@
         "cares.run_collectors",
         "cares.self_test_collectors",
         "grid.reconcile",
-        "grid.delete"
+        "grid.delete",
+        "files.create",
+        "files.update",
+        "files.read"
       ],
       "assignable_to": [
         "program"

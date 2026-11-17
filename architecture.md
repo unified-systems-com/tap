@@ -66,7 +66,7 @@ The Django apps, by what each one owns rather than by build order.
 | App | Owns |
 | --- | --- |
 | `tap_grid` | The core data model: Entity, Edge, dimensions, history/FLIP, the service layer, Gryphon, GRIFT, keystone, reconciliation. Everything else depends on it. |
-| `tap_files` | The file store: whole files kept for the grid in an OCFL 1.1 storage root on their own mounted volume, written once and verified before release (`specs/spec-tap-file-store.md`). Optional per instance and imports no plugin. |
+| `tap_files` | The file store: whole files kept for the grid in an OCFL 1.1 storage root on their own mounted volume, written once and verified before release (`specs/spec-tap-file-store.md`). Programs reach it only through the gated gateway `tap_files.services` (the `files.*` capabilities, one log record per operation). Optional per instance and imports no plugin. |
 | `tap_plugins` | Plugin identity, manifests, dependency declaration and resolution, validation (`validate_plugin`), load lifecycle, and the registry-backed discovery of TAP-managed types. |
 | `tap_boot` | All boot. First in `INSTALLED_APPS`. Takes a fresh database to a usable, populated, self-describing instance declaratively and with zero human interaction; the boot profile and its record are the bill of materials for what an instance is. |
 | `tap_auth` | Authentication and authorization as a platform-wide plane: actors, capabilities, policy, and the login chokepoint. TAP is its own identity authority, passwordless-primary with passkeys (WebAuthn), with OIDC as a complementary path and a capability gate that bootstrap sits beneath. |
