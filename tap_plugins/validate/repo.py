@@ -2036,9 +2036,10 @@ def requirement_pin_problem(raw: str) -> tuple[str | None, str | None]:
     otherwise says why the entry floats. ``name`` is None only when the entry does not parse, in
     which case ``problem`` says so: an entry that cannot be read is not shown to be pinned.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/480164e8ea7f (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/ff6c7e5adcab (derivation) — the one
         rule for "is this requirement an exact pin": a single `==` (no wildcard) or `===` clause,
-        environment markers and extras ignored, first-party plugin distributions exempt.
+        environment markers and extras ignored, first-party plugin distributions exempt
+        from the version rule but never from the direct-reference refusal.
     """
     from packaging.requirements import InvalidRequirement, Requirement
 
@@ -2046,10 +2047,13 @@ def requirement_pin_problem(raw: str) -> tuple[str | None, str | None]:
         req = Requirement(raw)
     except InvalidRequirement as exc:
         return None, f"does not parse as a PEP 508 requirement ({exc})"
-    if is_first_party_distribution(req.name):
-        return req.name, None
+    # A direct reference is refused BEFORE the first-party exemption: the exemption is for a plugin
+    # distribution's version range, not for an alternate source, and a plugin-shaped name alone must
+    # not let `evil-tap @ git+https://...` through (PR 1222 review, Codex).
     if req.url:
         return req.name, "is a direct reference (`name @ url`), not a released version from the index"
+    if is_first_party_distribution(req.name):
+        return req.name, None
     clauses = list(req.specifier)
     if not clauses:
         return req.name, "names no version at all, so any release satisfies it"

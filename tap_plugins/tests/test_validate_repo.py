@@ -2000,6 +2000,18 @@ class TestDependencyPins:
         itself are not plugin distributions, so they are held to the pin like any library."""
         assert _pins(tmp_path, [requirement]).status == "warn"
 
+    @pytest.mark.spec("req-tap-plugin-validate-pins-3")
+    @pytest.mark.parametrize(
+        "requirement",
+        ["evil-tap @ git+https://example.invalid/repo.git@main", "computing-core-tap @ https://example.invalid/c.whl"],
+    )
+    def test_a_plugin_shaped_direct_reference_is_still_refused(self, tmp_path: Path, requirement: str) -> None:
+        """The exemption covers a plugin distribution's version range, never an alternate source:
+        a plugin-shaped name alone must not let a remote reference through (PR 1222 review)."""
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        assert "direct reference" in _messages(check)
+
     @pytest.mark.spec("req-tap-plugin-validate-pins-4")
     def test_no_dependencies_passes(self, tmp_path: Path) -> None:
         check = _pins(tmp_path, None)
