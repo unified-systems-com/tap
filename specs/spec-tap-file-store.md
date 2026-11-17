@@ -144,16 +144,20 @@ The store lives under one root named by one core setting.
   route answers not found, and nothing else in TAP is affected. A plugin that cannot work without the
   store says so (`req-tap-files-mount-gate`).
 - **Its own volume.** The compose files in this repository enable the store: they mount a named volume
-  in every service that runs store code and set the variable to its path. It is a different volume from the plugin data volume (ruled 2026-11-16). The reason is
-  disk-full: plugin caches can grow by gigabytes, and on a shared disk a runaway cache would stop a
-  compliance document being written. Separate roots also let a backup treat the two differently.
+  in every service that runs store code and set the variable to its path. It is a different volume from the plugin data volume (ruled 2026-11-16). Separate roots let a
+  backup treat the two differently, and let an operator give each its own disk or quota.
+- **Shared capacity is an accepted limitation** (ruled 2026-11-16). Two named volumes are two
+  directories, and by default they sit on the same disk and share its free space. On the shipped
+  compose files a plugin cache that fills the disk does stop a file being stored. An operator who
+  needs that not to happen mounts the two roots on separately sized storage; this specification
+  does not require it and the mount gate does not test for it.
 - **Layout under the root.** Core owns everything under the root:
 
   | Path | Holds |
   | --- | --- |
   | `ocfl/` | The OCFL storage root. Nothing but OCFL content is ever placed in it. |
   | `staging/` | Files being written, before they are moved into `ocfl/`. Same filesystem, so the move is atomic. |
-  | `quarantine/` | Incomplete or invalid content moved aside by recovery or by the check, never deleted. |
+  | `quarantine/` | Incomplete or invalid content moved aside by recovery, never deleted. |
   | `locks/` | Per-object lock files. |
 
   Staging, quarantine and locks sit beside the OCFL root and not inside it because OCFL forbids
@@ -270,7 +274,11 @@ Choices this specification makes where OCFL leaves one:
   (ruled 2026-11-16). Hashing uses the interpreter's `hashlib`, which resolves to the image's
   validated OpenSSL provider; the store adds no cryptographic provider.
 - **Version inventories.** Each version directory carries its own inventory and sidecar, as OCFL
-  recommends, and the root inventory equals the newest version's.
+  recommends, and the root inventory equals the newest version's. The store relies on this copy: it
+  is what recovery completes or restores a root inventory from (`req-tap-files-write`).
+- **Every version has a directory.** A version that stores no new bytes (a rename) still has its
+  `vN` directory, holding its inventory and sidecar and no `content` directory, which is the shape
+  OCFL gives for a version that adds no content.
 - **One file per version.** Each version's state maps exactly one digest to exactly one logical path.
   OCFL allows more; the store does not use it.
 - **Version entries.** Each version records `created` (the time of the write, with zone), `user.name`
@@ -396,8 +404,9 @@ Stored bytes are write-once (ruled 2026-11-16).
 - **A new version** stores new bytes for an existing object. The earlier version's directory is not
   touched.
 - **A rename** records a new logical name. It is a new OCFL version that stores no new bytes: the
-  inventory gains a version whose state maps the existing digest to the new name. No file is written
-  into the new version's directory, so no directory is created for it.
+  inventory gains a version whose state maps the existing digest to the new name. The new version's
+  directory is created and holds that version's inventory and sidecar; it has no `content`
+  directory, because no content file is written.
 - **Nothing is deleted.** There is no operation that removes an object, a version or a content file
   (`req-tap-files-retention`).
 
@@ -417,7 +426,7 @@ for nodes (`req-grid-service-batch-occ`).
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-immutable-1 | Earlier Versions Untouched | Proposed | After adding a version, every file under the earlier version directories is byte-identical and has an unchanged modification time. | |
-| req-tap-files-immutable-2 | Rename Stores No Bytes | Proposed | A rename raises the head version by one, adds no content file, and leaves the digest unchanged. | |
+| req-tap-files-immutable-2 | Rename Stores No Bytes | Proposed | A rename raises the head version by one, adds no content file, and leaves the digest unchanged. The new version's directory exists, holds an inventory and its sidecar, and has no `content` directory. | |
 | req-tap-files-immutable-3 | No Delete Operation | Proposed | The backend protocol and the service gateway expose no operation that removes an object, a version or content, and no code path under the store unlinks a file inside `ocfl/`. | Recovery moves incomplete content to quarantine; it does not unlink. |
 | req-tap-files-immutable-4 | Stale Writer Refused | Proposed | Adding a version or renaming with an expected version that is not the head is refused with a conflict error carrying both numbers, and changes nothing. | |
 | req-tap-files-immutable-5 | Create Is Put-If-Absent | Proposed | Creating an object whose identifier already exists is refused and the existing object is unchanged. | |
@@ -478,31 +487,71 @@ A write never leaves a partly written file where a reader can find it.
    and a mismatch refuses the write. A collector that has verified a document elsewhere uses this to
    prove the store kept the same bytes.
 4. **Build the complete result in staging.** For a create, the whole object directory. For a new
-   version, the version directory and the new root inventory and sidecar.
-5. **Make it durable.** `fsync` each file and its directory.
+   version or a rename, the version directory, which carries the new inventory and its sidecar. The
+   staging directory's name begins with the object's encoded identifier, so anything that finds it
+   later knows which object's lock governs it.
+5. **Make it durable.** `fsync` each staged file and each staged directory.
 6. **Move into place.**
    - A create renames the staged object directory to its place under `ocfl/`, creating the hashed
      parent levels first. The rename is atomic, so the object either exists whole or not at all.
-   - A new version renames the staged version directory into the object, then replaces the root
-     inventory, then its sidecar, each by an atomic rename. The inventory is replaced last because an
-     object whose root inventory does not mention a version directory is recoverable, and one whose
-     inventory names content that is not there is not.
+   - A new version or a rename moves the staged version directory into the object. It then replaces
+     the root inventory with a copy of the new version's inventory, by an atomic rename of a
+     temporary file. **That rename is the commit point**: before it the object is at its old head,
+     after it at its new one. Last, it replaces the root sidecar the same way.
+   - After each rename the directory that received the entry is itself `fsync`ed, and for a create
+     so is each parent level that was made. A rename is not durable until its directory is.
 7. **Log, release the lock, return** the digest, size and version.
 
+The root inventory is replaced after the version directory is in place because an object whose root
+inventory does not mention a version directory is recoverable, and one whose inventory names content
+that is not there is not.
+
 **Order against the grid.** Bytes are stored before the node that names them is written, and a
-caller whose grid write then fails is left with a stored object and no node. That is the safe
-direction: the check reports it (`req-tap-files-check`), and nothing points at bytes that are not
-there.
+caller whose grid write then fails is left with stored bytes no node records: a whole object after a
+create, or a version above the one the node names after a new version or rename. That is the safe
+direction: nothing points at bytes that are not there. Three rules keep it safe.
 
-**Recovery.** At boot, and at the start of the check, the store sweeps for what an interrupted write
-left behind and moves it to `quarantine/` with a note saying what it was and when it was found:
+- The node is the authority for which version is current. A reader acting for a node asks for the
+  version the node records and does not take the store's head on trust (`req-tap-files-download`).
+- A stored version no node records is kept, like everything else, and is not an error in the store.
+  The check reports a whole object with no node (`req-tap-files-check`); the plugin that owns the
+  node type reports a head that is ahead of its node.
+- A caller that retries reads the store's head with `stat` first. It does not repeat its earlier
+  expected version, which the store would now refuse for good. If the head already holds the bytes
+  it means to store, it uses that version and writes nothing; otherwise it adds its version after
+  the head. Its grid write names the node version it expects, so the grid refuses a second writer
+  the same way the store does.
 
-- anything under `staging/`, since no write is in progress at boot;
-- a version directory in an object numbered above the head recorded in its root inventory;
-- a hashed parent directory under `ocfl/` left empty by a create that did not finish, which is
-  removed, this being the one place the store removes a directory, and only an empty one.
+**Recovery.** Recovery puts right what an interrupted write left behind. It runs for every object at
+boot, on demand through `manage.py files recover`, and for one object at the start of any write to
+it. It is the only thing besides a write that changes anything under the root, and the check never
+runs it (`req-tap-files-check`).
 
-Recovery never changes an object's inventory and never removes content.
+Recovery never assumes it is alone. Services boot separately, so one process can be recovering while
+another is writing. For each object it touches, recovery takes that object's lock without waiting,
+skips the object when the lock is held, and looks again at the object's state after taking the lock
+and before changing anything. A staging directory is examined under the lock of the object its name
+gives. A writer holds its lock for the whole write and the lock dies with its process, so a staging
+directory whose lock is free belongs to no one.
+
+Under the lock, recovery:
+
+- moves an unowned staging directory to `quarantine/`, with a note saying what it was and when it
+  was found;
+- **completes or restores the root inventory pair** when the root inventory does not match its
+  sidecar. If the root inventory's bytes equal the inventory in one of the object's version
+  directories, and that version inventory matches its own sidecar and validates, the root sidecar
+  is rewritten from that version's: the commit had happened and is finished. Otherwise both root
+  files are restored from the highest version directory whose inventory matches its sidecar and
+  validates, and an integrity finding is logged. Where no version directory qualifies, nothing is
+  changed and the object is reported invalid. This is the only case in which recovery writes an
+  inventory, and it only ever copies one the store had already written and can verify;
+- moves a version directory numbered above the head in the (now matching) root inventory to
+  `quarantine/`: the write was interrupted before its commit point;
+- removes a hashed parent directory under `ocfl/` left empty by a create that did not finish, this
+  being the one place the store removes a directory, and only an empty one.
+
+Recovery never authors an inventory and never removes content.
 
 #### Acceptance Criteria
 
@@ -512,10 +561,15 @@ Recovery never changes an object's inventory and never removes content.
 | req-tap-files-write-2 | Disk Full Fails Cleanly | Proposed | A write that fails because the volume is full raises an error, leaves nothing under `ocfl/` for that write, and leaves `staging/` empty. | |
 | req-tap-files-write-3 | Declared Digest Checked | Proposed | A create given an expected digest that does not match is refused and stores nothing. | |
 | req-tap-files-write-4 | Interrupted Create Leaves No Object | Proposed | A create killed at any step before the final rename leaves no object for its identifier, and after the next boot `ocfl/` validates and the remains are in `quarantine/`. | Test by injecting a failure at each step. |
-| req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Proposed | An `add_version` killed at any step leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
+| req-tap-files-write-5 | Interrupted Version Leaves The Old Head | Proposed | An `add_version` killed at any step before the commit point leaves the object readable at its previous head with its previous bytes, and after the next boot the object validates. | |
 | req-tap-files-write-6 | One Writer Per Object | Proposed | Two concurrent creates for one identifier yield exactly one success; two concurrent `add_version` calls with the same expected version yield one success and one conflict. | Across processes, not only threads. |
 | req-tap-files-write-7 | Constant Memory | Proposed | Writing a file many times larger than the chunk size does not raise the process's memory use by more than a small multiple of the chunk size. | |
-| req-tap-files-write-8 | Recovery Removes No Content | Proposed | After recovery, every content file that existed under `ocfl/` before it still exists and is unchanged. | |
+| req-tap-files-write-8 | Recovery Removes No Content | Proposed | After recovery, every content file that existed under `ocfl/` before it still exists and is unchanged, under `ocfl/` or under `quarantine/`. | |
+| req-tap-files-write-9 | Every Interruption Point Recovers | Proposed | An `add_version` and a rename are each killed after every single step of the move into place, including between the root inventory's replacement and the root sidecar's. After recovery the object validates, is readable, and is at the old head when the kill came before the commit point and at the new head when it came after. | The case the first draft could not recover from. |
+| req-tap-files-write-10 | Root Pair Restored From A Version | Proposed | With the root sidecar altered, recovery rewrites it from the matching version directory and the object reads again; with the root inventory altered, recovery restores both files from the highest valid version directory and logs a finding; with no valid version inventory it changes nothing and the object is reported invalid. | |
+| req-tap-files-write-11 | Recovery Spares A Live Write | Proposed | With a writer in another process holding an object's lock, mid-write, recovery run at each step of that write moves nothing of that object's, and the write then completes and reads back correctly. | Covers the staging directory and the version directory placed before its commit point. |
+| req-tap-files-write-12 | Destination Directories Synced | Proposed | Each rename into `ocfl/` is followed by an `fsync` of the directory that received the entry, and a create also syncs each parent level it made. | Asserted by recording the calls in a test. |
+| req-tap-files-write-13 | Retry After A Failed Grid Write | Proposed | After a stored version whose grid write was refused, repeating the write with the earlier expected version is a conflict; `stat` then shows the head, and a retry that offers the same bytes is told the version that already holds them and stores nothing new. | |
 
 ### Read Path
 ----
@@ -526,6 +580,11 @@ Status: `Proposed`
 No byte leaves the store unverified. `open` reads the object's root inventory, checks the inventory
 against its sidecar, locates the requested version's content file, computes the SHA-256 of the whole
 file, compares it with the inventory's digest, and only then returns a stream.
+
+A reader takes no lock in the ordinary case. A root inventory that does not match its sidecar may be
+a write caught between its last two renames, so before calling it a failure the reader takes the
+object's lock, waiting no longer than a writer would, and reads the pair again. A mismatch that is
+still there is real. A reader repairs nothing; repair is recovery's (`req-tap-files-write`).
 
 Verification completes before the first byte is released. A stream that verifies as it goes cannot
 take back what it has already sent, and a caller that has received half a corrupted file has no way
@@ -550,6 +609,7 @@ error.
 | req-tap-files-read-3 | Missing Content Is Integrity, Missing Object Is Not Found | Proposed | A deleted content file yields `FileIntegrityError`; an unknown identifier yields the not-found error. | |
 | req-tap-files-read-4 | Verified Before First Byte | Proposed | For a file whose last byte is corrupt, no byte is delivered to the caller before the error. | |
 | req-tap-files-read-5 | Any Version Readable | Proposed | After two further versions are added, `open` with version 1 returns version 1's bytes and name. | |
+| req-tap-files-read-7 | No False Alarm During A Write | Proposed | Reads of an object issued continuously while another process adds versions to it never raise `FileIntegrityError` and never emit `CONCERN`. | |
 | req-tap-files-read-6 | Finding Raised | Proposed | Each integrity failure produces one log record and one `CONCERN` record naming the identifier and the failure kind. | |
 
 ### Capabilities
@@ -689,6 +749,13 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
 - **Route.** `GET /files/<identifier>/download`, with an optional `version` query parameter. The
   `/files` prefix is declared reserved by the owning app in the same change
   (`req-tap-auth-app-4`). `HEAD` is answered with the same headers and no body.
+- **Which version.** With no `version` parameter the route serves the version the node records in
+  its `file_version` field, and before sending anything compares the store's digest and size for
+  that version with the node's `sha256` and `size_bytes`. A disagreement is an integrity failure.
+  The store's head is not consulted: a version stored ahead of a failed grid write is not the
+  file's current content until a node says so. A node with no `file_version` field is served the
+  head. The route reads these fields by name, as it does `media_type`, and knows nothing else
+  about the node's type. An explicit `version` is served as asked.
 - **Who may.** The request must come from an authenticated user; the route is behind the login wall
   and is not exempted from it. The user must hold `files.read`, and must be able to read the node
   whose identifier this is, which must exist and be live. A file whose node is tombstoned is not
@@ -727,6 +794,8 @@ makes the saved file open in the right program; it is not what the safety rests 
 | req-tap-files-download-5 | Tombstoned Not Served | Proposed | After the file's node is tombstoned, the route refuses and the object is still present in the store. | |
 | req-tap-files-download-6 | Hostile Name Safe In Header | Proposed | A logical name containing a quote, a newline, a semicolon and non-ASCII letters produces one well-formed `Content-Disposition` header and no additional header. | Header injection. |
 | req-tap-files-download-7 | Prefix Reserved | Proposed | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
+| req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
+| req-tap-files-download-11 | Node And Store Must Agree | Proposed | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
 | req-tap-files-download-8 | Changed File Fails Visibly | Proposed | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
 
 ### Report-Only Check
@@ -735,8 +804,10 @@ RID: `req-tap-files-check`
 
 Status: `Proposed`
 
-`manage.py files check` examines the store and reports. It changes nothing except to run the recovery
-sweep (`req-tap-files-write`), which only moves incomplete content aside.
+`manage.py files check` examines the store and reports. It changes nothing at all: it writes no
+file, moves nothing and takes no lock, so it is safe to run against a store in use. Recovery is a
+separate step (`req-tap-files-write`). An object caught mid-write may be reported as it is seen; a
+finding that a second run does not repeat was a write in progress.
 
 It reports:
 
@@ -745,6 +816,8 @@ It reports:
 - **Objects with no live node.** An object whose identifier is not the identifier of a live entity.
   Stored bytes nothing on the grid points at: the result of a write whose grid half failed, or of a
   node tombstoned after its file was stored.
+- **Interrupted writes.** Staging directories, version directories above an object's head and root
+  inventory pairs that do not match, each of which recovery would act on.
 - **What recovery found.** The contents of `quarantine/`, with what each item was.
 - **Totals.** Objects, versions, bytes.
 
@@ -765,7 +838,8 @@ told its users to write their own.
 | req-tap-files-check-1 | Clean Store Is Clean | Proposed | Against a store of valid objects each with a live node, the check reports nothing and exits zero. | |
 | req-tap-files-check-2 | Finds An Orphan Object | Proposed | An object with no matching live entity is listed by identifier. | |
 | req-tap-files-check-3 | Deep Finds A Changed Byte | Proposed | With one content byte changed, the check without `--deep` may pass and with `--deep` names the object and version. | |
-| req-tap-files-check-4 | Changes Nothing | Proposed | After the check runs against a store with findings, every file under `ocfl/` is unchanged. | |
+| req-tap-files-check-4 | Changes Nothing | Proposed | After the check runs against a store with findings, including a staging directory and a version directory above its head, every file and directory under the root is unchanged and in place. | |
+| req-tap-files-check-6 | Reports What Recovery Would Do | Proposed | A leftover staging directory, a version directory above the head and a mismatched root pair are each listed, and none is moved or repaired. | |
 | req-tap-files-check-5 | Seeded Defect Fails | Proposed | The check's own test seeds a defect of each reported class and asserts each is reported, so a passing check is not vacuous. | |
 
 ### Health Probe
