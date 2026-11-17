@@ -15,6 +15,10 @@ at import on any violation:
   later") is **admin-only**;
 - (the `tap_bootloader` least-privilege exclusion of `grid.purge`/`grid.delete` is
   additionally pinned by a guard test, `req-boot-phases` / `req-tap-auth-roles-4`).
+
+An installed plugin may add human roles in ``tap_plugin/<slug>/<slug>.roles.json``. Each is
+named ``<slug>.<role>``, bundles only ``<slug>.*`` capabilities, and is assignable to
+people only (req-tap-auth-plugin-declarations).
 """
 
 from __future__ import annotations
@@ -26,7 +30,16 @@ from typing import Any
 from django.core.exceptions import ImproperlyConfigured
 
 from tap.jsonfiles import JsonFileError, load_json_file
-from tap_auth.capabilities import ALL_CAPABILITY_NAMES, DELETE_CAPABILITY, PURGE_CAPABILITY, get_capability
+from tap_auth.capabilities import (
+    ALL_CAPABILITY_NAMES,
+    CORE_DECLARER,
+    CORE_NAMESPACES,
+    DELETE_CAPABILITY,
+    PURGE_CAPABILITY,
+    get_capability,
+    namespace_of,
+)
+from tap_auth.plugin_declarations import ROLES_SUFFIX, plugin_auth_files
 
 _DATA_PATH = Path(__file__).resolve().parent / "tap_auth.roles.json"
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "roles.schema.json"
@@ -64,33 +77,34 @@ class RoleSpec:
     The security boundary that keeps program-only roles unreachable from login
     config and human-only roles off program actors (req-tap-auth-roles)."""
 
+    declared_by: str = CORE_DECLARER
+    """``tap_auth`` for the core file, else the declaring plugin's slug
+    (req-tap-auth-plugin-declarations)."""
+
     def grantable_to(self, principal_class: str) -> bool:
         """Whether this role may be granted to ``principal_class`` ('human'/'program')."""
         return principal_class in self.assignable_to
 
 
-def _load_roles() -> dict[str, RoleSpec]:
+def _read_role_file(path: Path, *, label: str, declared_by: str) -> dict[str, RoleSpec]:
+    """Load + validate one roles file against the shared schema, resolving ``"*"``."""
     try:
-        data = load_json_file(_DATA_PATH, schema=_SCHEMA_PATH)
+        data = load_json_file(path, schema=_SCHEMA_PATH)
     except JsonFileError as exc:
-        raise ImproperlyConfigured(f"tap_auth.roles.json: {exc}") from exc
+        raise ImproperlyConfigured(f"{label}: {exc}") from exc
 
     roles: dict[str, RoleSpec] = {}
     for key, body in data["roles"].items():
         caps_field = body["capabilities"]
         if caps_field == "*":
-            if key != ADMIN_ROLE:
-                raise ImproperlyConfigured(
-                    f"tap_auth.roles.json: the '*' wildcard is admin-only; role '{key}' may not use it."
-                )
+            if key != ADMIN_ROLE or declared_by != CORE_DECLARER:
+                raise ImproperlyConfigured(f"{label}: the '*' wildcard is admin-only; role '{key}' may not use it.")
             resolved = tuple(ALL_CAPABILITY_NAMES)
             wildcard = True
         else:
             unknown = [c for c in caps_field if get_capability(c) is None]
             if unknown:
-                raise ImproperlyConfigured(
-                    f"tap_auth.roles.json: role '{key}' names undefined capabilities: {sorted(unknown)}"
-                )
+                raise ImproperlyConfigured(f"{label}: role '{key}' names undefined capabilities: {sorted(unknown)}")
             resolved = tuple(caps_field)
             wildcard = False
         roles[key] = RoleSpec(
@@ -100,11 +114,55 @@ def _load_roles() -> dict[str, RoleSpec]:
             is_wildcard=wildcard,
             description_json=body.get("description_json", {}),
             assignable_to=frozenset(body["assignable_to"]),
+            declared_by=declared_by,
         )
     return roles
 
 
-# Canonical role registry, loaded from tap_auth.roles.json at import.
+def _confine_plugin_roles(slug: str, declared: dict[str, RoleSpec], *, label: str) -> None:
+    """Refuse a plugin role that reaches past the plugin's own authority.
+
+    A plugin role is named ``<slug>.<role>``, bundles only ``<slug>.*`` capabilities, and
+    is assignable to people only. So installing a plugin can never hand anyone a core
+    capability, and a plugin cannot mint a program actor's bundle; per-plugin program
+    actors are ``req-tap-auth-program-users`` (req-tap-auth-plugin-declarations).
+    """
+    if slug in CORE_NAMESPACES:
+        raise ImproperlyConfigured(f"{label}: plugin slug '{slug}' is a core namespace; it may not declare roles")
+    for key, spec in declared.items():
+        if namespace_of(key) != slug or "." not in key:
+            raise ImproperlyConfigured(f"{label}: plugin '{slug}' may only declare roles named '{slug}.<role>'")
+        foreign = sorted(c for c in spec.capabilities if namespace_of(c) != slug)
+        if foreign:
+            raise ImproperlyConfigured(
+                f"{label}: role '{key}' may only bundle '{slug}.*' capabilities; refusing {foreign}. "
+                "Core capabilities such as grid.read come from a core role granted alongside it."
+            )
+        if spec.assignable_to != frozenset({PRINCIPAL_HUMAN}):
+            raise ImproperlyConfigured(
+                f"{label}: role '{key}' must be assignable_to exactly ['human']; plugin program actors are "
+                "not declared here (req-tap-auth-program-users)"
+            )
+
+
+def _load_roles() -> dict[str, RoleSpec]:
+    """Load the core roles, then every installed plugin's declared roles."""
+    roles = _read_role_file(_DATA_PATH, label="tap_auth.roles.json", declared_by=CORE_DECLARER)
+    for files in plugin_auth_files():
+        if files.roles_path is None:
+            continue
+        label = f"{files.slug}{ROLES_SUFFIX}"
+        declared = _read_role_file(files.roles_path, label=label, declared_by=files.slug)
+        _confine_plugin_roles(files.slug, declared, label=label)
+        clash = sorted(set(declared) & set(roles))
+        if clash:
+            raise ImproperlyConfigured(f"{label}: role keys already declared: {clash}")
+        roles.update(declared)
+    return roles
+
+
+# Canonical role registry: tap_auth.roles.json, then each installed plugin's
+# <slug>.roles.json, loaded at import.
 ROLES: dict[str, RoleSpec] = _load_roles()
 
 # Roles assignable to each principal class (req-tap-auth-roles), derived from each

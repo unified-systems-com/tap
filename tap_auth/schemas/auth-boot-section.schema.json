@@ -133,11 +133,16 @@
       "type": "object",
       "propertyNames": {"format": "email"},
       "additionalProperties": {
-        "description": "The roles granted to this email on login. Human-assignable roles only; held in sync with tap_auth.roles.HUMAN_ASSIGNABLE_ROLES by a guard test.",
+        "description": "The roles granted to this email on login. Human-assignable roles only. A core role is one of the enum, held in sync with the core human-assignable roles by a guard test. A plugin role is '<slug>.<role>' (req-tap-auth-plugin-declarations); the schema checks only its shape, because the plugins installed are not known here, and boot validation then refuses any name that is not a human-assignable role in tap_auth.roles.HUMAN_ASSIGNABLE_ROLES.",
         "type": "array",
         "minItems": 1,
         "uniqueItems": true,
-        "items": {"enum": ["tap_admin", "tap_viewer"]}
+        "items": {
+          "anyOf": [
+            {"enum": ["tap_admin", "tap_viewer"]},
+            {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"}
+          ]
+        }
       }
     },
     "local_password_enabled": {
