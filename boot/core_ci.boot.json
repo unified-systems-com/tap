@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
-          "rev": "v0.3.3",
-          "commit": "17d649bbe2988b9fc4e7a5d950b6aedae913ab26"
+          "rev": "v0.3.4",
+          "commit": "ebc29842aabe1ad0a3aa181f49ca251e843807fe"
         },
         "note": "Fixture: the neutral grid_fixtures__* vocabulary the core suites build fixtures from (tap.plugin_testing.BASELINE_PLUGIN_SLUGS)."
       },
