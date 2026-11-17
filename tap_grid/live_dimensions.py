@@ -264,7 +264,9 @@ def declared_in(document: Any, *, skip_batches: Iterable[str] = ()) -> dict[str,
     if not isinstance(document, Mapping):
         return found
     skipped = set(skip_batches)
-    for batch in document.get("batches") or []:
+    batches = document.get("batches")
+    # Runs before the document is validated: a non-list is the importer's to refuse, not a TypeError.
+    for batch in batches if isinstance(batches, list) else []:
         if not isinstance(batch, Mapping):
             continue
         batch_entity = batch.get("batch_entity") or {}
@@ -275,7 +277,8 @@ def declared_in(document: Any, *, skip_batches: Iterable[str] = ()) -> dict[str,
             pass
         if batch_id in skipped:
             continue
-        for node in batch.get("nodes") or []:
+        nodes = batch.get("nodes")
+        for node in nodes if isinstance(nodes, list) else []:
             if not isinstance(node, Mapping):
                 continue
             entity = node.get("entity") or {}

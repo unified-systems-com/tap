@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/7bd365acbfe7 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/89dd2733de7b (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -5476,7 +5476,9 @@ def _already_imported(document: Any, force_batches: set[str]) -> set[str]:
     if not isinstance(document, dict):
         return set()
     ids: set[str] = set()
-    for batch in document.get("batches") or []:
+    batches = document.get("batches")
+    # Not yet validated: a malformed `batches` is the validator's to report, not a TypeError here.
+    for batch in batches if isinstance(batches, list) else []:
         if isinstance(batch, dict) and isinstance(batch.get("batch_entity"), dict):
             ident = batch["batch_entity"].get("entity_id")
             if isinstance(ident, str):

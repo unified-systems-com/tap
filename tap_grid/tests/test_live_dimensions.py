@@ -119,6 +119,20 @@ class TestKnobsAreReadFromTheRow:
 @pytest.mark.django_db
 @pytest.mark.spec("req-grid-dimension-reference-9")
 class TestDimensionNodesAreJudgedWhenWritten:
+    @pytest.mark.parametrize("bad", ["batches", "nodes"])
+    def test_a_malformed_document_is_refused_not_raised(self, bad: str) -> None:
+        """The vocabulary and already-imported pre-checks run before validation: a non-list
+        `batches` or `nodes` must come back as a validation issue, never a TypeError."""
+        from tap_grid.grift import grift_import
+
+        document: dict[str, Any] = _document(_dimension("tap.test.shape"))
+        if bad == "batches":
+            document["batches"] = 1
+        else:
+            document["batches"][0]["nodes"] = 1
+        result = grift_import(document)
+        assert not result.success
+
     def test_a_second_live_node_under_a_taken_name_is_refused(self) -> None:
         from tap_grid.grift import grift_import
 
