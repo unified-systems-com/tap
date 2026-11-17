@@ -15,6 +15,7 @@ check here, on the PR that adds it, instead of at startup in two dozen plugin re
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -562,3 +563,179 @@ def test_the_boot_waits_never_sync_the_venv_pre_boot_is_installing() -> None:
     for name in ("Wait for pre-boot to install the plugins", "Wait for the stack to become healthy"):
         run = steps[names.index(name)]["run"]
         assert "uv run " not in run.replace("uv run --no-sync ", "")
+
+
+# --------------------------------------------------------------------------- #
+# The web image: pull the published, provenance-verified image for the harness SHA,
+# else build (req-tap-plugin-extdev-repo-ci-15, aws-build Q78c)
+# --------------------------------------------------------------------------- #
+
+PULL_STEP = "Pull the published web image for the harness SHA (provenance-verified)"
+_HARNESS_SHA = "d2599582803a260c04f3646ba11d2c8bcea41625"
+
+
+def _uses(step: dict[str, Any], prefix: str) -> bool:
+    return str(step.get("uses", "")).startswith(prefix)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_the_build_runs_only_when_no_verified_image_was_pulled() -> None:
+    """The pull comes first; buildx, the mirror mapping and the first build attempt are each
+    skipped once it succeeded (the later attempts already wait on the first one failing)."""
+    steps, names = _boot_steps()
+    pull = names.index(PULL_STEP)
+    assert steps[pull]["id"] == "prebuilt"
+    gate = "steps.prebuilt.outputs.pulled != 'true'"
+    buildx = next(i for i, step in enumerate(steps) if _uses(step, "docker/setup-buildx-action@"))
+    builds = [i for i, step in enumerate(steps) if _uses(step, "docker/build-push-action@")]
+    mirror = next(i for i, step in enumerate(steps) if step.get("id") == "mirror")
+    assert pull < buildx < mirror < builds[0]
+    for i in (buildx, mirror, builds[0]):
+        assert steps[i]["if"] == gate, steps[i].get("name", steps[i].get("uses"))
+    for i in builds[1:]:
+        assert "steps.build" in steps[i]["if"] and "failure" in steps[i]["if"]
+    # Whichever road is taken, the stack boots the same local tag and never pulls on its own.
+    assert "tap-web:ci" in steps[pull]["run"]
+    assert all(steps[i]["with"]["tags"] == "tap-web:ci" for i in builds)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_the_pull_verifies_provenance_for_the_harness_sha_and_pulls_by_digest() -> None:
+    steps, names = _boot_steps()
+    step = steps[names.index(PULL_STEP)]
+    assert step["env"]["HARNESS_SHA"] == "${{ needs.conformance.outputs.harness_sha }}"
+    assert step["env"]["HARNESS_REPO"] == "${{ inputs.harness_repo }}"
+    run = step["run"]
+    assert "${{" not in run, "the body must take env: values only"
+    for flag in (
+        "--repo unified-systems-com/tap",
+        "--signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml",
+        "--source-ref refs/heads/main",
+        '--source-digest "$HARNESS_SHA"',
+        "--predicate-type https://slsa.dev/provenance/v1",
+        "--deny-self-hosted-runners",
+    ):
+        assert flag in run, flag
+    # The tag is a lookup only: every pull and tag names the digest that was verified.
+    assert 'docker pull --quiet "$image@$index"' in run
+    assert 'docker tag "$image@$index" tap-web:ci' in run
+    assert run.count("docker pull") == 1
+    # A miss builds; it never fails the job, so the step needs no continue-on-error to hide one.
+    assert "continue-on-error" not in step
+    assert "set -e" not in run.replace("set -uo pipefail", "")
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_no_secret_is_written_into_the_tree_before_the_image_exists() -> None:
+    """`COPY . .` takes the whole tree, so a PAT written before the build would land in an image
+    layer and in the GitHub Actions cache export."""
+    steps, names = _boot_steps()
+    last_image_step = max(
+        i for i, step in enumerate(steps) if _uses(step, "docker/build-push-action@") or step.get("id") == "prebuilt"
+    )
+    for name in ("Prepare secrets root", "Wire read-only plugins PAT"):
+        assert last_image_step < names.index(name) < names.index("Boot the plugin profile"), name
+
+
+_PULL_DOCKER_STUB = """#!/usr/bin/env bash
+echo "docker $*" >> "$STUB_LOG"
+case "$*" in
+  "buildx imagetools inspect --raw "*)
+    [ -n "${STUB_INDEX_BYTES:-}" ] || exit 1
+    printf '%s' "$STUB_INDEX_BYTES" ;;
+  "pull --quiet "*|"tag "*) exit 0 ;;
+  *) echo "unexpected docker call: $*" >&2; exit 2 ;;
+esac
+"""
+
+_PULL_GH_STUB = """#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+exit "${STUB_GH_RC:-0}"
+"""
+
+
+def _run_pull(tmp_path: Path, dockerfile: str = "ARG TAP_FIPS=1\n", **overrides: str) -> tuple[str, str, list[str]]:
+    """Run the pull step's own body under stub docker/gh; return (output, summary, calls)."""
+    steps, names = _boot_steps()
+    body = str(steps[names.index(PULL_STEP)]["run"])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, source in (("docker", _PULL_DOCKER_STUB), ("gh", _PULL_GH_STUB)):
+        (bin_dir / name).write_text(source, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    (tmp_path / "Dockerfile").write_text(dockerfile, encoding="utf-8")
+    log, out, summary = tmp_path / "calls", tmp_path / "out", tmp_path / "summary"
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HARNESS_REPO": "unified-systems-com/tap",
+        "HARNESS_SHA": _HARNESS_SHA,
+        "GH_TOKEN": "stub",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_OUTPUT": str(out),
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "STUB_LOG": str(log),
+        "STUB_INDEX_BYTES": '{"mediaType":"application/vnd.oci.image.index.v1+json"}',
+        "STUB_GH_RC": "0",
+    }
+    env.update(overrides)
+    result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body under stub docker/gh IS the test; argv list, no shell, PATH is a temp stub dir
+        ["bash", "-c", body], env=env, cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return out.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8"), calls
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_a_verified_image_is_pulled_by_the_digest_of_the_bytes_served(tmp_path: Path) -> None:
+    raw = '{"mediaType":"application/vnd.oci.image.index.v1+json"}'
+    digest = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+    out, summary, calls = _run_pull(tmp_path, STUB_INDEX_BYTES=raw)
+    assert out.strip() == "pulled=true"
+    ref = f"ghcr.io/unified-systems-com/tap-web@{digest}"
+    assert f"docker buildx imagetools inspect --raw ghcr.io/unified-systems-com/tap-web:sha-{_HARNESS_SHA[:7]}" in calls
+    assert any(
+        c.startswith(f"gh attestation verify oci://{ref} ") and f"--source-digest {_HARNESS_SHA}" in c for c in calls
+    )
+    assert f"docker pull --quiet {ref}" in calls and f"docker tag {ref} tap-web:ci" in calls
+    assert digest in summary
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"STUB_GH_RC": "1"}, "does not verify"),
+        ({"STUB_INDEX_BYTES": ""}, "no image is published"),
+        ({"HARNESS_REPO": "someone/tap"}, "only unified-systems-com/tap"),
+        ({"HARNESS_SHA": "main"}, "not a full commit SHA"),
+    ],
+)
+def test_anything_short_of_a_verified_image_builds_and_pulls_nothing(
+    tmp_path: Path, overrides: dict[str, str], reason: str
+) -> None:
+    out, summary, calls = _run_pull(tmp_path, **overrides)
+    assert out.strip() == "pulled=false"
+    assert reason in summary and "built here" in summary
+    assert not any(c.startswith(("docker pull", "docker tag")) for c in calls), calls
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_a_harness_whose_dockerfile_builds_another_fips_posture_is_not_swapped(tmp_path: Path) -> None:
+    """publish-images builds TAP_FIPS=1 only; a harness defaulting otherwise must build its own."""
+    out, summary, calls = _run_pull(tmp_path, dockerfile="ARG TAP_FIPS=0\n")
+    assert out.strip() == "pulled=false" and "TAP_FIPS=1" in summary
+    assert calls == []
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_the_secrets_root_is_cleared_before_the_image_and_filled_after() -> None:
+    """Nothing at tap_secrets/ may be in the build context, whether pulled or built (the build context is `.`):
+    the clear runs before the image step, and the root is created and the PAT written only after it."""
+    steps, names = _boot_steps()
+    clear = names.index("Clear the secrets root before the image")
+    image = names.index("Pull the published web image for the harness SHA (provenance-verified)")
+    prepare = names.index("Prepare secrets root")
+    assert clear < image < prepare
+    run = steps[clear]["run"]
+    assert "rm -f tap_secrets" in run and "exit 1" in run
