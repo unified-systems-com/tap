@@ -552,10 +552,18 @@ class TestPluginDimensionVocabulary:
         import tap_plugins.seeding as seeding
         from tap_plugins.manifest import load_manifest
 
-        plugin = SimpleNamespace(manifest=load_manifest(_FIXTURE_PLUGIN_ROOT), name="validation_sample")
         real = seeding.all_tap_plugins()
-        monkeypatch.setattr(seeding, "all_tap_plugins", lambda: [*real, plugin])
-        return plugin
+        if any(getattr(c, "name", "") == "validation_sample" for c in real):
+            # core_ci installs validation_sample for real: the test database's own vocabulary
+            # import (the same import_dimension_vocabulary boot runs) already holds its rows.
+            present = next(c for c in real if getattr(c, "name", "") == "validation_sample")
+            monkeypatch.setattr(present, "really_installed", True, raising=False)
+            return present
+        added = SimpleNamespace(
+            manifest=load_manifest(_FIXTURE_PLUGIN_ROOT), name="validation_sample", really_installed=False
+        )
+        monkeypatch.setattr(seeding, "all_tap_plugins", lambda: [*real, added])
+        return added
 
     def _fixture_rows(self) -> list[str]:
         from tap_grid.models import Dimension
@@ -575,7 +583,10 @@ class TestPluginDimensionVocabulary:
     def test_a_plugin_installed_but_not_seeded_gets_its_dimension_rows(self, installed: Any) -> None:
         from tap_grid.dimension_names import resolve
 
-        assert self._fixture_rows() == []
+        if not installed.really_installed:
+            # Only provable where the test database did not already import it (the plugin is
+            # installed only for this test); under core_ci the harness import got there first.
+            assert self._fixture_rows() == []
         run_boot(None)  # an auth-only standup: no profile, no seed-plugin step at all
         assert self._fixture_rows() == ["tap.fixture"]
         assert str(resolve("tap.fixture")) == _FIXTURE_DIMENSION
