@@ -3,7 +3,7 @@
 TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/6ca6a1f39d68 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@c9ab69f9684f/6ca6a1f39d68 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@22cc89a88dc8/6ca6a1f39d68 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,

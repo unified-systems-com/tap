@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -238,17 +239,53 @@ def _not_only_dimensions(document: Any) -> str | None:
     return None
 
 
+def _redeclared_core_ids(document: Any, core_ids: dict[str, str]) -> str | None:
+    """Why a plugin's dimension bundle redeclares a Dimension node core declares, or None. The importer
+    upserts by id as the bootloader, so a plugin reusing core's id would rename or re-knob that
+    dimension for the whole grid. Core's ids are core's (aws-build Q85a); a move between plugins
+    stays allowed (Q56 moved ``tap.cloud`` from aws_core to computing_core). Runs after
+    :func:`_not_only_dimensions`, so the document's shape is already checked."""
+    for index, batch in enumerate(document["batches"]):
+        for node in batch.get("nodes", []):
+            try:
+                ident = str(uuid.UUID(str(node["entity"].get("entity_id"))))
+            except ValueError:
+                continue  # the importer refuses a bad id with its own issue
+            if ident in core_ids:
+                return (
+                    f"batch {index} redeclares core's Dimension {core_ids[ident]!r} ({ident}); "
+                    "a plugin may not redeclare a Dimension core declares"
+                )
+    return None
+
+
+def _declared_ids(document: Any) -> dict[str, str]:
+    """Every Dimension node id a (shape-checked) bundle declares, with its name, for naming a clash."""
+    found: dict[str, str] = {}
+    for batch in document["batches"]:
+        for node in batch.get("nodes", []):
+            entity = node["entity"]
+            try:
+                found[str(uuid.UUID(str(entity.get("entity_id"))))] = str(entity.get("name") or "")
+            except ValueError:
+                continue
+    return found
+
+
 def seed_dimension_vocabulary(*, actor: Any, extra: list[DimensionBundle] | None = None) -> list[BundleOutcome]:
     """Import every dimension vocabulary bundle (:func:`dimension_bundles`, then ``extra``) as ``actor``.
 
     Stops at the first bundle that does not import, and returns the outcomes so far, the failing one
     last: later bundles stamp the dimensions earlier ones declare (every Dimension node carries
     core's ``tap.meta``). Each bundle's seed batch has a fixed id, so a re-run skips it and writes
-    nothing, and the plugin's own seed-plugin step later skips it the same way.
+    nothing, and the plugin's own seed-plugin step later skips it the same way. A plugin bundle that
+    redeclares one of core's Dimension ids is refused before it imports (aws-build Q85a).
     """
     from tap_grid.grift import grift_import
+    from tap_grid.live_dimensions import CORE_SEED
 
     outcomes: list[BundleOutcome] = []
+    core_ids: dict[str, str] = {}
     for bundle in [*dimension_bundles(), *(extra or [])]:
         outcome = BundleOutcome(slug=bundle.slug, bundle_name=bundle.label, bundle_path=str(bundle.path))
         outcomes.append(outcome)
@@ -258,7 +295,10 @@ def seed_dimension_vocabulary(*, actor: Any, extra: list[DimensionBundle] | None
         except (OSError, ValueError) as exc:
             outcome.read_error = str(exc)
             return outcomes
+        is_core = Path(bundle.path) == CORE_SEED
         problem = _not_only_dimensions(document)
+        if problem is None and not is_core:
+            problem = _redeclared_core_ids(document, core_ids)
         if problem is not None:
             outcome.read_error = problem
             return outcomes
@@ -267,6 +307,8 @@ def seed_dimension_vocabulary(*, actor: Any, extra: list[DimensionBundle] | None
         )
         if not outcome.ok:
             return outcomes
+        if is_core:
+            core_ids = _declared_ids(document)
     return outcomes
 
 

@@ -534,6 +534,7 @@ class TestCoreVocabulary:
 _FIXTURES = Path(__file__).resolve().parents[2] / "tap_plugins" / "tests" / "fixtures"
 _FIXTURE_PLUGIN_ROOT = _FIXTURES / "validation_sample" / "tap_plugin" / "validation_sample"
 _FIXTURE_DIMENSION_BATCH = "01a1d2db-fead-711e-9523-152c4218b1e2"
+_CORE_TAP_META_ID = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap_grid/data/dimensions.grift.json
 _FIXTURE_DIMENSION = "01a1d2db-fead-711e-9523-152d3ea4555d"  # tap.fixture
 
 
@@ -619,7 +620,7 @@ class TestPluginDimensionVocabulary:
         assert self._fixture_rows() == ["tap.fixture"]
 
     @pytest.mark.parametrize(
-        "breakage", ["unreadable", "an-edge", "another-type", "a-bad-node", "a-retirement", "batches-not-a-list"]
+        "breakage", ["unreadable", "an-edge", "another-type", "a-bad-node", "a-retirement", "batches-not-a-list", "a-core-id"]
     )
     def test_a_failing_bundle_aborts_the_boot_naming_it(
         self, installed: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, breakage: str
@@ -641,6 +642,9 @@ class TestPluginDimensionVocabulary:
                 batch["nodes"][0]["entity"]["entity_type"] = "grid_fixtures__node"
             elif breakage == "batches-not-a-list":
                 document["batches"] = 1  # valid JSON, malformed GRIFT: a named failure, not a TypeError
+            elif breakage == "a-core-id":
+                # Reusing core's `tap.meta` id would rename it grid-wide: core's ids are core's (Q85a).
+                batch["nodes"][0]["entity"]["entity_id"] = _CORE_TAP_META_ID
             elif breakage == "a-retirement":
                 # A node-level retirement is a removal: refused before import, so nothing is retired.
                 batch["nodes"][0]["retirement"] = {
@@ -653,6 +657,13 @@ class TestPluginDimensionVocabulary:
         real = seeding.dimension_bundles
         broken = seeding.DimensionBundle("validation_sample", "validation_sample/dimension (broken)", bad)
         monkeypatch.setattr(seeding, "dimension_bundles", lambda: [*real()[:-1], broken])
-        with pytest.raises(BootError, match=r"validation_sample/dimension \(broken\)"):
+        with pytest.raises(BootError, match=r"validation_sample/dimension \(broken\)") as raised:
             run_boot(None)
+        if breakage == "a-core-id":
+            assert "redeclares core's Dimension 'tap.meta'" in str(raised.value)
+            from tap_grid.models import Dimension
+
+            # Refused before import: core's row keeps its name.
+            names = Dimension.all_objects.filter(entity_id=_CORE_TAP_META_ID).values_list("name", flat=True)  # type: ignore[misc]
+            assert list(names) in ([], ["tap.meta"])
 
