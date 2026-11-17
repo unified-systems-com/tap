@@ -476,6 +476,8 @@ Status: `Proposed`
 A write never leaves a partly written file where a reader can find it.
 
 1. **Take the object's lock.** A lock file per identifier under `locks/`, held for the whole write.
+   The lock is an exclusive `flock` (`fcntl.flock`, never the POSIX record locks of `fcntl.lockf`,
+   which a process loses on closing any descriptor for the file), and a lock file is never deleted.
    Writers do not wait indefinitely; a write that cannot take the lock within a short bound fails
    with a busy error.
 2. **Stream to staging while hashing.** Bytes are copied in bounded chunks into a new directory under

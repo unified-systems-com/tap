@@ -45,6 +45,9 @@ recalled. Inspiration only: no code was taken.
 | Snap and Flatpak (read; Flatpak's uninstall flag recalled) | Per-app data directories handed to the app by the host; removing the app keeps or snapshots its data, and deletion is an explicit flag. | Uninstall never deletes data. | Snap's per-revision copies, which are unworkable for gigabyte directories. |
 | VS Code extension API (read; orphan complaint recalled) | The host hands an extension its storage location through the extension context and deprecated the string-path variants extensions rebuilt by hand. Storage left behind after uninstall has no purge verb. | One accessor is the only way to learn the path; an orphan list and a purge verb exist from the first release. | Nothing. |
 | Kubernetes (read) | A volume not treated as ephemeral storage is not measured by the platform: "You need to monitor the disk usage by yourself." The default measurement is a periodic directory walk. | Core measures by a bounded walk and publishes the figure with the time it was taken. | Eviction as the response to an over-size tenant. |
+| bbolt and systemd block-device locking (read) | Ordinary users of a resource hold a shared `flock`; the operation that must have it alone takes an exclusive one without waiting and gives up if it cannot. systemd states plainly that these are BSD locks and not POSIX ones. | The in-use lock, exactly: shared by every process that has the plugin loaded, exclusive for purge. | Locking the data itself; the lock here is on a separate file. |
+| dpkg (read) | One lock file beside the data it guards, never unlinked; the source says removing it is always wrong, because a second process can then lock a new file of the same name while the first still holds the old one. | The lock file sits outside the directory it guards and is never deleted. | dpkg's POSIX record locks, which a process loses when it closes any descriptor on the file and which a forked child does not inherit. |
+| PostgreSQL, git, restic, BorgBackup (read) | A file recording the holder's process id, with staleness judged by probing the id or by age (git 12 hours, restic 30 minutes). | Nothing: a kernel lock ends when its process does, with no id to go stale or be reused, and a process id means nothing across containers. | The whole approach, which these projects need only because they run across hosts or on storage with no kernel locks. |
 | SQLite documentation (read) | Write-ahead mode "does not work over a network filesystem"; network file locks are unreliable; a plain copy of a live database can mix old and new content. | The root must be a local filesystem; the report names the filesystem type. | Nothing. |
 
 Two regrets recur across these systems and shape the requirements below: no split between cache and
@@ -421,6 +424,7 @@ plugin removal, not when a directory is over its declared size, and not for a ca
   not a core-reserved name, is reported as a stray and not touched.
 - **Purge.** `manage.py plugin_data purge <slug>` deletes one plugin's directory. It is the only
   deletion path core provides. It:
+  - refuses while the directory is in use (see the in-use lock below), and says so;
   - prints what it will delete (path, durability, measured size, entry count) and requires a
     confirming flag; a `"state"` directory, and any orphan whose description file is missing or says
     `"state"`, requires a second, differently named flag;
@@ -429,6 +433,40 @@ plugin removal, not when a directory is over its declared size, and not for a ca
   - is recorded in the log with who ran it, the slug, and what was removed.
 - **Listing.** `manage.py plugin_data list` prints every directory under the root with its owner
   status (declared, orphan, stray) and the same facts the report carries.
+
+**The in-use lock** (ruled 2026-11-16). A confirming flag shows the operator meant it. It does not
+make it safe to delete a database another process has open, and that loss is silent. So purge is
+refused while any TAP process is using the directory. The mechanism is the ordinary one, a shared
+and exclusive `flock` on a lock file, and nothing about it is particular to TAP.
+
+- **The lock file.** One per plugin directory, at `<root>/.tap-locks/<slug>.lock`, under whichever
+  root holds the directory. It is beside the directory and not in it, so purge does not delete what
+  it is holding. Core creates it on first need and never deletes it, purge included: a lock file
+  that is unlinked can be locked twice. `.tap-locks` is a core-reserved name under the root. The
+  file is empty and records no process id.
+- **Users hold it shared.** A process that loads a plugin with a declared directory takes the
+  plugin's lock shared before it provisions or touches the directory, and keeps the descriptor open
+  for as long as it lives. Any number of processes hold it together. Workers forked from a process
+  that holds it share its lock, which stays held until the last of them exits. The kernel drops the
+  lock when a process ends, however it ends, so no lock is ever left behind.
+- **Purge takes it exclusive, without waiting.** If any other process holds the lock, purge
+  refuses, deletes nothing and exits non-zero. The command's own process loaded the plugin like any
+  other, so it converts the lock it already holds on that descriptor to exclusive; it does not open
+  the file a second time, which would make it refuse itself. It holds the lock until the deletion
+  is finished.
+- **A process that starts during a purge waits** for the shared lock and then provisions a fresh,
+  empty directory. It never sees a half-deleted one.
+- **`flock`, and only `flock`.** Every participant uses `fcntl.flock` from the standard library.
+  POSIX record locks (`fcntl.lockf`) are not used: a process loses them when it closes any
+  descriptor on the file, a forked child does not inherit them, and on Linux they do not exclude
+  `flock` locks. The descriptor is not passed to programs a plugin runs.
+- **What the lock does and does not show.** It shows that no cooperating TAP process is running
+  with the plugin loaded. It is advisory: a program a plugin started and left running holds no
+  lock. It is dependable on a local filesystem shared by containers on one machine, which is the
+  only arrangement this specification supports (`req-tap-plugin-datadir-root`).
+
+To purge the directory of an installed plugin, then, an operator stops the services that load it. An
+orphan's directory has no holder and purges without that step.
 
 A plugin clears its own cache whenever it likes; that is the plugin's business inside its own
 directory and is not a core operation.
@@ -441,6 +479,13 @@ directory and is not a core operation.
 | req-tap-plugin-datadir-lifecycle-2 | Removed Plugin Leaves Its Directory | Proposed | After a plugin is removed from the install set and the instance rebooted, its directory and contents are byte-identical and it is listed as an orphan. | |
 | req-tap-plugin-datadir-lifecycle-3 | Purge Needs Confirmation | Proposed | `purge` without the confirming flag deletes nothing and exits non-zero; purging a `"state"` directory with only the first flag deletes nothing. | |
 | req-tap-plugin-datadir-lifecycle-4 | Purge Stays Inside | Proposed | With a symbolic link inside the directory pointing at a file outside the root, purge removes the link and leaves the outside file untouched; with `<root>/<slug>` itself a link, purge refuses. | |
+| req-tap-plugin-datadir-lifecycle-6 | Purge Refused While In Use | Proposed | With a second process running that has the plugin loaded, `purge` with every confirming flag deletes nothing, exits non-zero and names the directory as in use. | Across processes, not threads. |
+| req-tap-plugin-datadir-lifecycle-7 | Purge Proceeds When Unused | Proposed | With no other process holding the lock, `purge` of an installed plugin's directory and of an orphan's directory each succeed, and the command does not refuse on account of its own process. | |
+| req-tap-plugin-datadir-lifecycle-8 | A Killed Holder Leaves No Lock | Proposed | After the only other holder is killed with `SIGKILL`, `purge` proceeds without any cleanup step. | |
+| req-tap-plugin-datadir-lifecycle-9 | Forked Workers Keep It Held | Proposed | With the lock taken before a fork and the parent then exited, `purge` is still refused while a child lives. | |
+| req-tap-plugin-datadir-lifecycle-10 | A Start During Purge Waits | Proposed | A process that begins loading the plugin while a purge holds the lock does not touch the directory until the purge finishes, and then finds a newly provisioned empty one. | |
+| req-tap-plugin-datadir-lifecycle-11 | Lock File Outlives Purge | Proposed | After a purge the lock file exists at the same path with the same inode, and is listed neither as a stray nor as an orphan. | |
+| req-tap-plugin-datadir-lifecycle-12 | Only flock | Proposed | The lock module calls `fcntl.flock` and no code under the data-directory package calls `fcntl.lockf` or the POSIX record-lock commands. | Guard-pinned. |
 | req-tap-plugin-datadir-lifecycle-5 | Purge Is Logged | Proposed | A completed purge writes one log record naming the actor, the slug, the durability and the byte and entry counts removed. | |
 
 ### Reported Facts
