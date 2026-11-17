@@ -862,9 +862,14 @@ formats.
 
 - **The edge.** `FILE_CONTENTS`, declared by `tap_files`, from a `tap_file` to its format record.
   Its source is `tap_file`; its targets are left open, so a plugin points it at a type of its own
-  without core knowing that type. It declares the plain identity and no properties. Unlike the file
-  and its containment, it is an ordinary edge (ruled 2026-11-17): the plugin that understands the
-  format writes it in its own batch, naming a `tap_file` that already exists.
+  without core knowing that type. It declares the plain identity. Unlike the file and its
+  containment, it is an ordinary edge (ruled 2026-11-17): the plugin that understands the format
+  writes it in its own batch, naming a `tap_file` that already exists.
+- **The edge names the bytes its record describes.** `FILE_CONTENTS` carries one required property,
+  `sha256`: the digest of the bytes the plugin parsed. Because the edge type is core's, core refuses
+  the write unless that digest equals the `tap_file`'s current `sha256`, checked in the same
+  transaction as the write. So a record cannot be attached to bytes it does not describe: a plugin
+  that parsed one version and attaches after the file was replaced is refused, and re-parses.
 - **At most one per file.** A file whose format nobody knows has none and is still a complete,
   downloadable file.
 - **Validity lives on the format record.** Whether a file is well-formed, and why not, are facts
@@ -881,8 +886,9 @@ formats.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-format-record-1 | Edge Declared, Targets Open | Proposed | `FILE_CONTENTS` is declared by `tap_files` with `tap_file` as its only source and no target restriction; an edge from any other type is refused. | |
+| req-tap-files-format-record-1 | Edge Declared, Targets Open | Proposed | `FILE_CONTENTS` is declared by `tap_files` with `tap_file` as its only source, no target restriction and one required `sha256` property; an edge from any other type is refused. | |
 | req-tap-files-format-record-4 | Attached In The Plugin's Own Batch | Proposed | A plugin's GRIFT batch that creates a format record and a `FILE_CONTENTS` edge from an existing `tap_file` to it commits, and the `tap_file` itself is unchanged by it. | Depends on GRIFT naming an existing internal-only node as an edge end, which the build verifies first. |
+| req-tap-files-format-record-5 | Stale Record Refused | Proposed | A plugin parses a file at version 1, the helper replaces it with version 2, and the plugin then writes `FILE_CONTENTS` with version 1's digest: the write is refused and the file has no format record. With version 2's digest it commits. | Raised by the AI review on PR# 1229 - tap. |
 | req-tap-files-format-record-2 | One Per File | Proposed | A second `FILE_CONTENTS` edge out of one file is refused. | |
 | req-tap-files-format-record-3 | Shared Record Survives A Replacement | Proposed | Two files hold the same bytes and share one format record of a test type. One file's bytes are then replaced. The original record is unchanged and still joined to the other file; the replaced file has one `FILE_CONTENTS` edge, to the record for its new bytes. | |
 
@@ -1089,7 +1095,9 @@ It reports:
 
 Output is a human table by default and JSON with a published schema on request. The exit status is
 non-zero when any fault is found, so the command can gate a script; a notice (a store head ahead of
-its node) is reported and alone leaves the status zero.
+its node) is reported and alone leaves the status zero, because it is the expected leftover of a
+refused grid write. `--strict` makes a notice fail too, for a script that must gate on every
+disagreement between the store and the grid.
 
 The check exists from the first release because every system surveyed that shipped without one later
 told its users to write their own.
@@ -1105,7 +1113,7 @@ told its users to write their own.
 | req-tap-files-check-6 | Reports What Recovery Would Do | Proposed | A leftover staging directory, a version directory above the head and a mismatched root pair are each listed, and none is moved or repaired. | |
 | req-tap-files-check-7 | Finds A Node With No Bytes | Proposed | A live `tap_file` whose object is absent from the store is listed by identifier and path. | |
 | req-tap-files-check-8 | Finds A Disagreement | Proposed | A live `tap_file` whose `sha256` differs from the store's digest for its version is listed with both values, and one whose `file_version` is ahead of the store's head is listed. | |
-| req-tap-files-check-9 | A Head Ahead Is A Notice | Proposed | A store head one version ahead of its `tap_file` is listed as a notice, and alone does not make the exit status non-zero. | The node's own version is intact. |
+| req-tap-files-check-9 | A Head Ahead Is A Notice | Proposed | A store head one version ahead of its `tap_file` is listed as a notice, and alone does not make the exit status non-zero; with `--strict` it does. | The node's own version is intact. `--strict` raised by the AI review on PR# 1229 - tap. |
 | req-tap-files-check-5 | Seeded Defect Fails | Proposed | The check's own test seeds a defect of each reported class and asserts each is reported, so a passing check is not vacuous. | |
 
 ### Health Probe
