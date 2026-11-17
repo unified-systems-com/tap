@@ -89,6 +89,7 @@ which postpones that problem instead of solving it.
 | req-tap-files-backends | [Other Backends](#other-backends) | Backlog | How a contributed backend is discovered and what it must guarantee |
 | req-tap-files-upload | [Browser Upload](#browser-upload) | Backlog | A person adding a file through the web interface |
 | req-tap-files-slices | [Reading Inside Files](#reading-inside-files) | Backlog | Searching stored files and returning addressed parts of them |
+| req-tap-files-version-download | [Downloading An Earlier Version](#downloading-an-earlier-version) | Backlog | A browser surface for a version the node's history once recorded |
 | req-tap-files-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this specification deliberately does not do |
 
 ### Scope
@@ -764,16 +765,20 @@ Status: `Proposed`
 
 A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
 
-- **Route.** `GET /files/<identifier>/download`, with an optional `version` query parameter. The
+- **Route.** `GET /files/<identifier>/download`, with no query parameters. The
   `/files` prefix is declared reserved by the owning app in the same change
   (`req-tap-auth-app-4`). `HEAD` is answered with the same headers and no body.
-- **Which version.** With no `version` parameter the route serves the version the node records in
-  its `file_version` field, and before sending anything compares the store's digest and size for
+- **Which version.** The route serves the version the node records in its `file_version` field,
+  and only that version, and before sending anything compares the store's digest and size for
   that version with the node's `sha256` and `size_bytes`. A disagreement is an integrity failure.
   The store's head is not consulted: a version stored ahead of a failed grid write is not the
   file's current content until a node says so. A node with no `file_version` field is served the
   head. The route reads these fields by name, as it does `media_type`, and knows nothing else
-  about the node's type. An explicit `version` is served as asked.
+  about the node's type. There is no way to ask this route for another version (ruled 2026-11-17):
+  a stored version no node records may hold bytes whose grid write was refused, including one
+  below the node's version after a retry, and the node is the only authority for what a file's
+  content is. Earlier versions stay readable by programs through the service layer; a browser
+  surface for them is `req-tap-files-version-download`.
 - **Who may.** The request must come from an authenticated user; the route is behind the login wall
   and is not exempted from it. The user must hold `files.read`, and must be able to read the node
   whose identifier this is, which must exist and be live. A file whose node is tombstoned is not
@@ -813,6 +818,7 @@ makes the saved file open in the right program; it is not what the safety rests 
 | req-tap-files-download-6 | Hostile Name Safe In Header | Proposed | A logical name containing a quote, a newline, a semicolon and non-ASCII letters produces one well-formed `Content-Disposition` header and no additional header. | Header injection. |
 | req-tap-files-download-7 | Prefix Reserved | Proposed | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
 | req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
+| req-tap-files-download-12 | No Version Chosen By The Caller | Proposed | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 | req-tap-files-download-11 | Node And Store Must Agree | Proposed | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
 | req-tap-files-download-8 | Changed File Fails Visibly | Proposed | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
 
@@ -1007,6 +1013,23 @@ context. Two properties of this release are chosen so that it stays cheap:
 
 Partial download by HTTP range is part of this and is not in this release.
 
+### Downloading An Earlier Version
+----
+RID: `req-tap-files-version-download`
+
+Status: `Backlog`
+
+A person downloading a version of a file other than the current one. This release serves only the
+version the file's node records (`req-tap-files-download`), ruled 2026-11-17, because the store
+holds versions no node ever recorded: bytes stored before a grid write that was then refused, which
+can sit above the node's version or, after a retry, below it.
+
+What this needs, and why it is not in this release: a requested version is served only if the
+node's grid history once recorded that file version with that digest. Checking it means reading a
+node's history from core without knowing the node's type, and whether the service layer offers
+that read is not yet known. The data to answer it already exists (`req-tap-files-history`): the
+grid keeps each earlier state of the node, and the store keeps every version.
+
 ### v0 Non-Goals
 ----
 RID: `req-tap-files-nongoals`
@@ -1018,6 +1041,7 @@ Status: `Proposed`
 - **No browser upload.** `req-tap-files-upload`.
 - **No backend but the local filesystem.** `req-tap-files-backends`.
 - **No reading inside files and no HTTP range.** `req-tap-files-slices`.
+- **No browser download of an earlier version.** `req-tap-files-version-download`.
 - **No node types.** The types that represent a file and a directory on the grid are vocabulary and
   are specified by the plugin that owns them.
 - **No knowledge of formats.** No type detection, no parsing, no validation of content.
