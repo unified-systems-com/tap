@@ -34,4 +34,5 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'tap_plugins' has no attribute {name!r}")
 
 
-__all__ = ["PluginDataDirectoryError", "data_dir", "data_dir_is_ephemeral"]
+# PluginDataDirectoryError is served lazily by __getattr__ and so is not listed here.
+__all__ = ["data_dir", "data_dir_is_ephemeral"]

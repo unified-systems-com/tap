@@ -258,15 +258,6 @@ services:
       # tap_web/specs/spec-web-tailwind-pipeline.md and
       # tap_grid/specs/spec-grid-security.md req-grid-thirdparty-manifest.sec-9/-10.
       - tailwind_bin:/opt/tailwind
-      # Plugin data volume — the core-owned root for plugin data directories
-      # (tap_plugins/specs/spec-tap-plugin-data-directory.md, req-tap-plugin-datadir-root).
-      # One named volume per compose project, so each session has its own and `dc down -v`
-      # destroys it; sharing one across sessions is not supported (it would put several writers
-      # on directories whose locks assume one). The image creates this path owned by the runtime
-      # user, so a fresh volume inherits usable ownership. To run without the volume, remove this
-      # line AND TAP_PLUGIN_DATA_ROOT below: caches then go to an ephemeral root, and a plugin
-      # declaring "state" stops boot. Remove only one and boot aborts — a set root must be usable.
-      - plugin_data:/var/lib/tap/plugin-data
 
     # RAM-backed home for gunicorn's worker heartbeat files (worker_tmp_dir).
     #
@@ -439,11 +430,6 @@ services:
       # tap_cares/specs/spec-tap-cares-secrets.md.
       TAP_SECRETS_ROOT: /run/tap-secrets
 
-      # Plugin data volume root, backed by the plugin_data named volume above. No default in
-      # settings: set means "this is my volume", and boot's mount gate then requires it to be a
-      # mounted, writable volume (req-tap-plugin-datadir-mount-gate).
-      TAP_PLUGIN_DATA_ROOT: /var/lib/tap/plugin-data
-
       # Dev boot profile: which boot/<id>.json the `fire_boot_collectors`
       # command fires after seeding. Empty by default (no-op — boot collection
       # is never implicit); chosen explicitly per session via spawn's positional
@@ -510,4 +496,3 @@ volumes:
   venv:           # Stores the container-owned Python virtualenv at /app/.venv.
   uv_cache:       # Stores uv's downloaded wheels + extracted archives. Per-project.
   tailwind_bin:   # Stores the on-demand tailwindcss CLI binary at /opt/tailwind. Per-project.
-  plugin_data:    # Plugin data directories at /var/lib/tap/plugin-data. Per-project.

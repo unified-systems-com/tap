@@ -21,6 +21,6 @@
 | `req-tap-plugin-datadir-nongoals` | Implemented | Tested | — | `req-tap-plugin-datadir-nongoals-1` |
 | `req-tap-plugin-datadir-provision` | Implemented | Verified | `provision` | `req-tap-plugin-datadir-provision-1`, `req-tap-plugin-datadir-provision-2`, `req-tap-plugin-datadir-provision-3`, `req-tap-plugin-datadir-provision-4`, `req-tap-plugin-datadir-provision-5`, `req-tap-plugin-datadir-provision-6`, `req-tap-plugin-datadir-provision-7` |
 | `req-tap-plugin-datadir-report` | Implemented | Verified | `measure` | `req-tap-plugin-datadir-report-1`, `req-tap-plugin-datadir-report-2`, `req-tap-plugin-datadir-report-3`, `req-tap-plugin-datadir-report-4`, `req-tap-plugin-datadir-report-5`, `req-tap-plugin-datadir-report-6`, `req-tap-plugin-datadir-report-7`, `req-tap-plugin-datadir-report-8`, `req-tap-plugin-datadir-report-9` |
-| `req-tap-plugin-datadir-root` | Implemented | Verified | `place` | `req-tap-plugin-datadir-root-1`, `req-tap-plugin-datadir-root-2`, `req-tap-plugin-datadir-root-3`, `req-tap-plugin-datadir-root-4`, `req-tap-plugin-datadir-root-5` |
+| `req-tap-plugin-datadir-root` | In Development | Verified | `place` | `req-tap-plugin-datadir-root-1`, `req-tap-plugin-datadir-root-3`, `req-tap-plugin-datadir-root-4`, `req-tap-plugin-datadir-root-5` |
 | `req-tap-plugin-datadir-scope` | Implemented | Tested | — | `req-tap-plugin-datadir-scope-1`, `req-tap-plugin-datadir-scope-2` |
 | `req-tap-plugin-datadir-sharing` | Implemented | Tested | — | `req-tap-plugin-datadir-sharing-1` |

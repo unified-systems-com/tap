@@ -146,38 +146,6 @@ def test_the_root_is_one_setting_with_no_default() -> None:
     next(g for g in discover_guards() if g.slug == "plugin-data-root-resolution").check()
 
 
-def _compose_web(path: Path) -> list[str]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.rstrip() == "  web:")
-    except StopIteration:
-        return []
-    block: list[str] = []
-    for line in lines[start + 1 :]:
-        if line.strip() and not line.startswith("    ") and not line.lstrip().startswith("#"):
-            break
-        block.append(line.strip())
-    return block
-
-
-@pytest.mark.spec("req-tap-plugin-datadir-root-2")
-def test_every_compose_file_with_web_mounts_the_volume_and_sets_the_variable() -> None:
-    base = _compose_web(_REPO / "docker-compose.yml")
-    assert f"- plugin_data:{_MOUNT}" in base, base
-    assert f"TAP_PLUGIN_DATA_ROOT: {_MOUNT}" in base, base
-    assert "  plugin_data:" in (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
-    # The overlays merge into the base service (CI, build) or define another service
-    # (Codespaces' devbox); none may drop or repoint the volume or the variable.
-    for overlay in sorted(_REPO.glob("docker-compose.*.yml")):
-        web = _compose_web(overlay)
-        text = "\n".join(web)
-        assert "TAP_PLUGIN_DATA_ROOT" not in text, overlay.name
-        assert "plugin_data" not in text, overlay.name
-        assert not any(
-            line.startswith("volumes: !override") or line.startswith("environment: !override") for line in web
-        )
-
-
 @pytest.mark.spec("req-tap-plugin-datadir-root-3")
 def test_the_image_prepares_the_mount_path_for_the_runtime_user() -> None:
     dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")

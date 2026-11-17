@@ -51,8 +51,7 @@ def probe_plugin_data() -> ProbeResult:
                 continue
             if placement.ephemeral:
                 ephemeral.append(slug)
-            path = placement.path
-            assert path is not None  # nosec B101
+            path = placement.root / slug
             problem = _provision.describe(path)
             if problem:
                 bad[slug] = f"{path} {problem}"

@@ -69,7 +69,7 @@ that is thrown away because the intended volume was not mounted.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-plugin-datadir-scope | [Scope](#scope) | Implemented | A sub-grid working directory per plugin; not the file store; no grid node |
-| req-tap-plugin-datadir-root | [The Root](#the-root) | Implemented | One core setting, one mounted local volume, resolved in one place |
+| req-tap-plugin-datadir-root | [The Root](#the-root) | In Development | One core setting, one mounted local volume, resolved in one place |
 | req-tap-plugin-datadir-manifest | [Manifest Declaration](#manifest-declaration) | Implemented | A `[data_directory]` table: purpose, durability, declared maximum size |
 | req-tap-plugin-datadir-provision | [Provisioning](#provisioning) | Implemented | Core creates `<root>/<slug>/`, private to the runtime user, with a core-written description file |
 | req-tap-plugin-datadir-mount-gate | [Mount Gate](#mount-gate) | Implemented | Boot refuses when a plugin declares a directory and the root is not a mounted, writable volume |
@@ -114,7 +114,7 @@ No node represents a plugin data directory, and no node represents anything insi
 ----
 RID: `req-tap-plugin-datadir-root`
 
-Status: `Implemented`
+Status: `In Development`
 
 Plugin data directories live under one of two roots. Which one a directory lands under is decided by
 whether the operator enabled a volume and by what the plugin declared
@@ -159,7 +159,7 @@ service that runs plugin code must mount the same volume.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-datadir-root-1 | One Setting, No Default | Implemented | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned, as the secrets root is. |
-| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Implemented | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. |
+| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. Lands after the image that prepares the mount path (`-root-3`) is published, because spawn and the lean-boot gate run the published image: wired first, the volume is root-owned and the gate refuses it (seen on PR# 1224 - tap). |
 | req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Implemented | In the built image the conventional mount path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
 | req-tap-plugin-datadir-root-4 | Core Never Creates The Volume Root | Implemented | No core code creates the volume root directory; a configured root that is missing is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. Core does create the ephemeral root. |
 | req-tap-plugin-datadir-root-5 | Ephemeral Root Is Fixed | Implemented | The ephemeral root's location is one constant in core, is not configurable by a plugin, and is not on the configured volume. | |

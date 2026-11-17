@@ -84,8 +84,11 @@ def provision(
     path = root / slug
     try:
         os.mkdir(path, 0o700)
-        # The umask applied to creation; set the mode explicitly.
-        os.chmod(path, 0o700)
+        # The umask applied to creation; set the mode explicitly. 0700 is owner-only, the spec's
+        # mode for a plugin directory (req-tap-plugin-datadir-provision-1).
+        os.chmod(
+            path, 0o700
+        )  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
     except FileExistsError:
         problem = describe(path)
         if problem:
@@ -175,7 +178,8 @@ def prove_execution(path: Path) -> str:
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.chmod(probe, 0o700)
+        # Owner read and execute only: the probe must run, and nothing else needs it.
+        os.chmod(probe, 0o500)
         result = subprocess.run(  # nosec B603  # nosemgrep  # noqa: S603
             [str(probe)], capture_output=True, timeout=_EXEC_PROBE_TIMEOUT_S, check=False
         )
