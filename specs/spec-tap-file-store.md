@@ -790,7 +790,10 @@ cannot arrive in a GRIFT file, in another plugin's batch, or from another grid. 
 (`req-tap-files-hold`) writes it through the trusted-internal service path, which still runs
 validation, version and history, and which only a program actor may use. That is what makes "every
 `tap_file` is held" true by construction rather than by every caller's good behaviour: the only
-writer stores the bytes first. The cost, accepted with the ruling, is that field-level batch
+writer stores the bytes first. The trusted-internal path is a tripwire, not a wall: other in-process
+code holding a program actor could call it. So a guard fails the build if any module outside
+`tap_files` writes `tap_file`, `tap_directory` or their containment edges through that path, and the
+check (`req-tap-files-check`) reports any `tap_file` the store does not back, whoever wrote it. The cost, accepted with the ruling, is that field-level batch
 provenance is not stamped on an internal-only type; the node's version and history still record
 every change.
 
@@ -804,6 +807,7 @@ every change.
 | req-tap-files-node-4 | Found Again By Path | Proposed | Writing a file twice with the same path resolves to one node; one name in two directories is two nodes. | |
 | req-tap-files-node-5 | Path Shape | Proposed | A path that does not start with `/`, or has an empty, `.` or `..` element, a trailing separator or a control character, is refused. | |
 | req-tap-files-node-7 | Only tap_files Writes It | Proposed | A generic service-layer create, patch, replace or delete of a `tap_file`, and a GRIFT batch that creates or changes one, are each refused and change nothing; the holding helper's write succeeds. | Raised by the AI review on PR# 1229 - tap; ruled 2026-11-17. |
+| req-tap-files-node-8 | No Other Internal Writer | Proposed | A guard scans first-party code and finds no call outside `tap_files` to the trusted-internal write path that names `tap_file`, `tap_directory`, `CONTAINS_TAP_FILE` or `CONTAINS_TAP_DIRECTORY`; a seeded call in another module fails it. | Raised by the AI review on PR# 1229 - tap. |
 | req-tap-files-node-6 | No Body | Proposed | No field holds the file's bytes or a parsed copy, and a write carrying one is refused. | |
 
 ### Directories
@@ -870,8 +874,8 @@ formats.
   both are the format record's own fields, defined by the plugin that owns it.
 - **A format record describes bytes, not a file.** Where a record is identified by the digest of its
   bytes, two files holding the same bytes share one record, and a record is never changed to follow
-  a file. When a file's bytes are replaced, the file's `FILE_CONTENTS` edge moves to the record for
-  its new bytes; the old record stays.
+  a file. When a file's bytes are replaced, the helper removes the file's `FILE_CONTENTS` edge and the
+  caller attaches the record for its new bytes (`req-tap-files-hold`); the old record stays.
 
 #### Acceptance Criteria
 
@@ -913,8 +917,12 @@ against the grid").
 **When a file changes.** The same file with new bytes is the same node. The helper stores a new
 version under the same identifier (`add_file_version`, which needs `files.update`) and patches
 `sha256`, `size_bytes` and `file_version` itself, naming the node version it expects so the grid
-refuses a second writer. The caller's own batch moves the `FILE_CONTENTS` edge to the record for the
-new bytes. A renamed or moved file is likewise one node: the helper records the new name in the store
+refuses a second writer. In the same write it removes the file's `FILE_CONTENTS` edge, if there is
+one: that record described the old bytes, and leaving it would let a reader take the old bytes'
+parse result for the new ones. The caller's own batch then attaches the record for the new bytes. If
+that batch fails, the file has no format record, which is the state already accepted for a new file,
+and never a record for bytes it no longer holds. The old record itself is untouched
+(`req-tap-files-format-record`). A renamed or moved file is likewise one node: the helper records the new name in the store
 (`rename_file`) and patches `name`, `path`, `file_version` and its containment edge. The grid's history
 keeps each earlier state, so the digest and version a file had at any past moment can be read from
 history and the store still returns those bytes (`req-tap-files-history`).
@@ -940,6 +948,7 @@ that was one file is replaced.
 | req-tap-files-hold-5 | New Version Updates The Same Node | Proposed | Holding new bytes for an existing file leaves one node whose `file_version` is one higher and whose earlier `sha256` is in its history, and the store returns the earlier bytes for the earlier version. | |
 | req-tap-files-hold-6 | Capability Needed | Proposed | A caller without `files.create` is refused by the gateway, and the helper passes that refusal through unchanged. | |
 | req-tap-files-hold-7 | Refused Write Then Retry | Proposed | The helper stores a new version and its grid write is refused. The node still records the earlier version and digest, and a download returns the earlier bytes. A retry with the same bytes stores nothing and patches the node to the version already held; a retry with different bytes stores one version after the head. After the retry, the node, the store and the download agree. | |
+| req-tap-files-hold-9 | A Replaced File Drops Its Old Record | Proposed | Holding new bytes for a file joined to a format record leaves the file with no `FILE_CONTENTS` edge and the record unchanged; when the caller's batch attaching the new record then fails, the file still has none. | Raised by the AI review on PR# 1229 - tap. |
 | req-tap-files-hold-8 | Directories Made As Needed | Proposed | Holding a file at a path whose directories do not exist writes each missing directory and its containment edge; holding a second file in the same directory writes none for it. | |
 
 ### Operation Logging
