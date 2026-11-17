@@ -553,10 +553,15 @@ class TestPluginDimensionVocabulary:
         from tap_plugins.manifest import load_manifest
 
         real = seeding.all_tap_plugins()
-        if any(getattr(c, "name", "") == "validation_sample" for c in real):
+
+        def _is_sample(config: Any) -> bool:
+            manifest = getattr(config, "manifest", None)
+            return manifest is not None and manifest.slug == "validation_sample"
+
+        if any(_is_sample(c) for c in real):
             # core_ci installs validation_sample for real: the test database's own vocabulary
             # import (the same import_dimension_vocabulary boot runs) already holds its rows.
-            present = next(c for c in real if getattr(c, "name", "") == "validation_sample")
+            present = next(c for c in real if _is_sample(c))
             monkeypatch.setattr(present, "really_installed", True, raising=False)
             return present
         added = SimpleNamespace(
@@ -578,7 +583,8 @@ class TestPluginDimensionVocabulary:
         declaring = [c.manifest for c in all_tap_plugins() if c.manifest is not None]
         expected = [m.slug for m in declaring if any(e.name == "dimension" for e in m.grift)]
         assert [b.slug for b in bundles[1:]] == expected
-        assert bundles[-1].slug == "validation_sample"
+        # Last when the test adds it; wherever INSTALLED_APPS puts it when core_ci installs it.
+        assert "validation_sample" in [b.slug for b in bundles[1:]]
 
     def test_a_plugin_installed_but_not_seeded_gets_its_dimension_rows(self, installed: Any) -> None:
         from tap_grid.dimension_names import resolve
