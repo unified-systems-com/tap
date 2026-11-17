@@ -22,6 +22,7 @@ Grid history records how TAP's stored graph state changed over time. It exists t
 | req-grid-history-time | [History Time Semantics](#history-time-semantics) | Proposed | `recorded_at` is system-owned; `observed_at` is source/world time where available |
 | req-grid-history-version | [Revision Metadata](#revision-metadata) | Implemented | Canonical entities carry a simple revision counter for lifecycle/debug metadata |
 | req-grid-history-scope | [History Scope Configuration](#history-scope-configuration) | Proposed | History enablement and retention depth remain configurable per model/edge type |
+| req-grid-history-optout | [Per-Model History Opt-Out](#per-model-history-opt-out) | Implemented | A node type declares `TRACK_HISTORY = False` to get no history table; default on; every consumer degrades explicitly |
 
 ## Explanation
 
@@ -205,9 +206,67 @@ Selective enablement matters because not every graph object needs equal temporal
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-history-scope-1 | Explicit Enablement | Proposed | History policy includes an explicit enabled/disabled switch per model or edge type. | |
+| req-grid-history-scope-1 | Explicit Enablement | Proposed | History policy includes an explicit enabled/disabled switch per model or edge type. | The per-model switch is built as `req-grid-history-optout`; per-edge-type, per-app and grid-wide switches are not. |
 | req-grid-history-scope-2 | Retention Policy Surface | Proposed | History policy exposes revision-count and/or time-based retention settings even if cleanup automation is deferred. | |
 | req-grid-history-scope-3 | Independent Policy | Proposed | History retention and enablement can differ from FLIP and perspective policy for the same model type. | |
 
 #### Future
 If the time-dial UI becomes central to the product, TAP may eventually need a more explicit "historical visibility" policy layer in addition to raw retention policy.
+
+### Per-Model History Opt-Out
+----
+RID: `req-grid-history-optout`
+
+Status: `Implemented`
+
+A concrete node type may declare that TAP keeps no change history for it. History stays on by default; opting out is a per-type declaration in the type's own class body, and it removes the type's history table entirely rather than leaving an empty one.
+
+#### Status Details
+Built as the per-model slice of `req-grid-history-scope` (its `-1` switch, for node types only). Retention policy, per-edge-type enablement, and per-app or grid-wide settings stay with `req-grid-history-scope` and remain Proposed.
+
+The cost it answers (measured, against a plugin declaring several hundred generated node types): `inherit=True` on the abstract base gives every concrete type a second table, so a plugin with N types migrates 2N tables, and every install pays it at boot.
+
+#### Implementation
+**Declaration.** `BaseModel.TRACK_HISTORY: ClassVar[bool] = True`. A subclass sets it to `False` in its class body, the same idiom as `INTERNAL_ONLY`. It is inherited like the other ClassVars, so an abstract intermediate can set it for a subtree. A value that is not a `bool` is refused at class creation (`ImproperlyConfigured`), because it decides whether a table exists.
+
+**Mechanism** (read: django-simple-history 3.13 `HistoricalRecords.finalize`). The base declares `history = TapHistoricalRecords(get_user=..., inherit=True)`. simple-history builds each `Historical<Type>` model in `finalize`, on the concrete subclass's `class_prepared` signal, and offers no per-subclass exclusion for an inherited manager. `TapHistoricalRecords.finalize` returns before the stock body for a subclass whose `TRACK_HISTORY` is false, so that type gets no history model, no migration-state model, no `history` descriptor, no `simple_history_manager_attribute`, and no save/delete signal handlers. Every other sender runs the stock `finalize` untouched, which is why a type that does not opt out keeps exactly its prior history model and `makemigrations` reports no change.
+
+**What an untracked type loses.** Prior field values: TAP can no longer say what the row looked like before its last change, who made an individual field change outside a batch, or when a value changed between two batches. `history_user` and `history_change_reason` have no row to sit on.
+
+**What it keeps** (read: `Entity`, `BaseModel`, `BatchEvent`). The spine and the batch record are not history and are untouched: `Entity.version`, `created_at`, `updated_at`, `deleted_at`; the row's `batch_id` and `flip_map` (which batch last set each provenance-tracked field); and one `BatchEvent` per operation with its type, timestamp, actor and batch. An untracked type still answers who, when, through which batch and by which operation; it does not answer from what to what. A tombstone already writes no typed history row (Issue# 570 - tap), so retirement loses nothing further.
+
+**When opting out fits.** A type whose rows are re-observed from a source on a schedule, so that its current state is always re-collectable and its prior states are mostly re-observation churn (Issue# 322 - tap). It does not fit where the grid itself is the only record of a past value — analyst-asserted data, configuration whose change over time is the question being asked (who opened this rule, when did this policy widen), or anything a time-dial or "what changed" view must answer. The owning plugin decides per type; the platform default stays on.
+
+**Consumers and how each degrades** (grepped across core and installed plugins for `.history`, `history_user`, `Historical*`, `is_history_enabled`, `get_historical_records`, `simple_history`):
+
+| Consumer | Behaviour for an untracked type |
+| --- | --- |
+| `HistoryService.raw_records()` / `get_historical_records()` | Raises `HistoryNotTracked` ("no history for this type"); `is_enabled()` is `False`. Never returns an empty timeline, which would read as "never changed". |
+| `grid_tables.history_tables()` (ORM read backstop) | Names no history table for the type; the type's own table stays read-guarded. |
+| `purge_node` and the GRIFT sweep-purge | Skip the history sweep: both already guard on the type having a `history` manager, which an untracked type lacks; the purge of the row, spine, touching edges and `BatchEvent`s is unchanged. |
+| Admin | Only `Batch` uses `SimpleHistoryAdmin`, and core types keep history (`-7`). |
+| GRIFT export / import | Neither carries history today (export declares the history lane not included; import discards it). |
+| Batch actor (`get_history_user`) | Independent of history tables; batches and `BatchEvent`s still record the actor. |
+| History panel, composable queries, time-travel reconstruction | Not built. When built, each must check `is_history_enabled` and present "no history for this type"; time-travel must report an untracked row updated after the cutoff as not reconstructable, never return its current state as the past. |
+
+**Migration consequence.** Flipping the flag changes the owning app's next migration. `True → False` generates a `DeleteModel` for `Historical<Type>`: the recorded history of that type is dropped, irreversibly. `False → True` generates a `CreateModel`: the table starts empty and nothing is backfilled. The migration belongs to the plugin that owns the type, and a plugin generating it against a newer core than its floor must check its core dependency.
+
+**Scope.** Node types only. Edges share one `Edge` table across every edge type, so a per-edge-type opt-out cannot be a table decision and is not offered; an untracked node's edges keep their history.
+
+#### Development
+The alternative, removing `history` from the base and registering per concrete class, would have touched every app's migration state to gain nothing the `finalize` override does not give. A Meta option was rejected because `BaseModel.Meta` is inherited by explicit `class Meta(BaseModel.Meta)` and Django refuses unknown Meta keys; a ClassVar matches `INTERNAL_ONLY` and `DEFAULT_DIMENSIONS`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-history-optout-1 | Default On | Implemented | `BaseModel.TRACK_HISTORY` is `True`; a type that does not declare it has a history manager and a `Historical<Type>` model, and introducing the mechanism produces no migration change for core or the default plugin set. | `makemigrations --check` clean |
+| req-grid-history-optout-2 | No History Model | Implemented | A type declaring `TRACK_HISTORY = False` has no `Historical<Type>` model in the app registry or the migration state, no `history` attribute, and no history save/delete signal handlers. | |
+| req-grid-history-optout-3 | Declaration Shape | Implemented | The declaration is a `bool` ClassVar, inherited through abstract intermediates; a non-`bool` value is refused at class creation. | |
+| req-grid-history-optout-4 | Explicit Degradation | Implemented | Every built history consumer handles an untracked type explicitly: the history service raises `HistoryNotTracked` instead of returning empty, the read backstop names no history table, and purge and sweep-purge skip the history sweep without error. | Unbuilt consumers carry the same obligation (table above). |
+| req-grid-history-optout-5 | Migration Consequence | Implemented | Opting out removes the history model from the migration state, so the owning app's next migration drops the history table (data loss); opting back in creates an empty one. | |
+| req-grid-history-optout-6 | Spine Still Answers | Implemented | Writes to an untracked type through the service layer and GRIFT succeed, and the spine and batch record still carry version, timestamps, tombstone, `batch_id`, `flip_map` and per-operation `BatchEvent`s with actor. | |
+| req-grid-history-optout-7 | Core Types Keep History | Implemented | `Edge`, `Batch`, `Dimension`, `Search` and `Keystone` keep history. | Edge history is shared across all edge types |
+
+#### Future
+Retention policy and per-app or grid-wide defaults remain under `req-grid-history-scope`. If re-observation stops creating history versions (Issue# 322 - tap), the cost case for opting out a re-collected type weakens on storage but not on migrate time, which scales with the number of tables, not rows.

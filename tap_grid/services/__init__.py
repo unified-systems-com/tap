@@ -1099,7 +1099,9 @@ def purge_node(
 
         # 3) Now sweep history rows for the typed model and the touching edges.
         #    django-simple-history doesn't cascade-delete history with the live
-        #    row; explicit deletion is required.
+        #    row; explicit deletion is required. A type that declares
+        #    TRACK_HISTORY = False has no history table, so there is nothing to
+        #    sweep (req-grid-history-optout-4).
         if model_cls is not None and hasattr(model_cls, "history"):
             model_cls.history.filter(entity_id=target_uuid).delete()
         if touching_edge_ids:
