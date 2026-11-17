@@ -80,9 +80,13 @@ _ACTOR_DESCRIPTIONS: dict[str, str] = {
 # bundles live in tap_auth.roles.json (req-tap-auth-roles); each protected group's
 # built-in key is also its role key, so we resolve the bundle from the role
 # registry rather than hardcoding it here.
+#
+# Every role in the registry has a protected group: the five core roles and each role an
+# installed plugin declares (req-tap-auth-plugin-declarations).
+_CORE_GROUPS: tuple[str, ...] = (GROUP_ADMIN, GROUP_VIEWER, GROUP_BOOTLOADER, GROUP_SCHEDULER, GROUP_COLLECTOR)
 _GROUP_BUNDLES: dict[str, tuple[str, ...]] = {
-    key: roles.role_capabilities(key)
-    for key in (GROUP_ADMIN, GROUP_VIEWER, GROUP_BOOTLOADER, GROUP_SCHEDULER, GROUP_COLLECTOR)
+    **{key: roles.role_capabilities(key) for key in _CORE_GROUPS},
+    **{key: spec.capabilities for key, spec in roles.ROLES.items()},
 }
 
 
@@ -126,6 +130,7 @@ def sync_capabilities(*, declared_prune: tuple[str, ...] = ()) -> dict[str, int]
                     "description": spec.description,
                     "description_json": spec.description_json,
                     "risk": spec.risk.value,
+                    "declared_by": spec.declared_by,
                     "permission": permission,
                 },
             )
@@ -211,6 +216,19 @@ def sync_protected_groups() -> None:
             # Hard-sync: the group holds exactly the bundle's permissions.
             group.permissions.set(_permissions_for(bundle))
             logger.info("[b247] protected group synced: %s (%s caps)", builtin_key, len(bundle))
+
+        # A protected group whose role is gone (its plugin was uninstalled, or the role was
+        # removed from the plugin's roles file) keeps its row and its members, but loses
+        # every permission, so its members hold nothing through it. Fail closed, never
+        # delete: removing the group and its memberships is an operator decision.
+        orphans = ProtectedGroup.objects.exclude(builtin_key__in=list(_GROUP_BUNDLES)).select_related("group")
+        for orphan in orphans:
+            if orphan.group.permissions.exists():
+                orphan.group.permissions.clear()
+                logger.warning(
+                    "[9e69] protected group %s has no role in the registry; cleared its permissions",
+                    orphan.builtin_key,
+                )
 
 
 def _ensure_program_actor(builtin_key: str, group_key: str) -> None:

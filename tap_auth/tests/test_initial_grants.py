@@ -62,9 +62,12 @@ class TestRoleAssignmentModel:
         # Guard: the auth-boot-section initial_grants role enum is the same set the
         # loader derives, so adding/removing a human role can't silently leave the
         # two out of step.
+        # Plugin roles are '<slug>.<role>' and validated by shape in the schema, then by
+        # membership at boot (req-tap-auth-plugin-declarations); the enum is the core set.
         schema = json.loads(_SCHEMA.read_text())
-        enum = schema["properties"]["initial_grants"]["additionalProperties"]["items"]["enum"]
-        assert set(enum) == roles.HUMAN_ASSIGNABLE_ROLES
+        core_enum, _plugin_shape = schema["properties"]["initial_grants"]["additionalProperties"]["items"]["anyOf"]
+        core_human = {k for k in roles.HUMAN_ASSIGNABLE_ROLES if roles.ROLES[k].declared_by == "tap_auth"}
+        assert set(core_enum["enum"]) == core_human
 
 
 # --------------------------------------------------------------------------- #

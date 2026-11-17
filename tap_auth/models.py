@@ -181,6 +181,12 @@ class Capability(models.Model):
         default="medium",
         help_text="Risk/classification (low|medium|high|critical) from the registry.",
     )
+    declared_by = models.CharField(
+        max_length=64,
+        default="tap_auth",
+        help_text="Who declared this capability: 'tap_auth' for the core registry, else the slug of the "
+        "plugin whose <slug>.capabilities.json declares it (req-tap-auth-plugin-declarations).",
+    )
     permission = models.OneToOneField(
         "auth.Permission",
         on_delete=models.CASCADE,

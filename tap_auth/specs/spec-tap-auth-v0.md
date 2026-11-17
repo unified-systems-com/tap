@@ -69,6 +69,7 @@ This spec supersedes the user/auth architecture previously parked under `tap_gri
 | req-tap-auth-builtins | [Protected Built-Ins](#protected-built-ins) | Proposed | Built-in users/groups use immutable natural keys |
 | req-tap-auth-capabilities | [Capability Registry](#capability-registry) | Proposed | Declarative JSON file (schema-validated) hard-syncs to Django permissions |
 | req-tap-auth-roles | [Role Definitions](#role-definitions) | Implemented | Roles (capability bundles) in a schema-validated JSON file; bootloader least-privilege guarded by test |
+| req-tap-auth-plugin-declarations | [Plugin-Declared Capabilities And Roles](#plugin-declared-capabilities-and-roles) | Implemented | A plugin ships `<slug>.capabilities.json` and `<slug>.roles.json`; names confined to `<slug>.*`; plugin roles human-only and bundle only their own capabilities; synced, attributed, and fail closed on removal |
 | req-tap-auth-program-users | [Program-User Definitions](#program-user-definitions) | Proposed | **Design/deferred.** Program-only-by-construction declarative file; humans operator-only |
 | req-tap-auth-policy | [Policy API](#policy-api) | Proposed | One central `authorize()` API; typed errors; denial logging |
 | req-tap-auth-service-boundary | [Service Boundary Enforcement](#service-boundary-enforcement) | Proposed | AuthZ at service boundary; AuthN at edges |
@@ -305,7 +306,7 @@ imports at module scope, reads them on call rather than at import, so it restate
 - **Descriptions flow into the table, not just the file.** `sync_capabilities` writes each capability's `description` **and** `description_json` onto its `Capability` row, so the running system is self-describing and DB-queryable — the context an AI/Paladin actor reads instead of guessing, and the surface against which a reviewer verifies the stated purpose matches the granted action. (`Capability.description_json` was added for this.)
 - The file is validated against a **published JSON Schema** (`tap_auth/schemas/capabilities.schema.json`); a malformed file fails loud at load (`ImproperlyConfigured`), never a silent partial registry. `additionalProperties: false` and a name pattern catch typos and rogue fields.
 - The DB projection is hard-synced from the canonical file-backed registry, which remains the source of truth.
-- Composition is forward-compatible: the same file convention extends per-app/plugin later (`<app>/<app>.capabilities.json`, namespaced names) — see the per-app declaration backlog. v0 loads only `tap_auth`'s file.
+- Composition: the same file convention extends to plugins (`tap_plugin/<slug>/<slug>.capabilities.json`, names confined to `<slug>.*`), loaded after `tap_auth`'s file into the one registry (`req-tap-auth-plugin-declarations`). Core apps other than `tap_auth` still declare in `tap_auth`'s file; the per-app split is the backlog item.
 - Capabilities are stored as a **real `tap_auth.Capability` table** (a managed model with its own table), not a `managed=False` placeholder. Each row carries the capability's public name, a human-readable `description`, and risk/classification metadata (flagging high-risk actions such as `grid.purge`). A backing Django `Permission` is projected from each `Capability` (the `Capability` model serves as the content-type home for those permission rows, or each `Capability` has a one-to-one `Permission`), so Groups still hold standard Django permissions while the capability metadata lives queryably in the DB.
   - Rationale (chosen 2026-06-12): a real table makes capability descriptions and risk metadata **queryable from the database / service layer**, which is the affordance a future AI/Paladin actor needs — it can be granted DB-level read or a gated service-layer query rather than code access. This matches TAP's declarative-shapes-over-code and satellite-agents-without-code-access direction; a code-only registry would force code access to answer "what does this capability mean / how risky is it." The `managed=False` placeholder approach (descriptions in code only) was considered and rejected for exactly this reason.
   - Threat posture: the `Capability` table holds capability *definitions* (name/description/risk), which are a **projection** of the code/spec registry and hard-synced at boot. Tampering with a definition row, or injecting a rogue capability, is therefore self-correcting and detectable — the next sync reverts it or hard-fails on undeclared drift (`req-tap-auth-capabilities`), and an unknown capability fails closed at runtime. So DB access to *this table specifically* buys little beyond breaking the system (a denial-of-service against authz, which fails closed), not silent privilege escalation. The sensitive runtime state is the **grants** — Group↔Permission and User↔Group membership — not the definitions; and raw DB write access to those is full compromise in any auth system (one could equally flip `is_superuser` or rewrite a password hash), so it is out of scope for this design rather than made worse by it. Read access to definitions is low-sensitivity by intent — queryability is the whole point.
@@ -324,7 +325,7 @@ imports at module scope, reads them on call rather than at import, so it restate
 - `tap_admin` receives explicit grants for all v1 capabilities; no hidden implication rules.
 - Not every built-in actor gets the full set: the `tap_bootloader` program actor receives an explicit **least-privilege** boot-capability bundle (no `grid.purge`/`grid.delete`), not all capabilities, so a boot bug cannot demolish the grid. See `spec-tap-boot-v0.md` (`req-boot-phases`).
 - Direct per-user grants are not part of the v1 TAP path. Group-assigned permissions are preferred.
-- Plugin-declared capabilities are deferred until there is a real demand signal.
+- Plugin-declared capabilities: see `req-tap-auth-plugin-declarations`.
 
 #### Acceptance Criteria
 
@@ -366,9 +367,9 @@ Roles are named, reusable capability bundles — the least-privilege capability 
   - `tap_viewer` (read-only, `grid.read` only — the least-privilege bundle for an invited guest/viewer) is **human-only**.
   - `tap_bootloader` / `tap_cares.*` are **program-only** — they can never be handed to a person by login config.
 - The loader derives `HUMAN_ASSIGNABLE_ROLES` and `PROGRAM_ASSIGNABLE_ROLES` from the declarations. The boundary is enforced on **both** sides and guarded by tests:
-  - **human side** — the `auth.initial_grants` role enum (auth-boot-section schema) is held in sync with `HUMAN_ASSIGNABLE_ROLES`; boot additionally fails loud if a grant names a non-human role (defense against schema/registry drift); and the social adapter refuses to apply a non-human-assignable role even if one leaks into the effective map at runtime.
+  - **human side** — the `auth.initial_grants` role enum (auth-boot-section schema) is held in sync with the core members of `HUMAN_ASSIGNABLE_ROLES` (plugin roles are matched by shape, `req-tap-auth-plugin-declarations`); boot additionally fails loud if a grant names a non-human role (defense against schema/registry drift); and the social adapter refuses to apply a non-human-assignable role even if one leaks into the effective map at runtime.
   - **program side** — `_ensure_program_actor` refuses to bind an actor to a group whose role is not `assignable_to "program"` (so a program actor can't be bound to `tap_viewer`).
-- **Layering note:** in v0 the `tap_cares.collector` / `tap_cares.scheduler` roles still live in `tap_auth`'s `tap_auth.roles.json` (their historical placement). Re-homing them so `tap_cares` ships its own roles is the per-app split — deferred with the per-app/plugin declaration mechanism (Backlog). Moving the bundles to a file now fixes the buried-in-code smell; the ownership/layering fix lands with that split.
+- **Layering note:** in v0 the `tap_cares.collector` / `tap_cares.scheduler` roles still live in `tap_auth`'s `tap_auth.roles.json` (their historical placement). Re-homing them so `tap_cares` ships its own roles is the per-app split (Backlog); the plugin half of that mechanism is `req-tap-auth-plugin-declarations`. Moving the bundles to a file now fixes the buried-in-code smell; the ownership/layering fix lands with that split.
 
 #### Acceptance Criteria
 
@@ -381,8 +382,75 @@ Roles are named, reusable capability bundles — the least-privilege capability 
 | req-tap-auth-roles-5 | Role-Mediated Grants | Implemented | Principals receive capabilities via roles, not direct per-user grants. | |
 | req-tap-auth-roles-6 | Descriptions Reach The Table | Implemented | A role's `description`/`description_json` hard-sync onto its `ProtectedGroup` row; built-in program actors' descriptions hard-sync onto their `User` rows. | |
 | req-tap-auth-roles-7 | Principal-Class Declared | Implemented | Every role declares a mandatory, non-empty `assignable_to` (`human`/`program`/both). The loader exposes `HUMAN_ASSIGNABLE_ROLES`/`PROGRAM_ASSIGNABLE_ROLES`; guarded by test. | |
-| req-tap-auth-roles-8 | Assignment Boundary Enforced | Implemented | A program-only role can never be granted to a person (schema enum in sync with the human set + boot validation + adapter refusal), and a human-only role can never be bound to a program actor (`_ensure_program_actor` guard). | |
+| req-tap-auth-roles-8 | Assignment Boundary Enforced | Implemented | A program-only role can never be granted to a person (schema enum in sync with the core human set, plugin roles by shape — `req-tap-auth-plugin-declarations` — + boot validation + adapter refusal), and a human-only role can never be bound to a program actor (`_ensure_program_actor` guard). | |
 | req-tap-auth-roles-9 | Viewer Role | Implemented | `tap_viewer` is a human-only read-only role (`grid.read`), the least-privilege bundle for an invited guest/viewer. | |
+
+---
+
+### Plugin-Declared Capabilities And Roles
+----
+RID: `req-tap-auth-plugin-declarations`  
+
+Status: `Implemented`
+
+A plugin declares the operations it guards and the roles that grant them, in files beside its manifest. Core
+loads them into the one registry, confines them to the plugin's own namespace, and enforces them exactly like core
+capabilities. *Plugins extend what the system can do; the operator decides who may use it* (the human-introduction
+rule of `req-tap-auth-program-users`): a plugin names a role, and only operator config puts a person in it.
+
+#### Implementation
+
+- **Files by convention.** In the package root `tap_plugin/<slug>/`: `<slug>.capabilities.json` (schema
+  `tap_auth/schemas/capabilities.schema.json`) and `<slug>.roles.json` (schema `tap_auth/schemas/roles.schema.json`).
+  The same schemas as core, so the same mandatory descriptions and risk levels apply. Either file is optional.
+  `tap_auth/plugin_declarations.py` finds them from the `tap_plugin.<slug>` apps in `INSTALLED_APPS` without
+  importing plugin code; a listed plugin whose package cannot be located fails loud.
+- **Load order.** `tap_auth.capabilities` loads its own file, then each plugin's capabilities file in install order;
+  `tap_auth.roles` does the same for roles. `CAPABILITIES`, `ROLES`, `HUMAN_ASSIGNABLE_ROLES`, `authorize`, `can`
+  and `requires_capability` therefore see plugin entries with no other change.
+- **Capability confinement.** A plugin may only declare names `<slug>.<action>`. Its slug may not be a namespace the
+  core file uses (`CORE_NAMESPACES`: `grid`, `auth`, `cares`, …), so a plugin can neither shadow a core capability nor
+  mint one that reads as core authority. A name declared twice anywhere fails loud. Two names that project to the
+  same Django permission codename (`cares.run_collectors` and `cares_run.collectors` both become
+  `cares_run_collectors`) fail loud too: they would share one `Permission` row, and `policy` matches by codename,
+  so a grant of one would be a grant of the other.
+- **Role confinement.** A plugin role is named `<slug>.<role>`, bundles only `<slug>.*` capabilities, declares
+  `assignable_to: ["human"]` exactly, and may not use `"*"`. So installing a plugin can never hand anyone a core
+  capability, and a plugin cannot mint a program actor's bundle. A person who should read the grid *and* export
+  from a plugin holds a core role (`tap_viewer`) and the plugin role: two grants, two owners, matching the
+  composition rule in `req-tap-auth-service-boundary`.
+- **Admin.** `tap_admin`'s `"*"` resolves after plugin capabilities load, so it holds them, as
+  `req-tap-auth-roles` already promised ("including ones plugins add later").
+- **Feature control.** A plugin gates a feature by naming its capability at the service function that performs it,
+  `@requires_capability("<slug>.<action>")`, so every caller (page, panel, API, command) meets the same gate; a
+  page hides the control with `policy.can(...)`. A feature that also reads the graph meets `grid.read` there too.
+- **Sync and attribution.** `sync_capabilities` writes `Capability.declared_by` (`tap_auth` or the plugin slug), so
+  "which plugin declared this, and how risky is it" is a query. `sync_protected_groups` creates and hard-syncs a
+  protected group for every role in the registry, plugin roles included.
+- **Removal fails closed.** A capability that disappears (plugin uninstalled, or removed from its file) is undeclared
+  drift and needs a declared prune, as for core. A protected group whose role disappears keeps its row and its
+  members but loses every permission, logged; deleting the group or its memberships is an operator act.
+- **Login grants.** `auth.initial_grants` may name a plugin role. The boot-section schema checks the core role names
+  by enum and a plugin role by shape only (`<slug>.<role>`), because it cannot know what is installed; boot then
+  refuses any name not in `HUMAN_ASSIGNABLE_ROLES`, and the login adapter refuses it again at grant time. A dotted
+  program role (`tap_cares.collector`) passes the shape and is refused by both.
+- **Not in scope.** Plugin program actors and per-collector capability limits (`req-tap-auth-program-users`,
+  tap#1205); per-entity-type read capabilities; a page or panel declaring the capability that shows it. This is not
+  a sandbox: plugin code runs in-process, and confinement here bounds what a plugin's *declarations* can grant, not
+  what its code can do.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-auth-plugin-declarations-1 | Files By Convention | Implemented | Declarations are found as `<slug>.capabilities.json` / `<slug>.roles.json` in each installed `tap_plugin.<slug>` package; a plugin with neither contributes nothing. | |
+| req-tap-auth-plugin-declarations-2 | Same Schema, Attributed | Implemented | Plugin files validate against the core schemas and fail loud when malformed; each loaded capability records its declaring plugin. | |
+| req-tap-auth-plugin-declarations-3 | Capability Confinement | Implemented | A plugin capability outside `<slug>.*`, in a core namespace, repeating a name, or projecting to an existing permission codename is refused at load. | |
+| req-tap-auth-plugin-declarations-4 | Role Confinement | Implemented | A plugin role outside `<slug>.<role>`, bundling a capability outside `<slug>.*`, assignable to anything but exactly `human`, or using `"*"` is refused at load. | |
+| req-tap-auth-plugin-declarations-5 | Enforced Like Core | Implemented | A person in a plugin role passes `policy` for that role's capabilities and no others; `tap_admin` holds every plugin capability. | |
+| req-tap-auth-plugin-declarations-6 | Synced And Queryable | Implemented | `Capability.declared_by` carries the declarer; every plugin role has a protected group hard-synced to its bundle. | |
+| req-tap-auth-plugin-declarations-7 | Removal Fails Closed | Implemented | A removed plugin capability needs a declared prune; a protected group whose role is gone holds no permissions after sync. | |
+| req-tap-auth-plugin-declarations-8 | Login Grants | Implemented | `initial_grants` accepts an installed plugin's human role; a program role, or a role of a plugin not installed, aborts boot. | |
 
 ---
 
@@ -1201,7 +1269,7 @@ AI and machine execution must use named TAP actors, but detailed AI delegation i
 - Generic OIDC provider after `google_oidc`.
 - **IdP-claim → TAP-role mapping (post-MVP).** Delegate role assignment to the customer's identity provider: the IdP asserts group/role membership and TAP maps it to its own roles on each login, instead of (or alongside) the operator-curated `auth.initial_grants` map (`req-tap-auth-boot`). The standard shape is a per-provider **claim→role map** in the provider config (e.g. `{"tap-admins": "tap_admin", "tap-viewers": "tap_viewer"}`), read from the **verified token** at the same chokepoint that already enforces `hd`/`email_verified` (`evaluate_access`), and synced to group membership in the adapter's `save_user` path — `ProviderConfig.config` is already the per-provider passthrough where such a map would live, so the seams exist. Two materially different cases: providers that emit a **`groups`/`roles` claim in the ID token** (Okta, Entra/Azure AD, Auth0, Keycloak) are the easy, token-native path; **Google Workspace does not** (see the Google-specific entry below) and needs the Admin SDK Directory API instead. **The load-bearing design decision is reconciliation semantics:** unlike `initial_grants`, which is deliberately *add-only* (a typo can't revoke), IdP-claim mapping is normally *authoritative/reconciling* — drop out of the upstream group and lose the mapped role on next login, since the point is to delegate lifecycle to the customer's directory. Running both models at once needs an explicit per-source rule (config grants additive; claim-mapped grants authoritative over only the claim-mapped group set). The same security boundary still binds: a claim map may grant **only human-assignable roles** (`req-tap-auth-roles` — never `tap_bootloader`/`tap_cares.*`), regardless of what the upstream group is named. **Deferred because** every current use case has at most a small handful of users (mostly the operator); `allowed_emails` + `initial_grants` cover "let this set of people in" without the extra IdP integration and its credential/security surface. This lands when a customer arrives managing their own users at scale in their own IdP — at which point Okta/Entra (token-native claims) are the natural first targets over Google.
 - Group-based access (Google). Gate login and/or map TAP roles by upstream Google Workspace group membership. This is **not** available via Google OIDC ID tokens — unlike Okta/Entra, Google does not emit a `groups` claim — so it requires either the Admin SDK Directory API (a service account with domain-wide delegation + `admin.directory.group.readonly` scope, queried server-side after login) or a SAML provider with group-attribute mapping. Both are separate, heavier integrations with their own credentials and security surface. Until then, `allowed_emails` is the per-account substitute for "let this set of people in."
-- Plugin-declared capabilities and groups.
+- Plugin-declared capabilities and human roles are built (`req-tap-auth-plugin-declarations`). Still open: plugin program actors (`req-tap-auth-program-users`, tap#1205), per-entity-type read capabilities (the per-type gating in `req-tap-auth-service-boundary`), and plugin pages or panels declaring the capability that shows them.
 - **Per-app / plugin internal-actor declaration mechanism.** The generalization of v0's centrally-defined native-app actors: a first-class interface by which a native app *or a plugin* declares its own internal-app service actor(s) + least-privilege bundle, materialized and guarded by `tap_auth` sync (the existing immutable-key / hard-sync / protected-metadata guards prevent impersonation, duplication, or acquisition of an existing actor). Deferred to the **plugin refactor**, which is where plugins first need to self-declare actors — including a distinct actor *per collector* for cross-collector attribution (v0 runs all collectors as the single shared `tap_cares.collector`) — and is the right home for it, not the auth sync or boot system hardcoding them. Native apps (`tap_boot`, `tap_cares`) continue to use centrally-defined `tap_auth` bundles until then. (Referenced by the plugin refactor; `req-tap-auth-builtins` lists the v0 per-app-owned actors.)
 - **Grid-intent (request/response) triggering of internal operations.** Generalizes the scheduler: a user with the right capability creates an *intent* node on the grid — a schedule, a collection request, an "install-plugin" ask — and an internal-app service actor services it under its own bounded bundle. Two distinct authZ decisions, never collapsed: the capability to **create the intent** (at the grid-write boundary) and the bundle that bounds the **servicing actor**. The payoff over a classic code-path + dedicated table: the operation gains grid history / FLIP / search / linking, backend activity becomes grid-referenced and dimension-separated from monitored data (better than log-lines), and hosted AI reasons about system state with the same grid-search skills it uses for the domain. Needs the not-yet-baked `ask` / `action` / `emitter` node concepts. Scope boundary: this is for operations with a natural grid representation; **non-grid web/API config actions** (plugin enable/disable, route config, things with no grid side) are gated by classic per-request edge authZ (`req-tap-auth-service-boundary`) and are a separate `tap_web` design — not forced onto the grid.
 - **On-grid expression of users — records vs. actions (deliberately deferred, demand-driven).** Two separable questions, both post-MVP, with different answers:

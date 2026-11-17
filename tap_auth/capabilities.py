@@ -15,6 +15,11 @@ codename is an implementation detail (``grid_read``), via `codename_for()`.
 Role bundles (the least-privilege capability sets granted to the protected
 built-in groups) live in ``tap_auth/tap_auth.roles.json`` (loaded by `tap_auth.roles`),
 **not here** — moving them out of this file is `req-tap-auth-roles`.
+
+An installed plugin may add capabilities in ``tap_plugin/<slug>/<slug>.capabilities.json``,
+named ``<slug>.<action>`` only (req-tap-auth-plugin-declarations). They join the registry
+here, so ``authorize``/``can``/``requires_capability`` and the hard sync treat them like any
+other capability.
 """
 
 from __future__ import annotations
@@ -27,9 +32,13 @@ from typing import Any
 from django.core.exceptions import ImproperlyConfigured
 
 from tap.jsonfiles import JsonFileError, load_json_file
+from tap_auth.plugin_declarations import CAPABILITIES_SUFFIX, plugin_auth_files
 
 _DATA_PATH = Path(__file__).resolve().parent / "tap_auth.capabilities.json"
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "capabilities.schema.json"
+
+# The declarer recorded for capabilities and roles in tap_auth's own files.
+CORE_DECLARER = "tap_auth"
 
 
 class RiskLevel(StrEnum):
@@ -56,18 +65,21 @@ class CapabilitySpec:
     risk: RiskLevel
     description_json: dict[str, Any] = field(default_factory=dict)
     """Optional structured context, synced to ``Capability.description_json``."""
+    declared_by: str = CORE_DECLARER
+    """Who declared it: ``tap_auth`` for the core file, else the declaring plugin's slug
+    (req-tap-auth-plugin-declarations). Synced to ``Capability.declared_by``."""
 
 
-def _load_capabilities() -> tuple[CapabilitySpec, ...]:
-    """Load + validate ``tap_auth.capabilities.json`` into the canonical registry.
+def _read_capability_file(path: Path, *, label: str, declared_by: str) -> tuple[CapabilitySpec, ...]:
+    """Load + validate one capabilities file against the shared schema.
 
-    Fails loud (`ImproperlyConfigured`) on a missing/unreadable file, schema
-    violation, or duplicate capability name — never a silent partial registry.
+    Fails loud (`ImproperlyConfigured`) on a missing/unreadable file, a schema
+    violation, or a name repeated within the file — never a silent partial registry.
     """
     try:
-        data = load_json_file(_DATA_PATH, schema=_SCHEMA_PATH)
+        data = load_json_file(path, schema=_SCHEMA_PATH)
     except JsonFileError as exc:
-        raise ImproperlyConfigured(f"tap_auth.capabilities.json: {exc}") from exc
+        raise ImproperlyConfigured(f"{label}: {exc}") from exc
 
     specs = tuple(
         CapabilitySpec(
@@ -75,19 +87,94 @@ def _load_capabilities() -> tuple[CapabilitySpec, ...]:
             description=c["description"],
             risk=RiskLevel(c["risk"]),
             description_json=c.get("description_json", {}),
+            declared_by=declared_by,
         )
         for c in data["capabilities"]
     )
     names = [s.name for s in specs]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
-        raise ImproperlyConfigured(f"tap_auth.capabilities.json has duplicate capability names: {duplicates}")
+        raise ImproperlyConfigured(f"{label} has duplicate capability names: {duplicates}")
     return specs
 
 
-# Canonical v1 capability registry, loaded from tap_auth.capabilities.json at import.
-# Operation-level (not model-level) in v1.
+def namespace_of(name: str) -> str:
+    """The namespace of a capability or role name: the text before its first dot."""
+    return name.split(".", 1)[0]
+
+
+def codename_for(name: str) -> str:
+    """Project a public capability name to its Django permission codename.
+
+    ``grid.read`` -> ``grid_read``. The public name is the contract; the codename
+    is storage. Checked via ``has_perm("tap_auth.grid_read")`` semantics, but TAP
+    authorization never calls ``has_perm`` directly (it ignores ``is_superuser``).
+    """
+    return name.replace(".", "_")
+
+
+def _confine_plugin_capabilities(
+    slug: str, specs: tuple[CapabilitySpec, ...], *, label: str, reserved: frozenset[str]
+) -> None:
+    """Refuse a plugin capability file that reaches outside the plugin's own namespace.
+
+    A plugin may only name capabilities ``<slug>.<action>``, and its slug may not be a
+    namespace core already uses, so a plugin can neither shadow a core capability nor
+    mint one that reads as core authority (req-tap-auth-plugin-declarations).
+    """
+    if slug in reserved:
+        raise ImproperlyConfigured(
+            f"{label}: plugin slug '{slug}' is a core capability namespace ({sorted(reserved)}); "
+            "a plugin may not declare capabilities in it"
+        )
+    outside = sorted(s.name for s in specs if namespace_of(s.name) != slug)
+    if outside:
+        raise ImproperlyConfigured(
+            f"{label}: plugin '{slug}' may only declare capabilities named '{slug}.<action>'; " f"refusing {outside}"
+        )
+
+
+def _load_capabilities() -> tuple[CapabilitySpec, ...]:
+    """Load the core registry, then every installed plugin's declared capabilities.
+
+    Core loads first and defines the reserved namespaces. Each plugin file is
+    schema-validated and confined to its own namespace; a name declared twice
+    anywhere fails loud.
+    """
+    core = _read_capability_file(_DATA_PATH, label="tap_auth.capabilities.json", declared_by=CORE_DECLARER)
+    reserved = frozenset(namespace_of(s.name) for s in core)
+    specs = list(core)
+    for files in plugin_auth_files():
+        if files.capabilities_path is None:
+            continue
+        label = f"{files.slug}{CAPABILITIES_SUFFIX}"
+        declared = _read_capability_file(files.capabilities_path, label=label, declared_by=files.slug)
+        _confine_plugin_capabilities(files.slug, declared, label=label, reserved=reserved)
+        specs.extend(declared)
+    names = [s.name for s in specs]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise ImproperlyConfigured(f"capability names declared more than once: {duplicates}")
+    # Two names can project to one Django codename ('cares.run_collectors' and
+    # 'cares_run.collectors' are both 'cares_run_collectors'), which would make them share
+    # one Permission row, so a grant of one would be a grant of the other. Refuse it.
+    by_codename: dict[str, list[str]] = {}
+    for name in names:
+        by_codename.setdefault(codename_for(name), []).append(name)
+    shared = sorted(group for group in by_codename.values() if len(group) > 1)
+    if shared:
+        raise ImproperlyConfigured(f"capability names project to the same permission codename: {shared}")
+    return tuple(specs)
+
+
+# Canonical capability registry: tap_auth.capabilities.json, then each installed plugin's
+# <slug>.capabilities.json, loaded at import. Operation-level (not model-level).
 CAPABILITIES: tuple[CapabilitySpec, ...] = _load_capabilities()
+
+# The namespaces the core file uses. A plugin may not declare capabilities or roles in one.
+CORE_NAMESPACES: frozenset[str] = frozenset(
+    namespace_of(c.name) for c in CAPABILITIES if c.declared_by == CORE_DECLARER
+)
 
 ALL_CAPABILITY_NAMES: tuple[str, ...] = tuple(c.name for c in CAPABILITIES)
 
@@ -144,13 +231,3 @@ del _constant
 def get_capability(name: str) -> CapabilitySpec | None:
     """Return the registered CapabilitySpec for ``name``, or None if unknown."""
     return _BY_NAME.get(name)
-
-
-def codename_for(name: str) -> str:
-    """Project a public capability name to its Django permission codename.
-
-    ``grid.read`` -> ``grid_read``. The public name is the contract; the codename
-    is storage. Checked via ``has_perm("tap_auth.grid_read")`` semantics, but TAP
-    authorization never calls ``has_perm`` directly (it ignores ``is_superuser``).
-    """
-    return name.replace(".", "_")
