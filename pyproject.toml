@@ -405,4 +405,5 @@ markers = [
     "live_fetch: opt-in integration tests that hit real network upstreams; skipped by default",
     "enforce_write_guard: opt out of the autouse unguarded_write() hatch so the write backstop is live in this test",
     "smoke: high-signal canary subset — failure predicts broad downstream failure (req-dev-validation-canary-tier); run with `-m smoke`",
+    "ci_fast: a plugin's quick, database-free early check — plugin CI runs these first, during the boot, and stops on a failure (req-tap-plugin-extdev-repo-ci-14); run with `-m ci_fast`",
 ]

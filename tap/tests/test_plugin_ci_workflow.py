@@ -487,3 +487,78 @@ def test_the_failure_probe_cannot_change_the_boot_job_result() -> None:
     assert probe["if"] == "failure()"
     assert probe["continue-on-error"] is True
     assert names.index("Dump web logs on failure") < names.index(probe["name"])
+
+
+def _boot_steps() -> tuple[list[dict[str, Any]], list[str]]:
+    steps = _steps(_load(PLUGIN_CI)["jobs"]["boot-and-test"])
+    return steps, [step.get("name", "") for step in steps]
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_fast_set_runs_after_pre_boot_and_before_health_and_the_suite() -> None:
+    """The ci_fast set runs during the boot's migrate, ahead of everything slow (aws-build Q70c)."""
+    steps, names = _boot_steps()
+    order = [
+        "Boot the plugin profile",
+        "Wait for pre-boot to install the plugins",
+        "Start the test-DB template build (background)",
+        "Fast set (ci_fast) — fail early",
+        "Wait for the stack to become healthy",
+        "Run the plugin's in-package tests",
+    ]
+    assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
+    fast = steps[names.index("Fast set (ci_fast) — fail early")]
+    assert "if" not in fast, "a failed fast set must stop the job, not be stepped over"
+    run = fast["run"]
+    assert '-m "ci_fast and not live_fetch"' in run
+    assert "--no-sync" in run, "the venv must not be synced under the boot's running migrate"
+    # Exit 5 is pytest's "no tests ran": a plugin that marks nothing is a no-op, not a red.
+    assert "5)" in run and "exit 1" in run
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_parallel_suite_clones_one_template_and_has_a_serial_road() -> None:
+    steps, names = _boot_steps()
+    template = steps[names.index("Start the test-DB template build (background)")]["run"]
+    assert "scripts/build-test-template" in template and "exec -d" in template
+    assert 'mode=serial' in template and '"$TEST_WORKERS" = "0"' in template
+    suite = steps[names.index("Run the plugin's in-package tests")]["run"]
+    assert "TAP_TEST_DB_TEMPLATE=tap_test_template" in suite
+    assert '-n "$TEST_WORKERS"' in suite
+    # Both roads write the log the zero-executed summary reads.
+    assert suite.count("| tee pytest.log") == 2
+    # YAML 1.1 reads the bare `on:` key as the boolean True, so the trigger table is keyed by it.
+    loaded: dict[Any, Any] = _load(PLUGIN_CI)
+    workers = loaded[True]["workflow_call"]["inputs"]["test_workers"]
+    assert workers["default"] == "auto" and workers["required"] is False
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-8")
+def test_the_summary_still_fails_on_zero_executed_and_reports_the_fast_set() -> None:
+    steps, names = _boot_steps()
+    summary = steps[names.index("Summary (fails on zero executed tests)")]
+    assert summary["if"] == "always()"
+    run = summary["run"]
+    assert 'Path("pytest.log")' in run and '[ "$executed" = "0" ]' in run
+    assert "fast set (ci_fast)" in run
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_boot_waits_are_bounded_by_the_job_timeout_not_a_fixed_count() -> None:
+    """A long boot is bounded by boot_and_test_timeout_minutes alone (rampart-20x-playground, 2026-11-17)."""
+    steps, names = _boot_steps()
+    for name in ("Wait for pre-boot to install the plugins", "Wait for the stack to become healthy"):
+        step = steps[names.index(name)]
+        assert step["env"]["BOOT_TIMEOUT_MIN"] == "${{ inputs.boot_and_test_timeout_minutes }}"
+        assert "seq 1 $((BOOT_TIMEOUT_MIN * 6))" in step["run"]
+        assert "seq 1 90" not in step["run"]
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_boot_waits_never_sync_the_venv_pre_boot_is_installing() -> None:
+    """The waits poll while pre-boot installs plugins: a syncing `uv run` there could rewrite the venv
+    under it (PR 1219 review, Grok), so every command in them is `--no-sync`."""
+    steps, names = _boot_steps()
+    for name in ("Wait for pre-boot to install the plugins", "Wait for the stack to become healthy"):
+        run = steps[names.index(name)]["run"]
+        assert "uv run " not in run.replace("uv run --no-sync ", "")

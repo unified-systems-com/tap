@@ -8,9 +8,13 @@ to pass has not been shown to be capable of failing.
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
+import pytest
+
+from tap_plugins.validate import repo as repo_module
 from tap_plugins.validate.repo import (
     PROTECTED_RELEASE_TAGS,
     REUSABLE_CALLER,
@@ -172,6 +176,7 @@ class TestOptIn:
             "repo-release-lane",
             "repo-release-please-pair",
             "repo-waiver-ledger",
+            "repo-dependency-pins",
         }
 
     def test_conformant_shell_passes(self, tmp_path: Path) -> None:
@@ -184,6 +189,7 @@ class TestOptIn:
             "repo-ci-caller-pin",
             "repo-nightly-shape",
             "repo-waiver-ledger",
+            "repo-dependency-pins",
         ):
             assert _check(result, check_id).status == "pass", _messages(_check(result, check_id))
 
@@ -1875,3 +1881,206 @@ class TestReleasePleasePair:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-release-please-pair")
         assert check.status == "fail", _messages(check)
         assert "does not parse as JSON" in _messages(check)
+
+
+# ---------------------------------------------------------------------------
+# Third-party dependency pins (req-tap-plugin-validate-pins)
+# ---------------------------------------------------------------------------
+
+
+def _pins_repo(tmp_path: Path, dependencies: list[str] | None, *, raw: str | None = None) -> Path:
+    """A conformant shell whose pyproject declares *dependencies* (None: no dependencies key).
+
+    The array is written with `json.dumps`: a JSON array of ASCII strings is also a TOML array,
+    which keeps markers carrying both quote styles exactly as given."""
+    if raw is None:
+        raw = '[project]\nname = "shell-sample-tap"\nversion = "0.1.0"\n'
+        if dependencies is not None:
+            raw += f"dependencies = {json.dumps(dependencies)}\n"
+    return _make_repo(tmp_path, extra_files={"pyproject.toml": raw})
+
+
+def _pins(tmp_path: Path, dependencies: list[str] | None, *, raw: str | None = None) -> CheckResult:
+    return _check(validate_plugin(_pins_repo(tmp_path, dependencies, raw=raw), repo_scope=True), "repo-dependency-pins")
+
+
+class TestDependencyPins:
+    """Each third-party requirement names one release; plugin distributions keep their ranges.
+
+    Run in the warn phase (`DEPENDENCY_PINS_ENFORCED = False`, the shipped value) unless a test
+    flips it, so every reported case is asserted as `warn` and the enforced case separately as
+    `fail` — a check only ever seen to warn has not been shown to refuse."""
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-1")
+    @pytest.mark.parametrize(
+        "requirement",
+        [
+            "boto3==1.43.9",
+            "PyYAML==6.0.2",
+            "requests[socks]==2.34.2",
+            "sigstore===4.2.0",
+            'nh3==0.3.7; python_version >= "3.14"',
+            "requests==2.34.2 ; sys_platform != 'win32' and python_version > '3.0'",
+        ],
+    )
+    def test_an_exact_pin_passes(self, tmp_path: Path, requirement: str) -> None:
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "pass", _messages(check)
+        assert check.details == {"pinned": [requirement], "first_party": [], "floating": []}
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-1")
+    def test_a_marker_does_not_rescue_a_floor(self, tmp_path: Path) -> None:
+        """The marker's `>=` is not a version clause, and nor does a marker make a floor a pin."""
+        check = _pins(tmp_path, ['nh3>=0.3.7; python_version >= "3.14"'])
+        assert check.status == "warn"
+        assert "nh3==<version>" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-2")
+    def test_a_floor_is_reported_with_its_fix(self, tmp_path: Path) -> None:
+        """The originating burn: `boto3>=1.43.9` let botocore 1.44.4 in overnight."""
+        check = _pins(tmp_path, ["boto3>=1.43.9"])
+        assert check.status == "warn"
+        text = _messages(check)
+        assert "`boto3>=1.43.9`" in text
+        assert "`boto3==<version>`" in text
+        assert "Renovate" in text
+        assert check.messages[0].path == "pyproject.toml"
+        assert check.details is not None and check.details["floating"] == ["boto3>=1.43.9"]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-2")
+    @pytest.mark.parametrize(
+        ("requirement", "why"),
+        [
+            ("requests>=2.34.2,<3", "2 version clauses"),
+            ("PyYAML~=6.0", "`~=`"),
+            ("sigstore==4.*", "wildcard"),
+            ("nh3", "names no version"),
+            ("boto3<2", "`<`"),
+            ("boto3!=1.44.4", "`!=`"),
+            ("lib @ git+https://example.invalid/lib@v1", "direct reference"),
+            ("boto3==1.43.9,!=1.44.4", "2 version clauses"),
+        ],
+    )
+    def test_every_floating_shape_is_reported(self, tmp_path: Path, requirement: str, why: str) -> None:
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        assert why in _messages(check)
+        assert f"`{requirement}`" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-2")
+    def test_each_offender_is_named_and_the_pinned_ones_are_not(self, tmp_path: Path) -> None:
+        check = _pins(tmp_path, ["PyYAML>=6.0.2", "zizmor==1.30.0", "requests>=2,<3", "github-core-tap>=0.14,<0.15"])
+        assert check.status == "warn"
+        reported = [m.text for m in check.messages if m.severity == "warning"]
+        assert len(reported) == 2
+        assert any("`PyYAML>=6.0.2`" in t for t in reported)
+        assert any("`requests>=2,<3`" in t for t in reported)
+        assert not any("zizmor" in t or "github-core-tap" in t for t in reported)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-3")
+    @pytest.mark.parametrize(
+        "requirement",
+        [
+            "compliance-core-tap>=0.5.0,<0.9",
+            "identity-core-tap",
+            "computing_core_tap>=0.9.0",
+            "Github-Core-Tap>=0.13.0,<0.15",
+            "tap-plugin-legacy-thing>=0.1",
+        ],
+    )
+    def test_a_plugin_distribution_keeps_its_range(self, tmp_path: Path, requirement: str) -> None:
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "pass", _messages(check)
+        assert check.details == {"pinned": [], "first_party": [requirement], "floating": []}
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-3")
+    @pytest.mark.parametrize("requirement", ["tap-plugin-foo-tap>=1", "untapped>=1", "tap>=0.1"])
+    def test_a_name_the_identity_rule_refuses_is_not_exempt(self, tmp_path: Path, requirement: str) -> None:
+        """`slug_for_dist_name` is the rule: a both-conventions name, a non-suffix lookalike and core
+        itself are not plugin distributions, so they are held to the pin like any library."""
+        assert _pins(tmp_path, [requirement]).status == "warn"
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-3")
+    @pytest.mark.parametrize(
+        "requirement",
+        ["evil-tap @ git+https://example.invalid/repo.git@main", "computing-core-tap @ https://example.invalid/c.whl"],
+    )
+    def test_a_plugin_shaped_direct_reference_is_still_refused(self, tmp_path: Path, requirement: str) -> None:
+        """The exemption covers a plugin distribution's version range, never an alternate source:
+        a plugin-shaped name alone must not let a remote reference through."""
+        check = _pins(tmp_path, [requirement])
+        assert check.status == "warn", _messages(check)
+        assert "direct reference" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    def test_no_dependencies_passes(self, tmp_path: Path) -> None:
+        check = _pins(tmp_path, None)
+        assert check.status == "pass", _messages(check)
+        assert "nothing to pin" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    def test_an_empty_list_passes(self, tmp_path: Path) -> None:
+        assert _pins(tmp_path, []).status == "pass"
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    def test_no_pyproject_passes_with_nothing_to_check(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "pyproject.toml").unlink()
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-dependency-pins")
+        assert check.status == "pass"
+        assert "no pyproject.toml" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    @pytest.mark.parametrize(
+        ("raw", "why"),
+        [
+            ('[project]\nname = "shell-sample-tap"\ndependencies = ["boto3 >>= 1"]\n', "does not parse"),
+            ('[project\nname = "shell-sample-tap"\n', "cannot be read"),
+            ('[project]\nname = "shell-sample-tap"\ndynamic = ["dependencies"]\n', "dynamic"),
+            ('[project]\nname = "shell-sample-tap"\ndependencies = "boto3==1"\n', "not a list"),
+            ('[project]\nname = "shell-sample-tap"\ndependencies = [1]\n', "not a requirement string"),
+            # Falsy but malformed is not "none": only a missing key means no dependencies.
+            ('[project]\nname = "shell-sample-tap"\ndependencies = ""\n', "not a list"),
+            ('[project]\nname = "shell-sample-tap"\ndependencies = {}\n', "not a list"),
+            ('[project]\nname = "shell-sample-tap"\ndynamic = ""\n', "not a list of field names"),
+        ],
+    )
+    def test_what_cannot_be_read_is_reported_not_passed(self, tmp_path: Path, raw: str, why: str) -> None:
+        check = _pins(tmp_path, None, raw=raw)
+        assert check.status == "warn", _messages(check)
+        assert why in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-4")
+    def test_a_project_that_is_not_a_table_is_reported(self, tmp_path: Path) -> None:
+        """Called directly: a non-table `[project]` also trips older package checks before this one
+        runs, so the full validator run is not the place to observe this check's own verdict."""
+        repo = _pins_repo(tmp_path, None, raw="project = []\n")
+        result = ValidationResult(ok=True, level="structure", plugin_path=str(repo), strict=False)
+        repo_module._check_dependency_pins(repo, result)
+        check = _check(result, "repo-dependency-pins")
+        assert check.status == "warn", _messages(check)
+        assert "not a table" in _messages(check)
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-5")
+    def test_the_shipped_phase_warns(self) -> None:
+        """Five repositories float as of 2026-11-17; flipping this is the ratchet, made on purpose."""
+        assert repo_module.DEPENDENCY_PINS_ENFORCED is False
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-5")
+    def test_enforced_the_same_findings_refuse(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_module, "DEPENDENCY_PINS_ENFORCED", True)
+        check = _pins(tmp_path, ["boto3>=1.43.9", "compliance-core-tap>=0.5,<0.9", "zizmor==1.30.0"])
+        assert check.status == "fail"
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        assert len(errors) == 1 and "`boto3>=1.43.9`" in errors[0]
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-5")
+    def test_enforced_a_pinned_plugin_still_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_module, "DEPENDENCY_PINS_ENFORCED", True)
+        assert _pins(tmp_path, ["boto3==1.43.9", "compliance-core-tap>=0.5,<0.9"]).status == "pass"
+
+    @pytest.mark.spec("req-tap-plugin-validate-pins-6")
+    def test_only_in_repository_scope(self, tmp_path: Path) -> None:
+        repo = _pins_repo(tmp_path, ["boto3>=1.43.9"])
+        assert [c for c in validate_plugin(repo).checks if c.id == "repo-dependency-pins"] == []
+        assert _check(validate_plugin(repo, repo_scope=True), "repo-dependency-pins").status == "warn"

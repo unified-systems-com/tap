@@ -32,6 +32,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 | req-tap-plugin-validate-compat | [Compatibility Floor](#compatibility-floor) | Implemented | Structure check: `requires_tap` is declared and satisfied by the harness core |
 | req-tap-plugin-validate-version | [Version Form](#version-form) | Implemented | Structure check: `plugin_version` is a bare release number, never the `v`-prefixed tag |
 | req-tap-plugin-validate-repo | [Repository Scope](#repository-scope) | In Development | Opt-in structure checks on the repository SHELL: CODEOWNERS, the CI lanes, the reusable-caller pin and grant, the nightly lane's shape, the release lane, the waiver ledger |
+| req-tap-plugin-validate-pins | [Exact Third-Party Pins](#exact-third-party-pins) | In Development | Repository-scope check: every third-party `[project].dependencies` entry is an exact pin; plugin distributions keep ranges; warns until the fleet measures clean, then refuses |
 | req-tap-plugin-validate-cli | [Standalone CLI](#standalone-cli) | Implemented | Module-based CLI for structure level; loads/runs via management command |
 | req-tap-plugin-validate-mgmt | [Management Command](#management-command) | Implemented | Django management command supporting all levels |
 | req-tap-plugin-validate-output | [Validation Output](#validation-output) | Implemented | Human output and structured JSON output |
@@ -515,6 +516,12 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   required while core still writes the dependency graph, so it is reported rather than failed, and
   the finding says to remove it in the same change that adds the narrow one.
 
+- **`repo-dependency-pins`** — every third-party requirement in the repository-root
+  `pyproject.toml` names exactly one release. Specified on its own in
+  [Exact Third-Party Pins](#exact-third-party-pins) (`req-tap-plugin-validate-pins`), because its
+  subject is the distribution the repository declares rather than its CI shell; it runs here, in
+  repository scope, for the rollout reason that section gives.
+
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
 is a dependency-update job. This is the same distinction that decided a conformance checker
@@ -546,6 +553,77 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-10 | Waivers Carry Their Reason, Absence Does Not | In Development | A `.trivyignore` at the repository root with an entry that is not directly under a reason comment FAILS — the author-time mirror of `release_cve_gate.py --check-waivers`. A MISSING `.trivyignore` is never reported, and none is seeded. | Absence means nothing is waived, which is the state to want; reporting it teaches authors to create an empty file to silence a checker, and an empty ledger is indistinguishable from a repository that has never had to think about a CVE. Ruling George 2026-09-26 (Q94b/Q94c). It matters more now that the plugin gate blocks on unfixable findings too (Q94d): waivers are about to be written for the first time. |
 | req-tap-plugin-validate-repo-11 | A Repository That Cuts Releases Attests Them | In Development | A repository carrying release-please configuration (`release-please-config.json` or `.release-please-manifest.json`) and no `.github/workflows/release-sbom.yml` FAILS; one whose `release-sbom.yml` calls no job whose `uses:` target is EXACTLY `unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml` fails too, as does one that calls it but does not trigger on a tag push — or triggers on tag pushes whose filters cannot match a release tag, judged by whether every representative tag of the protected shape is covered by some filter (`PROTECTED_RELEASE_TAGS`); a filter using Actions syntax `fnmatch` cannot model (`!`, `**`, `+`) WARNS instead. Or one whose calling job does not grant `REQUIRED_RELEASE_GRANT` — `contents: read`, `id-token: write`, `attestations: write`. A calling job whose `if:` is decided FALSE by the file (`false`, `${{ false }}`, a comparison of two literals) fails, because the job never runs; one whose `if:` depends on the event WARNS, because the claim cannot be established by reading the file and refusing it would forbid a guard against releasing from a fork. A grant BROADER than the three scopes — `write-all`, or any other write the lane does not need — satisfies the requirement and warns, the same shape `-8` uses for `contents: write`: capability is what this asserts, narrowness is still worth saying. A repository declaring no releases is not reported, and a lane without release-please configuration is coherent (a hand-cut tag still reaches it). | The trigger is the DECLARATION, not a release: waiting for one makes the first release the detector, and the first release is the run nobody watches because it succeeds — the tag lands, the wheel publishes, and the only thing missing is evidence nobody has asked for yet. Measured 2026-09-29: 11 of 24 repositories carried no release lane and not one had ever released (`tap#892`). Pinning is deliberately NOT re-asserted here — `-4` owns it across the whole reusable prefix, and a second place to fix one rule is how the first version of that check came to miss `plugin-release-sbom.yml` altogether. The target is matched EXACTLY rather than by prefix, and the tag trigger is asserted, because neither presence of a lookalike path (`…/plugin-release-sbom.yml-disabled@<sha>`) nor a caller that only fires on `workflow_dispatch` attests anything — both would report this requirement as satisfied while it was false. An `on:` that cannot be parsed fails for the same reason, rather than passing. **The release-tag convention is NOT defined here — it lives in the org `tag-protection` ruleset (id `23794714`, source `unified-systems-com`, enforcement `active`), which protects `refs/tags/v[0-9]*.[0-9]*.[0-9]*` against deletion, update and non-fast-forward; this requirement only cites it.** That split is deliberate: encoding which glob counts as a release pattern here would put a second definition of "release tag" in the tree with nothing to arbitrate between them, the same reason pinning is left to `-4`. Capability is asserted rather than equality, so a repository spelling a working filter differently still passes; `v?.?.?` does NOT, because it misses `v0.12.2` (`tap#982`). Presence is likewise not capability: `plugin-release-sbom.yml` declares `permissions: {}` and its jobs take subsets of the three scopes above, so a caller granting less is refused at creation and publishes an unattested wheel regardless — and `-8` cannot cover it, keying on a different callee. Measured before asserting either: 24 of 24 repositories already carry `push:` with `tags:`, so it reds nothing. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
+
+### Exact Third-Party Pins
+----
+RID: `req-tap-plugin-validate-pins`
+
+Status: `In Development`
+
+A repository-scope check that every third-party library a plugin declares is pinned to one exact
+release, so a library changes only when someone has run the plugin's tests against the new release.
+
+#### Implementation
+
+**Why.** A floating requirement hands the timing of a library change to the library's publisher.
+`aws-core-tap` declared `boto3>=1.43.9`; botocore 1.44.4 was published on 2026-11-16 and the plugin's
+CI went red overnight with no change in its repository. The maintainer ruled (2026-11-17) that
+plugins should not be hit by floating library changes, and that a library is updated deliberately,
+after the tests have run against it. Renovate (`rangeStrategy: "pin"` for third-party dependencies,
+in the org's Renovate preset) proposes each new release as a pull request, which runs CI before the
+release lands. This check is what stops a range from coming back between Renovate runs.
+
+**What is read.** `[project].dependencies` in the repository-root `pyproject.toml`, each entry
+parsed as a PEP 508 requirement (`packaging.requirements`). An entry passes when it is:
+
+- an **exact pin**: exactly one version clause, `==` without a wildcard or `===`. Arbitrary equality
+  (`===`) is a plain string match with no normalisation, so it can never admit more than `==` does;
+  it is accepted because a requirement that matches one string cannot float. Extras and environment
+  markers do not affect the verdict, so `nh3==0.3.7; python_version >= "3.14"` passes; or
+- a **plugin distribution**, which keeps its range. A plugin's compatibility with a sibling plugin
+  is a span that the sibling's releases move through, governed by the sibling's own `requires_tap`
+  and release discipline. "Plugin distribution" is decided by `tap.plugin_identity.slug_for_dist_name`,
+  the one inverse of the naming convention (`<slug>-tap`, legacy `tap-plugin-<slug>`), so a name the
+  identity gates refuse is not exempt here either.
+
+Anything else is a finding: a floor (`>=`), a range (`>=a,<b`), a compatible-release clause (`~=`), a
+wildcard (`==1.*`), several clauses, a bare name, or a direct reference (`name @ url`). Each finding
+names the requirement, says why it floats, and gives the fix in the requirement's own name
+(`boto3>=1.43.9` → `boto3==<version>`, the release the plugin's tests last passed on), with Renovate
+as the road that keeps it current. An entry that does not parse, a `pyproject.toml` that cannot be
+read, and `dependencies` declared `dynamic` are reported the same way rather than passed: an entry
+that cannot be read has not been shown to be pinned. No `pyproject.toml` (a legacy flat plugin) or
+no dependencies is a pass with nothing to check.
+
+`[project.optional-dependencies]` and dependency groups are not read. The boot installs neither,
+so neither can change what runs in a deployment.
+
+**Why repository scope.** The reusable per-repo CI runs the package checks with `--strict`, which
+turns any warning into a failure, and runs `--repo` without it (`plugin-ci.yml`, the `repo-scope`
+job): a repository-scope warning is reported on the run as an annotation and does not fail it.
+That is the validator's existing warn-then-fail road, the one `repo-workflows` took for the nightly
+lane and `repo-caller-permissions` takes for the SARIF grant. A per-plugin baseline in the style of
+the edge-naming debt file was considered and rejected: the five floating repositories would have to
+add a baseline before taking the core pin that carries this check, which is a red Renovate pull
+request in each of them on the day core ships it.
+
+**The ratchet.** `DEPENDENCY_PINS_ENFORCED` in `tap_plugins/validate/repo.py` selects the phase. While
+it is `False` a floating requirement warns; once the fleet measures clean it is set to `True` in one
+reviewed change, and the check refuses. Measured 2026-11-17 across the 32 unarchived `*-tap`
+repositories (each repository's `pyproject.toml` on `main`, read through the GitHub API): 5 float, 2
+already pin, 25 declare no third-party dependency. The flip is a code change rather than a date in
+the code, so it reddens no lane on a morning nobody chose.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-validate-pins-1 | Exact Pin Passes | In Development | A third-party requirement with one `==` clause (no wildcard) or one `===` clause passes, with or without extras and environment markers. | A marker's own comparison operators are not version clauses. |
+| req-tap-plugin-validate-pins-2 | Floating Requirement Reported | In Development | A floor, a range, `~=`, a wildcard `==`, several clauses, a bare name and a direct reference are each reported. The finding names the requirement, says why it floats, gives `<name>==<version>` as the fix, and points at Renovate's pull requests as the way the pin stays current. | |
+| req-tap-plugin-validate-pins-3 | Plugin Distributions Keep Ranges | In Development | A requirement on a plugin distribution (`<slug>-tap`, legacy `tap-plugin-<slug>`) passes with any range, decided by `tap.plugin_identity.slug_for_dist_name`; a name that function refuses is not exempt. | One rule for "first-party", already used by the identity gates. |
+| req-tap-plugin-validate-pins-4 | Nothing To Pin Passes, Unreadable Does Not | In Development | No `pyproject.toml`, or no `[project].dependencies`, passes. An unparseable requirement, an unreadable `pyproject.toml` and `dynamic` dependencies are reported, not passed. | An entry that cannot be read is not shown to be pinned. |
+| req-tap-plugin-validate-pins-5 | Warns Until The Fleet Is Clean, Then Refuses | In Development | While `DEPENDENCY_PINS_ENFORCED` is false every finding is a warning; set true, the same findings fail the check. | Five repositories float as of 2026-11-17; Renovate's pinning pull requests clear them. |
+| req-tap-plugin-validate-pins-6 | Repository Scope | In Development | The check is `repo-dependency-pins` and runs only with `repo_scope=True` (`--repo`), like every `repo-*` check. | The reusable lane's `repo-scope` job does not run `--strict`. |
 
 ### Standalone CLI
 ----
@@ -754,5 +832,7 @@ The following items are explicitly deferred:
 - validating that manifest-declared model types have corresponding database tables and migration state required for plugin load
 - richer machine-readable output variants beyond the v0 result schema
 - **unifying enforcement across the source-tree and installed-metadata surfaces.** The `identity-coherence` (req-tap-plugin-validate-identity) and `declared-dependencies` (req-tap-plugin-validate-deps) checks enforce the same conventions that the pre-boot `conformance_gate` and `dependency_consistency_guard` (`tap/preboot.py`) enforce — the validator from the on-disk source tree at author time, the gates from installed distribution metadata at boot. Today the two surfaces re-derive those rules in parallel. The deliberate next step is to have the pre-boot gates *call* the validator's per-plugin checks (adding only the cross-plugin, whole-profile layer — install order, version bounds, profile-set membership — on top) so a single implementation is the source of truth and the two surfaces cannot drift. For declared-dependencies specifically there is now a third parallel surface — the per-commit `PluginDependencyConsistencyGuard` (`tap_plugins/guards/dependency_consistency.py`), the whole-repo CI twin of the author-time `declared-dependencies` check. This is intentionally deferred, not overlooked: the parallel enforcement is cheap and correct for now, and all the surfaces already share the lower-level primitives (`dist_name_for_slug`, `NAMESPACE_PACKAGE`, `tap.plugin_deps`), which bounds the drift risk — a single scanner is the common source of truth even before the entry points are unified.
+
+- **third-party pin agreement across a profile.** `req-tap-plugin-validate-pins` checks one repository. Two plugins in one boot profile that pin the same library to different releases cannot both be satisfied, and pre-boot installs plugins one `uv pip install` at a time, so the later install replaces the earlier plugin's pin and exits 0 (observed 2026-11-17 with uv in the core image: `pa` pinning `idna==3.9`, then `pb` pinning `idna==3.10`, left `idna` at 3.10 and only `uv pip check` reported the break). The validator has no profile scope to run that comparison in; it belongs with the pre-boot gates, over the installed environment, and is deferred to its own issue.
 
 These are future expansions of the validator, not requirements for the initial authoring workflow.
