@@ -431,9 +431,10 @@ Stored bytes are write-once (ruled 2026-11-16).
   directory, because no content file is written.
 - **Nothing is deleted.** There is no operation that removes an object, a version or a content file
   (`req-tap-files-retention`).
-- **Content is placed read-only.** A content file has mode `0444` when it is moved into place, and
+- **Content is placed read-only.** A content file has mode `0440` when it is moved into place, and
   no code path opens one for writing afterwards (ruled 2026-11-17; the read path relies on it,
-  `req-tap-files-read`).
+  `req-tap-files-read`). Read for the runtime user and its group, never for others: the store's
+  writer and readers are one runtime user, and group 0 carries the development uid override.
 
 The **file version** is OCFL's version number for the object. It counts changes to the file's bytes
 or name and nothing else. It is deliberately not the grid's per-node edit counter, which rises on
@@ -455,7 +456,7 @@ for nodes (`req-grid-service-batch-occ`).
 | req-tap-files-immutable-3 | No Delete Operation | Implemented | The backend protocol and the service gateway expose no operation that removes an object, a version or content, and no code path under the store unlinks a file inside `ocfl/`. | Recovery moves incomplete content to quarantine; it does not unlink. |
 | req-tap-files-immutable-4 | Stale Writer Refused | Implemented | Adding a version or renaming with an expected version that is not the head is refused with a conflict error carrying both numbers, and changes nothing. | |
 | req-tap-files-immutable-5 | Create Is Put-If-Absent | Implemented | Creating an object whose identifier already exists is refused and the existing object is unchanged. | |
-| req-tap-files-immutable-6 | Content Is Read-Only | Implemented | After a create and after a new version, every content file under `ocfl/` has mode `0444`, and no code path under the store opens a content file for writing once it is placed. | |
+| req-tap-files-immutable-6 | Content Is Read-Only | Implemented | After a create and after a new version, every content file under `ocfl/` has mode `0440`, and no code path under the store opens a content file for writing once it is placed. | `0440` rather than `0444`: no world read (SonarCloud S2612 on PR# 1233 - tap). |
 
 ### Store Interface
 ----

@@ -636,7 +636,7 @@ def test_content_is_read_only(store: LocalBackend) -> None:
     store.add_version(ident, 1, "a", data("two"), "t")
     files = list(store.ocfl.rglob("content/*"))
     assert len(files) == 2
-    assert all(stat.S_IMODE(p.stat().st_mode) == 0o444 for p in files)
+    assert all(stat.S_IMODE(p.stat().st_mode) == 0o440 for p in files)
     source = (_REPO / "tap_files" / "store" / "local.py").read_text(encoding="utf-8")
     assert "O_RDWR" not in source.replace("os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)", "")
 

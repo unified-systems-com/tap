@@ -62,6 +62,9 @@ LAYOUT_FILE = "ocfl_layout.json"
 CHUNK = 1024 * 1024
 #: How long a writer, or a reader confirming a mismatch, waits for an object's lock.
 LOCK_WAIT_S = 10.0
+#: Stored content is read-only, and readable only by the runtime user and its group (group 0 carries
+#: the development uid override). No write bit, no world read (req-tap-files-immutable).
+CONTENT_MODE = stat.S_IRUSR | stat.S_IRGRP
 _LOCK_POLL_S = 0.02
 
 
@@ -265,7 +268,7 @@ class LocalBackend:
     ) -> StoredResult:
         """Store a new object at version 1 (put-if-absent).
 
-        TAP-IMPLEMENTS: req-tap-files-write@bdc69ac51e75/435732a87cc3 (derivation) — the write path: lock,
+        TAP-IMPLEMENTS: req-tap-files-write@bdc69ac51e75/d7e5fcc5d3c9 (derivation) — the write path: lock,
             stream and hash into staging, build, sync, then move into place.
         """
         uuid_text = check_identifier(identifier)
@@ -289,7 +292,7 @@ class LocalBackend:
                     raise DigestMismatch(f"{identifier}: expected {expected_digest}, received {digest}")
                 filename = stored_filename(name, identifier, 1, digest)
                 os.rename(temp, content / filename)
-                os.chmod(content / filename, 0o444)
+                os.chmod(content / filename, CONTENT_MODE)
                 record = inv.VersionRecord(1, digest, name, _now(), actor, self._message("create", reason))
                 data = inv.serialise(inv.build(identifier, [record], {digest: [f"v1/content/{filename}"]}))
                 side = inv.sidecar_text(data)
@@ -409,7 +412,7 @@ class LocalBackend:
             content = vdir / "content"
             content.mkdir()
             os.rename(temp, content / filename)
-            os.chmod(content / filename, 0o444)
+            os.chmod(content / filename, CONTENT_MODE)
             _fsync_dir(content)
         new = inv.serialise(inv.build(identifier, [*versions, record], manifest))
         side = inv.sidecar_text(new)
@@ -573,7 +576,7 @@ class LocalBackend:
                 except FileNotFoundError:
                     findings.append(f"{rel} is missing")
                     continue
-                if stat.S_IMODE(st.st_mode) != 0o444:
+                if stat.S_IMODE(st.st_mode) != CONTENT_MODE:
                     findings.append(f"{rel} is not read-only")
                 try:
                     f_uuid, f_version, f_digest = parse_stored_filename(Path(rel).name)
