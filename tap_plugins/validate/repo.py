@@ -117,7 +117,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@b6cfd92404c7/afd26aebfe28 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@e2433873c476/1c164745b08c (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -129,6 +129,7 @@ def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     _check_release_lane(repo_root, result)
     _check_release_please(repo_root, result)
     _check_waiver_ledger(repo_root, result)
+    _check_dependency_pins(repo_root, result)
 
 
 # ---------------------------------------------------------------------------
@@ -1987,4 +1988,166 @@ def _check_release_please(repo_root: Path, result: ValidationResult) -> None:
         return
 
     check.info(f"{RELEASE_PLEASE_CONFIG_FILE} and {RELEASE_PLEASE_MANIFEST_FILE} are both present and parse as JSON")
+    result.checks.append(check)
+
+
+# ---------------------------------------------------------------------------
+# Third-party dependency pins
+# ---------------------------------------------------------------------------
+
+#: The pyproject a plugin repository declares its distribution in, at the repository root.
+PYPROJECT = "pyproject.toml"
+
+#: Rollout phase of `repo-dependency-pins` (req-tap-plugin-validate-pins-5). ``False``: a floating
+#: requirement WARNS, which the reusable lane's repo-scope job (run without ``--strict``) reports as
+#: an annotation and does not fail on. Measured 2026-11-17 across the 32 unarchived `*-tap`
+#: repositories: 5 float (`anchore-tap` requests, `aws-core-tap` boto3, `github-core-tap` PyYAML,
+#: `sigstore-core-tap` sigstore, `stackarmor-vdr-tap` nh3), 2 already pin, 25 declare no third-party
+#: dependency. Flip to ``True`` once the fleet measures zero floating — the same warn-then-fail ratchet
+#: `repo-workflows` took for the nightly lane at 24 of 24 — and the check refuses instead. One reviewed
+#: line, rather than a date in the code that reddens a lane on a morning nobody chose.
+DEPENDENCY_PINS_ENFORCED = False
+
+#: The two PEP 440 operators that admit exactly one release. `===` (arbitrary equality) is a plain
+#: string match with no normalisation, so it is never looser than `==`; it is accepted because a
+#: requirement that matches one string cannot float, which is the whole of what this check asks.
+EXACT_PIN_OPERATORS = frozenset({"==", "==="})
+
+
+def is_first_party_distribution(name: str) -> bool:
+    """True if *name* is one of the org's own plugin distributions, exempt from exact pinning.
+
+    Derived from ``tap.plugin_identity.slug_for_dist_name`` — the one inverse of the plugin
+    naming convention (``<slug>-tap``, legacy ``tap-plugin-<slug>``) — rather than a second
+    suffix test, so a name the identity gates refuse (``tap-plugin-foo-tap``, a malformed slug)
+    is not first-party here either. Plugins keep RANGES on each other because a plugin's
+    compatibility with a sibling is a span the sibling's releases move through; a third-party
+    library is code nobody here has tested until CI runs against it.
+    """
+    from tap.plugin_identity import slug_for_dist_name
+
+    return slug_for_dist_name(name) is not None
+
+
+def requirement_pin_problem(raw: str) -> tuple[str | None, str | None]:
+    """Classify one ``[project].dependencies`` entry: ``(name, problem)``.
+
+    ``problem`` is None when the entry is an exact pin or a first-party plugin distribution, and
+    otherwise says why the entry floats. ``name`` is None only when the entry does not parse, in
+    which case ``problem`` says so: an entry that cannot be read is not shown to be pinned.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/480164e8ea7f (derivation) — the one
+        rule for "is this requirement an exact pin": a single `==` (no wildcard) or `===` clause,
+        environment markers and extras ignored, first-party plugin distributions exempt.
+    """
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    try:
+        req = Requirement(raw)
+    except InvalidRequirement as exc:
+        return None, f"does not parse as a PEP 508 requirement ({exc})"
+    if is_first_party_distribution(req.name):
+        return req.name, None
+    if req.url:
+        return req.name, "is a direct reference (`name @ url`), not a released version from the index"
+    clauses = list(req.specifier)
+    if not clauses:
+        return req.name, "names no version at all, so any release satisfies it"
+    if len(clauses) > 1:
+        return req.name, f"has {len(clauses)} version clauses (`{req.specifier}`); an exact pin is one `==` clause"
+    clause = clauses[0]
+    if clause.operator not in EXACT_PIN_OPERATORS:
+        return req.name, f"uses `{clause.operator}`, which admits releases nobody has tested yet"
+    if clause.operator == "==" and clause.version.endswith(".*"):
+        return req.name, f"uses the wildcard `=={clause.version}`, which admits every matching release"
+    return req.name, None
+
+
+def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
+    """Does every third-party dependency this plugin declares name exactly one release?
+
+    The maintainer's principle (aws-build Q72c, 2026-11-17): a plugin must not be hit by a floating
+    library change; a library moves when someone has run the tests against the new release. The
+    originating burn: `aws-core-tap` declared `boto3>=1.43.9`, botocore 1.44.4 shipped on
+    2026-11-16, and the plugin's CI went red overnight with no change in the repository. An exact
+    pin moves only through a Renovate pull request (`rangeStrategy: "pin"`), which runs CI before
+    the new release lands; this check stops a range coming back between Renovate runs.
+
+    Reads ``[project].dependencies`` from the repository-root ``pyproject.toml``. Each third-party
+    entry must be a single ``==`` clause (no wildcard) or ``===``; markers and extras are allowed.
+    The org's plugin distributions are exempt (``is_first_party_distribution``) and keep ranges.
+    ``[project.optional-dependencies]`` and dependency groups are not read: an extra is not
+    installed by the boot, and a dev group never reaches a deployment.
+
+    A WARNING while ``DEPENDENCY_PINS_ENFORCED`` is False, a failure after; see that constant for
+    the measurement the flip waits on.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/77479451741d (enforcement) — reads the
+        repository's declared requirements, reports each floating one with its fix, and applies the
+        warn-then-fail phase.
+    """
+    check = CheckResult(id="repo-dependency-pins", name="Third-party dependencies are pinned to exact versions")
+    report = check.fail if DEPENDENCY_PINS_ENFORCED else check.warn
+    path = repo_root / PYPROJECT
+    if not path.is_file():
+        check.info(f"no {PYPROJECT} at the repository root — no declared distribution to check")
+        result.checks.append(check)
+        return
+
+    import tomllib
+
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        report(f"{PYPROJECT} cannot be read ({exc}), so its dependencies are not shown to be pinned", path=PYPROJECT)
+        result.checks.append(check)
+        return
+
+    raw_project = data.get("project")
+    project: dict[str, Any] = raw_project if isinstance(raw_project, dict) else {}
+    dynamic = project.get("dynamic") or []
+    if isinstance(dynamic, list) and "dependencies" in dynamic:
+        report(
+            f"{PYPROJECT} declares `dependencies` as dynamic, so the requirements are computed at build time "
+            "and cannot be read here; declare them statically so their pins can be checked",
+            path=PYPROJECT,
+        )
+        result.checks.append(check)
+        return
+    dependencies = project.get("dependencies") or []
+    if not isinstance(dependencies, list):
+        report(f"`[project].dependencies` in {PYPROJECT} is not a list of requirement strings", path=PYPROJECT)
+        result.checks.append(check)
+        return
+
+    pinned: list[str] = []
+    first_party: list[str] = []
+    floating: list[str] = []
+    for raw in dependencies:
+        if not isinstance(raw, str):
+            report(f"`[project].dependencies` entry {raw!r} is not a requirement string", path=PYPROJECT)
+            continue
+        name, problem = requirement_pin_problem(raw)
+        if problem is None:
+            (first_party if name is not None and is_first_party_distribution(name) else pinned).append(raw)
+            continue
+        floating.append(raw)
+        target = f"`{name}==<version>`" if name else "an exact `name==<version>` requirement"
+        report(
+            f"`{raw}` {problem}. Pin it: {target}, the release this plugin's tests last passed on. "
+            'Renovate then proposes each new release as a pull request (`rangeStrategy: "pin"`), so the '
+            "update runs CI before it lands instead of arriving overnight. Plugin distributions "
+            "(`<slug>-tap`) are exempt and keep their ranges",
+            path=PYPROJECT,
+        )
+
+    check.details = {"pinned": pinned, "first_party": first_party, "floating": floating}
+    if not floating and check.status == "pass":
+        if pinned or first_party:
+            check.info(
+                f"{len(pinned)} third-party requirement(s) pinned exactly; "
+                f"{len(first_party)} plugin requirement(s) exempt"
+            )
+        else:
+            check.info("no `[project].dependencies` — nothing to pin")
     result.checks.append(check)
