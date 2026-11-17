@@ -126,7 +126,7 @@ class LocalBackend:
     def initialise(self) -> str:
         """Initialise an empty root, accept this store's own, refuse anything else.
 
-        TAP-IMPLEMENTS: req-tap-files-mount-gate@5ba3891da5a4/d039358d6d68 (derivation) — core never adopts
+        TAP-IMPLEMENTS: req-tap-files-mount-gate@74744dced61b/d039358d6d68 (derivation) — core never adopts
             content it did not create and never initialises over existing files.
 
         Returns ``"initialised"`` or ``"existing"``; raises :class:`StoreRootRefused` naming what it found.
@@ -219,7 +219,26 @@ class LocalBackend:
     # ------------------------------------------------------------------ reading an object's state
 
     def _object_dir(self, identifier: str) -> Path:
-        return self.ocfl / object_path(identifier)
+        """The object's directory, refusing a link anywhere on the way down from ``ocfl/``.
+
+        Every hashed parent level and the object directory itself must be a real directory where it
+        exists, so no write, read or recovery move can be redirected off the mounted volume.
+        """
+        objdir = self.ocfl / object_path(identifier)
+        self._refuse_links(identifier, objdir)
+        return objdir
+
+    def _refuse_links(self, identifier: str, target: Path) -> None:
+        """Raise when any existing component between ``ocfl/`` and *target* is a symbolic link."""
+        cursor = self.ocfl
+        for part in target.relative_to(self.ocfl).parts:
+            cursor = cursor / part
+            try:
+                mode = os.lstat(cursor).st_mode
+            except FileNotFoundError:
+                return
+            if stat.S_ISLNK(mode):
+                raise self._integrity(identifier, None, "link", f"{cursor.relative_to(self.root)} is a symbolic link")
 
     def _read_pair(self, objdir: Path, where: str = "") -> tuple[bytes, bytes] | None:
         base = objdir / where if where else objdir
@@ -495,7 +514,7 @@ class LocalBackend:
     def open(self, identifier: str, version: int | None = None) -> OpenedFile:
         """Verify the requested version's bytes against the inventory, then return that same descriptor.
 
-        TAP-IMPLEMENTS: req-tap-files-read@5bd5dcf0a848/979828599411 (enforcement) — no byte leaves the store
+        TAP-IMPLEMENTS: req-tap-files-read@5bd5dcf0a848/6774f2eefdac (enforcement) — no byte leaves the store
             before the whole content file has been hashed and matched.
         """
         check_identifier(identifier)
@@ -510,6 +529,7 @@ class LocalBackend:
         if not paths:
             raise self._integrity(identifier, number, "manifest", "no content path for the version's digest")
         path = self._object_dir(identifier) / paths[0]
+        self._refuse_links(identifier, path.parent)  # the version and content directories too
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         except FileNotFoundError:
@@ -600,6 +620,10 @@ class LocalBackend:
         for digest, paths in data["manifest"].items():
             for rel in paths:
                 path = objdir / rel
+                linked = [p for p in (objdir / rel.split("/")[0], path.parent) if p.is_symlink()]
+                if linked:
+                    findings.append(f"{rel}: {linked[0].relative_to(objdir)} is a symbolic link")
+                    continue
                 try:
                     st = os.lstat(path)
                 except FileNotFoundError:

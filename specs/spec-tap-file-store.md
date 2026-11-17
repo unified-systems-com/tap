@@ -239,7 +239,9 @@ whoever is installed.
   extension, and that extension's configuration under `extensions/`.
 - A root that holds a valid OCFL storage root with the expected layout is used as it is, provided
   each of the four directories is a real directory and not a link: a linked `ocfl/` would carry every
-  write out of the mounted volume.
+  write out of the mounted volume. The same holds below `ocfl/`: every hashed parent level, object
+  directory and version directory a write or a read passes through must be a real directory, and a
+  link found there is an integrity failure.
 - A root that is not empty and is not that is refused with a standup abort. Core never adopts
   content it did not create and never initialises over existing files.
 
@@ -256,6 +258,7 @@ whoever is installed.
 | req-tap-files-mount-gate-2 | Empty Root Initialised | Implemented | Booting against an empty mounted root leaves the four directories, and under `ocfl/` exactly the OCFL 1.1 storage-root marker, `ocfl_layout.json` naming the `0003` extension, and that extension's configuration. | An independent validator's verdict is `req-tap-files-ocfl-validation` (Backlog, ruled 2026-11-17). |
 | req-tap-files-mount-gate-3 | Foreign Content Refused | Implemented | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
 | req-tap-files-mount-gate-4 | Idempotent | Implemented | A second boot against an initialised root changes no file under `ocfl/`. | |
+| req-tap-files-mount-gate-10 | No Link Below The OCFL Root | Implemented | With a hashed parent level or an object directory replaced by a symbolic link, a create, a new version, a read and recovery of that object each raise `FileIntegrityError` naming the link; with a version's `content` directory replaced, a read raises and `verify` reports it. Nothing is written through any of them. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-mount-gate-9 | Linked Store Directory Refused | Implemented | A root whose `ocfl/`, `staging/`, `quarantine/` or `locks/` is a symbolic link, even to a valid storage root, is refused at boot and by every store operation, and nothing is written through the link. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-mount-gate-5 | Shared Mount Test | Implemented | The file store and the plugin data directory obtain their mount verdicts from one implementation of the test. | |
 

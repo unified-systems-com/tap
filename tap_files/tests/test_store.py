@@ -1059,3 +1059,34 @@ def test_shared_parents_do_not_collide(store: LocalBackend) -> None:
         _pid, status = os.waitpid(pid, 0)
         codes.append(os.waitstatus_to_exitcode(status))
     assert codes == [0, 0] and store.exists(first) and store.exists(second)
+
+
+@pytest.mark.spec("req-tap-files-mount-gate-10")
+@pytest.mark.parametrize("level", ["parent", "object", "content"])
+def test_no_link_below_the_ocfl_root(store: LocalBackend, tmp_path: Path, level: str) -> None:
+    import shutil
+
+    ident = new_id()
+    store.create(ident, "a", data("one"), "t")
+    objdir = store.ocfl / layout.object_path(ident)
+    target = {"parent": objdir.parent.parent.parent, "object": objdir, "content": objdir / "v1" / "content"}[level]
+    outside = tmp_path / f"outside-{level}"
+    shutil.move(str(target), outside)
+    target.symlink_to(outside)
+    before = tree(outside)
+    with pytest.raises(FileIntegrityError, match="symbolic link"):
+        store.open(ident)
+    if level == "content":
+        # A new version writes v2/ and recovery reads the object root: neither passes through
+        # v1/content, so neither is redirected; verify reports the link.
+        result = store.verify(ident)
+        assert not result.ok and any("symbolic link" in f for f in result.findings), result.findings
+    else:
+        for call in (
+            lambda: store.add_version(ident, 1, "a", data("two"), "t"),
+            lambda: store.recover_object(ident, locked=False),
+            lambda: store.create(ident, "b", data("b"), "t"),
+        ):
+            with pytest.raises(FileIntegrityError, match="symbolic link"):
+                call()
+    assert tree(outside) == before
