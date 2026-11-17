@@ -30,6 +30,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 | req-tap-plugin-validate-identity | [Identity Coherence](#identity-coherence) | Implemented | Structure check: package-mode identity chain agrees on disk |
 | req-tap-plugin-validate-deps | [Declared Dependencies](#declared-dependencies) | Implemented | Structure check: cross-plugin imports are declared in depends_on |
 | req-tap-plugin-validate-compat | [Compatibility Floor](#compatibility-floor) | Implemented | Structure check: `requires_tap` is declared and satisfied by the harness core |
+| req-tap-plugin-validate-version | [Version Form](#version-form) | Implemented | Structure check: `plugin_version` is a bare release number, never the `v`-prefixed tag |
 | req-tap-plugin-validate-repo | [Repository Scope](#repository-scope) | In Development | Opt-in structure checks on the repository SHELL: CODEOWNERS, the CI lanes, the reusable-caller pin and grant, the nightly lane's shape, the release lane, the waiver ledger |
 | req-tap-plugin-validate-cli | [Standalone CLI](#standalone-cli) | Implemented | Module-based CLI for structure level; loads/runs via management command |
 | req-tap-plugin-validate-mgmt | [Management Command](#management-command) | Implemented | Django management command supporting all levels |
@@ -377,6 +378,34 @@ pre-boot gate uses — so author-time and boot-time agree by construction.
 | req-tap-plugin-validate-compat-2 | Satisfied Passes | Implemented | A `requires_tap` satisfied by the harness core passes. | |
 | req-tap-plugin-validate-compat-3 | Unsatisfied Fails | Implemented | A `requires_tap` the harness core does not satisfy fails the check. | Mirrors the pre-boot refusal. |
 | req-tap-plugin-validate-compat-4 | Shared Resolver | Implemented | The check reuses `tap.core_version` rather than re-deriving version logic. | Agrees with the boot gate. |
+
+### Version Form
+----
+RID: `req-tap-plugin-validate-version`
+
+Status: `Implemented`
+
+A structure-level check verifies that `plugin_version` is the bare release number.
+
+#### Implementation
+
+Only the git tag carries the `v` (`v0.1.0`); every version field in a manifest is the bare number (`0.1.0`)
+(`req-tap-plugin-manifest-v0-top-7`). The `plugin-version-form` check (structure level, no Django) matches the
+value against `tap.plugin_release.BARE_VERSION_RE`, the same pattern the release tool derives its tag from, so
+what a release writes and what the validator accepts cannot drift. It is a plain regex, not
+`packaging.version.Version`, which accepts a leading `v`.
+
+The check is author time and fails at every level, not only `--strict`. It is not a manifest-parse rule: a tag
+published with a `v` in its manifest keeps loading, so a boot record pinned to it does not stop booting.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-validate-version-1 | Bare Passes | Implemented | A `plugin_version` of `MAJOR.MINOR.PATCH`, with or without a `-pre`/`+build` suffix, passes. | |
+| req-tap-plugin-validate-version-2 | Tag Form Fails With A Hint | Implemented | `plugin_version = "v0.1.0"` fails, and the message names the bare form to write. | Fails without `--strict`. |
+| req-tap-plugin-validate-version-3 | Malformed Fails | Implemented | A value that is not a release number (`dev`, `0.1`, `1.2.3.4`) fails. | |
+| req-tap-plugin-validate-version-4 | One Pattern | Implemented | The check uses `tap.plugin_release.BARE_VERSION_RE`, the pattern the release tool derives its tag from. | |
 
 ### Repository Scope
 ----

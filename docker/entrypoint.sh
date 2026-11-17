@@ -340,6 +340,52 @@ echo "==> Running database migrations..."
 uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
 
 # ---------------------------------------------------------------------------
+# Persistent database connections (req-tap-serving-conn-max-age).
+# ---------------------------------------------------------------------------
+# The Steady Queue supervisor below starts HERE, before the Codespace boot
+# further down, not after it. Every other standup runs `manage.py boot` from outside
+# once the container is already serving (scripts/spawn-session.sh Step 6 follows Step 5's
+# wait for gunicorn), so the job workers exist when a `fire-collector` step enqueues work.
+# The Codespace branch below is the one place the entrypoint runs boot itself; with the
+# workers still unstarted, the collector preflight waited its full 60 s for a worker that
+# did not exist and the step was skipped (measured 2026-11-13 on a real Codespace: boot 123 s,
+# of which 60 s was that wait). Nothing is lost by starting them early: the queue tables
+# exist (migrate ran above), the plugin set is final (pre-boot ran above), and the scheduler's
+# once-a-minute tick finds no Schedule on a fresh database until boot's own population seeds one.
+#
+# TAP_DB_CONN_MAX_AGE defaults to 0 in settings — closed at request end — because a
+# positive lifetime is only safe when the number of processes that can HOLD a connection
+# is BOUNDED and FIXED (the ceiling is holders x aliases; PostgreSQL's max_connections is
+# the wall). The SERVING PROFILE is what makes that true, so the serving profile is what
+# opts in, here, rather than the setting assuming it.
+#
+# Both process trees started below (the supervisor here, gunicorn after the boot block) are bounded: gunicorn runs a fixed count of SYNC
+# workers (one request, therefore one connection per alias, at a time) and steady_queue
+# forks one worker per declared Configuration.Worker. Neither grows with load. That is
+# exactly what `runserver` did not give us: thread-per-request with no thread cap, which
+# on 2026-09-15 pinned all 100 connections on the demo-dev stack and took out the web UI
+# AND the collector pipeline (tap#460, tap#471).
+#
+# Set with :- so an operator can still override it (including back to 0) from compose.
+export TAP_DB_CONN_MAX_AGE="${TAP_DB_CONN_MAX_AGE:-600}"
+echo "==> Persistent DB connections: TAP_DB_CONN_MAX_AGE=${TAP_DB_CONN_MAX_AGE} (bounded holders: gunicorn sync workers + steady_queue)"
+
+# Start the Steady Queue supervisor as a background process. It runs both
+# the once-per-minute scheduler tick (declared as a @recurring task in
+# tap_cares/task_backend.py) and the collector execution tasks. The
+# supervisor forks one worker process per Configuration.Worker in
+# settings.STEADY_QUEUE — one for the scheduler queue, one for the default
+# queue — giving OS-level isolation between the clock and collector
+# execution (req-tap-cares-task-backend-queue-isolation). Trap kills it on
+# exit. Steady Queue does NOT auto-reload; restart the container if you
+# edit task or scheduler code (req-tap-cares-task-backend-deployment-3).
+echo "==> Starting Steady Queue supervisor..."
+uv run python manage.py steady_queue &
+STEADY_QUEUE_PID=$!
+
+trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
+
+# ---------------------------------------------------------------------------
 # Boot orchestration — CODESPACES ONLY (req-boot-*, spec-tap-boot-v0.md).
 # ---------------------------------------------------------------------------
 # The comment above pre-boot says "`manage.py boot` (population) still runs at spawn
@@ -393,41 +439,6 @@ fi
 # orchestrates an on-demand install + build inside this container and
 # commits the regenerated file alongside the template change. See
 # tap_web/specs/spec-web-tailwind-pipeline.md.
-
-# ---------------------------------------------------------------------------
-# Persistent database connections (req-tap-serving-conn-max-age).
-# ---------------------------------------------------------------------------
-# TAP_DB_CONN_MAX_AGE defaults to 0 in settings — closed at request end — because a
-# positive lifetime is only safe when the number of processes that can HOLD a connection
-# is BOUNDED and FIXED (the ceiling is holders x aliases; PostgreSQL's max_connections is
-# the wall). The SERVING PROFILE is what makes that true, so the serving profile is what
-# opts in, here, rather than the setting assuming it.
-#
-# Both process trees started below are bounded: gunicorn runs a fixed count of SYNC
-# workers (one request, therefore one connection per alias, at a time) and steady_queue
-# forks one worker per declared Configuration.Worker. Neither grows with load. That is
-# exactly what `runserver` did not give us: thread-per-request with no thread cap, which
-# on 2026-09-15 pinned all 100 connections on the demo-dev stack and took out the web UI
-# AND the collector pipeline (tap#460, tap#471).
-#
-# Set with :- so an operator can still override it (including back to 0) from compose.
-export TAP_DB_CONN_MAX_AGE="${TAP_DB_CONN_MAX_AGE:-600}"
-echo "==> Persistent DB connections: TAP_DB_CONN_MAX_AGE=${TAP_DB_CONN_MAX_AGE} (bounded holders: gunicorn sync workers + steady_queue)"
-
-# Start the Steady Queue supervisor as a background process. It runs both
-# the once-per-minute scheduler tick (declared as a @recurring task in
-# tap_cares/task_backend.py) and the collector execution tasks. The
-# supervisor forks one worker process per Configuration.Worker in
-# settings.STEADY_QUEUE — one for the scheduler queue, one for the default
-# queue — giving OS-level isolation between the clock and collector
-# execution (req-tap-cares-task-backend-queue-isolation). Trap kills it on
-# exit. Steady Queue does NOT auto-reload; restart the container if you
-# edit task or scheduler code (req-tap-cares-task-backend-deployment-3).
-echo "==> Starting Steady Queue supervisor..."
-uv run python manage.py steady_queue &
-STEADY_QUEUE_PID=$!
-
-trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 
 # ---------------------------------------------------------------------------
 # The web server (req-tap-serving-server).

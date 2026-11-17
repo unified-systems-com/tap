@@ -176,7 +176,7 @@ Never add `root = "../.."` (a retired monorepo artifact) and never author a vers
   derived from the module path, `label`/`verbose_name` from the manifest. Collector and panel-type
   registrations go in `ready()`, imported inside it.
 - `tap_plugin/<slug>/tap-plugin.toml` — per `spec-tap-plugin-manifest-v0.md`: `manifest_version`,
-  `plugin_version`, `requires_tap` (the core floor the plugin is tested against), `slug`, `name`,
+  `plugin_version` (the bare number, `0.1.0`; never `v0.1.0`), `requires_tap` (the core floor the plugin is tested against), `slug`, `name`,
   `description`, `depends_on` (Step 6), `[fips]`, `[models]`, `[edges]`, `[grift]`, `[[boot.records]]`.
   Class paths use `tap_plugin.<slug>.…`. **`[fips]` is required** (`spec-fips.md`): a pure-Python plugin with
   no crypto deps declares `status = "compatible"`; a non-validated provider declares
@@ -459,9 +459,13 @@ merge commit and publishes the Release. Never cut a later version by hand, and n
 manifest without the tag or the tag without the manifest.
 
 **`scripts/release-plugin.sh` is not this path.** It is for a plugin without the release-please pair.
-On a plugin that has the pair it rewrites `plugin_version` as `"v<x.y.z>"` (with the `v`, which the
-bare `x.y.z` convention above does not use) and does not move `.release-please-manifest.json`, which is
-how a manifest and its tags drift apart. Read from the script; the release PR is the release.
+On a plugin that has the pair it does not move `.release-please-manifest.json`, which is how a manifest
+and its tags drift apart. Read from the script; the release PR is the release. Only tags carry the `v`
+(`v0.1.0`); every version field in a manifest or record is the bare number (`0.1.0`). Either spelling of
+the script's argument works: it derives the tag `v<x.y.z>` and writes the bare number into
+`plugin_version` (`req-dev-workspace-release-7`), and `validate_plugin` fails a manifest that carries a
+`v` (`req-tap-plugin-validate-version`). Before that, the script wrote its argument as typed, which is
+how `aws_core` and `vuln_mosaic` came to carry `v0.8.0` and `v0.7.0` for a month (tap#1198).
 
 Why this is a step and not an option: with no tag, release-please has no baseline and proposes the
 plugin's entire history as its first release, and a manifest that drifts from the tags makes it propose

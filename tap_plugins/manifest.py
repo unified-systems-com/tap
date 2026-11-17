@@ -180,7 +180,7 @@ class FipsDeclaration:
 class PluginManifest:
     """Parsed and validated contents of a tap-plugin.toml file.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@0d54584a2204/e7f64ef78a16 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@a38a1d4a1fc2/e7f64ef78a16 (derivation) — the
         v0 top-level manifest shape IS this model.
     TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/e7f64ef78a16 (derivation) — the
         declared surfaces (models, edges, editors, searches, grift) are exactly this

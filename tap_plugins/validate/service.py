@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/ddc54223a632 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/4d7797fb66e6 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -310,6 +310,7 @@ def _run_structure_checks(
         _check_declared_dependencies(package_root, manifest, result)
         _check_ci_record(package_root, manifest, result, legacy_record=ci_record)
         _check_requires_tap(manifest, result, core_version=core_version)
+        _check_plugin_version_form(manifest, result)
         _check_crypto_providers(plugin_root, manifest, result)
     return manifest
 
@@ -1283,6 +1284,39 @@ def _check_ci_record_content(
             f'{record_path.name}: population.on_failure must be "abort" (found {on_failure!r}) — a test stack that '
             f"half-boots is a false green"
         )
+
+
+def _check_plugin_version_form(manifest: Any, result: ValidationResult) -> None:
+    """Verify ``plugin_version`` is the bare release number, never a ``v``-prefixed tag.
+
+    Only the git tag carries the ``v`` (``v0.1.0``); every version FIELD in a manifest or boot
+    record is the bare number (``0.1.0``). The shape is ``tap.plugin_release.BARE_VERSION_RE``, the
+    same pattern the release tool derives its tag from, so what a release writes and what this
+    accepts cannot drift. Author time only: a published tag whose manifest still carries a ``v``
+    keeps loading, because the manifest parser does not reject it (a boot record pinned to that tag
+    must not stop booting); this check stops the next one being cut that way.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-version@fdb497b92b51/03cc9bf596d6 (enforcement) — the one
+        author-time gate on the manifest's version form: it reads ``BARE_VERSION_RE`` from the release
+        tool rather than copying it, so what a release writes and what is accepted cannot drift.
+    """
+    from tap.plugin_release import BARE_VERSION_RE
+
+    check = CheckResult(id="plugin-version-form", name="plugin_version is a bare release number (no `v` prefix)")
+    version = manifest.plugin_version
+    if isinstance(version, str) and BARE_VERSION_RE.match(version):
+        check.info(f"plugin_version = {version!r}")
+    elif isinstance(version, str) and version.startswith("v") and BARE_VERSION_RE.match(version[1:]):
+        check.fail(
+            f"plugin_version = {version!r} carries the tag's `v` prefix — write {version[1:]!r}: only git tags "
+            "are `v`-prefixed, every version field in a manifest is the bare number"
+        )
+    else:
+        check.fail(
+            f"plugin_version = {version!r} is not a MAJOR.MINOR.PATCH release number "
+            "(optional -pre/+build suffix, no `v` prefix)"
+        )
+    result.checks.append(check)
 
 
 def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version: str | None = None) -> None:

@@ -55,9 +55,16 @@ from tap.git_pin import TAG_MATCHES, TagCheck, is_commit_sha, resolve_tag
 #: JSON-edit logic stays exercisable with no git and no network.
 TagResolver = Callable[[str, str], TagCheck]
 
-#: A release tag: ``v`` + a semver-ish core, optional pre-release / build suffix. Kept as a plain
-#: regex (not ``packaging``) so this module stays stdlib-only and host-runnable venv-free.
-_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+#: A semver-ish core, optional pre-release / build suffix. Kept as a plain regex (not ``packaging``)
+#: so this module stays stdlib-only and host-runnable venv-free. ``packaging.version.Version``
+#: would also accept a leading ``v``, which is exactly the form this must reject.
+_VERSION_CORE = r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?"
+
+#: A release tag: ``v`` + the core. Only tags (and boot-record ``rev`` fields naming one) carry the ``v``.
+_TAG_RE = re.compile(rf"^v{_VERSION_CORE}$")
+
+#: The bare version number every manifest and record VERSION field carries: the core, no ``v``.
+BARE_VERSION_RE = re.compile(rf"^{_VERSION_CORE}$")
 
 
 class PluginReleaseError(Exception):
@@ -94,6 +101,16 @@ def normalize_tag(version: str) -> str:
             f"(e.g. '0.2.0' or 'v0.2.0'), optionally with a -pre/+build suffix."
         )
     return candidate
+
+
+def normalize_version(version: str) -> str:
+    """Return the bare ``MAJOR.MINOR.PATCH`` form of *version*, the form a manifest carries.
+
+    Accepts ``0.2.0`` or ``v0.2.0`` (both normalize to ``0.2.0``) and rejects exactly what
+    :func:`normalize_tag` rejects. Only the git tag carries the ``v``: a manifest's
+    ``plugin_version`` is the bare number, so a release writes this and never the argument as typed.
+    """
+    return normalize_tag(version)[1:]
 
 
 def _git_pin(entry: dict[str, Any]) -> str | None:

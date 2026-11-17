@@ -79,6 +79,47 @@ class TestRequiresTapCheck:
         assert _named_check(result, "requires-tap").status == "fail"
 
 
+class TestPluginVersionFormCheck:
+    """`plugin_version` is the bare release number; only the git tag carries the `v`."""
+
+    @staticmethod
+    def _toml(version: str) -> str:
+        return f'manifest_version = "0"\nplugin_version = "{version}"\nslug = "test_plugin"\nname = "T"\n'
+
+    @pytest.mark.spec("req-tap-plugin-validate-version-1")
+    @pytest.mark.parametrize("version", ["0.1.0", "12.3.40", "0.2.0-rc1", "1.0.0+build.5"])
+    def test_bare_number_passes(self, tmp_path: Path, version: str) -> None:
+        plugin = _make_plugin(tmp_path, toml=self._toml(version))
+        check = _named_check(validate_plugin(plugin), "plugin-version-form")
+        assert check.status == "pass", check.messages
+
+    @pytest.mark.spec("req-tap-plugin-validate-version-2")
+    @pytest.mark.spec("req-tap-plugin-manifest-v0-top-7")
+    def test_tag_form_fails_with_the_bare_form_named_and_without_strict(self, tmp_path: Path) -> None:
+        plugin = _make_plugin(tmp_path, toml=self._toml("v0.1.0"))
+        result = validate_plugin(plugin)  # not strict: this is a failure, not a warning
+        assert not result.ok
+        check = _named_check(result, "plugin-version-form")
+        assert check.status == "fail"
+        assert any("write '0.1.0'" in m.text for m in check.messages), check.messages
+
+    @pytest.mark.spec("req-tap-plugin-validate-version-3")
+    @pytest.mark.parametrize("version", ["dev", "0.1", "1.2.3.4", "0.1.0a1", "vv0.1.0"])
+    def test_non_release_numbers_fail(self, tmp_path: Path, version: str) -> None:
+        plugin = _make_plugin(tmp_path, toml=self._toml(version))
+        check = _named_check(validate_plugin(plugin), "plugin-version-form")
+        assert check.status == "fail"
+
+    @pytest.mark.spec("req-tap-plugin-validate-version-4")
+    def test_uses_the_release_tools_pattern(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Narrowing the shared pattern changes the verdict: the check reads it, it does not copy it."""
+        import re
+
+        monkeypatch.setattr("tap.plugin_release.BARE_VERSION_RE", re.compile(r"^9\.9\.9$"))
+        plugin = _make_plugin(tmp_path, toml=self._toml("0.1.0"))
+        assert _named_check(validate_plugin(plugin), "plugin-version-form").status == "fail"
+
+
 # ---------------------------------------------------------------------------
 # Real plugin tests
 # ---------------------------------------------------------------------------

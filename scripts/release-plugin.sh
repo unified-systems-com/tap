@@ -40,6 +40,10 @@
 # Adopting a release is still one command, it is just yours to run on purpose:
 #   python3 -m tap.plugin_release --slug <slug> --version v<version> --boot-dir boot
 #
+# <version> is MAJOR.MINOR.PATCH, with or without a leading `v` (`0.2.0` and `v0.2.0` are the same
+# release). Only the git TAG carries the `v` (`v0.2.0`); the manifest's plugin_version is always written as
+# the bare number (`0.2.0`), whichever form you typed.
+#
 # Usage:
 #   scripts/release-plugin.sh <slug> <version>
 #   scripts/release-plugin.sh <slug> <version> --dry-run       # report; no push/tag/write
@@ -99,7 +103,12 @@ try:
 except PluginReleaseError as exc:
     print(f"error: {exc}", file=sys.stderr); sys.exit(1)
 PY
-)" || fail "Invalid version '$VERSION' (expected vMAJOR.MINOR.PATCH)."
+)" || fail "Invalid version '$VERSION' (expected MAJOR.MINOR.PATCH, with or without a leading v)."
+# Only the TAG carries the `v`; every version FIELD (the manifest's plugin_version) is the bare
+# number. Derived from the normalized tag, never from the argument as typed: `v0.1.0` and `0.1.0`
+# must write the same manifest line (the first release of rampart_20x_playground wrote the typed
+# `v0.1.0` into plugin_version).
+BARE="${TAG#v}"
 
 [[ -n "$REPO_DIR" ]] || REPO_DIR="_dev-plugins/$SLUG"
 # -e, not -d: a git WORKTREE has a .git FILE, and worktree checkouts are legitimate
@@ -234,18 +243,18 @@ restore_manifest() {
 }
 trap restore_manifest EXIT
 
-if [[ "$DECLARED" == "$VERSION" ]]; then
-  info "Manifest already declares plugin_version = $VERSION."
+if [[ "$DECLARED" == "$BARE" ]]; then
+  info "Manifest already declares plugin_version = $BARE."
 elif [[ "$DRY_RUN" -eq 1 ]]; then
-  bold "Manifest: plugin_version $DECLARED -> $VERSION"
+  bold "Manifest: plugin_version $DECLARED -> $BARE"
   info "[dry-run] would: rewrite plugin_version in $MANIFEST, gate it, then commit it"
 else
-  bold "Manifest: plugin_version $DECLARED -> $VERSION"
+  bold "Manifest: plugin_version $DECLARED -> $BARE"
   MANIFEST_BACKUP="$(mktemp)"
   cp "$MANIFEST" "$MANIFEST_BACKUP"
   # A literal replacement of the whole assignment: no version substring can
   # match part of another key's value.
-  python3 - "$MANIFEST" "$VERSION" <<'PYBUMP'
+  python3 - "$MANIFEST" "$BARE" <<'PYBUMP'
 import pathlib, re, sys
 path, version = pathlib.Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
@@ -340,7 +349,7 @@ if [[ "$BUMP_PENDING" -eq 1 ]]; then
     GATED_BY="The conformance gate and the plugin suite ran against this exact tree."
   fi
   git -C "$REPO_DIR" add "tap_plugin/$SLUG/tap-plugin.toml"
-  git -C "$REPO_DIR" commit -q -s -m "chore(release): plugin_version = $VERSION
+  git -C "$REPO_DIR" commit -q -s -m "chore(release): plugin_version = $BARE
 
 The manifest carries the version a consumer can read without cloning tags
 (req-dev-workspace-release-6). Written by scripts/release-plugin.sh in the
