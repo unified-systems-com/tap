@@ -213,13 +213,19 @@ def _not_only_dimensions(document: Any) -> str | None:
     whether or not the profile seeds its plugin, so anything else in it would land unasked."""
     if not isinstance(document, dict):
         return "not a GRIFT document object"
-    for index, batch in enumerate(document.get("batches") or []):
+    batches = document.get("batches")
+    if not isinstance(batches, list):
+        return "`batches` is not a list"
+    for index, batch in enumerate(batches):
         if not isinstance(batch, dict):
             return f"batch {index} is not an object"
         for section in ("edges", "deletes", "purges"):
             if batch.get(section):
                 return f"batch {index} carries {section}; a dimension bundle declares Dimension nodes only"
-        for node in batch.get("nodes") or []:
+        nodes = batch.get("nodes", [])
+        if not isinstance(nodes, list):
+            return f"batch {index} `nodes` is not a list"
+        for node in nodes:
             entity_type = ((node or {}).get("entity") or {}).get("entity_type") if isinstance(node, dict) else None
             if entity_type != "dimension":
                 return (
