@@ -174,7 +174,8 @@ def test_a_start_during_purge_waits_then_finds_a_fresh_directory(volume: Path) -
         _wait_for(read_fd, b"starting;")
         time.sleep(0.3)
         assert (volume / "alpha" / "old-data").exists(), "the newcomer touched the directory during the purge"
-        removed = _purge._remove(volume, "alpha")
+        removed = {"bytes": 0, "entries": 0}
+        _purge._remove(volume, "alpha", removed)
         assert removed["entries"] >= 1
         released_at = time.monotonic()
         _lock.back_to_shared(volume, "alpha")

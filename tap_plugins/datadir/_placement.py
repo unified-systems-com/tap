@@ -117,7 +117,7 @@ class Placement:
 def place(slug: str, durability: str, *, fresh: bool = False) -> Placement:
     """Apply the mount gate's table to one declaration.
 
-    TAP-IMPLEMENTS: req-tap-plugin-datadir-root@c5bdeaccd871/35e13d466ab3 (derivation) — which of the two
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-root@42b5bc3acb7f/35e13d466ab3 (derivation) — which of the two
         roots a directory lands under is decided here and nowhere else.
     """
     verdict = volume_verdict(fresh=fresh)
