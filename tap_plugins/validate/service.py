@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/4d7797fb66e6 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/43195c8e45c7 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -312,6 +312,7 @@ def _run_structure_checks(
         _check_requires_tap(manifest, result, core_version=core_version)
         _check_plugin_version_form(manifest, result)
         _check_crypto_providers(plugin_root, manifest, result)
+        _check_data_directory(package_root, manifest, result)
     return manifest
 
 
@@ -477,6 +478,86 @@ def _check_ci_record_fips_verdict(
             f"`ci` stack boots under FIPS: waived on {record_path.name} — {', '.join(posture['waived'])} "
             f"(the waiver reasons are the record's; the boot gate re-applies them to the installed artifacts)"
         )
+
+
+def _check_data_directory(package_root: Path, manifest: Any, result: ValidationResult) -> None:
+    """Report the declared data directory, and a plugin that asks for one without declaring it.
+
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-manifest@18b757055f08/512f320a9bef (surface) — the declaration
+        an operator and a reviewer see, and the best-effort static check for an undeclared caller.
+
+    The second half is a static scan of the plugin's own Python for a call to the accessor
+    (``tap_plugins.data_dir`` / ``data_dir_is_ephemeral``, or either imported from ``tap_plugins``).
+    It is best-effort: a call reached through indirection is not seen, and the message says so.
+    """
+    check = CheckResult(id="data-directory", name="Data directory declaration")
+    declaration = getattr(manifest, "data_directory", None)
+    callers = _accessor_callers(package_root)
+    if declaration is None:
+        check.details = {"declared": False}
+        if callers:
+            for rel in callers:
+                check.fail(
+                    "calls the plugin data directory accessor but declares no [data_directory] table; "
+                    "the accessor will refuse it at run time",
+                    path=rel,
+                )
+        else:
+            check.info("no [data_directory] declared, and no call to the accessor found (static scan, best-effort)")
+    else:
+        check.details = {
+            "declared": True,
+            "durability": declaration.durability,
+            "purpose": declaration.purpose,
+            "max_bytes": declaration.max_bytes,
+            "executes": declaration.executes,
+        }
+        check.info(
+            f"[data_directory] durability={declaration.durability} max_bytes={declaration.max_bytes} "
+            f"executes={str(declaration.executes).lower()}: {declaration.purpose}"
+        )
+        if declaration.durability == "state":
+            check.info('a "state" directory needs the plugin data volume: boot refuses without one')
+    result.checks.append(check)
+
+
+_ACCESSOR_NAMES = frozenset({"data_dir", "data_dir_is_ephemeral"})
+
+
+def _accessor_callers(package_root: Path) -> list[str]:
+    """Relative paths of the plugin's Python files that call the data directory accessor."""
+    import ast
+
+    found: list[str] = []
+    for path in sorted(package_root.rglob("*.py")):
+        if "tests" in path.relative_to(package_root).parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        imported = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module in ("tap_plugins", "tap_plugins.datadir")
+            for alias in node.names
+            if alias.name in _ACCESSOR_NAMES
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            direct = isinstance(func, ast.Name) and func.id in imported
+            dotted = (
+                isinstance(func, ast.Attribute)
+                and func.attr in _ACCESSOR_NAMES
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "tap_plugins"
+            )
+            if direct or dotted:
+                found.append(path.relative_to(package_root).as_posix())
+                break
+    return found
 
 
 def _check_plugin_root(plugin_root: Path, result: ValidationResult) -> None:

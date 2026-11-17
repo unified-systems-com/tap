@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tap.dev/schemas/tap.plugins.data-directory.schema.json",
+  "title": "TAP Plugin Data Directory Description",
+  "description": "The `.tap-plugin-dir.json` file core writes at the top of every plugin data directory (tap_plugins/specs/spec-tap-plugin-data-directory.md, req-tap-plugin-datadir-provision). Its purpose is that a directory found on a volume, with no instance running, says what it is — above all its durability, which a future backup needs (req-tap-plugin-datadir-backup-facts). Written by core, rewritten when the declaration changes, and validated against this schema whenever it is read.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "slug",
+    "durability",
+    "purpose",
+    "max_bytes",
+    "executes",
+    "location",
+    "created_by_plugin_version",
+    "created_at"
+  ],
+  "properties": {
+    "format_version": {
+      "description": "Version of this file's format. 1 for the first release.",
+      "type": "integer",
+      "const": 1
+    },
+    "slug": {
+      "description": "The plugin slug the directory is named after.",
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "durability": {
+      "description": "`cache`: everything can be fetched or rebuilt. `state`: something cannot be rebuilt and must survive.",
+      "type": "string",
+      "enum": ["cache", "state"]
+    },
+    "purpose": {
+      "description": "The plugin's one-sentence statement of what it keeps there.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "max_bytes": {
+      "description": "The largest size the plugin's author expects the directory to reach. Recorded, not enforced.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "executes": {
+      "description": "Whether the plugin declared that it runs programs from the directory.",
+      "type": "boolean"
+    },
+    "location": {
+      "description": "`volume`: on the operator's plugin data volume. `ephemeral`: under core's ephemeral root, lost when the container is recreated.",
+      "type": "string",
+      "enum": ["volume", "ephemeral"]
+    },
+    "created_by_plugin_version": {
+      "description": "The plugin version that first caused the directory to be created.",
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "description": "When core created the directory, as an RFC 3339 UTC timestamp.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

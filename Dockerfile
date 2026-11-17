@@ -370,13 +370,18 @@ COPY --from=js-vendor /opt/tap-static-vendor /opt/tap-static-vendor
 #     explicitly below rather than resolved from /etc/passwd. The published image's own
 #     default stays `nonroot` (65532), which is what a plain `docker run` gets.
 #
+# `/var/lib/tap/plugin-data` is the plugin data volume's mount path (docker-compose.yml,
+# req-tap-plugin-datadir-root-3): created here for the same reason as fact 1, so the named volume
+# comes out owned by the runtime user. Verified on Linux 2026-11-17: without this line a fresh
+# volume there is root:root 0755 and the mount gate refuses it as unwritable.
+#
 # `/run/tap` holds the persisted TAP_PLUGINS set. It is a directory in the image's
 # writable layer — NOT a tmpfs, despite what the entrypoint comment used to say — so it
 # is fresh per container either way, and it has to be prepared here because `/run` itself
 # is root-owned and a non-root process cannot create a path in it.
-RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap \
- && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap \
- && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap
+RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap /var/lib/tap/plugin-data \
+ && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data \
+ && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data
 
 # HOME is declared, not inherited: under the dev `user:` override the runtime uid has no
 # /etc/passwd entry, so Docker would hand it HOME=/ and uv, git and anything else reaching

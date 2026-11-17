@@ -5,13 +5,14 @@
   "description": "Schema for the read-only plugin registry/report emitted by `manage.py plugins --json` and the `tap_plugins.report.build_report()` service (spec-tap-plugin-architecture.md req-tap-plugin-arch-install-registry -3/-5). The report is a SERIALIZATION of facts boot/Django already hold — installed plugins, provenance, install mode, declared vs loaded surfaces, load health, and the bidirectional cross-plugin dependency graph — not a computation. It is the canonical inspection surface for an assembled instance (the plugin software bill of materials). additionalProperties:false throughout catches drift between the service and this contract. Consumed by the administrivia plugin status page (gated by the plugins.read capability).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "plugin_count", "plugins"],
+  "required": ["schema_version", "plugin_count", "plugins", "plugin_data"],
   "properties": {
     "schema_version": {
-      "description": "Report schema version. 1 for v0.",
+      "description": "Report schema version. 1 for v0; 2 adds the plugin data directory facts (`data_directory` per plugin, `plugin_data` for the instance; tap_plugins/specs/spec-tap-plugin-data-directory.md, req-tap-plugin-datadir-report).",
       "type": "integer",
-      "const": 1
+      "const": 2
     },
+    "plugin_data": { "$ref": "#/$defs/plugin_data" },
     "plugin_count": {
       "description": "Number of package-mode plugins in the report (== length of `plugins`).",
       "type": "integer",
@@ -34,7 +35,8 @@
           "app_config",
           "load_health",
           "surfaces",
-          "dependencies"
+          "dependencies",
+          "data_directory"
         ],
         "properties": {
           "slug": {
@@ -104,6 +106,7 @@
               "grift": { "$ref": "#/$defs/surface_counts" }
             }
           },
+          "data_directory": { "$ref": "#/$defs/data_directory" },
           "dependencies": {
             "description": "The cross-plugin CODE dependency graph, BOTH directions on every row (consolidated so humans never hunt across rows). Does NOT include runtime-DATA dependencies (collector-produced nodes) — those stay profile-explicit and invisible to the import graph by design (req-tap-plugin-arch-dependencies-3).",
             "type": "object",
@@ -152,6 +155,117 @@
     }
   },
   "$defs": {
+    "data_directory": {
+      "description": "The plugin's data directory facts (req-tap-plugin-datadir-report): the declaration exactly as the manifest states it, where the directory is and whether it is as provisioned, its measured size with the time the measurement was taken, its executable files and a bounded top-level listing. `{\"declared\": false}` for a plugin that declares no directory. Read from the manifest and the filesystem, never the grid.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declared"],
+          "properties": { "declared": { "const": false } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "declared", "purpose", "durability", "max_bytes", "executes", "path", "location", "placement_refusal",
+            "exists", "as_provisioned", "detail", "measurement", "executables", "executables_cut", "listing"
+          ],
+          "properties": {
+            "declared": { "const": true },
+            "purpose": { "description": "The manifest's `purpose`.", "type": "string" },
+            "durability": { "description": "The manifest's `durability`.", "type": "string", "enum": ["cache", "state"] },
+            "max_bytes": { "description": "The manifest's declared maximum size. Recorded, not enforced (req-tap-plugin-datadir-size-use).", "type": "integer", "minimum": 1 },
+            "executes": { "description": "Whether the plugin declared that it runs programs from its directory.", "type": "boolean" },
+            "path": { "description": "Where the directory is, or null when the mount gate places it nowhere.", "type": ["string", "null"] },
+            "location": { "description": "`volume` or `ephemeral` (lost when the container is recreated); null when not placed.", "enum": ["volume", "ephemeral", null] },
+            "placement_refusal": { "description": "Why the directory cannot be placed; empty when it can.", "type": "string" },
+            "exists": { "description": "Whether something exists at the path.", "type": "boolean" },
+            "as_provisioned": { "description": "Whether it is a real directory owned by the runtime user with mode 0700.", "type": "boolean" },
+            "detail": { "description": "What differs from provisioned; empty when nothing does.", "type": "string" },
+            "measurement": { "$ref": "#/$defs/measurement" },
+            "executables": { "description": "Executable files found in the directory, by relative path, capped. Listed whether or not the plugin declared `executes`, so an undeclared one is visible; core reports it and changes nothing.", "type": "array", "items": { "type": "string" } },
+            "executables_cut": { "description": "True when more executable files exist than are listed.", "type": "boolean" },
+            "listing": { "$ref": "#/$defs/listing" }
+          }
+        }
+      ]
+    },
+    "measurement": {
+      "description": "A bounded walk's figures. The walk does not follow links or leave the root's device, sums allocated blocks and counts a hard-linked file once. Every figure carries the time it was taken; `complete` false means the time budget ran out and the figures are partial.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "measured_at"],
+      "properties": {
+        "available": { "description": "False when no measurement could be taken; `reason` says why.", "type": "boolean" },
+        "reason": { "description": "Why no measurement is available.", "type": "string" },
+        "allocated_bytes": { "description": "Allocated bytes, sparse files counted by what they occupy.", "type": "integer", "minimum": 0 },
+        "entry_count": { "description": "Entries counted below the directory.", "type": "integer", "minimum": 0 },
+        "complete": { "description": "Whether the walk finished within its time budget.", "type": "boolean" },
+        "measured_at": { "description": "When the measurement was taken (RFC 3339, UTC).", "type": "string" },
+        "duration_ms": { "description": "How long the walk took.", "type": "number", "minimum": 0 }
+      }
+    },
+    "listing": {
+      "description": "The directory's top level, cut at a fixed number of entries.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entries", "cut"],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "size_bytes", "modified_at"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "type": "string", "enum": ["file", "directory", "link", "other"] },
+              "size_bytes": { "type": "integer", "minimum": 0 },
+              "modified_at": { "type": "string" }
+            }
+          }
+        },
+        "cut": { "description": "True when the directory has more top-level entries than are listed.", "type": "boolean" },
+        "reason": { "description": "Why the directory could not be listed.", "type": "string" }
+      }
+    },
+    "plugin_data": {
+      "description": "Instance-wide plugin data facts (req-tap-plugin-datadir-report): whether the plugin data volume is enabled and, when it is, its configured root, the mount test's verdict, its filesystem, free bytes and inodes, and the orphan directories and strays under it. With no volume, the orphans and strays are those under the ephemeral root. The report names the root, so a future backup can find every directory without knowing any plugin.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["volume_enabled", "volume_root", "verdict", "ephemeral_root", "filesystem", "orphans", "strays"],
+      "properties": {
+        "volume_enabled": { "description": "Whether TAP_PLUGIN_DATA_ROOT is set.", "type": "boolean" },
+        "volume_root": { "description": "The configured root, or null.", "type": ["string", "null"] },
+        "verdict": {
+          "description": "The shared mount test's verdict on the volume root, or null when not enabled.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["usable", "check", "reason"],
+          "properties": {
+            "usable": { "type": "boolean" },
+            "check": { "description": "The failed check, empty when usable.", "type": "string" },
+            "reason": { "type": "string" }
+          }
+        },
+        "ephemeral_root": { "description": "Core's fixed ephemeral root.", "type": "string" },
+        "filesystem": {
+          "description": "The volume's filesystem facts, or null when not enabled or not usable.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["type", "free_bytes", "free_inodes"],
+          "properties": {
+            "type": { "description": "Filesystem type from the mount table, or null when unknown.", "type": ["string", "null"] },
+            "free_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "free_inodes": { "type": ["integer", "null"], "minimum": 0 },
+            "detail": { "type": "string" }
+          }
+        },
+        "orphans": { "description": "Directories named by a valid slug that no loaded plugin declares. Never touched.", "type": "array", "items": { "type": "string" } },
+        "strays": { "description": "Anything else directly under the root that is not core's. Never touched.", "type": "array", "items": { "type": "string" } }
+      }
+    },
     "surface_counts": {
       "description": "Declared count for a surface, and the loaded count where derivable (null when TAP does not track per-plugin registration for that surface in v0).",
       "type": "object",

@@ -19,7 +19,7 @@ from django.core.management import call_command
 from tap.plugin_testing import requires_plugins
 from tap_auth.errors import AuthzError
 from tap_grid.caller_context import CallerContext, set_caller_context
-from tap_plugins.report import build_report, get_plugin_report
+from tap_plugins.report import SCHEMA_VERSION, build_report, get_plugin_report
 
 pytestmark = pytest.mark.django_db
 
@@ -28,7 +28,7 @@ def test_build_report_validates_and_is_self_consistent() -> None:
     # build_report() validates against plugin-report.schema.json internally — a bad shape
     # would raise here. Then check the count invariant.
     report = build_report()
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == SCHEMA_VERSION
     assert report["plugin_count"] == len(report["plugins"])
     assert report["plugin_count"] >= 1
 
@@ -72,7 +72,7 @@ def test_plugins_command_json_smoke() -> None:
     out = io.StringIO()
     call_command("plugins", "--json", stdout=out)
     data = json.loads(out.getvalue())
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == SCHEMA_VERSION
     assert {"slug", "dependencies", "surfaces", "load_health"} <= set(data["plugins"][0])
 
 
@@ -98,7 +98,7 @@ def test_get_plugin_report_allows_plugins_read_holder() -> None:
     # tap_admin holds "*" (every capability, incl. plugins.read).
     _set_caller("tap_admin")
     report = get_plugin_report()
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == SCHEMA_VERSION
     assert report["plugin_count"] >= 1
 
 

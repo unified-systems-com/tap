@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/c9a41bf9775e (enforcement)
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/2796df1feb00 (enforcement)
     — the strict raise-on-unknown parse discipline is module-wide here.
 
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
@@ -39,11 +39,16 @@ _ALLOWED_TOP_KEYS = {
     "grift",
     "boot",
     "fips",
+    "data_directory",
 }
 _DEPENDS_ON_KEYS = {"slug", "min_version", "optional", "note"}
 _BOOT_RECORD_KEYS = {"name", "description", "sha256"}
 _FIPS_KEYS = {"status", "reason", "providers"}
 _FIPS_STATUSES = {"compatible", "uses-nonvalidated"}
+_DATA_DIRECTORY_KEYS = {"purpose", "durability", "max_bytes", "executes"}
+_DATA_DIRECTORY_REQUIRED = ("purpose", "durability", "max_bytes")
+DATA_DIRECTORY_DURABILITIES = ("cache", "state")
+_PURPOSE_MAX = 255
 _REQUIRED_TOP_KEYS = {"manifest_version", "plugin_version", "slug", "name"}
 
 _EDGE_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "tap_grid" / "schemas" / "edge-definition.schema.json"
@@ -176,13 +181,29 @@ class FipsDeclaration:
     providers: list[str]
 
 
+@dataclass(frozen=True)
+class DataDirectoryDeclaration:
+    """A plugin's ``[data_directory]`` table (``req-tap-plugin-datadir-manifest``).
+
+    ``durability`` decides where the directory may live: ``"state"`` needs the plugin data volume,
+    ``"cache"`` goes on the volume when one is enabled and under the ephemeral root when not.
+    ``max_bytes`` is a declared convention in this release; core records and reports it and does
+    nothing else with it (``req-tap-plugin-datadir-size-use``).
+    """
+
+    purpose: str
+    durability: str
+    max_bytes: int
+    executes: bool
+
+
 @dataclass
 class PluginManifest:
     """Parsed and validated contents of a tap-plugin.toml file.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@a38a1d4a1fc2/e7f64ef78a16 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@a38a1d4a1fc2/46238d11f654 (derivation) — the
         v0 top-level manifest shape IS this model.
-    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/e7f64ef78a16 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/46238d11f654 (derivation) — the
         declared surfaces (models, edges, editors, searches, grift) are exactly this
         model's collections; a capability not declared here is not published.
     """
@@ -203,12 +224,13 @@ class PluginManifest:
     boot_records: list[BootRecordEntry]
     fips: FipsDeclaration | None
     plugin_root: Path
+    data_directory: DataDirectoryDeclaration | None = None
 
 
 def load_manifest(plugin_root: Path) -> PluginManifest:
     """Load, parse, and validate tap-plugin.toml at *plugin_root*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/b8b07e2d6d22 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/55fe9a39318e (derivation) — the
         fixed-name TOML manifest loads exactly here.
 
     Args:
@@ -242,6 +264,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
     grift = _parse_grift(raw.get("grift", {}), manifest_path)
     boot_records = _parse_boot_records(raw.get("boot", {}), manifest_path)
     fips = _parse_fips(raw.get("fips"), manifest_path)
+    data_directory = _parse_data_directory(raw.get("data_directory"), manifest_path)
 
     manifest = PluginManifest(
         manifest_version=raw["manifest_version"],
@@ -260,6 +283,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
         boot_records=boot_records,
         fips=fips,
         plugin_root=plugin_root,
+        data_directory=data_directory,
     )
 
     _validate_convention_dirs(manifest)
@@ -600,6 +624,57 @@ def _parse_fips(raw_value: Any, manifest_path: Path) -> FipsDeclaration | None:
         reason=reason.strip() if isinstance(reason, str) and reason.strip() else None,
         providers=list(providers),
     )
+
+
+def _parse_data_directory(raw_value: Any, manifest_path: Path) -> DataDirectoryDeclaration | None:
+    """Parse the optional ``[data_directory]`` table (``req-tap-plugin-datadir-manifest``).
+
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-manifest@18b757055f08/7556e2b1c10e (enforcement) — the
+        table's keys, types and values are refused here, at manifest load, or not at all.
+
+    Strict like every other table: ``purpose``, ``durability`` and ``max_bytes`` are required,
+    unknown keys are refused by name, and ``max_bytes`` must be a positive TOML integer (a TOML
+    boolean is a Python ``bool``, which is an ``int`` subclass, so it is refused explicitly).
+    """
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, dict):
+        raise PluginManifestError(f"'data_directory' must be a table in {manifest_path}")
+
+    unknown = set(raw_value) - _DATA_DIRECTORY_KEYS
+    if unknown:
+        raise PluginManifestError(f"data_directory table has unknown keys {sorted(unknown)} in {manifest_path}")
+    for key in _DATA_DIRECTORY_REQUIRED:
+        if key not in raw_value:
+            raise PluginManifestError(f"data_directory.{key} is required in {manifest_path}")
+
+    purpose = raw_value["purpose"]
+    if (
+        not isinstance(purpose, str)
+        or not purpose.strip()
+        or len(purpose) > _PURPOSE_MAX
+        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in purpose)
+    ):
+        raise PluginManifestError(
+            f"data_directory.purpose must be a non-empty string of at most {_PURPOSE_MAX} characters "
+            f"with no control characters in {manifest_path}"
+        )
+
+    durability = raw_value["durability"]
+    if durability not in DATA_DIRECTORY_DURABILITIES:
+        raise PluginManifestError(
+            f"data_directory.durability must be one of {list(DATA_DIRECTORY_DURABILITIES)} in {manifest_path}"
+        )
+
+    max_bytes = raw_value["max_bytes"]
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise PluginManifestError(f"data_directory.max_bytes must be a positive integer in {manifest_path}")
+
+    executes = raw_value.get("executes", False)
+    if not isinstance(executes, bool):
+        raise PluginManifestError(f"data_directory.executes must be a boolean in {manifest_path}")
+
+    return DataDirectoryDeclaration(purpose=purpose, durability=durability, max_bytes=max_bytes, executes=executes)
 
 
 # ---------------------------------------------------------------------------
