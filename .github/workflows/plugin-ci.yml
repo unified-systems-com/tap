@@ -543,6 +543,19 @@ jobs:
       # verification that cannot run — builds exactly as before. A miss is never a failure, and
       # the summary records which road was taken and why. No caller grant is needed: the package
       # and its attestations are public, and gh only needs some token to start.
+      # Clear the secrets root BEFORE any image is resolved or built: the build context is `.`, and
+      # old harness tags' .dockerignore does not exclude tap_secrets/, so anything at that path when
+      # the build runs could land in a layer and in the GHA cache. A stray file or symlink is
+      # removed; a stray directory stops the job, exactly as the old pre-build step did. The root is
+      # created and populated only after the image exists ("Prepare secrets root", below).
+      - name: Clear the secrets root before the image
+        run: |
+          rm -f tap_secrets
+          if [ -e tap_secrets ]; then
+            echo "::error::tap_secrets exists before the image build; refusing to build with it in the context"
+            exit 1
+          fi
+
       - name: Pull the published web image for the harness SHA (provenance-verified)
         id: prebuilt
         env:

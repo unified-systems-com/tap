@@ -726,3 +726,16 @@ def test_a_harness_whose_dockerfile_builds_another_fips_posture_is_not_swapped(t
     out, summary, calls = _run_pull(tmp_path, dockerfile="ARG TAP_FIPS=0\n")
     assert out.strip() == "pulled=false" and "TAP_FIPS=1" in summary
     assert calls == []
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-15")
+def test_the_secrets_root_is_cleared_before_the_image_and_filled_after() -> None:
+    """Nothing at tap_secrets/ may be in the build context, whether pulled or built (the build context is `.`):
+    the clear runs before the image step, and the root is created and the PAT written only after it."""
+    steps, names = _boot_steps()
+    clear = names.index("Clear the secrets root before the image")
+    image = names.index("Pull the published web image for the harness SHA (provenance-verified)")
+    prepare = names.index("Prepare secrets root")
+    assert clear < image < prepare
+    run = steps[clear]["run"]
+    assert "rm -f tap_secrets" in run and "exit 1" in run
