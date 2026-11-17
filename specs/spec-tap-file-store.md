@@ -717,11 +717,18 @@ backend sits below the gate where callers cannot reach it.
 The acting actor is taken from the caller context, as it is for grid operations, and is what the
 store records as the writer of a version. A caller cannot name a different actor.
 
-**Who mints the identifier.** The caller, and in practice the holding helper
-(`req-tap-files-hold`), which mints the `tap_file`'s entity identifier, stores the bytes under it,
-and returns the node envelopes carrying the returned digest, size and file version for the caller's
-batch. The gateway itself does not create or change any node: the store is format-blind, and writing
-nodes is the job of the service layer the caller already uses.
+**Who mints the identifier.** The holding helper (`req-tap-files-hold`), which mints the
+`tap_file`'s entity identifier, stores the bytes under it, and then writes the node carrying the
+returned digest, size and file version. The gateway itself does not create or change any node: the
+store is format-blind, and the node is written by the helper through the grid's service layer.
+
+**What reaches the store, and how** (ruled 2026-11-17). Every operation a program or a request makes
+on stored bytes goes through this gateway, and every write of a grid file node goes through the grid
+service layer. Three things reach the store below the gate, on purpose, and nothing else does: boot's
+initialisation of an empty root (`req-tap-files-mount-gate`), recovery (`req-tap-files-write`), and
+the operator's `manage.py files check` (`req-tap-files-check`). Boot runs before the capability system
+exists, and the check is an operator command, as `manage.py health` is. Plugin data directories are
+not part of this store and are outside the service layer by their own specification.
 
 **Writers in this release are programs** (ruled 2026-11-16): collectors and other processes running
 inside the instance, through this gateway. That covers a file fetched from an outside source, a
@@ -737,6 +744,7 @@ are stored as files here and not kept in a plugin's own directory (ruled 2026-11
 | req-tap-files-gateway-2 | Refused Without The Capability | Proposed | Each gateway operation called by an actor without its capability raises the standard capability error and performs no backend call. | |
 | req-tap-files-gateway-3 | Actor From Context | Proposed | The writer recorded in a version's inventory entry is the caller context's actor, and no gateway operation accepts an actor argument. | |
 | req-tap-files-gateway-4 | No Grid Write | Proposed | No gateway operation creates, changes or deletes a node or an edge. | |
+| req-tap-files-gateway-5 | Nothing Else Reaches The Backend | Proposed | Outside the gateway, only the boot initialisation, recovery and the check command import the backend; the boundary guard finds no other importer, the download route included. | Ruled 2026-11-17. |
 
 ### The Grid File
 ----
@@ -775,6 +783,17 @@ path.
 **No body.** The node holds no bytes and no parsed copy of them. What the bytes mean is recorded on
 a format record (`req-tap-files-format-record`).
 
+**Only `tap_files` writes one** (ruled 2026-11-17). `tap_file` is an internal-only type
+(`req-grid-entity-internal`), as `batch` and the collector node are. The generic create, patch,
+replace and delete verbs refuse it, and so does GRIFT, which goes through them, so a `tap_file`
+cannot arrive in a GRIFT file, in another plugin's batch, or from another grid. The holding helper
+(`req-tap-files-hold`) writes it through the trusted-internal service path, which still runs
+validation, version and history, and which only a program actor may use. That is what makes "every
+`tap_file` is held" true by construction rather than by every caller's good behaviour: the only
+writer stores the bytes first. The cost, accepted with the ruling, is that field-level batch
+provenance is not stamped on an internal-only type; the node's version and history still record
+every change.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -784,6 +803,7 @@ a format record (`req-tap-files-format-record`).
 | req-tap-files-node-3 | Digest And Version Shape | Proposed | A `sha256` that is not 64 lower-case hex characters, a negative `size_bytes`, and a `file_version` below 1 are each refused. | |
 | req-tap-files-node-4 | Found Again By Path | Proposed | Writing a file twice with the same path resolves to one node; one name in two directories is two nodes. | |
 | req-tap-files-node-5 | Path Shape | Proposed | A path that does not start with `/`, or has an empty, `.` or `..` element, a trailing separator or a control character, is refused. | |
+| req-tap-files-node-7 | Only tap_files Writes It | Proposed | A generic service-layer create, patch, replace or delete of a `tap_file`, and a GRIFT batch that creates or changes one, are each refused and change nothing; the holding helper's write succeeds. | Raised by the AI review on PR# 1229 - tap; ruled 2026-11-17. |
 | req-tap-files-node-6 | No Body | Proposed | No field holds the file's bytes or a parsed copy, and a write carrying one is refused. | |
 
 ### Directories
@@ -806,7 +826,9 @@ this app like `tap_file` (ruled 2026-11-17).
   one file must appear in two places, that is a future link node, not a second parent.
 - **Path and edges agree.** The path is what identity is declared on; the edges are what a
   traversal follows. The helper that holds files (`req-tap-files-hold`) writes both and keeps them in
-  step.
+  step, and is the only writer of either: `tap_directory`, `CONTAINS_TAP_DIRECTORY` and
+  `CONTAINS_TAP_FILE` are internal-only like `tap_file` (ruled 2026-11-17), so no other write can make
+  them disagree.
 - **No cycles.** A directory cannot contain itself, directly or through its descendants.
 
 A file need not sit in a directory. One with no `CONTAINS_TAP_FILE` edge is at the top.
@@ -815,11 +837,12 @@ A file need not sit in a directory. One with no `CONTAINS_TAP_FILE` edge is at t
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-directory-1 | Type And Edges Declared | Proposed | `tap_directory`, `CONTAINS_TAP_DIRECTORY` and `CONTAINS_TAP_FILE` are declared by `tap_files`, and both edges are in the directory's `CONTAINMENT_EDGES`. | |
+| req-tap-files-directory-1 | Type And Edges Declared | Proposed | `tap_directory`, `CONTAINS_TAP_DIRECTORY` and `CONTAINS_TAP_FILE` are declared by `tap_files`, the type and both edges are internal-only, and both edges are in the directory's `CONTAINMENT_EDGES`. | |
 | req-tap-files-directory-2 | One Parent | Proposed | A second `CONTAINS_TAP_DIRECTORY` edge into one directory, and a second `CONTAINS_TAP_FILE` edge into one file, are refused. | |
 | req-tap-files-directory-3 | Wrong Ends Refused | Proposed | `CONTAINS_TAP_FILE` from anything but a `tap_directory` or into anything but a `tap_file`, and `CONTAINS_TAP_DIRECTORY` between anything but two directories, are refused. | |
 | req-tap-files-directory-4 | Retirement Cascades | Proposed | Tombstoning a directory tombstones the directories and files it contains, and their bytes stay in the store. | The store deletes nothing (`req-tap-files-immutable`). |
 | req-tap-files-directory-5 | No Cycle | Proposed | An edge that would make a directory its own ancestor is refused. | |
+| req-tap-files-directory-7 | Only tap_files Writes Them | Proposed | A generic service-layer or GRIFT write that creates, changes or removes a `tap_directory`, a `CONTAINS_TAP_DIRECTORY` edge or a `CONTAINS_TAP_FILE` edge is refused and changes nothing. | Raised by the AI review on PR# 1229 - tap; ruled 2026-11-17. |
 | req-tap-files-directory-6 | Paths Follow Edges | Proposed | For every file and directory written through the helper, the stored path equals the path composed from its chain of containment edges. | |
 
 ### Format Records
@@ -835,7 +858,9 @@ formats.
 
 - **The edge.** `FILE_CONTENTS`, declared by `tap_files`, from a `tap_file` to its format record.
   Its source is `tap_file`; its targets are left open, so a plugin points it at a type of its own
-  without core knowing that type. It declares the plain identity and no properties.
+  without core knowing that type. It declares the plain identity and no properties. Unlike the file
+  and its containment, it is an ordinary edge (ruled 2026-11-17): the plugin that understands the
+  format writes it in its own batch, naming a `tap_file` that already exists.
 - **At most one per file.** A file whose format nobody knows has none and is still a complete,
   downloadable file.
 - **Validity lives on the format record.** Whether a file is well-formed, and why not, are facts
@@ -853,6 +878,7 @@ formats.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-format-record-1 | Edge Declared, Targets Open | Proposed | `FILE_CONTENTS` is declared by `tap_files` with `tap_file` as its only source and no target restriction; an edge from any other type is refused. | |
+| req-tap-files-format-record-4 | Attached In The Plugin's Own Batch | Proposed | A plugin's GRIFT batch that creates a format record and a `FILE_CONTENTS` edge from an existing `tap_file` to it commits, and the `tap_file` itself is unchanged by it. | Depends on GRIFT naming an existing internal-only node as an edge end, which the build verifies first. |
 | req-tap-files-format-record-2 | One Per File | Proposed | A second `FILE_CONTENTS` edge out of one file is refused. | |
 | req-tap-files-format-record-3 | Shared Record Survives A Replacement | Proposed | Two files hold the same bytes and share one format record of a test type. One file's bytes are then replaced. The original record is unchanged and still joined to the other file; the replaced file has one `FILE_CONTENTS` edge, to the record for its new bytes. | |
 
@@ -871,25 +897,29 @@ plumbing.
 1. Mint the `tap_file`'s entity identifier.
 2. Store the bytes under it (`store_file`, which needs `files.create`). The store returns the digest,
    the size and the file version.
-3. Return node and edge envelopes for the caller's own batch: the `tap_file` with the returned facts,
-   its `CONTAINS_TAP_FILE` edge and any directories on its path that do not yet exist, and the
-   `FILE_CONTENTS` edge when the caller supplies a format record.
+3. Write the `tap_file` with the returned facts, any directories on its path that do not yet exist,
+   and their containment edges, through the trusted-internal service path, in one grid batch, and
+   return the `tap_file`'s identifier.
 
-The helper writes no grid node itself. A collector submits the envelopes in its own GRIFT batch with
-everything else it found, so the file, its format record and the facts parsed from it land or fail
-together. Bytes go first: if the batch then fails, the store holds an object no node points at,
-which the check reports and which harms nothing (`req-tap-files-write`, "Order against the grid").
+The helper is the only writer of these types (`req-tap-files-node`, ruled 2026-11-17). The caller
+then attaches what it knows about the bytes in its own batch: the format record and the
+`FILE_CONTENTS` edge pointing at the identifier the helper returned (`req-tap-files-format-record`).
+So a file and its format record do not land or fail together, and that is accepted (ruled
+2026-11-17): if the caller's batch fails, the file is still held, complete and downloadable, with no
+format record yet. Bytes go first: if the helper's own grid write fails, the store holds an object no
+node points at, which the check reports and which harms nothing (`req-tap-files-write`, "Order
+against the grid").
 
 **When a file changes.** The same file with new bytes is the same node. The helper stores a new
-version under the same identifier (`add_file_version`, which needs `files.update`) and returns a
-patch setting `sha256`, `size_bytes` and `file_version`, naming the node version it expects so the
-grid refuses a second writer. The caller's batch moves the `FILE_CONTENTS` edge to the record for the
+version under the same identifier (`add_file_version`, which needs `files.update`) and patches
+`sha256`, `size_bytes` and `file_version` itself, naming the node version it expects so the grid
+refuses a second writer. The caller's own batch moves the `FILE_CONTENTS` edge to the record for the
 new bytes. A renamed or moved file is likewise one node: the helper records the new name in the store
 (`rename_file`) and patches `name`, `path`, `file_version` and its containment edge. The grid's history
 keeps each earlier state, so the digest and version a file had at any past moment can be read from
 history and the store still returns those bytes (`req-tap-files-history`).
 
-**Retrying after a refused batch.** A refused batch leaves the store one version ahead of the node.
+**Retrying after a refused write.** A refused grid write leaves the store one version ahead of the node.
 The node still names the current version, and downloads follow the node. On the next attempt the
 helper reads the store's head first: if the head already holds the bytes it was given, it uses that
 version and stores nothing; otherwise it stores after the head. A version skipped this way stays in
@@ -903,14 +933,14 @@ that was one file is replaced.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-hold-1 | Bytes Before Nodes | Proposed | When the helper returns, the store already holds the object; with the store refusing the write, the helper raises and returns no envelope. | |
-| req-tap-files-hold-2 | Facts From The Store | Proposed | The returned `tap_file` envelope's `sha256`, `size_bytes` and `file_version` are exactly what the store returned, never values the caller passed. | |
-| req-tap-files-hold-3 | Identifier Shared | Proposed | The `tap_file` envelope's entity identifier is the identifier the bytes were stored under. | |
-| req-tap-files-hold-4 | No Grid Write | Proposed | The helper performs no grid write; the nodes exist only after the caller's batch commits. | |
+| req-tap-files-hold-1 | Bytes Before Nodes | Proposed | The store holds the object before any node is written; with the store refusing the write, the helper raises and writes no node. | |
+| req-tap-files-hold-2 | Facts From The Store | Proposed | The written `tap_file`'s `sha256`, `size_bytes` and `file_version` are exactly what the store returned, never values the caller passed. | |
+| req-tap-files-hold-3 | Identifier Shared | Proposed | The written `tap_file`'s entity identifier is the identifier the bytes were stored under, and is what the helper returns. | |
+| req-tap-files-hold-4 | The Helper Writes The Nodes | Proposed | When the helper returns, the `tap_file`, any new directories and their containment edges exist, written through the trusted-internal path by a program actor; a caller that is not a program actor is refused before anything is stored. | Replaces "No Grid Write", ruled 2026-11-17. |
 | req-tap-files-hold-5 | New Version Updates The Same Node | Proposed | Holding new bytes for an existing file leaves one node whose `file_version` is one higher and whose earlier `sha256` is in its history, and the store returns the earlier bytes for the earlier version. | |
 | req-tap-files-hold-6 | Capability Needed | Proposed | A caller without `files.create` is refused by the gateway, and the helper passes that refusal through unchanged. | |
-| req-tap-files-hold-7 | Refused Batch Then Retry | Proposed | The helper stores a new version and the caller's batch is refused. The node still records the earlier version and digest, and a download returns the earlier bytes. A retry with the same bytes stores nothing and returns a patch naming the version already held; a retry with different bytes stores one version after the head. After the retried batch commits, the node, the store and the download agree. | |
-| req-tap-files-hold-8 | Directories Made As Needed | Proposed | Holding a file at a path whose directories do not exist returns envelopes for each missing directory and its containment edge; holding a second file in the same directory returns none for it. | |
+| req-tap-files-hold-7 | Refused Write Then Retry | Proposed | The helper stores a new version and its grid write is refused. The node still records the earlier version and digest, and a download returns the earlier bytes. A retry with the same bytes stores nothing and patches the node to the version already held; a retry with different bytes stores one version after the head. After the retry, the node, the store and the download agree. | |
+| req-tap-files-hold-8 | Directories Made As Needed | Proposed | Holding a file at a path whose directories do not exist writes each missing directory and its containment edge; holding a second file in the same directory writes none for it. | |
 
 ### Operation Logging
 ----
@@ -966,7 +996,9 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
   file's current content until a node says so. A node with no `file_version` field is refused
   rather than served the head (ruled 2026-11-17): falling back to the head would serve exactly the
   unrecorded bytes this rule exists to keep out. The identifier must be that of a live `tap_file`
-  (`req-tap-files-node`); the route reads that node's fields and no other type's. There is no way to ask this route for another version (ruled 2026-11-17):
+  (`req-tap-files-node`); the route reads that node through the grid service layer, as the
+  requesting user, and the bytes through the gateway's `open_file`, so the capability check and the
+  operation log are the gateway's own (ruled 2026-11-17). There is no way to ask this route for another version (ruled 2026-11-17):
   a stored version no node records may hold bytes whose grid write was refused, including one
   below the node's version after a retry, and the node is the only authority for what a file's
   content is. Earlier versions stay readable by programs through the service layer; a browser
@@ -1011,6 +1043,7 @@ makes the saved file open in the right program; it is not what the safety rests 
 | req-tap-files-download-6 | Hostile Name Safe In Header | Proposed | A logical name containing a quote, a newline, a semicolon and non-ASCII letters produces one well-formed `Content-Disposition` header and no additional header. | Header injection. |
 | req-tap-files-download-7 | Prefix Reserved | Proposed | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
 | req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
+| req-tap-files-download-15 | Through The Gateway | Proposed | A download calls `open_file` and emits the gateway's operation record; the route imports no backend module and reads the node through the service layer as the requesting user. | Ruled 2026-11-17. |
 | req-tap-files-download-12 | No Version Chosen By The Caller | Proposed | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 | req-tap-files-download-13 | No Recorded Version Is Refused | Proposed | With versions 1 and 2 stored and the node's `file_version` field removed, a download returns a server error naming `file_version`, sends no file bytes, and logs a finding; it does not return version 2's bytes. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 | req-tap-files-download-14 | Recorded Version Not Stored Is Not Found | Proposed | With the node recording version 3 and the store holding versions 1 and 2, and again with the store holding no object for the identifier, the route answers not found, sends no file bytes, and serves no other version. | Raised by the AI review on PR# 1218 - tap. |
@@ -1046,7 +1079,8 @@ It reports:
 - **Totals.** Objects, versions, bytes.
 
 Output is a human table by default and JSON with a published schema on request. The exit status is
-non-zero when anything was found, so the command can gate a script.
+non-zero when any fault is found, so the command can gate a script; a notice (a store head ahead of
+its node) is reported and alone leaves the status zero.
 
 The check exists from the first release because every system surveyed that shipped without one later
 told its users to write their own.
@@ -1299,7 +1333,13 @@ and `tap_directory` with their edges in `tap_files`, so storing files never depe
 name, written as one logical path, with no path scope; the join to a plugin's format record,
 `FILE_CONTENTS`, and the holding helper are core's (`req-tap-files-format-record`,
 `req-tap-files-hold`); and the check reports file nodes the store disagrees with
-(`req-tap-files-check`).
+(`req-tap-files-check`). Also ruled that day, in answer to the AI review on PR# 1229 - tap: `tap_file`,
+`tap_directory` and their containment edges are internal-only and written only by the holding
+helper, `FILE_CONTENTS` stays an ordinary edge, and a file and its format record no longer land
+together (`req-tap-files-node`, `req-tap-files-directory`, `req-tap-files-format-record`,
+`req-tap-files-hold`); every program operation on bytes goes through the gateway and the download
+route reads through it, with boot, recovery and the check the only paths below the gate
+(`req-tap-files-gateway`, `req-tap-files-download`).
 
 ## What This Settles Elsewhere
 
