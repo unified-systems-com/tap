@@ -232,6 +232,7 @@ The core probes live in `tap_health/probes.py` and register from `tap_health`'s 
 - **grid.tables** (`tap_grid.health.probe_grid_tables`, group `tap_grid`) — every model classified as TAP-managed has its table in the database: the fail-closed grid-integrity invariant (`req-tap-plugin-lifecycle-v1-grid-invariant`) evaluated continuously instead of only at a plugin transition, and the exact fingerprint of the plugin-loading race (a registered type whose migration never ran). Shares **one** implementation with search-role provisioning (`grid_tables.classified_but_absent`) — provisioning skips absent tables, the probe reports them. **Critical**.
 - **plugins-loaded** (`tap_plugins.health.probe_plugins_loaded`, group `tap_plugins`) — the plugin set this process was told to run is actually present in the Django app registry: the RUNTIME-LOADED half of the three-state model checked against DESIRED. Reads the desired set from the one authoritative resolver (`preboot.resolved_plugin_app_configs()`) and never re-derives it — re-deriving the plugin set is the bug this probe exists to catch. In-memory only (no DB, no network), so it reports truthfully when the database is unreachable. **Critical**.
 - **plugin-data** (`tap_plugins.datadir.health.probe_plugin_data`, group `tap_plugins`) — every plugin data directory a loaded plugin declares is placed, present, the runtime user's and writable, and a configured plugin data volume passes the shared mount test. Specified by `tap_plugins/specs/spec-tap-plugin-data-directory.md` (`req-tap-plugin-datadir-health`), not here. Filesystem only, never walks a directory. **Non-critical**: a broken directory breaks the plugins that use it, and boot has already refused the cases that cannot run.
+- **grid.history_agreement** (`tap_grid.health.probe_history_agreement`, group `tap_grid`) — every registered node type's `TRACK_HISTORY`, its `EntityType.track_history` and the presence of its `Historical<Type>` model agree. Specified by `tap_grid/specs/spec-grid-history.md` (`req-grid-history-optout-9`), not here. **Non-critical**: every history consumer asks the class-built answer and degrades explicitly, so a disagreement misdescribes a type without misleading a consumer.
 - **Aggregation** is in `HealthReport` (`req-tap-health-service`) keyed on the per-probe `critical=` flag (`req-tap-health-probe-registry`): `unhealthy` if any critical probe is `unhealthy`; else `degraded` if any probe is `degraded` or a non-critical probe is `unhealthy`; else `healthy`.
 - Per-probe exception isolation lives in the service (`run_health._run_one`): a probe that raises is reported as `unhealthy` (code `probe.raised`) and isolated — the run never crashes.
 
@@ -395,6 +396,7 @@ question nobody answered.
 | `grid.tables` (`tap_grid`) | ✓ | — | ✓ |
 | `plugins-loaded` (`tap_plugins`) | ✓ | — | ✓ |
 | `plugin-data` (`tap_plugins`) | ✓ | — | — |
+| `grid.history_agreement` (`tap_grid`) | ✓ | — | — |
 
 #### Acceptance Criteria
 

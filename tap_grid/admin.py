@@ -123,8 +123,8 @@ class EntityAdmin(ReadOnlyGraphAdmin):
 
 @admin.register(EntityType)
 class EntityTypeAdmin(ReadOnlyGraphAdmin):
-    list_display = ["slug", "name", "icon", "plugin_name"]
-    list_filter = ["plugin_name"]
+    list_display = ["slug", "name", "icon", "plugin_name", "kind", "track_history"]
+    list_filter = ["plugin_name", "kind", "track_history"]
     search_fields = ["slug", "name"]
 
 
