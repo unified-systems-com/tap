@@ -63,7 +63,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/15b7f1bc30bf (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/14cedc05e4e8 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -99,11 +99,12 @@ class TapPluginConfig(AppConfig):
     def ready(self) -> None:
         """Contract-driven startup: every TAP-facing registration flows through here.
 
-        TAP-IMPLEMENTS: req-tap-plugin-arch-runtime@c8349f6ecc06/8c183340b09d (derivation) —
+        TAP-IMPLEMENTS: req-tap-plugin-arch-runtime@c8349f6ecc06/c1dcf20892d9 (derivation) —
             manifest-backed registration in a fixed order, no hidden side effects in
             arbitrary import paths; read-only toward graph state by contract.
         """
         self._load_and_validate_manifest()
+        self._hold_data_directory()
         self._register_edges_from_manifest()
         self._register_types_from_manifest()
         self._register_editors_from_manifest()
@@ -160,6 +161,19 @@ class TapPluginConfig(AppConfig):
 
         warn_undeclared_convention_files(manifest)
         self._manifest = manifest
+
+    def _hold_data_directory(self) -> None:
+        """For a declared data directory, take the plugin's shared in-use lock and provision it.
+
+        Held for the life of the process, so a purge refuses while this process has the plugin
+        loaded (req-tap-plugin-datadir-lifecycle). Filesystem only, no graph state, and it never
+        raises: boot's mount gate and the accessor are where a refusal is loud.
+        """
+        if self._manifest is None or self._manifest.data_directory is None:
+            return
+        from tap_plugins.datadir import on_plugin_loaded
+
+        on_plugin_loaded(self.label, self._manifest.data_directory, self._manifest.plugin_version)
 
     # ---------------------------------------------------------------------------
     # Edge registration

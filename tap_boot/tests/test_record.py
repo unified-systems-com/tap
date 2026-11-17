@@ -45,6 +45,7 @@ def _validate(record: BootRecord) -> dict[str, Any]:
 
 
 @pytest.mark.django_db
+@pytest.mark.spec("req-boot-phases-6")  # the plugin_data phase sits directly after posture
 def test_success_run_writes_validating_record(tmp_path, monkeypatch):
     def fake_fire(collector, **kwargs):
         return True, _FakeJob(summary="collected 3 nodes")
@@ -57,7 +58,7 @@ def test_success_run_writes_validating_record(tmp_path, monkeypatch):
     assert data["outcome"] == "ok"
     assert data["profile"] == "test"
     assert data["finished_at"] is not None
-    assert [p["phase"] for p in data["phases"]] == ["posture", "auth", "grid_infra", "core_vocabulary", "population", "web"]
+    assert [p["phase"] for p in data["phases"]] == ["posture", "plugin_data", "auth", "grid_infra", "core_vocabulary", "population", "web"]
     assert all(p["status"] == "ok" for p in data["phases"])
     # Preflight entry then the fire entry, in execution order.
     assert [(s["type"], s["status"]) for s in data["steps"]] == [("preflight", "ok"), ("fire-collector", "ok")]
