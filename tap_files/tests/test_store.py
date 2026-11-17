@@ -976,3 +976,86 @@ def test_past_bytes_are_retrievable(store: LocalBackend) -> None:
     past = store.stat(ident).version(1)
     opened = store.open(ident, past.number)
     assert opened.digest == past.digest and sha(read_all(opened)) == past.digest
+
+
+# =========================================================================== round 2 of the AI review on PR# 1233
+
+
+@pytest.mark.spec("req-tap-files-mount-gate-9")
+@pytest.mark.parametrize("name", ["ocfl", "staging", "quarantine", "locks"])
+def test_a_linked_store_directory_is_refused(tmp_path: Path, name: str) -> None:
+    import shutil
+
+    elsewhere = tmp_path / "elsewhere"
+    root = tmp_path / "files"
+    root.mkdir()
+    real = LocalBackend(root)
+    real.initialise()
+    shutil.move(str(root / name), elsewhere)
+    (root / name).symlink_to(elsewhere)
+    before = tree(elsewhere)
+    with pytest.raises(StoreRootRefused, match="not a real directory"):
+        LocalBackend(root).initialise()
+    with pytest.raises(StoreRootRefused, match="not a real directory"):
+        LocalBackend(root).create(new_id(), "a", data("a"), "t")
+    assert tree(elsewhere) == before
+
+
+@pytest.mark.spec("req-tap-files-write-14")
+def test_only_a_trustworthy_version_restores_the_root(store: LocalBackend) -> None:
+    ident, other = new_id(), new_id()
+    store.create(ident, "a", data("one"), "t")
+    store.create(other, "b", data("other"), "t")
+    objdir = store.ocfl / layout.object_path(ident)
+    foreign = store.ocfl / layout.object_path(other)
+    # An injected v9: another object's valid inventory pair.
+    (objdir / "v9").mkdir()
+    for name in (inv.INVENTORY, inv.SIDECAR):
+        (objdir / "v9" / name).write_bytes((foreign / name).read_bytes())
+    os.replace(_write_tmp(store, b"broken"), objdir / inv.INVENTORY)
+    actions = store.recover_object(ident, locked=False)
+    assert any("restored from v1" in a for a in actions), actions
+    assert read_all(store.open(ident)) == b"one"
+
+
+@pytest.mark.spec("req-tap-files-write-15")
+def test_short_writes_are_completed(store: LocalBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_write = os.write
+
+    def one_byte(fd: int, buf: Any) -> int:
+        return real_write(fd, bytes(buf[:1]))
+
+    monkeypatch.setattr(os, "write", one_byte)
+    ident = new_id()
+    store.create(ident, "short.json", data("short writes"), "t")
+    monkeypatch.undo()
+    result = store.verify(ident, deep=True)
+    assert result.ok, result.findings
+    assert read_all(store.open(ident)) == b"short writes"
+
+
+@pytest.mark.spec("req-tap-files-write-16")
+def test_shared_parents_do_not_collide(store: LocalBackend) -> None:
+    # Two identifiers whose layout paths share the first hashed level.
+    first = new_id()
+    prefix = layout.object_path(first).split("/")[0]
+    second = next(i for i in (new_id() for _ in range(100000)) if layout.object_path(i).startswith(prefix + "/"))
+    go_r, go_w = os.pipe()
+    pids = []
+    for ident in (first, second):
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover — the child
+            code = 1
+            try:
+                os.read(go_r, 1)
+                store.create(ident, "a", data(os.urandom(50000)), "t")
+                code = 0
+            finally:
+                os._exit(code)
+        pids.append(pid)
+    os.write(go_w, b"gg")
+    codes = []
+    for pid in pids:
+        _pid, status = os.waitpid(pid, 0)
+        codes.append(os.waitstatus_to_exitcode(status))
+    assert codes == [0, 0] and store.exists(first) and store.exists(second)

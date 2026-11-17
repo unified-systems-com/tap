@@ -237,7 +237,9 @@ whoever is installed.
 - A root that is completely empty is initialised: the four directories are created, and `ocfl/`
   receives the OCFL storage-root marker `0=ocfl_1.1`, an `ocfl_layout.json` naming the layout
   extension, and that extension's configuration under `extensions/`.
-- A root that holds a valid OCFL storage root with the expected layout is used as it is.
+- A root that holds a valid OCFL storage root with the expected layout is used as it is, provided
+  each of the four directories is a real directory and not a link: a linked `ocfl/` would carry every
+  write out of the mounted volume.
 - A root that is not empty and is not that is refused with a standup abort. Core never adopts
   content it did not create and never initialises over existing files.
 
@@ -254,6 +256,7 @@ whoever is installed.
 | req-tap-files-mount-gate-2 | Empty Root Initialised | Implemented | Booting against an empty mounted root leaves the four directories, and under `ocfl/` exactly the OCFL 1.1 storage-root marker, `ocfl_layout.json` naming the `0003` extension, and that extension's configuration. | An independent validator's verdict is `req-tap-files-ocfl-validation` (Backlog, ruled 2026-11-17). |
 | req-tap-files-mount-gate-3 | Foreign Content Refused | Implemented | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
 | req-tap-files-mount-gate-4 | Idempotent | Implemented | A second boot against an initialised root changes no file under `ocfl/`. | |
+| req-tap-files-mount-gate-9 | Linked Store Directory Refused | Implemented | A root whose `ocfl/`, `staging/`, `quarantine/` or `locks/` is a symbolic link, even to a valid storage root, is refused at boot and by every store operation, and nothing is written through the link. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-mount-gate-5 | Shared Mount Test | Implemented | The file store and the plugin data directory obtain their mount verdicts from one implementation of the test. | |
 
 ### On-Disk Format
@@ -580,7 +583,14 @@ Under the lock, recovery:
 - removes a hashed parent directory under `ocfl/` left empty by a create that did not finish, this
   being the one place the store removes a directory, and only an empty one.
 
-Recovery never authors an inventory and never removes content.
+Recovery never authors an inventory and never removes content. A version inventory is a recovery
+source only when it matches its sidecar and the schema, names this object, has its own directory's
+version as its head, and every content path it names exists inside the object; anything else is
+damage or something placed there, and is not promoted.
+
+Every file the store writes is written whole: a short write is continued until every byte is down.
+Objects share the layout's hashed parent levels, so a create tolerates a parent another writer made
+first, and retries once when another create pruned an empty one between its `mkdir` and its rename.
 
 #### Acceptance Criteria
 
@@ -598,6 +608,9 @@ Recovery never authors an inventory and never removes content.
 | req-tap-files-write-10 | Root Pair Restored From A Version | Implemented | With the root sidecar altered, recovery rewrites it from the matching version directory and the object reads again; with the root inventory altered, recovery restores both files from the highest valid version directory and logs a finding; with no valid version inventory it changes nothing and the object is reported invalid. | |
 | req-tap-files-write-11 | Recovery Spares A Live Write | Implemented | With a writer in another process holding an object's lock, mid-write, recovery run at each step of that write moves nothing of that object's, and the write then completes and reads back correctly. | Covers the staging directory and the version directory placed before its commit point. |
 | req-tap-files-write-12 | Destination Directories Synced | Implemented | Each rename into `ocfl/` is followed by an `fsync` of the directory that received the entry, and a create also syncs each parent level it made. | Asserted by recording the calls in a test. |
+| req-tap-files-write-14 | Only A Trustworthy Version Restores The Root | Implemented | With the root pair damaged, a version directory holding a valid inventory for another identifier, or one whose head is not its own directory's, or one naming content that is absent, is never used as the source; a genuine version is. | Raised by the AI review on PR# 1233 - tap. |
+| req-tap-files-write-15 | Short Writes Completed | Implemented | With the operating system writing at most one byte per call, a create completes and every inventory, sidecar and marker it wrote is whole and valid. | Raised by the AI review on PR# 1233 - tap. |
+| req-tap-files-write-16 | Shared Parents Do Not Collide | Implemented | Two creates of different objects whose directories share hashed parents, run concurrently in two processes, both succeed. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-write-13 | Retry After A Failed Grid Write | Implemented | After a stored version whose grid write was refused, repeating the write with the earlier expected version is a conflict; `stat` then shows the head, and a retry that offers the same bytes is told the version that already holds them and stores nothing new. | |
 
 ### Read Path

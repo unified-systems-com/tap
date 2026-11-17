@@ -28,7 +28,7 @@ class FileStoreGateError(Exception):
 def run_gate(say: Any = None) -> dict[str, Any]:
     """Gate, initialise and recover the store; raise :class:`FileStoreGateError` to abort boot.
 
-    TAP-IMPLEMENTS: req-tap-files-mount-gate@c5a9542d429d/877821a9b2a6 (enforcement) — the standup refuses
+    TAP-IMPLEMENTS: req-tap-files-mount-gate@5ba3891da5a4/877821a9b2a6 (enforcement) — the standup refuses
         here when a configured store is not a mounted, writable volume or holds foreign content.
     """
     from tap_files.store import configured_root, get_store

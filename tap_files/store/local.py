@@ -91,7 +91,9 @@ def _fsync_file(path: Path) -> None:
 def _write_new(path: Path, data: bytes, mode: int = 0o644) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
-        os.write(fd, data)
+        view = memoryview(data)
+        while view:  # POSIX allows a short write; keep going until every byte is down
+            view = view[os.write(fd, view) :]
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -124,7 +126,7 @@ class LocalBackend:
     def initialise(self) -> str:
         """Initialise an empty root, accept this store's own, refuse anything else.
 
-        TAP-IMPLEMENTS: req-tap-files-mount-gate@c5a9542d429d/d039358d6d68 (derivation) — core never adopts
+        TAP-IMPLEMENTS: req-tap-files-mount-gate@5ba3891da5a4/d039358d6d68 (derivation) — core never adopts
             content it did not create and never initialises over existing files.
 
         Returns ``"initialised"`` or ``"existing"``; raises :class:`StoreRootRefused` naming what it found.
@@ -152,6 +154,9 @@ class LocalBackend:
         unexpected = [e for e in entries if e not in ROOT_DIRS]
         if unexpected:
             return f"unexpected entries {unexpected}"
+        linked = self._not_real_dirs()
+        if linked:
+            return linked
         try:
             marker = (self.ocfl / inv.STORAGE_ROOT_MARKER).read_text(encoding="ascii")
             layout = json.loads((self.ocfl / LAYOUT_FILE).read_text(encoding="utf-8"))
@@ -166,9 +171,24 @@ class LocalBackend:
             return "the storage root uses a different layout"
         return ""
 
+    def _not_real_dirs(self) -> str:
+        """Each of the four controlled directories must be a real directory, never a link.
+
+        A link would carry every write and every recovery move out of the mounted volume.
+        """
+        for name in ROOT_DIRS:
+            try:
+                mode = os.lstat(self.root / name).st_mode
+            except FileNotFoundError:
+                return f"{name}/ is missing"
+            if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                return f"{name}/ is not a real directory (a link or a file)"
+        return ""
+
     def _require_ready(self) -> None:
-        if not (self.ocfl / inv.STORAGE_ROOT_MARKER).is_file():
-            raise StoreRootRefused(f"{self.root} has not been initialised; boot initialises it")
+        problem = self._not_real_dirs()
+        if problem or not (self.ocfl / inv.STORAGE_ROOT_MARKER).is_file():
+            raise StoreRootRefused(f"{self.root} is not a ready store root: {problem or 'not initialised'}")
 
     # ------------------------------------------------------------------ locks
 
@@ -268,7 +288,7 @@ class LocalBackend:
     ) -> StoredResult:
         """Store a new object at version 1 (put-if-absent).
 
-        TAP-IMPLEMENTS: req-tap-files-write@bdc69ac51e75/d7e5fcc5d3c9 (derivation) — the write path: lock,
+        TAP-IMPLEMENTS: req-tap-files-write@95be594ff629/1aa0c897b6da (derivation) — the write path: lock,
             stream and hash into staging, build, sync, then move into place.
         """
         uuid_text = check_identifier(identifier)
@@ -306,7 +326,13 @@ class LocalBackend:
                 self._step("synced")
                 made = self._make_parents(objdir.parent)
                 self._step("parents_made")
-                os.rename(staged_obj, objdir)
+                try:
+                    os.rename(staged_obj, objdir)
+                except FileNotFoundError:
+                    # Another create of a different object pruned a shared parent between our mkdir
+                    # and our rename (parents are shared by the layout's 3-character tuples).
+                    made += self._make_parents(objdir.parent)
+                    os.rename(staged_obj, objdir)
                 self._step("renamed")
                 for path in [objdir.parent, *made]:
                     _fsync_dir(path)
@@ -443,8 +469,11 @@ class LocalBackend:
             missing.append(cursor)
             cursor = cursor.parent
         for path in reversed(missing):
-            os.mkdir(path, 0o750)
-            made.append(path)
+            try:
+                os.mkdir(path, 0o750)
+                made.append(path)
+            except FileExistsError:
+                pass  # another writer made this shared level first
         return made
 
     def _prune_empty_parents(self, parent: Path) -> None:
@@ -601,7 +630,7 @@ class LocalBackend:
     def recover(self) -> list[str]:
         """Put right what interrupted writes left, for every object; skip any object being written.
 
-        TAP-IMPLEMENTS: req-tap-files-write@bdc69ac51e75/8a88d5d86c16 (enforcement) — the recovery sweep:
+        TAP-IMPLEMENTS: req-tap-files-write@95be594ff629/8a88d5d86c16 (enforcement) — the recovery sweep:
             quarantine, never unlink; restore a root pair only from a verified version inventory.
         """
         actions: list[str] = []
@@ -666,7 +695,7 @@ class LocalBackend:
             if not (vdir.is_dir() and vdir.name[1:].isdigit()):
                 continue
             vpair = self._read_pair(objdir, vdir.name)
-            if vpair is not None and inv.parse(*vpair) is not None:
+            if vpair is not None and self._trustworthy(identifier, objdir, int(vdir.name[1:]), vpair):
                 valid.append((int(vdir.name[1:]), *vpair))
         if pair is not None:
             for number, vinv, vside in valid:
@@ -681,6 +710,26 @@ class LocalBackend:
         logger.error("[ba0d] files: integrity finding: %s root inventory restored from v%d", identifier, number)
         concern(logger, "files", "stored_file_integrity", f"{identifier} root inventory restored from v{number}")
         return [f"{identifier}: root inventory pair restored from v{number}"]
+
+    def _trustworthy(self, identifier: str, objdir: Path, number: int, vpair: tuple[bytes, bytes]) -> bool:
+        """Whether a version directory's inventory may stand in for the root.
+
+        It must match its sidecar and the schema, name this object, have its own directory's version
+        as its head, and every content path it names must exist inside this object. Anything else is
+        damage or something placed there, and recovery will not promote it.
+        """
+        data = inv.parse(*vpair)
+        if data is None or data["id"] != identifier or data["head"] != inv.vname(number):
+            return False
+        for paths in data["manifest"].values():
+            for rel in paths:
+                target = objdir / rel
+                try:
+                    if not stat.S_ISREG(os.lstat(target).st_mode):
+                        return False
+                except FileNotFoundError:
+                    return False
+        return True
 
     def _replace_root(self, objdir: Path, inventory_bytes: bytes | None, sidecar_bytes: bytes) -> None:
         for data, name in ((inventory_bytes, inv.INVENTORY), (sidecar_bytes, inv.SIDECAR)):
