@@ -409,6 +409,9 @@ Stored bytes are write-once (ruled 2026-11-16).
   directory, because no content file is written.
 - **Nothing is deleted.** There is no operation that removes an object, a version or a content file
   (`req-tap-files-retention`).
+- **Content is placed read-only.** A content file has mode `0444` when it is moved into place, and
+  no code path opens one for writing afterwards (ruled 2026-11-17; the read path relies on it,
+  `req-tap-files-read`).
 
 The **file version** is OCFL's version number for the object. It counts changes to the file's bytes
 or name and nothing else. It is deliberately not the grid's per-node edit counter, which rises on
@@ -430,6 +433,7 @@ for nodes (`req-grid-service-batch-occ`).
 | req-tap-files-immutable-3 | No Delete Operation | Proposed | The backend protocol and the service gateway expose no operation that removes an object, a version or content, and no code path under the store unlinks a file inside `ocfl/`. | Recovery moves incomplete content to quarantine; it does not unlink. |
 | req-tap-files-immutable-4 | Stale Writer Refused | Proposed | Adding a version or renaming with an expected version that is not the head is refused with a conflict error carrying both numbers, and changes nothing. | |
 | req-tap-files-immutable-5 | Create Is Put-If-Absent | Proposed | Creating an object whose identifier already exists is refused and the existing object is unchanged. | |
+| req-tap-files-immutable-6 | Content Is Read-Only | Proposed | After a create and after a new version, every content file under `ocfl/` has mode `0444`, and no code path under the store opens a content file for writing once it is placed. | |
 
 ### Store Interface
 ----
@@ -592,6 +596,17 @@ Verification completes before the first byte is released. A stream that verifies
 take back what it has already sent, and a caller that has received half a corrupted file has no way
 to know. The cost is reading the file twice.
 
+The stream released is the one that was verified (ruled 2026-11-17). `open` opens the content file
+once, computes the digest through that descriptor, seeks it back to the start and returns it; it
+never opens the path a second time. Content files are placed read-only (`req-tap-files-immutable`)
+and nothing opens one for writing afterwards. The bytes delivered are therefore the bytes verified,
+unless a process with write access to the volume changes the file in place while the read is in
+flight. Such a process is outside this store's threat model: it could as easily rewrite a content
+file and its inventory together, and what catches tampering at rest is the digest recorded on the
+file's node, which the download route compares (`req-tap-files-download`). The read guarantee is
+against corruption, an interrupted write and tampering at rest, not against a hostile writer on the
+volume during a read.
+
 A failure is one error, `FileIntegrityError`, whatever the cause: the content does not match its
 digest, the inventory does not match its sidecar, the inventory is not valid, or the content file is
 missing. The error carries the identifier, the version and the kind of failure, and never any of the
@@ -613,6 +628,7 @@ error.
 | req-tap-files-read-5 | Any Version Readable | Proposed | After two further versions are added, `open` with version 1 returns version 1's bytes and name. | |
 | req-tap-files-read-7 | No False Alarm During A Write | Proposed | Reads of an object issued continuously while another process adds versions to it never raise `FileIntegrityError` and never emit `CONCERN`. | |
 | req-tap-files-read-6 | Finding Raised | Proposed | Each integrity failure produces one log record and one `CONCERN` record naming the identifier and the failure kind. | |
+| req-tap-files-read-8 | The Verified Descriptor Is Delivered | Proposed | `open` opens the content file exactly once, and the stream it returns is that same descriptor, positioned at the first byte. | Asserted by recording the opens in a test. Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 
 ### Capabilities
 ----
@@ -1034,6 +1050,10 @@ compose files enable it; the object identifier is a `urn:uuid:` URN; the directo
 type recorded on the node and is always an attachment; there is no file size limit in this release;
 the names `TAP_FILES_ROOT`, `files.*`, `/files` and `manage.py files`; the collector actor's grant is global for now, with per-collector scoping
 tracked in Issue# 1205 - tap.
+
+Ruled 2026-11-17 and now in the requirements above: a read delivers the descriptor it verified,
+content files are placed read-only, and a process with write access to the volume during a read is
+outside the threat model (`req-tap-files-read`, `req-tap-files-immutable`).
 
 ## What This Settles Elsewhere
 
