@@ -4,26 +4,27 @@ History is a standalone capability independent of FLIP and perspective.
 It records durable change timelines for domain objects.
 
 Architecture notes:
-- All concrete BaseModel subclasses automatically get history tracking
-  via the HistoricalRecords manager declared on the abstract BaseModel.
+- Every concrete BaseModel subclass gets history tracking via the
+  TapHistoricalRecords manager declared on the abstract BaseModel, unless the
+  type opts out with ``TRACK_HISTORY = False`` (req-grid-history-optout).
 - Actor information is threaded through the history user context here;
   call set_history_user(user) at the start of request handling.
 - Composable queries (timeline, between, latest_before, as_of) are
   intentionally deferred to the time-travel implementation pass.
 
-Future — History Scope Configuration:
-  The spec calls for per-model/per-app/per-grid configurable history
-  enablement and retention policy (revision-count and time-based).
-  In v1 the default is: all objects tracked, no retention limits.
-  When scope configuration is implemented, it should be expressible at
-  three levels: model class, Django app, and TAP grid-wide settings.
-  Design that mechanism before building it — it will affect migrations.
+History Scope Configuration:
+  Per-model enablement is built (req-grid-history-optout): a type that declares
+  ``TRACK_HISTORY = False`` gets no Historical<Type> model, table, manager or
+  signal handlers. Retention policy (revision-count and time-based) and any
+  per-app or grid-wide setting remain backlogged under req-grid-history-scope.
 """
 
 from __future__ import annotations
 
 import contextvars
 from typing import TYPE_CHECKING, Any
+
+from simple_history.models import HistoricalRecords
 
 if TYPE_CHECKING:
     # Generic over AUTH_USER_MODEL — not the concrete tap_auth.User
@@ -68,13 +69,54 @@ def set_history_user(user: AbstractUser | None) -> None:
     _history_user.set(user)
 
 
+class HistoryNotTracked(LookupError):
+    """Raised when history is asked of a type that declares ``TRACK_HISTORY = False``.
+
+    A type without history has no timeline, which is not the same as an empty one: an
+    empty result would read as "never changed". Consumers that can answer without
+    history check :func:`is_history_enabled` first; consumers that cannot raise this
+    (req-grid-history-optout-4).
+    """
+
+    def __init__(self, model_class: type) -> None:
+        name = getattr(model_class, "ENTITY_TYPE", model_class.__name__)
+        super().__init__(
+            f"no history for this type: {name} declares TRACK_HISTORY = False (req-grid-history-optout)."
+        )
+        self.model_class = model_class
+
+
+class TapHistoricalRecords(HistoricalRecords):
+    """``HistoricalRecords`` that honours a per-model ``TRACK_HISTORY`` declaration.
+
+    Declared once on the abstract ``BaseModel`` with ``inherit=True``, simple-history
+    builds a ``Historical<Type>`` model for every concrete subclass when that subclass's
+    ``class_prepared`` signal fires (``HistoricalRecords.finalize``). simple-history has
+    no per-subclass exclusion for an inherited manager, so this skips ``finalize`` for a
+    subclass whose ``TRACK_HISTORY`` is false: no history model, no table in the
+    migration state, no ``history`` descriptor and no save/delete signal handlers. Every
+    other sender goes through the stock ``finalize`` unchanged, so a type that does not
+    opt out gets exactly the history model it had before (req-grid-history-optout-2).
+    """
+
+    def finalize(self, sender: type, **kwargs: Any) -> None:
+        """Build ``sender``'s history model unless it declares ``TRACK_HISTORY = False``.
+
+        TAP-IMPLEMENTS: req-grid-history-optout@da89a0e8b5f5/d68de3c234c5 (derivation) — the one place a type's history model is built or withheld
+        """
+        if sender is not self.cls and not getattr(sender, "TRACK_HISTORY", True):
+            return
+        super().finalize(sender, **kwargs)
+
+
 def is_history_enabled(model_class: type) -> bool:
     """Return True if history tracking is enabled for a model class.
 
     History is determined by the presence of a django-simple-history
-    HistoricalRecords manager (``history`` attribute) on the class.
-    In v1, all concrete BaseModel subclasses have history enabled by
-    default via inheritance.
+    HistoricalRecords manager (``history`` attribute) on the class. Every
+    concrete BaseModel subclass has one unless it declares
+    ``TRACK_HISTORY = False`` (req-grid-history-optout), in which case
+    TapHistoricalRecords never attaches it.
     """
     return hasattr(model_class, "history")
 
@@ -115,14 +157,18 @@ class HistoryService:
         """Return the django-simple-history queryset for this instance.
 
         Ordered newest-first by history_date (TAP transaction time).
-        Returns an empty list if history is not enabled for this model.
+
+        Raises:
+            HistoryNotTracked: the model declares ``TRACK_HISTORY = False``. An
+                untracked type has no timeline, and an empty list would read as
+                "never changed" (req-grid-history-optout-4).
 
         Note: Use this only when you need DSH internals directly. Higher-level
         callers should prefer the composable query methods when they are
         implemented (time-travel pass).
         """
         if not self.is_enabled():
-            return []
+            raise HistoryNotTracked(self._instance.__class__)
         return self._instance.history.all()
 
     def timeline(self) -> Any:

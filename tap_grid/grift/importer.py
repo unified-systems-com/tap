@@ -5152,7 +5152,9 @@ def _apply_sweep_purge(
         ).delete()
 
         # Hard-delete domain-model history rows for the entity, if the entity
-        # type has a registered model class with a HistoricalRecords manager.
+        # type has a registered model class with a HistoricalRecords manager. A
+        # type that declares TRACK_HISTORY = False has none, so there is nothing
+        # to sweep (req-grid-history-optout-4).
         if entity_type != "edge":
             try:
                 model_cls = get_model_class(entity_type)

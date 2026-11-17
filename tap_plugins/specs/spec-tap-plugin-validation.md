@@ -32,7 +32,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 | req-tap-plugin-validate-compat | [Compatibility Floor](#compatibility-floor) | Implemented | Structure check: `requires_tap` is declared and satisfied by the harness core |
 | req-tap-plugin-validate-version | [Version Form](#version-form) | Implemented | Structure check: `plugin_version` is a bare release number, never the `v`-prefixed tag |
 | req-tap-plugin-validate-repo | [Repository Scope](#repository-scope) | In Development | Opt-in structure checks on the repository SHELL: CODEOWNERS, the CI lanes, the reusable-caller pin and grant, the nightly lane's shape, the release lane, the waiver ledger |
-| req-tap-plugin-validate-pins | [Exact Third-Party Pins](#exact-third-party-pins) | In Development | Repository-scope check: every third-party `[project].dependencies` entry is an exact pin; plugin distributions keep ranges; warns until the fleet measures clean, then refuses |
+| req-tap-plugin-validate-pins | [Exact Third-Party Pins](#exact-third-party-pins) | In Development | Repository-scope check: every third-party `[project].dependencies` entry is an exact pin; plugin distributions keep ranges when the repository's CI record installs them from the org, and so does a library tap's own lock pins, provided the range admits the locked version; warns until the fleet measures clean, then refuses |
 | req-tap-plugin-validate-cli | [Standalone CLI](#standalone-cli) | Implemented | Module-based CLI for structure level; loads/runs via management command |
 | req-tap-plugin-validate-mgmt | [Management Command](#management-command) | Implemented | Django management command supporting all levels |
 | req-tap-plugin-validate-output | [Validation Output](#validation-output) | Implemented | Human output and structured JSON output |
@@ -517,7 +517,8 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   the finding says to remove it in the same change that adds the narrow one.
 
 - **`repo-dependency-pins`** — every third-party requirement in the repository-root
-  `pyproject.toml` names exactly one release. Specified on its own in
+  `pyproject.toml` names exactly one release, except a range on a library tap's own lock pins that
+  admits the locked version. Specified on its own in
   [Exact Third-Party Pins](#exact-third-party-pins) (`req-tap-plugin-validate-pins`), because its
   subject is the distribution the repository declares rather than its CI shell; it runs here, in
   repository scope, for the rollout reason that section gives.
@@ -584,7 +585,9 @@ parsed as a PEP 508 requirement (`packaging.requirements`). An entry passes when
   is a span that the sibling's releases move through, governed by the sibling's own `requires_tap`
   and release discipline. "Plugin distribution" is decided by `tap.plugin_identity.slug_for_dist_name`,
   the one inverse of the naming convention (`<slug>-tap`, legacy `tap-plugin-<slug>`), so a name the
-  identity gates refuse is not exempt here either.
+  identity gates refuse is not exempt here either. The name is necessary, not sufficient: the
+  repository's CI record must install it from the org (below); or
+- a **range on a library tap itself declares** that admits the version tap's lock pins (below).
 
 Anything else is a finding: a floor (`>=`), a range (`>=a,<b`), a compatible-release clause (`~=`), a
 wildcard (`==1.*`), several clauses, a bare name, or a direct reference (`name @ url`). Each finding
@@ -597,6 +600,76 @@ no dependencies is a pass with nothing to check.
 
 `[project.optional-dependencies]` and dependency groups are not read. The boot installs neither,
 so neither can change what runs in a deployment.
+
+**Libraries tap's lock already pins keep a range.** Plugins share one Python environment with core,
+and core's `uv.lock` already pins some of the libraries plugins use. Pre-boot installs each plugin
+with its own `uv pip install`, which keeps an installed release that satisfies a range but replaces
+it to satisfy an exact pin (`tap#1220`). For such a library an exact plugin pin is the one shape
+that can silently move core's version, and a range is the shape that lets tap's lock decide. The
+maintainer ruled (2026-11-17, aws-build Q76a) that the check accepts a range on any third-party
+library tap itself declares, provided the range admits tap's locked version; org-bots PR #40 makes
+Renovate leave the same libraries as ranges (`rangeStrategy: "replace"`), so the check and the bot
+agree.
+
+- **Which libraries.** Read from tap's own `uv.lock` beside the validator (`/app/uv.lock` in the
+  image, `_tooling/uv.lock` in plugin-ci's jobs, which run the validator from a full core checkout
+  and sync it `--no-install-project`, so there is no installed `tap` distribution to read metadata
+  from). The set is the root `tap` package's `dependencies` plus the dependency groups a boot
+  installs: `[tool.uv].default-groups` in tap's root `pyproject.toml`, or uv's default `dev` when
+  that is unset, because the image and the entrypoint both run `uv sync --all-packages`, which
+  installs the default groups. That is how `pyyaml` (in `dev` and `ci-tooling`, never a runtime
+  dependency) is counted. `ci-tooling` is not counted on its own: a bare CI runner installs it, a
+  boot never does. A transitive dependency in the lock (`urllib3`) is not counted either; it is
+  there because of something tap declares, and leaves the lock without any decision about plugins.
+  An unreadable root `pyproject.toml` counts no group, the narrower set. No hand-kept list: the set
+  follows tap's lock. Read 2026-11-17 from `uv.lock` on `main`, it is the 15 runtime dependencies
+  and the 11 `dev` libraries, which includes Renovate's three (`requests` 2.34.2, `nh3` 0.3.7,
+  `pyyaml` 6.0.3) and more besides.
+- **Admits the locked version.** The requirement's specifier must contain every version tap's lock
+  records for the library (pre-releases included, since the locked version is what is installed).
+  A bare name, a floor, `~=` and a wildcard all qualify when they contain it. A range that excludes
+  it (`requests<2.30`) is reported, naming the locked version.
+- **An exact pin of such a library is reported**, even when it equals the locked version, with a
+  range that admits the lock as the fix. Equal today, it moves on the plugin's schedule (Renovate's
+  `replace` rewrites an out-of-range pin to the new release's pin) while tap's lock moves on tap's;
+  the day they differ, pre-boot replaces core's copy, which is the failure this exemption exists to
+  prevent.
+- **A lock that cannot be read withdraws the exemption.** A missing lock, one that does not parse,
+  one without exactly one `tap` package, or one that declares a library it records no version for,
+  falls back to requiring an exact pin for every library, and each finding says so. Fail closed: a
+  range is never accepted on a lock nobody read.
+
+**A plugin-shaped name is not enough: the repository's CI record must source it from the org.**
+The `-tap` suffix (and legacy `tap-plugin-` prefix) stays the rule for recognising the org's own
+plugins, but anyone can publish a package with that shape to an index, and on its name alone
+`evil-tap>=1` would be exempt from pinning. The maintainer ruled (2026-11-17, aws-build Q77a) to keep
+the naming rule and add a check that every plugin-shaped dependency is one of the org's
+repositories. The check reads that from the repository's own CI boot record
+(`tap_plugin/<slug>/boot/ci.boot.json`, `req-boot-bootstrap-ci-record`, the slug taken from the
+repository's `[project].name`): it is offline, already in every plugin repository, declared with
+its digest, and already obliged to close over `depends_on`, so it needs no list kept here. A
+plugin-shaped dependency passes the source half when the record installs its slug
+(`slug_for_dist_name`) and every entry for that slug is a `git` source at
+`https://github.com/unified-systems-com/<repository>` (one path component, optional `.git` or
+trailing slash) whose repository name carries the same slug, so a legacy `tap-plugin-<slug>`
+repository still answers for `<slug>-tap`. A dependency the record does not install, one installed
+from anywhere else (another owner or host, another org repository's slug, a non-`git` source), and
+every plugin-shaped dependency of a repository whose record is missing or unreadable, or whose
+`[project].name` is not a plugin name, is reported as unverified and is not exempt. It is the same
+check id, on its own switch, `FIRST_PARTY_SOURCES_ENFORCED`, rather than `DEPENDENCY_PINS_ENFORCED`:
+the two halves measure different things across the fleet and clear on different days, and one flag
+would hold either ratchet to the other's stragglers. The org is named once, from `REUSABLE_PREFIX`.
+Measured 2026-11-17 across the 32 unarchived `*-tap` repositories (each `pyproject.toml` and CI
+record on `main`, read through the GitHub API and run through the check): 31 plugin-shaped
+dependencies in 13 repositories, every one installed from the org by its repository's CI record, so
+the source half flags nothing and its switch can be flipped whenever the maintainer chooses.
+This verifies the repository's own declaration of where the dependency comes from; it does not
+verify what an index serves under that name in a deployment, which the boot profile's sources
+decide.
+
+`check.details` sorts every entry into `pinned`, `first_party` (plugin-shaped and installed from the
+org by the CI record), `first_party_unverified`, `core_locked` (an accepted range on a library
+tap's lock pins) and `floating` (every other reported entry).
 
 **Why repository scope.** The reusable per-repo CI runs the package checks with `--strict`, which
 turns any warning into a failure, and runs `--repo` without it (`plugin-ci.yml`, the `repo-scope`
@@ -612,7 +685,11 @@ it is `False` a floating requirement warns; once the fleet measures clean it is 
 reviewed change, and the check refuses. Measured 2026-11-17 across the 32 unarchived `*-tap`
 repositories (each repository's `pyproject.toml` on `main`, read through the GitHub API): 5 float, 2
 already pin, 25 declare no third-party dependency. The flip is a code change rather than a date in
-the code, so it reddens no lane on a morning nobody chose.
+the code, so it reddens no lane on a morning nobody chose. Three of the five (`anchore-tap`
+`requests>=2.34.2,<3`, `github-core-tap` `PyYAML>=6.0.2`, `stackarmor-vdr-tap` `nh3>=0.3.7`) are
+ranges on libraries tap's lock pins and pass under `-7`. Of the other two, `aws-core-tap` has since
+pinned (`boto3==1.44.4`, `botocore==1.44.4`), which leaves `sigstore-core-tap` (each `pyproject.toml`
+on `main` read through the GitHub API and run through the check, 2026-11-17).
 
 #### Acceptance Criteria
 
@@ -620,10 +697,12 @@ the code, so it reddens no lane on a morning nobody chose.
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-validate-pins-1 | Exact Pin Passes | In Development | A third-party requirement with one `==` clause (no wildcard) or one `===` clause passes, with or without extras and environment markers. | A marker's own comparison operators are not version clauses. |
 | req-tap-plugin-validate-pins-2 | Floating Requirement Reported | In Development | A floor, a range, `~=`, a wildcard `==`, several clauses, a bare name and a direct reference are each reported. The finding names the requirement, says why it floats, gives `<name>==<version>` as the fix, and points at Renovate's pull requests as the way the pin stays current. | |
-| req-tap-plugin-validate-pins-3 | Plugin Distributions Keep Ranges | In Development | A requirement on a plugin distribution (`<slug>-tap`, legacy `tap-plugin-<slug>`) passes with any range, decided by `tap.plugin_identity.slug_for_dist_name`; a name that function refuses is not exempt. | One rule for "first-party", already used by the identity gates. |
+| req-tap-plugin-validate-pins-3 | Plugin Distributions Keep Ranges | In Development | A requirement on a plugin distribution (`<slug>-tap`, legacy `tap-plugin-<slug>`) passes with any range once `-8` shows it is the org's, decided by `tap.plugin_identity.slug_for_dist_name`; a name that function refuses is not exempt. | One rule for "first-party", already used by the identity gates. |
 | req-tap-plugin-validate-pins-4 | Nothing To Pin Passes, Unreadable Does Not | In Development | No `pyproject.toml`, or no `[project].dependencies`, passes. An unparseable requirement, an unreadable `pyproject.toml` and `dynamic` dependencies are reported, not passed. | An entry that cannot be read is not shown to be pinned. |
 | req-tap-plugin-validate-pins-5 | Warns Until The Fleet Is Clean, Then Refuses | In Development | While `DEPENDENCY_PINS_ENFORCED` is false every finding is a warning; set true, the same findings fail the check. | Five repositories float as of 2026-11-17; Renovate's pinning pull requests clear them. |
 | req-tap-plugin-validate-pins-6 | Repository Scope | In Development | The check is `repo-dependency-pins` and runs only with `repo_scope=True` (`--repo`), like every `repo-*` check. | The reusable lane's `repo-scope` job does not run `--strict`. |
+| req-tap-plugin-validate-pins-7 | Libraries Tap's Lock Pins Keep A Range | In Development | A requirement on a third-party library tap itself declares (the root `tap` package's `dependencies` and boot-installed default dependency groups in tap's own `uv.lock`, not a hand-kept list) passes as `core_locked` when its specifier contains every version that lock records for it. A range excluding the locked version is reported, naming it; an exact pin of such a library is reported even when it equals the locked version, with a range admitting the lock as the fix; a range on a library tap does not declare (a transitive, or `ci-tooling` only) is reported as before; a direct reference is refused as before. When tap's lock cannot be read every library falls back to the exact pin, and each finding says so. | Maintainer ruling 2026-11-17 (aws-build Q76a). Pre-boot's per-plugin install keeps a release that satisfies a range and replaces one to satisfy a pin (`tap#1220`), so for these libraries the range lets tap's lock decide and the pin can move core's version. Matches Renovate's `rangeStrategy: "replace"` for the same libraries (org-bots PR #40). |
+| req-tap-plugin-validate-pins-8 | Plugin Dependencies Are The Org's | In Development | A requirement on a plugin distribution keeps its range (`-3`) only when the repository's own CI record (`tap_plugin/<slug>/boot/ci.boot.json`, slug from `[project].name`) installs its slug and every entry for that slug is a `git` source at `https://github.com/unified-systems-com/<repository>` whose repository name carries the same slug; it is then `first_party`. Otherwise it is `first_party_unverified` and reported, naming the record: not installed (an index-only `evil-tap`), installed from another owner, host or slug, or from a non-`git` source; with no readable record, or a `[project].name` that is not a plugin name, every plugin-shaped dependency is reported as unverifiable, not passed. While `FIRST_PARTY_SOURCES_ENFORCED` is false the finding is a warning; set true, it fails the check, independently of `DEPENDENCY_PINS_ENFORCED`. | Maintainer ruling 2026-11-17 (aws-build Q77a): keep the naming rule, and close the gap where a stranger's package with a plugin-shaped name was exempt on its name alone. The CI record is offline and already closes over `depends_on`, so no list is kept. Measured 2026-11-17: 31 plugin-shaped dependencies in 13 of 32 repositories, none flagged. |
 
 ### Standalone CLI
 ----

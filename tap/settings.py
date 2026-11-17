@@ -329,6 +329,14 @@ SESSION_COOKIE_NAME, CSRF_COOKIE_NAME = per_stack_cookie_names(TAP_SESSION_LABEL
 # putting eyes on the partner.
 TAP_SECRETS_ROOT = os.environ.get("TAP_SECRETS_ROOT", "/run/tap-secrets")
 
+# Plugin data volume root (tap_plugins/specs/spec-tap-plugin-data-directory.md,
+# req-tap-plugin-datadir-root). NO default, on purpose: unset or empty means the operator enabled
+# no plugin data volume, and set means "this is my volume" — from then on it must be usable or
+# boot aborts. A default path would make "not configured" and "configured but broken" look the
+# same. Every consumer reads this setting; nothing else reads the variable (guard-pinned by
+# plugin-data-root-resolution). The repository's compose files set it to the named volume's mount.
+TAP_PLUGIN_DATA_ROOT = os.environ.get("TAP_PLUGIN_DATA_ROOT") or ""
+
 # =============================================================================
 # Application Definition
 # =============================================================================

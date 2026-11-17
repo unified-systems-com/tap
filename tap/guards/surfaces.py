@@ -440,6 +440,31 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Boot gate — plugin data volume and directories",
+        rid="req-tap-plugin-datadir-mount-gate",
+        cadence="Per-boot (`manage.py boot`, the `plugin_data` phase directly after `posture`) + per-commit (`pytest`)",
+        status=(
+            "Gate-guarded (fail-closed) — a configured volume must pass the shared mount test (exists, not a link, "
+            'on a different device from /, a real write); a "state" declaration with no volume aborts naming the '
+            "plugin; an executes declaration must run a probe script. CI exercises it insofar as it boots with the "
+            "compose volume; the noexec case is tested through a seam, not a real noexec mount"
+        ),
+        enforced_by=(
+            "`tap_boot/orchestrator.py::_phase_plugin_data` → `tap_plugins.datadir.run_gate`, deciding with "
+            "`tap/volume_mount.py::check_volume`; `tap_plugins/tests/test_plugin_data_directory.py`"
+        ),
+    ),
+    DeclaredSurface(
+        surface="Plugin data health probe",
+        rid="req-tap-plugin-datadir-health",
+        cadence="Per-commit (`pytest`) + per-spawn and per-120s in-container (the readiness set it joins)",
+        status=(
+            "CI-guarded units; non-critical — unhealthy when a declared directory or a configured volume is "
+            "unusable, never for orphans, strays or size"
+        ),
+        enforced_by="`tap_plugins/datadir/health.py::probe_plugin_data`; `tap_plugins/tests/test_plugin_data_directory.py`",
+    ),
+    DeclaredSurface(
         surface="Boot preflight — collector credential liveness (live self-test)",
         rid="req-boot-obs-preflight",
         cadence="Per-boot (`manage.py boot`, after the offline lane, before population mutates)",

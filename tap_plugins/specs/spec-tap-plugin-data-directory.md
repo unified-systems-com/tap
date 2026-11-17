@@ -68,27 +68,27 @@ that is thrown away because the intended volume was not mounted.
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-tap-plugin-datadir-scope | [Scope](#scope) | Proposed | A sub-grid working directory per plugin; not the file store; no grid node |
-| req-tap-plugin-datadir-root | [The Root](#the-root) | Proposed | One core setting, one mounted local volume, resolved in one place |
-| req-tap-plugin-datadir-manifest | [Manifest Declaration](#manifest-declaration) | Proposed | A `[data_directory]` table: purpose, durability, declared maximum size |
-| req-tap-plugin-datadir-provision | [Provisioning](#provisioning) | Proposed | Core creates `<root>/<slug>/`, private to the runtime user, with a core-written description file |
-| req-tap-plugin-datadir-mount-gate | [Mount Gate](#mount-gate) | Proposed | Boot refuses when a plugin declares a directory and the root is not a mounted, writable volume |
-| req-tap-plugin-datadir-accessor | [The Accessor](#the-accessor) | Proposed | One function returns a plugin's directory; an undeclared plugin is refused |
-| req-tap-plugin-datadir-sharing | [Sharing Between Plugins](#sharing-between-plugins) | Proposed | Use the owning plugin's interface; not enforced |
-| req-tap-plugin-datadir-lifecycle | [Lifecycle And Purge](#lifecycle-and-purge) | Proposed | Nothing is deleted automatically; orphans are listed; purge is an explicit command |
-| req-tap-plugin-datadir-report | [Reported Facts](#reported-facts) | Proposed | The plugin report carries each directory's facts and a bounded listing of its contents |
-| req-tap-plugin-datadir-health | [Health Probe](#health-probe) | Proposed | A probe reports the root and each declared directory as usable or not |
-| req-tap-plugin-datadir-backup-facts | [Facts A Backup Will Need](#facts-a-backup-will-need) | Proposed | Durability is recorded and caches are tagged now; building the backup is not in this specification |
+| req-tap-plugin-datadir-scope | [Scope](#scope) | Implemented | A sub-grid working directory per plugin; not the file store; no grid node |
+| req-tap-plugin-datadir-root | [The Root](#the-root) | Implemented | One core setting, one mounted local volume, resolved in one place |
+| req-tap-plugin-datadir-manifest | [Manifest Declaration](#manifest-declaration) | Implemented | A `[data_directory]` table: purpose, durability, declared maximum size |
+| req-tap-plugin-datadir-provision | [Provisioning](#provisioning) | Implemented | Core creates `<root>/<slug>/`, private to the runtime user, with a core-written description file |
+| req-tap-plugin-datadir-mount-gate | [Mount Gate](#mount-gate) | Implemented | Boot refuses when a plugin declares a directory and the root is not a mounted, writable volume |
+| req-tap-plugin-datadir-accessor | [The Accessor](#the-accessor) | Implemented | One function returns a plugin's directory; an undeclared plugin is refused |
+| req-tap-plugin-datadir-sharing | [Sharing Between Plugins](#sharing-between-plugins) | Implemented | Use the owning plugin's interface; not enforced |
+| req-tap-plugin-datadir-lifecycle | [Lifecycle And Purge](#lifecycle-and-purge) | Implemented | Nothing is deleted automatically; orphans are listed; purge is an explicit command |
+| req-tap-plugin-datadir-report | [Reported Facts](#reported-facts) | Implemented | The plugin report carries each directory's facts and a bounded listing of its contents |
+| req-tap-plugin-datadir-health | [Health Probe](#health-probe) | Implemented | A probe reports the root and each declared directory as usable or not |
+| req-tap-plugin-datadir-backup-facts | [Facts A Backup Will Need](#facts-a-backup-will-need) | Implemented | Durability is recorded and caches are tagged now; building the backup is not in this specification |
 | req-tap-plugin-datadir-size-use | [Using The Declared Size](#using-the-declared-size) | Backlog | What the declared maximum is compared against and what happens when it is exceeded |
 | req-tap-plugin-datadir-free-floor | [Free-Space Floor](#free-space-floor) | Backlog | One floor on free space for the whole volume, checked before large writes |
 | req-tap-plugin-datadir-helpers | [Shared Helpers](#shared-helpers) | Backlog | Staged swap, single-writer lock and dataset age as core helpers |
-| req-tap-plugin-datadir-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this specification deliberately does not do |
+| req-tap-plugin-datadir-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | What this specification deliberately does not do |
 
 ### Scope
 ----
 RID: `req-tap-plugin-datadir-scope`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A plugin data directory is a directory under a core-owned root, named by the plugin's slug, that the
 plugin reads and writes with ordinary file calls. It is for working data whose shape only the plugin
@@ -107,14 +107,14 @@ No node represents a plugin data directory, and no node represents anything insi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-scope-1 | No Grid Type | Proposed | No TAP-managed node or edge type represents a plugin data directory or its contents; provisioning, reporting and purging create no grid write. | |
-| req-tap-plugin-datadir-scope-2 | Separate From The File Store | Proposed | The plugin data root and the file store root are different settings resolving to different directories; when both are set, the mount gate fails if the two resolve to the same path or one contains the other. | Two volumes, ruled 2026-11-16. |
+| req-tap-plugin-datadir-scope-1 | No Grid Type | Implemented | No TAP-managed node or edge type represents a plugin data directory or its contents; provisioning, reporting and purging create no grid write. | |
+| req-tap-plugin-datadir-scope-2 | Separate From The File Store | Implemented | The plugin data root and the file store root are different settings resolving to different directories; when both are set, the mount gate fails if the two resolve to the same path or one contains the other. | Two volumes, ruled 2026-11-16. |
 
 ### The Root
 ----
 RID: `req-tap-plugin-datadir-root`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Plugin data directories live under one of two roots. Which one a directory lands under is decided by
 whether the operator enabled a volume and by what the plugin declared
@@ -158,17 +158,17 @@ service that runs plugin code must mount the same volume.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-root-1 | One Setting, No Default | Proposed | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned, as the secrets root is. |
-| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. |
-| req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Proposed | In the built image the conventional mount path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
-| req-tap-plugin-datadir-root-4 | Core Never Creates The Volume Root | Proposed | No core code creates the volume root directory; a configured root that is missing is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. Core does create the ephemeral root. |
-| req-tap-plugin-datadir-root-5 | Ephemeral Root Is Fixed | Proposed | The ephemeral root's location is one constant in core, is not configurable by a plugin, and is not on the configured volume. | |
+| req-tap-plugin-datadir-root-1 | One Setting, No Default | Implemented | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned, as the secrets root is. |
+| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Implemented | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. Lands after the image that prepares the mount path (`-root-3`) is published, because spawn and the lean-boot gate run the published image: wired first, the volume is root-owned and the gate refuses it (seen on PR# 1224 - tap); wired once tap-web `sha-dfade0d`, which carries the path, was published. |
+| req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Implemented | In the built image the conventional mount path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
+| req-tap-plugin-datadir-root-4 | Core Never Creates The Volume Root | Implemented | No core code creates the volume root directory; a configured root that is missing is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. Core does create the ephemeral root. |
+| req-tap-plugin-datadir-root-5 | Ephemeral Root Is Fixed | Implemented | The ephemeral root's location is one constant in core, is not configurable by a plugin, and is not on the configured volume. | |
 
 ### Manifest Declaration
 ----
 RID: `req-tap-plugin-datadir-manifest`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A plugin that needs a directory declares it in `tap-plugin.toml` with one optional table:
 
@@ -216,19 +216,19 @@ so with its own subdirectories and declares `"state"`.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-manifest-1 | Optional Table | Proposed | A manifest with no `[data_directory]` table parses, and the parsed manifest records that no directory is declared. | |
-| req-tap-plugin-datadir-manifest-2 | Required Keys | Proposed | A table missing `purpose`, `durability` or `max_bytes` fails the manifest load with an error naming the missing key. | |
-| req-tap-plugin-datadir-manifest-3 | Durability Is One Of Two | Proposed | Any `durability` other than `"cache"` or `"state"` fails the load. | |
-| req-tap-plugin-datadir-manifest-4 | Size Is A Positive Integer | Proposed | A `max_bytes` that is zero, negative, a float, a string or a boolean fails the load. | TOML booleans are not integers. |
-| req-tap-plugin-datadir-manifest-5 | Unknown Keys Rejected | Proposed | An unrecognised key inside the table fails the load and the error names it. | |
-| req-tap-plugin-datadir-manifest-7 | Executes Is A Boolean | Proposed | `executes` absent parses as false; any value other than a TOML boolean fails the load. | |
-| req-tap-plugin-datadir-manifest-6 | Validator Reports It | Proposed | `validate_plugin` reports the declared directory (durability, purpose, declared size) in its output, and reports a plugin whose code calls the accessor without declaring the table. | The second half is a static check and may be best-effort; say so in the report. |
+| req-tap-plugin-datadir-manifest-1 | Optional Table | Implemented | A manifest with no `[data_directory]` table parses, and the parsed manifest records that no directory is declared. | |
+| req-tap-plugin-datadir-manifest-2 | Required Keys | Implemented | A table missing `purpose`, `durability` or `max_bytes` fails the manifest load with an error naming the missing key. | |
+| req-tap-plugin-datadir-manifest-3 | Durability Is One Of Two | Implemented | Any `durability` other than `"cache"` or `"state"` fails the load. | |
+| req-tap-plugin-datadir-manifest-4 | Size Is A Positive Integer | Implemented | A `max_bytes` that is zero, negative, a float, a string or a boolean fails the load. | TOML booleans are not integers. |
+| req-tap-plugin-datadir-manifest-5 | Unknown Keys Rejected | Implemented | An unrecognised key inside the table fails the load and the error names it. | |
+| req-tap-plugin-datadir-manifest-7 | Executes Is A Boolean | Implemented | `executes` absent parses as false; any value other than a TOML boolean fails the load. | |
+| req-tap-plugin-datadir-manifest-6 | Validator Reports It | Implemented | `validate_plugin` reports the declared directory (durability, purpose, declared size) in its output, and reports a plugin whose code calls the accessor without declaring the table. | The second half is a static check and may be best-effort; say so in the report. |
 
 ### Provisioning
 ----
 RID: `req-tap-plugin-datadir-provision`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Core, not the plugin, creates a declared directory.
 
@@ -237,8 +237,10 @@ Core, not the plugin, creates a declared directory.
   on a case-insensitive filesystem. Core validates the slug with `valid_slug` before joining it to
   the root and does not rely on the manifest loader having done so.
 - **When.** During boot, after the mount gate passes, for every installed plugin that declares a
-  directory. Provisioning is idempotent: an existing directory with the right owner is left exactly
-  as it is.
+  directory. Provisioning is idempotent: an existing directory with the right owner is left as it
+  is, except that a mode other than `0700` is reset to `0700` and the reset logged (ruled
+  2026-11-17, in answer to the AI review on PR# 1224 - tap: a loose mode would expose the plugin's
+  data, and refusing boot over it would stop the instance for one `chmod`).
 - **Mode.** Created `0700` and then explicitly set to `0700`, because the process umask applies to
   creation.
 - **What core refuses.** If `<root>/<slug>` exists and is a symbolic link, or is not a directory, or
@@ -261,19 +263,20 @@ Core, not the plugin, creates a declared directory.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-provision-1 | Created Private | Proposed | After boot, each declared directory exists, is a real directory, is owned by the runtime user and has mode `0700`. | |
-| req-tap-plugin-datadir-provision-2 | Idempotent | Proposed | A second boot changes no byte and no timestamp inside an existing, correctly owned directory other than core's own files when the declaration changed. | |
-| req-tap-plugin-datadir-provision-3 | Symlink Refused | Proposed | When `<root>/<slug>` is a symbolic link, provisioning fails, names the path, and creates or changes nothing at the link's target. | |
-| req-tap-plugin-datadir-provision-4 | Wrong Owner Refused | Proposed | When the directory exists under a different owner, provisioning fails and performs no `chown`. | |
-| req-tap-plugin-datadir-provision-5 | Description File Valid | Proposed | Every provisioned directory holds a `.tap-plugin-dir.json` that validates against its published schema and agrees with the manifest. | |
-| req-tap-plugin-datadir-provision-6 | Cache Tag Follows Durability | Proposed | A `"cache"` directory holds a `CACHEDIR.TAG` whose first 43 octets are the standard signature; a `"state"` directory holds none at its top level after boot. | |
-| req-tap-plugin-datadir-provision-7 | Undeclared Gets Nothing | Proposed | No directory is created for an installed plugin that declares no table. | |
+| req-tap-plugin-datadir-provision-1 | Created Private | Implemented | After boot, each declared directory exists, is a real directory, is owned by the runtime user and has mode `0700`. | |
+| req-tap-plugin-datadir-provision-2 | Idempotent | Implemented | A second boot changes no byte and no timestamp inside an existing, correctly owned directory other than core's own files when the declaration changed. | |
+| req-tap-plugin-datadir-provision-8 | Loose Mode Reset | Implemented | An existing, correctly owned directory with mode `0777` has mode `0700` after boot, its contents are unchanged, and one log record names the directory and the old mode. | Ruled 2026-11-17 in answer to the AI review on PR# 1224 - tap. |
+| req-tap-plugin-datadir-provision-3 | Symlink Refused | Implemented | When `<root>/<slug>` is a symbolic link, provisioning fails, names the path, and creates or changes nothing at the link's target. | |
+| req-tap-plugin-datadir-provision-4 | Wrong Owner Refused | Implemented | When the directory exists under a different owner, provisioning fails and performs no `chown`. | |
+| req-tap-plugin-datadir-provision-5 | Description File Valid | Implemented | Every provisioned directory holds a `.tap-plugin-dir.json` that validates against its published schema and agrees with the manifest. | |
+| req-tap-plugin-datadir-provision-6 | Cache Tag Follows Durability | Implemented | A `"cache"` directory holds a `CACHEDIR.TAG` whose first 43 octets are the standard signature; a `"state"` directory holds none at its top level after boot. | |
+| req-tap-plugin-datadir-provision-7 | Undeclared Gets Nothing | Implemented | No directory is created for an installed plugin that declares no table. | |
 
 ### Mount Gate
 ----
 RID: `req-tap-plugin-datadir-mount-gate`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The failure this gate exists to prevent: an operator believes plugin data is on a volume, the volume
 is not actually mounted, the path exists anyway inside the container's writable layer, the plugin
@@ -335,20 +338,20 @@ was started without running boot.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-mount-gate-1 | State Without A Volume Aborts | Proposed | With the setting unset and an installed plugin declaring `"state"`, boot exits non-zero after one `ABORT` record whose reason names that plugin. | |
-| req-tap-plugin-datadir-mount-gate-2 | Cache Without A Volume Boots Ephemeral | Proposed | With the setting unset and an installed plugin declaring `"cache"`, boot succeeds, the plugin's directory is under the ephemeral root, and the report marks it ephemeral. | |
-| req-tap-plugin-datadir-mount-gate-3 | Unmounted Configured Root Aborts | Proposed | With the setting naming a path on the same device as `/`, boot aborts and the reason says the root is not a mounted volume, whether or not any plugin declares a directory. | The case the gate exists for. |
-| req-tap-plugin-datadir-mount-gate-4 | Unwritable Configured Root Aborts | Proposed | With the setting naming a mounted root whose write probe fails, boot aborts and the reason carries the operating-system error. | |
-| req-tap-plugin-datadir-mount-gate-5 | Nothing Needed, Nothing Required | Proposed | With the setting unset and no installed plugin declaring a directory, boot succeeds. | |
-| req-tap-plugin-datadir-mount-gate-6 | One Decision Function | Proposed | Boot, the health probe and the report obtain the verdict from the same function; no second implementation of the test exists. | |
-| req-tap-plugin-datadir-mount-gate-7 | No Fallback From A Failed Volume | Proposed | With the setting set and the volume unusable, no directory is provisioned under the ephemeral root. | |
-| req-tap-plugin-datadir-mount-gate-8 | Execution Proven At Boot | Proposed | With a plugin declaring `executes = true` and its directory on a volume mounted to forbid execution, boot aborts naming the plugin; with execution allowed, the probe file is gone after boot. | |
+| req-tap-plugin-datadir-mount-gate-1 | State Without A Volume Aborts | Implemented | With the setting unset and an installed plugin declaring `"state"`, boot exits non-zero after one `ABORT` record whose reason names that plugin. | |
+| req-tap-plugin-datadir-mount-gate-2 | Cache Without A Volume Boots Ephemeral | Implemented | With the setting unset and an installed plugin declaring `"cache"`, boot succeeds, the plugin's directory is under the ephemeral root, and the report marks it ephemeral. | |
+| req-tap-plugin-datadir-mount-gate-3 | Unmounted Configured Root Aborts | Implemented | With the setting naming a path on the same device as `/`, boot aborts and the reason says the root is not a mounted volume, whether or not any plugin declares a directory. | The case the gate exists for. |
+| req-tap-plugin-datadir-mount-gate-4 | Unwritable Configured Root Aborts | Implemented | With the setting naming a mounted root whose write probe fails, boot aborts and the reason carries the operating-system error. | |
+| req-tap-plugin-datadir-mount-gate-5 | Nothing Needed, Nothing Required | Implemented | With the setting unset and no installed plugin declaring a directory, boot succeeds. | |
+| req-tap-plugin-datadir-mount-gate-6 | One Decision Function | Implemented | Boot, the health probe and the report obtain the verdict from the same function; no second implementation of the test exists. | |
+| req-tap-plugin-datadir-mount-gate-7 | No Fallback From A Failed Volume | Implemented | With the setting set and the volume unusable, no directory is provisioned under the ephemeral root. | |
+| req-tap-plugin-datadir-mount-gate-8 | Execution Proven At Boot | Implemented | With a plugin declaring `executes = true` and its directory on a volume mounted to forbid execution, boot aborts naming the plugin; with execution allowed, the probe file is gone after boot. | |
 
 ### The Accessor
 ----
 RID: `req-tap-plugin-datadir-accessor`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A plugin learns its directory by calling one function, `tap_plugins.data_dir(slug)`, which returns a
 `pathlib.Path`.
@@ -376,17 +379,17 @@ way; the device comparison in the mount test is the one seam a test replaces.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-accessor-1 | Returns The Canonical Path | Proposed | For a declaring, provisioned plugin the accessor returns the real path of `<root>/<slug>`, and two calls return equal values. | |
-| req-tap-plugin-datadir-accessor-2 | Undeclared Refused | Proposed | For an installed plugin with no table, and for a slug that is not installed, the accessor raises and creates nothing. | |
-| req-tap-plugin-datadir-accessor-3 | Invalid Slug Refused | Proposed | A slug containing a path separator, a dot, upper case or an empty string raises before any filesystem call. | |
-| req-tap-plugin-datadir-accessor-4 | Unusable Root Refused | Proposed | When the mount test fails, the accessor raises with the same reason the mount gate would give, and returns no path. | Covers a process started without boot. |
-| req-tap-plugin-datadir-accessor-5 | Never Creates | Proposed | The accessor performs no `mkdir`; an unprovisioned directory is an error. | |
+| req-tap-plugin-datadir-accessor-1 | Returns The Canonical Path | Implemented | For a declaring, provisioned plugin the accessor returns the real path of `<root>/<slug>`, and two calls return equal values. | |
+| req-tap-plugin-datadir-accessor-2 | Undeclared Refused | Implemented | For an installed plugin with no table, and for a slug that is not installed, the accessor raises and creates nothing. | |
+| req-tap-plugin-datadir-accessor-3 | Invalid Slug Refused | Implemented | A slug containing a path separator, a dot, upper case or an empty string raises before any filesystem call. | |
+| req-tap-plugin-datadir-accessor-4 | Unusable Root Refused | Implemented | When the mount test fails, the accessor raises with the same reason the mount gate would give, and returns no path. | Covers a process started without boot. |
+| req-tap-plugin-datadir-accessor-5 | Never Creates | Implemented | The accessor performs no `mkdir`; an unprovisioned directory is an error. | |
 
 ### Sharing Between Plugins
 ----
 RID: `req-tap-plugin-datadir-sharing`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Every plugin's directory sits under the same root, so one plugin can reach another's files. That is
 accepted (ruled 2026-11-16): the trust boundary is the instance, not the plugin, and no guard in this
@@ -405,13 +408,13 @@ practice and not merely unusual.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-sharing-1 | Practice Is Stated To Authors | Proposed | The plugin-authoring guidance that covers data directories states both halves: go through the owner's interface, and only the owner writes. | Carried by the plugin-building skills when this is built. |
+| req-tap-plugin-datadir-sharing-1 | Practice Is Stated To Authors | Implemented | The plugin-authoring guidance that covers data directories states both halves: go through the owner's interface, and only the owner writes. | Carried by the plugin-building skills when this is built. |
 
 ### Lifecycle And Purge
 ----
 RID: `req-tap-plugin-datadir-lifecycle`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Nothing in a plugin data directory is ever deleted by core on its own initiative. Not on boot, not on
 plugin removal, not when a directory is over its declared size, and not for a cache.
@@ -430,7 +433,10 @@ plugin removal, not when a directory is over its declared size, and not for a ca
     `"state"`, requires a second, differently named flag;
   - refuses when `<root>/<slug>` is a symbolic link, and never follows a symbolic link while walking;
   - stays on the root's device and inside the real path of the root;
-  - is recorded in the log with who ran it, the slug, and what was removed.
+  - is recorded in the log with who ran it, the slug, and what was removed;
+  - when it fails after deletion has begun (a mount point inside, a filesystem error), says how much
+    it removed before stopping and that the rest remains, logs that like a completed purge, and
+    never reports that nothing was deleted (raised by the AI review on PR# 1224 - tap).
 - **Listing.** `manage.py plugin_data list` prints every directory under the root with its owner
   status (declared, orphan, stray) and the same facts the report carries.
 
@@ -475,24 +481,25 @@ directory and is not a core operation.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-lifecycle-1 | No Automatic Deletion | Proposed | No boot step, load step, health probe or report deletes or truncates anything under the root except core's own reserved files in a declared directory. | |
-| req-tap-plugin-datadir-lifecycle-2 | Removed Plugin Leaves Its Directory | Proposed | After a plugin is removed from the install set and the instance rebooted, its directory and contents are byte-identical and it is listed as an orphan. | |
-| req-tap-plugin-datadir-lifecycle-3 | Purge Needs Confirmation | Proposed | `purge` without the confirming flag deletes nothing and exits non-zero; purging a `"state"` directory with only the first flag deletes nothing. | |
-| req-tap-plugin-datadir-lifecycle-4 | Purge Stays Inside | Proposed | With a symbolic link inside the directory pointing at a file outside the root, purge removes the link and leaves the outside file untouched; with `<root>/<slug>` itself a link, purge refuses. | |
-| req-tap-plugin-datadir-lifecycle-6 | Purge Refused While In Use | Proposed | With a second process running that has the plugin loaded, `purge` with every confirming flag deletes nothing, exits non-zero and names the directory as in use. | Across processes, and across two containers sharing the volume: that locks hold between containers is expected of one kernel and was not found stated in a primary source, so the test is the proof. |
-| req-tap-plugin-datadir-lifecycle-7 | Purge Proceeds When Unused | Proposed | With no other process holding the lock, `purge` of an installed plugin's directory and of an orphan's directory each succeed, and the command does not refuse on account of its own process. | |
-| req-tap-plugin-datadir-lifecycle-8 | A Killed Holder Leaves No Lock | Proposed | After the only other holder is killed with `SIGKILL`, `purge` proceeds without any cleanup step. | |
-| req-tap-plugin-datadir-lifecycle-9 | Forked Workers Keep It Held | Proposed | With the lock taken before a fork and the parent then exited, `purge` is still refused while a child lives. | |
-| req-tap-plugin-datadir-lifecycle-10 | A Start During Purge Waits | Proposed | A process that begins loading the plugin while a purge holds the lock does not touch the directory until the purge finishes, and then finds a newly provisioned empty one. | |
-| req-tap-plugin-datadir-lifecycle-11 | Lock File Outlives Purge | Proposed | After a purge the lock file exists at the same path with the same inode, and is listed neither as a stray nor as an orphan. | |
-| req-tap-plugin-datadir-lifecycle-12 | Only flock | Proposed | The lock module calls `fcntl.flock` and no code under the data-directory package calls `fcntl.lockf` or the POSIX record-lock commands. | Guard-pinned. |
-| req-tap-plugin-datadir-lifecycle-5 | Purge Is Logged | Proposed | A completed purge writes one log record naming the actor, the slug, the durability and the byte and entry counts removed. | |
+| req-tap-plugin-datadir-lifecycle-1 | No Automatic Deletion | Implemented | No boot step, load step, health probe or report deletes or truncates anything under the root except core's own reserved files in a declared directory. | |
+| req-tap-plugin-datadir-lifecycle-2 | Removed Plugin Leaves Its Directory | Implemented | After a plugin is removed from the install set and the instance rebooted, its directory and contents are byte-identical and it is listed as an orphan. | |
+| req-tap-plugin-datadir-lifecycle-3 | Purge Needs Confirmation | Implemented | `purge` without the confirming flag deletes nothing and exits non-zero; purging a `"state"` directory with only the first flag deletes nothing. | |
+| req-tap-plugin-datadir-lifecycle-4 | Purge Stays Inside | Implemented | With a symbolic link inside the directory pointing at a file outside the root, purge removes the link and leaves the outside file untouched; with `<root>/<slug>` itself a link, purge refuses. | |
+| req-tap-plugin-datadir-lifecycle-6 | Purge Refused While In Use | Implemented | With a second process running that has the plugin loaded, `purge` with every confirming flag deletes nothing, exits non-zero and names the directory as in use. | Across processes, and across two containers sharing the volume: that locks hold between containers is expected of one kernel and was not found stated in a primary source, so the test is the proof. Built and proven across processes in one container (`test_plugin_data_lock.py`); the two-container case is not yet tested. |
+| req-tap-plugin-datadir-lifecycle-7 | Purge Proceeds When Unused | Implemented | With no other process holding the lock, `purge` of an installed plugin's directory and of an orphan's directory each succeed, and the command does not refuse on account of its own process. | |
+| req-tap-plugin-datadir-lifecycle-8 | A Killed Holder Leaves No Lock | Implemented | After the only other holder is killed with `SIGKILL`, `purge` proceeds without any cleanup step. | |
+| req-tap-plugin-datadir-lifecycle-9 | Forked Workers Keep It Held | Implemented | With the lock taken before a fork and the parent then exited, `purge` is still refused while a child lives. | |
+| req-tap-plugin-datadir-lifecycle-10 | A Start During Purge Waits | Implemented | A process that begins loading the plugin while a purge holds the lock does not touch the directory until the purge finishes, and then finds a newly provisioned empty one. | |
+| req-tap-plugin-datadir-lifecycle-11 | Lock File Outlives Purge | Implemented | After a purge the lock file exists at the same path with the same inode, and is listed neither as a stray nor as an orphan. | |
+| req-tap-plugin-datadir-lifecycle-12 | Only flock | Implemented | The lock module calls `fcntl.flock` and no code under the data-directory package calls `fcntl.lockf` or the POSIX record-lock commands. | Guard-pinned. |
+| req-tap-plugin-datadir-lifecycle-13 | A Partial Purge Says So | Implemented | With a filesystem error raised after the first entry is removed, `purge` exits non-zero saying how many entries and bytes were removed and that the rest remains, logs one record with that outcome, and never says nothing was deleted; with the error raised before any entry is removed, it says nothing was deleted. | Raised by the AI review on PR# 1224 - tap. |
+| req-tap-plugin-datadir-lifecycle-5 | Purge Is Logged | Implemented | A completed purge writes one log record naming the actor, the slug, the durability and the byte and entry counts removed. | |
 
 ### Reported Facts
 ----
 RID: `req-tap-plugin-datadir-report`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The plugin report (`tap_plugins.report.build_report`, the one source for "what plugins is this
 instance running") carries the data-directory facts, so the command-line surface and the human plugin
@@ -530,21 +537,21 @@ Reading the report requires the capability it already requires. No new capabilit
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-report-1 | Declaration In The Report | Proposed | For a declaring plugin the report carries its purpose, durability and declared maximum size exactly as the manifest states them; for a non-declaring plugin it says no directory is declared. | |
-| req-tap-plugin-datadir-report-2 | Measured With A Timestamp | Proposed | Every measured size in the report is accompanied by the time it was measured and whether the walk completed. | |
-| req-tap-plugin-datadir-report-3 | Links Not Followed | Proposed | A symbolic link inside a plugin directory pointing at a large file outside it adds the link's own size, not the target's, to the measurement. | |
-| req-tap-plugin-datadir-report-4 | Bounded Listing | Proposed | A directory with more top-level entries than the cap yields exactly the cap and a flag saying the listing was cut. | |
-| req-tap-plugin-datadir-report-5 | Orphans And Strays Listed | Proposed | A directory under the root with no declaring plugin appears as an orphan, and a top-level file under the root appears as a stray. | |
-| req-tap-plugin-datadir-report-6 | Schema Carries It | Proposed | A report containing these fields validates against the published plugin report schema, and the schema version is higher than before this change. | |
-| req-tap-plugin-datadir-report-8 | Ephemeral Is Said | Proposed | A directory under the ephemeral root is marked ephemeral in the report, and the report says the volume is not enabled. | |
-| req-tap-plugin-datadir-report-9 | Undeclared Executables Shown | Proposed | An executable file in a directory whose plugin did not declare `executes` appears in that plugin's executable list. | Reported, not changed. |
-| req-tap-plugin-datadir-report-7 | Budget Respected | Proposed | A walk given a budget it cannot meet returns within a small multiple of that budget with a partial figure marked as partial. | |
+| req-tap-plugin-datadir-report-1 | Declaration In The Report | Implemented | For a declaring plugin the report carries its purpose, durability and declared maximum size exactly as the manifest states them; for a non-declaring plugin it says no directory is declared. | |
+| req-tap-plugin-datadir-report-2 | Measured With A Timestamp | Implemented | Every measured size in the report is accompanied by the time it was measured and whether the walk completed. | |
+| req-tap-plugin-datadir-report-3 | Links Not Followed | Implemented | A symbolic link inside a plugin directory pointing at a large file outside it adds the link's own size, not the target's, to the measurement. | |
+| req-tap-plugin-datadir-report-4 | Bounded Listing | Implemented | A directory with more top-level entries than the cap yields exactly the cap and a flag saying the listing was cut. | |
+| req-tap-plugin-datadir-report-5 | Orphans And Strays Listed | Implemented | A directory under the root with no declaring plugin appears as an orphan, and a top-level file under the root appears as a stray. | |
+| req-tap-plugin-datadir-report-6 | Schema Carries It | Implemented | A report containing these fields validates against the published plugin report schema, and the schema version is higher than before this change. | |
+| req-tap-plugin-datadir-report-8 | Ephemeral Is Said | Implemented | A directory under the ephemeral root is marked ephemeral in the report, and the report says the volume is not enabled. | |
+| req-tap-plugin-datadir-report-9 | Undeclared Executables Shown | Implemented | An executable file in a directory whose plugin did not declare `executes` appears in that plugin's executable list. | Reported, not changed. |
+| req-tap-plugin-datadir-report-7 | Budget Respected | Implemented | A walk given a budget it cannot meet returns within a small multiple of that budget with a partial figure marked as partial. | |
 
 ### Health Probe
 ----
 RID: `req-tap-plugin-datadir-health`
 
-Status: `Proposed`
+Status: `Implemented`
 
 `tap_plugins` registers one health probe for plugin data, alongside its existing probe.
 
@@ -569,17 +576,17 @@ rows to the Validation Map (`req-dev-validation-map`).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-health-1 | Healthy When Unused | Proposed | With no declaring plugin and the volume not enabled the probe is healthy. | |
-| req-tap-plugin-datadir-health-5 | Ephemeral Caches Are Healthy | Proposed | With the volume not enabled and one plugin declaring `"cache"`, the probe is healthy and its context lists that directory as ephemeral. | |
-| req-tap-plugin-datadir-health-2 | Unmounted Is Unhealthy | Proposed | With a declaring plugin and a failing mount test the probe is unhealthy and its detail carries the mount test's reason. | |
-| req-tap-plugin-datadir-health-3 | Each Bad Directory Named | Proposed | A missing, linked, wrongly owned or unwritable declared directory makes the probe unhealthy and appears by slug in its context. | |
-| req-tap-plugin-datadir-health-4 | Orphans Do Not Fail It | Proposed | An orphan directory leaves the verdict healthy and appears in the context. | |
+| req-tap-plugin-datadir-health-1 | Healthy When Unused | Implemented | With no declaring plugin and the volume not enabled the probe is healthy. | |
+| req-tap-plugin-datadir-health-5 | Ephemeral Caches Are Healthy | Implemented | With the volume not enabled and one plugin declaring `"cache"`, the probe is healthy and its context lists that directory as ephemeral. | |
+| req-tap-plugin-datadir-health-2 | Unmounted Is Unhealthy | Implemented | With a declaring plugin and a failing mount test the probe is unhealthy and its detail carries the mount test's reason. | |
+| req-tap-plugin-datadir-health-3 | Each Bad Directory Named | Implemented | A missing, linked, wrongly owned or unwritable declared directory makes the probe unhealthy and appears by slug in its context. | |
+| req-tap-plugin-datadir-health-4 | Orphans Do Not Fail It | Implemented | An orphan directory leaves the verdict healthy and appears in the context. | |
 
 ### Facts A Backup Will Need
 ----
 RID: `req-tap-plugin-datadir-backup-facts`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Building backup and restore for plugin data is not part of this specification (ruled 2026-11-16:
 "we're not building backups just yet, right now we're just including the data we'll need"). What this
@@ -603,7 +610,7 @@ Two things a future backup has to settle, written down so they are not rediscove
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-backup-facts-1 | Durability Is Recoverable From Disk | Proposed | With no instance running, the durability of every provisioned directory can be read from its description file alone. | |
+| req-tap-plugin-datadir-backup-facts-1 | Durability Is Recoverable From Disk | Implemented | With no instance running, the durability of every provisioned directory can be read from its description file alone. | |
 
 ### Using The Declared Size
 ----
@@ -654,7 +661,7 @@ working plugin, not designed in the abstract.
 ----
 RID: `req-tap-plugin-datadir-nongoals`
 
-Status: `Proposed`
+Status: `Implemented`
 
 - **No grid representation.** No node or edge for a directory or its contents.
 - **No mediation of file I/O.** Core does not see, log or limit individual reads and writes inside a
@@ -672,7 +679,7 @@ Status: `Proposed`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-datadir-nongoals-1 | Non-Goals Are Listed | Proposed | This section names each deliberate omission, and each omission that has a planned home names the Backlog requirement that holds it. | |
+| req-tap-plugin-datadir-nongoals-1 | Non-Goals Are Listed | Implemented | This section names each deliberate omission, and each omission that has a planned home names the Backlog requirement that holds it. | |
 
 ## Open Decisions
 
