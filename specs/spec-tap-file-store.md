@@ -361,9 +361,13 @@ vdr-2026-11-16+0192f3a1-7c2e-7d4a-9b1c-2f6e5a7b8c9d+v1+9f86d0…0f00a08.json
 ```
 
 - `<stem>` and `<extension>` are derived from the logical name at the time of that version. The stem
-  keeps letters, digits, `.`, `_` and `-`, replaces every other character with `_`, drops leading
-  dots, and is cut to 100 characters. The extension is the logical name's final suffix when it is 1
-  to 16 letters or digits, and is otherwise omitted along with its dot.
+  keeps ASCII letters, ASCII digits, `.`, `_` and `-`, replaces every other character with `_`,
+  drops leading dots, and is cut to 100 characters. The extension is the logical name's final
+  suffix when it is 1 to 16 ASCII letters or digits, and is otherwise omitted along with its dot.
+  Both are ASCII so that the name has a fixed byte budget: at most 100 + 1 + 36 + 2 + 1 + 64 + 1 +
+  16 = 221 bytes plus the digits of the version, well inside the 255-byte limit common filesystems
+  place on one name. A stem that kept other letters would not fit: a hundred two-byte letters alone
+  take 200 bytes.
 - `<identifier>` is the bare UUID, without the `urn:uuid:` prefix, because a colon is not safe in a
   file name on every filesystem.
 - `v<N>` is the OCFL version in whose directory the file sits. It is OCFL's number, not any counter
@@ -391,6 +395,7 @@ store does not silently repair a logical name.
 | req-tap-files-naming-6 | Identifier Is A URN | Proposed | Every object's inventory `id` is `urn:uuid:` followed by a canonical lower-case UUID, and equals the URN of the entity identifier it was stored under. | |
 | req-tap-files-naming-3 | Name Carries All Four | Proposed | Every content file's name parses from the right into a digest equal to the SHA-256 of its bytes, a version equal to its version directory, and an identifier equal to its object's. | |
 | req-tap-files-naming-4 | Hostile Names Are Safe | Proposed | Logical names containing `../`, a leading dot, a NUL, a newline, a `+`, a 300-character stem and a reserved device name each either produce a stored filename inside the object's own `content` directory or are refused; none writes anywhere else. | |
+| req-tap-files-naming-8 | Stored Name Fits One Path Element | Proposed | For the logical names `"é" * 100 + ".json"`, `"a" * 255` and a 100-character stem with a 16-character extension, the stored filename is ASCII, at most 255 bytes, and the write succeeds; the logical name is still kept exactly. | Raised by the AI review on PR# 1213 - tap. |
 | req-tap-files-naming-5 | Logical Name Kept Exactly | Proposed | A valid logical name containing spaces and non-ASCII letters is returned unchanged by a read and appears unchanged in the inventory. | |
 
 ### Immutability And Versions
@@ -772,8 +777,9 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
   and only that version, and before sending anything compares the store's digest and size for
   that version with the node's `sha256` and `size_bytes`. A disagreement is an integrity failure.
   The store's head is not consulted: a version stored ahead of a failed grid write is not the
-  file's current content until a node says so. A node with no `file_version` field is served the
-  head. The route reads these fields by name, as it does `media_type`, and knows nothing else
+  file's current content until a node says so. A node with no `file_version` field is refused
+  rather than served the head (ruled 2026-11-17): falling back to the head would serve exactly the
+  unrecorded bytes this rule exists to keep out. The route reads these fields by name, as it does `media_type`, and knows nothing else
   about the node's type. There is no way to ask this route for another version (ruled 2026-11-17):
   a stored version no node records may hold bytes whose grid write was refused, including one
   below the node's version after a retry, and the node is the only authority for what a file's
@@ -797,8 +803,11 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
   - cache headers that keep the response out of shared caches.
 - **What is refused, and how.** No session: the login wall's ordinary response. No capability, or a
   node the user cannot read: a refusal that does not reveal whether the file exists. Unknown
-  identifier or version: not found. Integrity failure: a server error that names no detail, with the
-  finding logged.
+  identifier: not found. A node whose `file_version` names an object or a version the store does
+  not hold: not found, as the read reports it (`req-tap-files-read`); a node can arrive without its
+  bytes, by GRIFT for one. Integrity failure: a server error that names no detail, with the finding
+  logged. A node with no `file_version`: a server error that names the missing field and sends no
+  bytes, with the finding logged; the node is malformed, and no request can make it right.
 
 The files served here may have been written by a third party and fetched by a collector. Serving
 every one as an attachment is what makes that safe to do from the instance's own origin: whatever
@@ -819,6 +828,8 @@ makes the saved file open in the right program; it is not what the safety rests 
 | req-tap-files-download-7 | Prefix Reserved | Proposed | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
 | req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
 | req-tap-files-download-12 | No Version Chosen By The Caller | Proposed | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-download-13 | No Recorded Version Is Refused | Proposed | With versions 1 and 2 stored and the node's `file_version` field removed, a download returns a server error naming `file_version`, sends no file bytes, and logs a finding; it does not return version 2's bytes. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-download-14 | Recorded Version Not Stored Is Not Found | Proposed | With the node recording version 3 and the store holding versions 1 and 2, and again with the store holding no object for the identifier, the route answers not found, sends no file bytes, and serves no other version. | Raised by the AI review on PR# 1218 - tap. |
 | req-tap-files-download-11 | Node And Store Must Agree | Proposed | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
 | req-tap-files-download-8 | Changed File Fails Visibly | Proposed | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
 
@@ -1077,7 +1088,9 @@ tracked in Issue# 1205 - tap.
 
 Ruled 2026-11-17 and now in the requirements above: a read delivers the descriptor it verified,
 content files are placed read-only, and a process with write access to the volume during a read is
-outside the threat model (`req-tap-files-read`, `req-tap-files-immutable`).
+outside the threat model (`req-tap-files-read`, `req-tap-files-immutable`); the download route
+serves only the node's version, and refuses a node that records none (`req-tap-files-download`);
+a stored filename is ASCII and fits one path element (`req-tap-files-naming`).
 
 ## What This Settles Elsewhere
 
