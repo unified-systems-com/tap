@@ -580,6 +580,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-validation | [Validation Rules](#validation-rules) | Implemented | Strict schema and sanity rules |
 | req-grift-seed-ids | [Seed Data ID Convention](#seed-data-id-convention) | Deprecated | Superseded by [spec-grid-uuid-selection.md](spec-grid-uuid-selection.md) and [spec-grift-seed-ids-real-uuid7.md](spec-grift-seed-ids-real-uuid7.md) |
 | req-grift-order | [Canonical Export Ordering](#canonical-export-ordering) | Backlog | Export ordering (no exporter yet) |
+| req-grift-stored-files | [Stored Files](#stored-files) | Backlog | How the bytes of a stored file follow its node from one grid to another; GRIFT carries the node, not the bytes |
 | req-grift-import-deletes | [Imperative Removal Sections](#imperative-removal-sections) | Approved for Development | Explicit batch-level delete and purge operations; not desired-state reconciliation |
 | req-grift-concurrency-version | [Optimistic Concurrency Via Expected Version](#optimistic-concurrency-via-expected-version) | Implemented | Optional `entity_expected_version` on any mutating target declares the local `Entity.version` the sender expects; the importer aborts the batch on mismatch |
 | req-grift-retirement | [Retirement Block](#retirement-block) | Implemented | A node or edge object may carry the entity's retirement in its source grid as plain data: retired-at time, retiring batch id, reason, metadata |
@@ -1315,6 +1316,33 @@ Each selector flag may repeat. Repeats of one flag are OR-ed; different flags ar
 | req-grift-export-4 | Selectors select exactly | Implemented | The exported nodes are exactly the nodes every given selector kind admits; the exported edges are exactly the in-scope edges whose endpoints are both exported. A `--batch` name that matches no batch or more than one, or a `--reachable-from` value that names no node, is refused and nothing is exported. | |
 | req-grift-export-5 | Every left-out row is counted | Implemented | Retired rows are no longer skipped by default. With `--exclude-tombstones` they are counted under `tombstoned`; a node a selector did not admit is counted under `not_selected`. Every row the export leaves out is still counted under exactly one named reason. | |
 | req-grift-export-6 | A subset says it is a subset | Implemented | The batch's `description_json` capture data records the selectors used (`selection`), so a subset export can never be read as a whole grid. | |
+
+## Stored Files
+----
+RID: `req-grift-stored-files`
+
+Status: `Backlog`
+
+A node may represent a file whose bytes are kept in the file store (`specs/spec-tap-file-store.md`)
+and not in the database. GRIFT is JSON and carries no bytes, so today a batch that includes such a
+node carries the node, with the file's digest, size and file version, and nothing else. Imported into
+another grid, the node arrives and the file does not.
+
+How files move between grids is not designed (ruled 2026-11-16: recorded here as backlog). The
+questions it has to settle:
+
+- **What the document carries.** The closest prior art is the Git LFS pointer: the interchange
+  document carries a small record of digest and size, the bytes travel by a separate channel, and the
+  receiver says which digests it lacks before anything is sent.
+- **What an import does when the bytes are absent.** Refuse the node, or accept it and record that
+  its content is not held. The second needs a third state on the node beside "no file" and "file
+  held", in line with the rule that absence is declared and never invented as a value
+  (`req-grid-node-observation`).
+- **What an export bundles.** Whether an export may produce the files beside the batch, and in what
+  layout. The file store's own directory is already a self-describing standard layout, which makes a
+  copy of the relevant objects a candidate.
+- **Integrity across the move.** The digest on the node is the check that the bytes that arrived are
+  the bytes that left.
 
 ## v0 Non-Goals
 ----
