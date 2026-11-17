@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/89dd2733de7b (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f166ce9b109d (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -5489,8 +5489,12 @@ def _already_imported(document: Any, force_batches: set[str]) -> set[str]:
     if not ids:
         return set()
     from tap_grid.models import Batch
+    from tap_grid.read_guard import unguarded_read
 
-    seen = {str(i) for i in Batch.all_objects.filter(entity_id__in=ids).values_list("entity_id", flat=True)}
+    # Unguarded, like every other vocabulary read: if the read guard filtered this lookup, an
+    # already-imported batch would look new and its declarations could revive a retired name.
+    with unguarded_read():
+        seen = {str(i) for i in Batch.all_objects.filter(entity_id__in=ids).values_list("entity_id", flat=True)}
     return seen - force_batches
 
 

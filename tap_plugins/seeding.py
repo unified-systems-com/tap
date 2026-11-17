@@ -225,6 +225,10 @@ def _not_only_dimensions(document: Any) -> str | None:
                 return (
                     f"batch {index} declares a {entity_type!r} node; a dimension bundle declares Dimension nodes only"
                 )
+            # A node-level `retirement` is an executable removal (the importer tombstones the node),
+            # so it is refused like batch-level deletes and purges: no removals land unasked.
+            if node.get("retirement") is not None:
+                return f"batch {index} retires a Dimension node; a dimension bundle declares nodes, it never removes them"
     return None
 
 

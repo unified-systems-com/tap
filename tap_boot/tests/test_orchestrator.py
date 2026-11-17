@@ -618,7 +618,7 @@ class TestPluginDimensionVocabulary:
         assert [b.batch_entity_id for b in result.skipped_batches] == [_FIXTURE_DIMENSION_BATCH]
         assert self._fixture_rows() == ["tap.fixture"]
 
-    @pytest.mark.parametrize("breakage", ["unreadable", "an-edge", "another-type", "a-bad-node"])
+    @pytest.mark.parametrize("breakage", ["unreadable", "an-edge", "another-type", "a-bad-node", "a-retirement"])
     def test_a_failing_bundle_aborts_the_boot_naming_it(
         self, installed: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, breakage: str
     ) -> None:
@@ -637,6 +637,12 @@ class TestPluginDimensionVocabulary:
                 batch["edges"] = [{"entity": {}, "edge": {}}]
             elif breakage == "another-type":
                 batch["nodes"][0]["entity"]["entity_type"] = "grid_fixtures__node"
+            elif breakage == "a-retirement":
+                # A node-level retirement is a removal: refused before import, so nothing is retired.
+                batch["nodes"][0]["retirement"] = {
+                    "retired_at": "2026-01-01T00:00:00Z",
+                    "batch_id": batch["batch_entity"]["entity_id"],
+                }
             else:
                 batch["nodes"][0]["node"]["values"] = "not-a-list"
             bad.write_text(json.dumps(document), encoding="utf-8")
