@@ -102,7 +102,7 @@ class TapHistoricalRecords(HistoricalRecords):
     def finalize(self, sender: type, **kwargs: Any) -> None:
         """Build ``sender``'s history model unless it declares ``TRACK_HISTORY = False``.
 
-        TAP-IMPLEMENTS: req-grid-history-optout@94e818897e17/d68de3c234c5 (derivation) — the one place a type's history model is built or withheld
+        TAP-IMPLEMENTS: req-grid-history-optout@da89a0e8b5f5/d68de3c234c5 (derivation) — the one place a type's history model is built or withheld
         """
         if sender is not self.cls and not getattr(sender, "TRACK_HISTORY", True):
             return
