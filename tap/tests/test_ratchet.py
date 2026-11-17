@@ -112,3 +112,36 @@ def test_read_baseline_accepts_repo_paths_and_non_path_entries(tmp_path):
         encoding="utf-8",
     )
     assert len(read_baseline_set(p)) == 4
+
+
+@pytest.mark.spec("req-dev-validation-mypy-ratchet-4")
+def test_mypy_guard_measures_from_a_private_temporary_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard never reads or writes the worktree's `.mypy_cache` (tap#1214)."""
+    import os
+    import subprocess
+    from types import SimpleNamespace
+
+    from tap.guards.base import REPO_ROOT
+    from tap.guards.mypy import mypy_error_counts
+
+    cache_dirs: list[str] = []
+    existed_during_run: list[bool] = []
+
+    # The guard reads only returncode, stdout and stderr, so a plain namespace stands in
+    # for the finished process.
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        cache_dir = cmd[cmd.index("--cache-dir") + 1]
+        cache_dirs.append(cache_dir)
+        existed_during_run.append(os.path.isdir(cache_dir))
+        return SimpleNamespace(returncode=1, stdout="tap/x.py:3: error: boom  [attr-defined]\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    counts = mypy_error_counts()
+
+    assert counts == {"tap/x.py:attr-defined": 1}
+    assert len(cache_dirs) == 1
+    (cache_dir,) = cache_dirs
+    assert existed_during_run == [True], "the cache directory must exist while mypy runs"
+    assert os.path.isabs(cache_dir)
+    assert not cache_dir.startswith(str(REPO_ROOT)), "the cache must live outside the worktree"
+    assert not os.path.exists(cache_dir), "the private cache is removed after the run"
