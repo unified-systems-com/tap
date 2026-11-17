@@ -39,7 +39,11 @@
 #                   (CODEOWNERS, lanes, reusable-workflow pins, nightly shape, waiver ledger).
 #                   Warnings are reported; a failed `repo-*` check fails the job.
 #   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
-#                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
+#                   compose stack and runs the plugin's in-package tests (loads/runs coverage):
+#                   first the tests it marks `@pytest.mark.ci_fast`, during the boot's migrate,
+#                   failing the job there; then the whole suite under pytest-xdist
+#                   (`test_workers`, default auto), each worker cloning one test-DB template
+#                   (req-tap-plugin-extdev-repo-ci-14).
 #                   Also walks the plugin's OWN dependency closure out of the venv the boot
 #                   resolved (tap#664: stops at sibling plugins) into a CycloneDX document.
 #   scan-dependencies — read-only. Trivy scans that document. A HIGH/CRITICAL not waived in the
@@ -134,6 +138,16 @@ on:
         required: false
         type: string
         default: ""
+      test_workers:
+        description: >-
+          pytest-xdist workers for the in-package suite: `auto` (the default; one per vCPU,
+          4 on the free runner), `logical`, or a whole number. "0" runs the suite serially
+          in one process, as before this input existed — the escape for a suite that is not
+          yet xdist-safe. A harness without xdist or the test-DB template script runs
+          serially whatever this says.
+        required: false
+        type: string
+        default: auto
       boot_and_test_timeout_minutes:
         description: "Job timeout for boot-and-test. The default fits the tests; a caller running a long after-tests command raises it."
         required: false
@@ -657,8 +671,100 @@ jobs:
           # checkout. Both roads in produce this same id.
           TAP_BOOT_PROFILE: _ext_ci__dev
           TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+        run: docker compose --env-file .env up -d
+
+      # The boot's long pole is `migrate` (aws_core, 2026-11-17: ~13 of the boot's 13.5 minutes),
+      # and nothing the fast set or the test-DB template needs waits on it: the venv is final once
+      # pre-boot has installed the plugins, which the entrypoint announces with the line below
+      # (present, verbatim, from v0.1.0 to main). So the next two steps run DURING the migrate.
+      # A harness whose entrypoint never prints it falls through to readiness, and the two steps
+      # run after the boot instead: later, never wrong.
+      - name: Wait for pre-boot to install the plugins
         run: |
-          docker compose --env-file .env up -d
+          for i in $(seq 1 90); do
+            log="$(docker compose --env-file .env logs web 2>/dev/null)"
+            if printf '%s' "$log" | grep -q 'TAP-ABORT:'; then
+              echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
+              printf '%s\n' "$log"; exit 1
+            fi
+            if printf '%s' "$log" | grep -q '==> Running database migrations'; then
+              echo "plugins installed after ~$((i * 10))s; migrate is running"; exit 0
+            fi
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+              echo "no pre-boot marker in this harness's log; the stack is already healthy"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::pre-boot did not finish within the timeout"
+          docker compose --env-file .env logs web | tail -150; exit 1
+
+      # Parallel suite (aws-build Q70c, 2026-11-17). The serial run spent 10.5 minutes building
+      # its test DB by migration before the first test, so xdist alone would make it worse: every
+      # worker would migrate its own. Instead ONE template is migrated here, in the background
+      # while the boot's own migrate runs, and each worker clones it (TAP_TEST_DB_TEMPLATE, the
+      # same mechanism core_ci uses; both present from v0.1.0). Workers default to `auto`, which
+      # is 4 on the free 4-vCPU runner — core_ci measured 4 workers fastest there (4 = 233s,
+      # 6 = 243s, 8 = 256s). A harness without xdist or the template script, or a caller passing
+      # `test_workers: "0"` for a suite that is not xdist-safe, runs serially exactly as before.
+      - name: Start the test-DB template build (background)
+        id: template
+        env:
+          TEST_WORKERS: ${{ inputs.test_workers }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TEST_WORKERS" | grep -Eqx 'auto|logical|[0-9]+'; then
+            echo "::error::test_workers must be auto, logical or a whole number, got: $TEST_WORKERS"; exit 1
+          fi
+          mode=parallel
+          if [ "$TEST_WORKERS" = "0" ]; then
+            mode=serial; echo "test_workers is 0: the suite runs serially"
+          elif [ ! -x scripts/build-test-template ]; then
+            mode=serial; echo "::notice::this harness has no scripts/build-test-template: the suite runs serially"
+          elif ! docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python -c "import xdist"' >/dev/null 2>&1; then
+            mode=serial; echo "::notice::pytest-xdist is not importable in this harness: the suite runs serially"
+          fi
+          if [ "$mode" = parallel ]; then
+            mkdir -p .tap-ci
+            rm -f .tap-ci/template.rc .tap-ci/template.log
+            # /app is this harness tree, so the status file is readable here on the runner.
+            docker compose --env-file .env exec -d -T web sh -c \
+              'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template scripts/build-test-template > .tap-ci/template.log 2>&1; echo $? > .tap-ci/template.rc'
+            echo "template build started in the background; the suite will run with -n $TEST_WORKERS"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      # The fast set (aws-build Q70c): tests a plugin marks `@pytest.mark.ci_fast` run here,
+      # before the suite and during the boot's migrate, so a quick-to-detect break — SDK drift,
+      # a manifest that no longer validates — goes red minutes into the job instead of after the
+      # whole suite (aws_core 2026-11-17: a botocore field removal failed at minute 58). Opt-in
+      # and declared in the plugin's own tests, so no caller edits a workflow: no marked test is
+      # a no-op (pytest exit 5, "no tests ran"), never a failure. Marked tests should not touch
+      # the database — one that does still passes or fails correctly, but builds an untemplated
+      # test DB first and loses the point. Serial (`-p no:xdist`): a handful of tests is faster
+      # without workers. `--no-sync`: the venv must not be touched under a running migrate. The
+      # suite runs them again; the zero-executed guard below counts the suite alone.
+      - name: Fast set (ci_fast) — fail early
+        id: fast
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set +e
+          docker compose --env-file .env exec -T -e PLUGIN_SLUG="$PLUGIN_SLUG" web sh -c \
+            'cd /app && uv run --no-sync pytest -p no:cacheprovider -p no:xdist --pyargs "tap_plugin.$PLUGIN_SLUG" -m "ci_fast and not live_fetch"' \
+            2>&1 | tee fast-tests.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          case "$rc" in
+            0) echo "result=passed" >> "$GITHUB_OUTPUT" ;;
+            5) echo "::notice::tap_plugin.$PLUGIN_SLUG marks no ci_fast tests — fast set skipped (opt-in)"
+               echo "result=none declared" >> "$GITHUB_OUTPUT" ;;
+            *) echo "result=FAILED" >> "$GITHUB_OUTPUT"
+               echo "::error::the ci_fast set failed (pytest exit $rc) — the full suite is not run"
+               exit 1 ;;
+          esac
+
+      - name: Wait for the stack to become healthy
+        run: |
           ok=0
           for i in $(seq 1 90); do
             if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
@@ -727,13 +833,38 @@ jobs:
 
       # The plugin ships its tests inside the package (tap_plugin/<slug>/tests/), so
       # collect them by import path — travels with the plugin, no path knowledge needed.
+      # Parallel mode waits for the template the background build is migrating, then runs the
+      # suite across xdist workers that each clone it. A template that failed to build fails
+      # here with its log: the serial road would have failed the same migration, more slowly.
       - name: Run the plugin's in-package tests
         env:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          TEST_WORKERS: ${{ inputs.test_workers }}
+          TEST_MODE: ${{ steps.template.outputs.mode }}
         run: |
           set -o pipefail
-          docker compose --env-file .env exec -T web sh -c \
-            "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
+          if [ "$TEST_MODE" != parallel ]; then
+            docker compose --env-file .env exec -T web sh -c \
+              "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
+            exit
+          fi
+          waited=0
+          until [ -f .tap-ci/template.rc ]; do
+            if [ -z "$(docker compose --env-file .env ps -q --status running web)" ]; then
+              echo "::error::the web container stopped before the test-DB template was built"
+              tail -100 .tap-ci/template.log 2>/dev/null; exit 1
+            fi
+            sleep 5; waited=$((waited + 5))
+          done
+          [ "$waited" -gt 0 ] && echo "waited ${waited}s for the test-DB template"
+          if [ "$(cat .tap-ci/template.rc)" != 0 ]; then
+            echo "::error::the test-DB template build failed (exit $(cat .tap-ci/template.rc))"
+            tail -150 .tap-ci/template.log; exit 1
+          fi
+          tail -3 .tap-ci/template.log
+          docker compose --env-file .env exec -T -e PLUGIN_SLUG="$PLUGIN_SLUG" -e TEST_WORKERS="$TEST_WORKERS" \
+            -e TAP_TEST_DB_TEMPLATE=tap_test_template web sh -c \
+            'cd /app && uv run pytest -p no:cacheprovider --pyargs "tap_plugin.$PLUGIN_SLUG" -n "$TEST_WORKERS"' | tee pytest.log
 
       # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
       # scan. Runs only after the in-package tests passed (a campaign over a broken
@@ -856,6 +987,9 @@ jobs:
           HARNESS_SOURCE: ${{ needs.conformance.outputs.harness_source }}
           HARNESS_FLOOR: ${{ needs.conformance.outputs.harness_floor }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          FAST_RESULT: ${{ steps.fast.outputs.result || 'not run' }}
+          TEST_MODE: ${{ steps.template.outputs.mode || 'not reached' }}
+          TEST_WORKERS: ${{ inputs.test_workers }}
         run: |
           plugin_sha=$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)
           executed=$(python3 - <<'PY'
@@ -872,8 +1006,14 @@ jobs:
             echo "| --- | --- |"
             echo "| core harness | \`$HARNESS_SHA\` (${HARNESS_SOURCE}${HARNESS_FLOOR:+, floor $HARNESS_FLOOR}) |"
             echo "| plugin | \`$plugin_sha\` |"
+            echo "| fast set (ci_fast) | $FAST_RESULT |"
+            echo "| suite mode | $TEST_MODE$([ "$TEST_MODE" = parallel ] && echo " (-n $TEST_WORKERS)") |"
             echo "| tests executed | $executed |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FAST_RESULT" = FAILED ]; then
+            echo "::error::the ci_fast set failed, so the suite never ran — see the fast-set step"
+            exit 1
+          fi
           if [ "$executed" = "0" ]; then
             echo "::error::boot-and-test executed 0 tests for tap_plugin.$PLUGIN_SLUG — a green with nothing run is not a green (req-tap-plugin-extdev-repo-ci-8)"
             exit 1
