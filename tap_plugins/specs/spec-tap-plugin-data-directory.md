@@ -69,7 +69,7 @@ that is thrown away because the intended volume was not mounted.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-plugin-datadir-scope | [Scope](#scope) | Implemented | A sub-grid working directory per plugin; not the file store; no grid node |
-| req-tap-plugin-datadir-root | [The Root](#the-root) | In Development | One core setting, one mounted local volume, resolved in one place |
+| req-tap-plugin-datadir-root | [The Root](#the-root) | Implemented | One core setting, one mounted local volume, resolved in one place |
 | req-tap-plugin-datadir-manifest | [Manifest Declaration](#manifest-declaration) | Implemented | A `[data_directory]` table: purpose, durability, declared maximum size |
 | req-tap-plugin-datadir-provision | [Provisioning](#provisioning) | Implemented | Core creates `<root>/<slug>/`, private to the runtime user, with a core-written description file |
 | req-tap-plugin-datadir-mount-gate | [Mount Gate](#mount-gate) | Implemented | Boot refuses when a plugin declares a directory and the root is not a mounted, writable volume |
@@ -114,7 +114,7 @@ No node represents a plugin data directory, and no node represents anything insi
 ----
 RID: `req-tap-plugin-datadir-root`
 
-Status: `In Development`
+Status: `Implemented`
 
 Plugin data directories live under one of two roots. Which one a directory lands under is decided by
 whether the operator enabled a volume and by what the plugin declared
@@ -159,7 +159,7 @@ service that runs plugin code must mount the same volume.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-datadir-root-1 | One Setting, No Default | Implemented | `TAP_PLUGIN_DATA_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned, as the secrets root is. |
-| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. Lands after the image that prepares the mount path (`-root-3`) is published, because spawn and the lean-boot gate run the published image: wired first, the volume is root-owned and the gate refuses it (seen on PR# 1224 - tap). |
+| req-tap-plugin-datadir-root-2 | Repository Compose Enables It | Implemented | Every compose file in this repository that defines the `web` service mounts a named volume and sets the variable to that mount path. | Includes the CI and Codespaces overlays. Lands after the image that prepares the mount path (`-root-3`) is published, because spawn and the lean-boot gate run the published image: wired first, the volume is root-owned and the gate refuses it (seen on PR# 1224 - tap); wired once tap-web `sha-dfade0d`, which carries the path, was published. |
 | req-tap-plugin-datadir-root-3 | Image Prepares Ownership | Implemented | In the built image the conventional mount path exists and is owned and writable by the runtime user. | So an empty named volume inherits usable ownership. |
 | req-tap-plugin-datadir-root-4 | Core Never Creates The Volume Root | Implemented | No core code creates the volume root directory; a configured root that is missing is reported by the mount gate, never repaired. | Creating it would hide an unmounted volume. Core does create the ephemeral root. |
 | req-tap-plugin-datadir-root-5 | Ephemeral Root Is Fixed | Implemented | The ephemeral root's location is one constant in core, is not configurable by a plugin, and is not on the configured volume. | |
@@ -433,7 +433,10 @@ plugin removal, not when a directory is over its declared size, and not for a ca
     `"state"`, requires a second, differently named flag;
   - refuses when `<root>/<slug>` is a symbolic link, and never follows a symbolic link while walking;
   - stays on the root's device and inside the real path of the root;
-  - is recorded in the log with who ran it, the slug, and what was removed.
+  - is recorded in the log with who ran it, the slug, and what was removed;
+  - when it fails after deletion has begun (a mount point inside, a filesystem error), says how much
+    it removed before stopping and that the rest remains, logs that like a completed purge, and
+    never reports that nothing was deleted (raised by the AI review on PR# 1224 - tap).
 - **Listing.** `manage.py plugin_data list` prints every directory under the root with its owner
   status (declared, orphan, stray) and the same facts the report carries.
 
@@ -489,6 +492,7 @@ directory and is not a core operation.
 | req-tap-plugin-datadir-lifecycle-10 | A Start During Purge Waits | Implemented | A process that begins loading the plugin while a purge holds the lock does not touch the directory until the purge finishes, and then finds a newly provisioned empty one. | |
 | req-tap-plugin-datadir-lifecycle-11 | Lock File Outlives Purge | Implemented | After a purge the lock file exists at the same path with the same inode, and is listed neither as a stray nor as an orphan. | |
 | req-tap-plugin-datadir-lifecycle-12 | Only flock | Implemented | The lock module calls `fcntl.flock` and no code under the data-directory package calls `fcntl.lockf` or the POSIX record-lock commands. | Guard-pinned. |
+| req-tap-plugin-datadir-lifecycle-13 | A Partial Purge Says So | Implemented | With a filesystem error raised after the first entry is removed, `purge` exits non-zero saying how many entries and bytes were removed and that the rest remains, logs one record with that outcome, and never says nothing was deleted; with the error raised before any entry is removed, it says nothing was deleted. | Raised by the AI review on PR# 1224 - tap. |
 | req-tap-plugin-datadir-lifecycle-5 | Purge Is Logged | Implemented | A completed purge writes one log record naming the actor, the slug, the durability and the byte and entry counts removed. | |
 
 ### Reported Facts

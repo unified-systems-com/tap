@@ -45,7 +45,7 @@ def _open_lock(root: Path, slug: str) -> int:
 def hold_shared(root: Path, slug: str) -> None:
     """Take the plugin's lock shared and keep it for the life of the process.
 
-    TAP-IMPLEMENTS: req-tap-plugin-datadir-lifecycle@cf3b9a921595/cf103f17d916 (derivation) — what "in use"
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-lifecycle@c1a3a27d0731/cf103f17d916 (derivation) — what "in use"
         means: every process that loads a declaring plugin holds this before it provisions or touches
         the directory, and purge refuses while anyone else does.
 

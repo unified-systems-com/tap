@@ -35,6 +35,18 @@ class PurgeRefused(Exception):
     """Purge deleted nothing; the message says why."""
 
 
+class PurgeIncomplete(Exception):
+    """Purge started deleting and then failed: some entries are gone and the rest remain.
+
+    Raised only once deletion has begun, with what was removed, so the operator is never told
+    "nothing deleted" about a directory that is now half gone.
+    """
+
+    def __init__(self, reason: str, removed: dict[str, int]) -> None:
+        super().__init__(reason)
+        self.removed = removed
+
+
 @dataclass
 class PurgePlan:
     """What a purge would delete, shown to the operator before anything is touched."""
@@ -93,7 +105,10 @@ def _orphan_root(slug: str) -> Path:
 def purge(the_plan: PurgePlan, *, confirm: bool, confirm_state: bool) -> dict[str, int]:
     """Delete the planned directory, or raise :class:`PurgeRefused` having deleted nothing.
 
-    TAP-IMPLEMENTS: req-tap-plugin-datadir-lifecycle@cf3b9a921595/f51d32e0f0dd (enforcement) — the only
+    A failure after deletion has begun (a nested mount, a filesystem error) raises
+    :class:`PurgeIncomplete` with what was removed, and is logged like a completed purge.
+
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-lifecycle@c1a3a27d0731/2af6a3391aad (enforcement) — the only
         code that deletes a plugin data directory, behind the confirmation flags and the in-use lock.
     """
     if not confirm:
@@ -107,19 +122,31 @@ def purge(the_plan: PurgePlan, *, confirm: bool, confirm_state: bool) -> dict[st
         _lock.take_exclusive(the_plan.root, the_plan.slug)
     except _lock.DirectoryInUse as exc:
         raise PurgeRefused(str(exc)) from exc
+    removed = {"bytes": 0, "entries": 0}
     try:
-        removed = _remove(the_plan.root, the_plan.slug)
+        _remove(the_plan.root, the_plan.slug, removed)
+    except (OSError, PluginDataDirectoryError) as exc:
+        if not removed["entries"]:
+            raise PurgeRefused(f"nothing could be removed from {the_plan.path}: {exc}") from exc
+        _log_purge(the_plan, removed, outcome=f"incomplete: {exc}")
+        raise PurgeIncomplete(str(exc), removed) from exc
     finally:
         _lock.back_to_shared(the_plan.root, the_plan.slug)
+    _log_purge(the_plan, removed, outcome="complete")
+    return removed
+
+
+def _log_purge(the_plan: PurgePlan, removed: dict[str, int], *, outcome: str) -> None:
     actor = _actor()
     logger.warning(
-        "[ec35] plugin data: purged %s by %s: durability=%s bytes=%d entries=%d path=%s",
+        "[ec35] plugin data: purged %s by %s: durability=%s bytes=%d entries=%d path=%s outcome=%s",
         the_plan.slug,
         actor,
         the_plan.durability,
         removed["bytes"],
         removed["entries"],
         the_plan.path,
+        outcome,
         extra={
             "message_data": {
                 "actor": actor,
@@ -128,10 +155,10 @@ def purge(the_plan: PurgePlan, *, confirm: bool, confirm_state: bool) -> dict[st
                 "bytes_removed": removed["bytes"],
                 "entries_removed": removed["entries"],
                 "path": str(the_plan.path),
+                "outcome": outcome,
             }
         },
     )
-    return removed
 
 
 def _actor() -> str:
@@ -142,9 +169,12 @@ def _actor() -> str:
     return f"{name} (uid {os.geteuid()})"
 
 
-def _remove(root: Path, slug: str) -> dict[str, int]:
-    """Remove ``<root>/<slug>`` through directory descriptors, never following a link."""
-    counts = {"bytes": 0, "entries": 0}
+def _remove(root: Path, slug: str, counts: dict[str, int]) -> None:
+    """Remove ``<root>/<slug>`` through directory descriptors, never following a link.
+
+    *counts* is updated as each entry goes, so a caller still knows what was removed when this
+    raises partway.
+    """
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     root_fd = os.open(root, flags)
     try:
@@ -162,7 +192,6 @@ def _remove(root: Path, slug: str) -> dict[str, int]:
         os.rmdir(slug, dir_fd=root_fd)
     finally:
         os.close(root_fd)
-    return counts
 
 
 def _remove_contents(dir_fd: int, device: int, counts: dict[str, int], where: Path) -> None:
@@ -185,4 +214,4 @@ def _remove_contents(dir_fd: int, device: int, counts: dict[str, int], where: Pa
         counts["entries"] += 1
 
 
-__all__ = ["PurgePlan", "PurgeRefused", "plan", "purge"]
+__all__ = ["PurgeIncomplete", "PurgePlan", "PurgeRefused", "plan", "purge"]

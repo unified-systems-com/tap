@@ -146,6 +146,36 @@ def test_the_root_is_one_setting_with_no_default() -> None:
     next(g for g in discover_guards() if g.slug == "plugin-data-root-resolution").check()
 
 
+def _compose_web(path: Path) -> list[str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.rstrip() == "  web:")
+    except StopIteration:
+        return []
+    block: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.strip() and not line.startswith("    ") and not line.lstrip().startswith("#"):
+            break
+        block.append(line.strip())
+    return block
+
+
+@pytest.mark.spec("req-tap-plugin-datadir-root-2")
+def test_every_compose_file_with_web_mounts_the_volume_and_sets_the_variable() -> None:
+    base = _compose_web(_REPO / "docker-compose.yml")
+    assert f"- plugin_data:{_MOUNT}" in base, base
+    assert f"TAP_PLUGIN_DATA_ROOT: {_MOUNT}" in base, base
+    assert "  plugin_data:" in (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    # The overlays merge into the base service (CI, build) or define another service
+    # (Codespaces' devbox); none may drop or repoint the volume or the variable.
+    for overlay in sorted(_REPO.glob("docker-compose.*.yml")):
+        web = _compose_web(overlay)
+        text = "\n".join(web)
+        assert "TAP_PLUGIN_DATA_ROOT" not in text, overlay.name
+        assert "plugin_data" not in text, overlay.name
+        assert not any(line.startswith(("volumes: !override", "environment: !override")) for line in web)
+
+
 @pytest.mark.spec("req-tap-plugin-datadir-root-3")
 def test_the_image_prepares_the_mount_path_for_the_runtime_user() -> None:
     dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
@@ -708,6 +738,43 @@ def test_the_lock_module_uses_flock_only() -> None:
     from tap.guards.discovery import discover_guards
 
     next(g for g in discover_guards() if g.slug == "plugin-data-flock-only").check()
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-tap-plugin-datadir-lifecycle-13")
+def test_a_partial_purge_says_what_it_removed(
+    pd: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    pd.enable()
+    pd.declare("alpha", "cache")
+    run_gate()
+    for i in range(5):
+        (pd.volume / "alpha" / f"f{i}").write_bytes(b"x" * 10)
+    real_unlink = os.unlink
+    calls = {"n": 0}
+
+    def failing_second_unlink(*args: Any, **kwargs: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError(5, "Input/output error")
+        real_unlink(*args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", failing_second_unlink)
+    caplog.set_level(logging.WARNING, logger="tap_plugins.datadir._purge")
+    with pytest.raises(CommandError) as raised:
+        call_command("plugin_data", "purge", "alpha", "--yes")
+    message = str(raised.value)
+    assert message.startswith("Partially deleted: 1 entries") and "Nothing deleted" not in message
+    records = [r for r in caplog.records if "purged alpha" in r.getMessage()]
+    assert len(records) == 1 and records[0].__dict__["message_data"]["outcome"].startswith("incomplete")
+    assert (pd.volume / "alpha").is_dir()
+
+    calls["n"] = 1  # the next unlink is the second call: it fails before anything is removed
+    with pytest.raises(CommandError, match="^Nothing deleted"):
+        call_command("plugin_data", "purge", "alpha", "--yes")
 
 
 @pytest.mark.spec("req-tap-plugin-datadir-lifecycle-5")
