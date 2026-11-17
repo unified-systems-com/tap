@@ -552,3 +552,13 @@ def test_the_boot_waits_are_bounded_by_the_job_timeout_not_a_fixed_count() -> No
         assert step["env"]["BOOT_TIMEOUT_MIN"] == "${{ inputs.boot_and_test_timeout_minutes }}"
         assert "seq 1 $((BOOT_TIMEOUT_MIN * 6))" in step["run"]
         assert "seq 1 90" not in step["run"]
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_boot_waits_never_sync_the_venv_pre_boot_is_installing() -> None:
+    """The waits poll while pre-boot installs plugins: a syncing `uv run` there could rewrite the venv
+    under it (PR 1219 review, Grok), so every command in them is `--no-sync`."""
+    steps, names = _boot_steps()
+    for name in ("Wait for pre-boot to install the plugins", "Wait for the stack to become healthy"):
+        run = steps[names.index(name)]["run"]
+        assert "uv run " not in run.replace("uv run --no-sync ", "")

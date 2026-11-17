@@ -696,7 +696,7 @@ jobs:
             if printf '%s' "$log" | grep -q '==> Running database migrations'; then
               echo "plugins installed after ~$((i * 10))s; migrate is running"; exit 0
             fi
-            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python manage.py health --set readiness' >/dev/null 2>&1; then
               echo "no pre-boot marker in this harness's log; the stack is already healthy"; exit 0
             fi
             sleep 10
@@ -779,7 +779,7 @@ jobs:
               echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
               docker compose --env-file .env logs web; exit 1
             fi
-            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python manage.py health --set readiness' >/dev/null 2>&1; then
               echo "web healthy after ~$((i * 10))s"; ok=1; break
             fi
             sleep 10
