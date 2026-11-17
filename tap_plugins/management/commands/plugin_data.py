@@ -76,7 +76,7 @@ class Command(BaseCommand):
 
     def _purge(self, slug: str, *, confirm: bool, confirm_state: bool) -> None:
         from tap_plugins.datadir import PluginDataDirectoryError
-        from tap_plugins.datadir._purge import PurgeRefused, plan, purge
+        from tap_plugins.datadir._purge import PurgeIncomplete, PurgeRefused, plan, purge
 
         try:
             the_plan = plan(slug)
@@ -92,6 +92,11 @@ class Command(BaseCommand):
             )
         try:
             removed = purge(the_plan, confirm=confirm, confirm_state=confirm_state)
+        except PurgeIncomplete as exc:
+            raise CommandError(
+                f"Partially deleted: {exc.removed['entries']} entries, {exc.removed['bytes']} bytes were removed "
+                f"from {the_plan.path} before the purge stopped: {exc}. What remains is still there."
+            ) from exc
         except (PurgeRefused, PluginDataDirectoryError) as exc:
             raise CommandError(f"Nothing deleted: {exc}") from exc
         self.stdout.write(

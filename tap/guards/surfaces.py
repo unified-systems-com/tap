@@ -446,8 +446,8 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         status=(
             "Gate-guarded (fail-closed) — a configured volume must pass the shared mount test (exists, not a link, "
             'on a different device from /, a real write); a "state" declaration with no volume aborts naming the '
-            "plugin; an executes declaration must run a probe script. Until the compose files enable the volume "
-            "(req-tap-plugin-datadir-root-2) CI boots with it unset; the noexec case is tested through a seam"
+            "plugin; an executes declaration must run a probe script. CI exercises it insofar as it boots with the "
+            "compose volume; the noexec case is tested through a seam, not a real noexec mount"
         ),
         enforced_by=(
             "`tap_boot/orchestrator.py::_phase_plugin_data` → `tap_plugins.datadir.run_gate`, deciding with "
