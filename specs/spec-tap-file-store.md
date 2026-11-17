@@ -803,7 +803,9 @@ A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
   - cache headers that keep the response out of shared caches.
 - **What is refused, and how.** No session: the login wall's ordinary response. No capability, or a
   node the user cannot read: a refusal that does not reveal whether the file exists. Unknown
-  identifier: not found. Integrity failure: a server error that names no detail, with the finding
+  identifier: not found. A node whose `file_version` names an object or a version the store does
+  not hold: not found, as the read reports it (`req-tap-files-read`); a node can arrive without its
+  bytes, by GRIFT for one. Integrity failure: a server error that names no detail, with the finding
   logged. A node with no `file_version`: a server error that names the missing field and sends no
   bytes, with the finding logged; the node is malformed, and no request can make it right.
 
@@ -827,6 +829,7 @@ makes the saved file open in the right program; it is not what the safety rests 
 | req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
 | req-tap-files-download-12 | No Version Chosen By The Caller | Proposed | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
 | req-tap-files-download-13 | No Recorded Version Is Refused | Proposed | With versions 1 and 2 stored and the node's `file_version` field removed, a download returns a server error naming `file_version`, sends no file bytes, and logs a finding; it does not return version 2's bytes. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-download-14 | Recorded Version Not Stored Is Not Found | Proposed | With the node recording version 3 and the store holding versions 1 and 2, and again with the store holding no object for the identifier, the route answers not found, sends no file bytes, and serves no other version. | Raised by the AI review on PR# 1218 - tap. |
 | req-tap-files-download-11 | Node And Store Must Agree | Proposed | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
 | req-tap-files-download-8 | Changed File Fails Visibly | Proposed | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
 
