@@ -527,7 +527,9 @@ def test_the_parallel_suite_clones_one_template_and_has_a_serial_road() -> None:
     assert '-n "$TEST_WORKERS"' in suite
     # Both roads write the log the zero-executed summary reads.
     assert suite.count("| tee pytest.log") == 2
-    workers = _load(PLUGIN_CI)[True]["workflow_call"]["inputs"]["test_workers"]
+    # YAML 1.1 reads the bare `on:` key as the boolean True, so the trigger table is keyed by it.
+    loaded: dict[Any, Any] = _load(PLUGIN_CI)
+    workers = loaded[True]["workflow_call"]["inputs"]["test_workers"]
     assert workers["default"] == "auto" and workers["required"] is False
 
 
@@ -539,3 +541,14 @@ def test_the_summary_still_fails_on_zero_executed_and_reports_the_fast_set() -> 
     run = summary["run"]
     assert 'Path("pytest.log")' in run and '[ "$executed" = "0" ]' in run
     assert "fast set (ci_fast)" in run
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-14")
+def test_the_boot_waits_are_bounded_by_the_job_timeout_not_a_fixed_count() -> None:
+    """A long boot is bounded by boot_and_test_timeout_minutes alone (rampart-20x-playground, 2026-11-17)."""
+    steps, names = _boot_steps()
+    for name in ("Wait for pre-boot to install the plugins", "Wait for the stack to become healthy"):
+        step = steps[names.index(name)]
+        assert step["env"]["BOOT_TIMEOUT_MIN"] == "${{ inputs.boot_and_test_timeout_minutes }}"
+        assert "seq 1 $((BOOT_TIMEOUT_MIN * 6))" in step["run"]
+        assert "seq 1 90" not in step["run"]

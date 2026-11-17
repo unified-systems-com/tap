@@ -679,9 +679,15 @@ jobs:
       # (present, verbatim, from v0.1.0 to main). So the next two steps run DURING the migrate.
       # A harness whose entrypoint never prints it falls through to readiness, and the two steps
       # run after the boot instead: later, never wrong.
+      # Both waits below run as long as the job's own timeout allows, not a fixed 15 minutes: a
+      # profile with many plugins after a large one (rampart-20x-playground, 2026-11-17) was still
+      # migrating at ~36 minutes, and a fixed 90 x 10 s loop failed it however high the caller set
+      # boot_and_test_timeout_minutes. The job timeout is the one bound.
       - name: Wait for pre-boot to install the plugins
+        env:
+          BOOT_TIMEOUT_MIN: ${{ inputs.boot_and_test_timeout_minutes }}
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 $((BOOT_TIMEOUT_MIN * 6))); do
             log="$(docker compose --env-file .env logs web 2>/dev/null)"
             if printf '%s' "$log" | grep -q 'TAP-ABORT:'; then
               echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
@@ -764,9 +770,11 @@ jobs:
           esac
 
       - name: Wait for the stack to become healthy
+        env:
+          BOOT_TIMEOUT_MIN: ${{ inputs.boot_and_test_timeout_minutes }}
         run: |
           ok=0
-          for i in $(seq 1 90); do
+          for i in $(seq 1 $((BOOT_TIMEOUT_MIN * 6))); do
             if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
               echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
               docker compose --env-file .env logs web; exit 1
