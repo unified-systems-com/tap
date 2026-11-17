@@ -71,7 +71,7 @@ def provision(
 ) -> Path:
     """Create or confirm ``<root>/<slug>`` for one declaring plugin and return its path.
 
-    TAP-IMPLEMENTS: req-tap-plugin-datadir-provision@fb0b9fcdca09/09764df87200 (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-plugin-datadir-provision@fb0b9fcdca09/df9e0773ae14 (derivation) — the one
         place a plugin data directory is created and its core-owned files are written.
 
     The caller has already passed the mount gate for *root* and holds the plugin's shared lock.
@@ -86,9 +86,7 @@ def provision(
         os.mkdir(path, 0o700)
         # The umask applied to creation; set the mode explicitly. 0700 is owner-only, the spec's
         # mode for a plugin directory (req-tap-plugin-datadir-provision-1).
-        os.chmod(
-            path, 0o700
-        )  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
+        os.chmod(path, stat.S_IRWXU)
     except FileExistsError:
         problem = describe(path)
         if problem:
