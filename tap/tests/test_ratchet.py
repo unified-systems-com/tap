@@ -119,6 +119,7 @@ def test_mypy_guard_measures_from_a_private_temporary_cache(monkeypatch: pytest.
     """The guard never reads or writes the worktree's `.mypy_cache` (tap#1214)."""
     import os
     import subprocess
+    from types import SimpleNamespace
 
     from tap.guards.base import REPO_ROOT
     from tap.guards.mypy import mypy_error_counts
@@ -126,11 +127,13 @@ def test_mypy_guard_measures_from_a_private_temporary_cache(monkeypatch: pytest.
     cache_dirs: list[str] = []
     existed_during_run: list[bool] = []
 
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    # The guard reads only returncode, stdout and stderr, so a plain namespace stands in
+    # for the finished process.
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
         cache_dir = cmd[cmd.index("--cache-dir") + 1]
         cache_dirs.append(cache_dir)
         existed_during_run.append(os.path.isdir(cache_dir))
-        return subprocess.CompletedProcess(cmd, 1, stdout="tap/x.py:3: error: boom  [attr-defined]\n", stderr="")
+        return SimpleNamespace(returncode=1, stdout="tap/x.py:3: error: boom  [attr-defined]\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     counts = mypy_error_counts()
