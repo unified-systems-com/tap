@@ -31,6 +31,16 @@ class PluginNotFound(LookupError):
     """Raised when a requested plugin slug is not a loaded TAP plugin."""
 
 
+class DimensionVocabularyError(RuntimeError):
+    """A dimension vocabulary bundle did not import. Carries the bundle's label and why, so every
+    caller (boot, ``import_plugin_grift``) names the broken bundle the same way."""
+
+    def __init__(self, bundle_name: str, detail: str) -> None:
+        self.bundle_name = bundle_name
+        self.detail = detail
+        super().__init__(f"Dimension vocabulary bundle {bundle_name} did not import: {detail}")
+
+
 @dataclass
 class BundleOutcome:
     """The result of importing one declared GRIFT bundle.
@@ -248,3 +258,44 @@ def seed_dimension_vocabulary(*, actor: Any, extra: list[DimensionBundle] | None
         if not outcome.ok:
             return outcomes
     return outcomes
+
+
+@dataclass(frozen=True)
+class VocabularySummary:
+    """What :func:`import_dimension_vocabulary` did: bundles read, batches imported, batches skipped."""
+
+    bundles: int
+    imported: int
+    skipped: int
+
+
+def import_failure_detail(result: Any, limit: int = 5) -> str:
+    """Why a bundle's import failed, from the GRIFT result itself: each issue's code, path and message,
+    so a log names the reason instead of pointing at a result nobody can see."""
+    errors = list(getattr(result, "errors", None) or [])
+    if not errors:
+        return "import failed with no reported issue"
+    shown = "; ".join(f"[{e.code}] {e.path}: {e.message}" for e in errors[:limit])
+    more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
+    return f"import failed: {shown}{more}"
+
+
+def import_dimension_vocabulary(*, actor: Any) -> VocabularySummary:
+    """Import every dimension vocabulary bundle as ``actor``, or raise :class:`DimensionVocabularyError`.
+
+    The one entry point for "make sure the grid holds its Dimension rows": boot's core-vocabulary
+    phase (req-boot-phases-5) and ``import_plugin_grift`` before a plugin's own bundles
+    (req-tap-plugin-load-v0-upsert-7). Idempotent: each bundle's batch id is
+    fixed, so on a grid that already holds them every batch is skipped and nothing is written.
+    """
+    outcomes = seed_dimension_vocabulary(actor=actor)
+    imported = skipped = 0
+    for outcome in outcomes:
+        if not outcome.ok:
+            detail = outcome.read_error if outcome.read_error is not None else import_failure_detail(outcome.result)
+            raise DimensionVocabularyError(outcome.bundle_name, detail)
+        result = outcome.result  # set: an ok outcome imported
+        assert result is not None
+        imported += len(result.imported_batches)
+        skipped += len(result.skipped_batches)
+    return VocabularySummary(bundles=len(outcomes), imported=imported, skipped=skipped)

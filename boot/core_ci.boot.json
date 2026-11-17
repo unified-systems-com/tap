@@ -21,8 +21,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/gryphon-playground-tap",
-          "rev": "647679caabd7e8025c3fb04b01af21442b5391c8",
-          "commit": "647679caabd7e8025c3fb04b01af21442b5391c8"
+          "rev": "22dd9fe44693d46410e1edd61cea1f0444d90b52",
+          "commit": "22dd9fe44693d46410e1edd61cea1f0444d90b52"
         },
         "note": "Fixture: the Gridkin scenario corpus + harness that exercise the Gryphon query language; owns no types, depends_on grid_fixtures."
       },

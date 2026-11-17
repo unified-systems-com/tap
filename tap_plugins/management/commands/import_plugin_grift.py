@@ -7,6 +7,13 @@ Usage:
 
 Reads each plugin's tap-plugin.toml manifest, finds declared [[grift]] bundles,
 and calls grift_import on each one using strict upsert semantics.
+
+A real import first imports the dimension vocabulary (core's seed, then every
+installed plugin's ``[grift] dimension`` bundle), the same op boot's
+core-vocabulary phase runs, so the command works on a fresh grid before boot
+(req-tap-plugin-load-v0-upsert-7). On a grid that
+already holds it every vocabulary batch is skipped. A broken vocabulary bundle
+stops the command, naming the bundle, before any plugin bundle is imported.
 """
 
 from __future__ import annotations
@@ -144,6 +151,9 @@ class Command(BaseCommand):
                 )
             )
 
+        if not dry_run:
+            self._import_vocabulary()
+
         total_imported = 0
         total_errors = 0
 
@@ -170,6 +180,28 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"Done. {total_imported} bundle(s) imported."))
 
     # ---------------------------------------------------------------------------
+
+    def _import_vocabulary(self) -> None:
+        """Import the dimension vocabulary before any plugin bundle (aws-build Q69b).
+
+        Names resolve from live Dimension rows (req-grid-dimension-reference-9), so on a grid boot
+        has not reached, every bundle that stamps a dimension would fail with UnknownDimension. This
+        is boot's own op (``import_dimension_vocabulary``), as the same bootloader actor.
+        """
+        from tap_auth.actors import BOOTLOADER, get_builtin_actor
+        from tap_plugins.seeding import DimensionVocabularyError, import_dimension_vocabulary
+
+        try:
+            summary = import_dimension_vocabulary(actor=get_builtin_actor(BOOTLOADER))
+        except DimensionVocabularyError as exc:
+            raise CommandError(f"{exc}. No plugin bundle was imported.") from exc
+        if summary.imported:
+            self.stdout.write(
+                f"  Dimension vocabulary: {summary.bundles} bundle(s); imported {summary.imported} batch(es), "
+                f"{summary.skipped} already present."
+            )
+        else:
+            self.stdout.write(f"  Dimension vocabulary: {summary.bundles} bundle(s) already present.")
 
     def _resolve_plugins(
         self,

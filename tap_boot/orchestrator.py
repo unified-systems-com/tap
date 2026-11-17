@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/f2b64b56f6da (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/e872067d8425 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@f3d6e1da255d/f2b64b56f6da (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@fade9b5ab7f1/e872067d8425 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -357,26 +357,21 @@ def _phase_core_vocabulary(say: Echo) -> None:
     and the plugin's own seed-plugin step later skips it the same way. A failure aborts the boot,
     naming the bundle and each issue.
     """
-    from tap_plugins.seeding import seed_dimension_vocabulary
+    from tap_plugins.seeding import DimensionVocabularyError, import_dimension_vocabulary
 
-    outcomes = seed_dimension_vocabulary(actor=get_builtin_actor(BOOTLOADER))
-    imported = skipped = 0
-    for outcome in outcomes:
-        if not outcome.ok:
-            detail = outcome.read_error if outcome.read_error is not None else _import_failure_detail(outcome.result)
-            logger.error("[c0a1] boot dimension vocabulary failed at %s: %s", outcome.bundle_name, detail)
-            raise BootError(f"Dimension vocabulary bundle {outcome.bundle_name} did not import: {detail}")
-        result = outcome.result  # set: an ok outcome imported
-        assert result is not None
-        imported += len(result.imported_batches)
-        skipped += len(result.skipped_batches)
+    try:
+        summary = import_dimension_vocabulary(actor=get_builtin_actor(BOOTLOADER))
+    except DimensionVocabularyError as exc:
+        logger.error("[c0a1] boot dimension vocabulary failed at %s: %s", exc.bundle_name, exc.detail)
+        raise BootError(str(exc)) from exc
+    imported, skipped = summary.imported, summary.skipped
     logger.info(
         "[c0a2] boot dimension vocabulary: %d bundle(s), %d batch(es) imported, %d already present",
-        len(outcomes),
+        summary.bundles,
         imported,
         skipped,
     )
-    head = f"Core vocabulary: {len(outcomes)} dimension bundle(s); "
+    head = f"Core vocabulary: {summary.bundles} dimension bundle(s); "
     if imported:
         say(head + f"imported {imported} batch(es), {skipped} already present.")
     else:
@@ -739,7 +734,7 @@ def _apply_step(step: object, bootloader: object, say: Echo) -> tuple[bool, dict
 
 
 def _apply_seed_plugin(step: SeedPluginStep, bootloader: object, say: Echo) -> tuple[bool, dict[str, Any]]:
-    from tap_plugins.seeding import resolve_tap_plugin, seed_plugin
+    from tap_plugins.seeding import import_failure_detail, resolve_tap_plugin, seed_plugin
 
     say(f"  [seed-plugin] {step.plugin} ...")
     config = resolve_tap_plugin(step.plugin)  # validated in _resolve_steps; cheap in-memory lookup
@@ -759,7 +754,7 @@ def _apply_seed_plugin(step: SeedPluginStep, bootloader: object, say: Echo) -> t
         if o.ok:
             logger.info("[e79e] seeded %s/%s", o.slug, o.bundle_name)
         else:
-            detail = o.read_error if o.read_error is not None else _import_failure_detail(o.result)
+            detail = o.read_error if o.read_error is not None else import_failure_detail(o.result)
             logger.error("[916b] seed failed %s/%s: %s", o.slug, o.bundle_name, detail)
             say(f"    seed failed {o.slug}/{o.bundle_name}: {detail}")
     entry |= {"bundles_seeded": len(outcomes) - len(failed), "failed_bundles": len(failed)}
@@ -768,17 +763,6 @@ def _apply_seed_plugin(step: SeedPluginStep, bootloader: object, say: Echo) -> t
         return False, entry
     say(f"    OK — {step.plugin}: {len(outcomes)} bundle(s) seeded.")
     return True, entry
-
-
-def _import_failure_detail(result: Any, limit: int = 5) -> str:
-    """Why a bundle's import failed, from the GRIFT result itself: each issue's code, path and message,
-    so the boot log names the reason instead of pointing at a result nobody can see."""
-    errors = list(getattr(result, "errors", None) or [])
-    if not errors:
-        return "import failed with no reported issue"
-    shown = "; ".join(f"[{e.code}] {e.path}: {e.message}" for e in errors[:limit])
-    more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
-    return f"import failed: {shown}{more}"
 
 
 def _apply_fire_collector(step: FireCollectorStep, say: Echo) -> tuple[bool, dict[str, Any]]:
