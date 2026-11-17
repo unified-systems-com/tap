@@ -2080,7 +2080,7 @@ def _core_default_groups(pyproject: Path, available: list[str]) -> tuple[str, ..
 
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return ()
     tool = data.get("tool", {})
     uv = tool.get("uv", {}) if isinstance(tool, dict) else None
