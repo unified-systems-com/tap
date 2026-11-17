@@ -1,4 +1,5 @@
-"""The `grid.tables` health probe (req-tap-health-probes-8).
+"""The `grid.tables` health probe (req-tap-health-probes-8), and `grid.history_agreement`
+(req-grid-history-optout-9), which is described on its function.
 
 Owned by `tap_grid` and registered from its own `ready()` (the dependency
 inversion of req-tap-health-probe-registry-3).
@@ -75,4 +76,41 @@ def probe_grid_tables() -> ProbeResult:
     return ProbeResult.healthy(context={"classified_tables": classified_count})
 
 
-__all__ = ["probe_grid_tables"]
+def probe_history_agreement() -> ProbeResult:
+    """Every node type's history status agrees between class, catalog row and history model.
+
+    Reported, not gating (``critical=False``, req-grid-history-optout-9). Every consumer that
+    acts on history asks the class-built answer (``is_history_enabled``) and degrades
+    explicitly with ``HistoryNotTracked``, so no disagreement this finds makes a consumer
+    answer wrongly: a stale ``EntityType.track_history`` misdescribes the type in the
+    catalog, and a class whose history model disagrees with its ``TRACK_HISTORY`` still
+    behaves as its model says. ``grid.tables`` already fails readiness when a history table
+    the model needs is absent. A mismatch makes the verdict ``degraded`` and names the
+    types; it does not take the instance out of service.
+    """
+    from tap_grid.history import history_agreement_problems
+    from tap_grid.read_guard import unguarded_read
+
+    try:
+        with unguarded_read():
+            problems = history_agreement_problems()
+    except Exception as exc:  # noqa: BLE001 — report, never raise.
+        logger.warning("[c4e2] health: history agreement probe failed: %s", exc)
+        return ProbeResult.unhealthy("grid.history_agreement_check_failed", detail=exception_detail(exc))
+
+    if problems:
+        return ProbeResult.unhealthy(
+            "grid.history_disagreement",
+            detail=f"{len(problems)} node type(s) disagree: " + "; ".join(str(p) for p in problems),
+            reasoning=(
+                "A node type's TRACK_HISTORY, its EntityType.track_history and the presence of its "
+                "Historical model should say the same thing. The class is the authority; a row that "
+                "disagrees was not re-stamped by registration, and a history model that disagrees "
+                "with its class was attached outside TapHistoricalRecords."
+            ),
+            context={"disagreements": [p.entity_type for p in problems]},
+        )
+    return ProbeResult.healthy()
+
+
+__all__ = ["probe_grid_tables", "probe_history_agreement"]

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tap.dev/schemas/tap.files.ocfl-inventory.schema.json",
+  "title": "OCFL 1.1 Object Inventory, as the TAP file store writes it",
+  "description": "Authored for TAP from the text of the OCFL 1.1 specification, section 3.5 (Inventory), not copied from another project (specs/spec-tap-file-store.md, req-tap-files-ocfl). It describes every inventory the store writes and is checked against every inventory the store reads before it is trusted. It is narrower than OCFL where the store chooses to be: digest algorithm sha256 only, no fixity block, the default content directory, unpadded version numbers, and exactly one logical path per version state (req-tap-files-ocfl).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "type", "digestAlgorithm", "head", "manifest", "versions"],
+  "properties": {
+    "id": {
+      "description": "The object identifier: urn:uuid: and the canonical lower-case UUID of the file's node (req-tap-files-naming).",
+      "type": "string",
+      "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "type": {
+      "description": "OCFL 3.5.1: the inventory type URI for OCFL 1.1.",
+      "const": "https://ocfl.io/1.1/spec/#inventory"
+    },
+    "digestAlgorithm": {
+      "description": "OCFL 3.5.1 permits sha256; the store uses it everywhere.",
+      "const": "sha256"
+    },
+    "head": {
+      "description": "OCFL 3.5.1: the most recent version, vN with no zero padding.",
+      "type": "string",
+      "pattern": "^v[1-9][0-9]*$"
+    },
+    "manifest": {
+      "description": "OCFL 3.5.2: each content digest to the content paths, relative to the object root, holding those bytes.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[0-9a-f]{64}$" },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "string", "pattern": "^v[1-9][0-9]*/content/[^/]+$" }
+      }
+    },
+    "versions": {
+      "description": "OCFL 3.5.3: every version from v1 to the head.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^v[1-9][0-9]*$" },
+      "additionalProperties": { "$ref": "#/$defs/version" }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created", "state", "message", "user"],
+      "properties": {
+        "created": {
+          "description": "OCFL 3.5.3.1: the time of the version, RFC 3339 with a zone.",
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "state": {
+          "description": "OCFL 3.5.3.1: digest to logical paths. The store keeps exactly one digest and one logical path per version.",
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "propertyNames": { "pattern": "^[0-9a-f]{64}$" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "message": {
+          "description": "The operation, and the caller's short reason when one was given.",
+          "type": "string",
+          "minLength": 1
+        },
+        "user": {
+          "description": "OCFL 3.5.3.1: the actor. name is the acting actor's stable key, never an email address.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "address": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

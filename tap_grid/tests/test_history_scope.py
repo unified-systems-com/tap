@@ -19,6 +19,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, models
 from django.db.migrations.state import ProjectState
 from django.db.models.signals import post_delete, post_save
+from tap.plugin_testing import requires_plugins
 from tap_plugin.grid_fixtures.models import ConstrainedSource
 
 from tap_grid.grid_tables import history_tables, read_guarded_tables
@@ -362,3 +363,255 @@ def test_grift_sweep_purge_on_an_untracked_type(untracked_table: Any, settings: 
     assert result.success, result.errors
     assert any(s.action == "purge" for s in result.imported_batches[0].swept_entities)
     assert not Entity.objects.filter(pk=node_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# -8 Recorded on EntityType, stamped by registration
+# ---------------------------------------------------------------------------
+
+SPEC_RECORD = pytest.mark.spec("req-grid-history-optout-8")
+SPEC_AGREEMENT = pytest.mark.spec("req-grid-history-optout-9")
+SPEC_VALIDATOR = pytest.mark.spec("req-grid-history-optout-10")
+
+_UNTRACKED_PATH = "tests.history_scope.Untracked"
+_TRACKED_PATH = "tap_plugin.grid_fixtures.models.ConstrainedSource"
+
+
+class _ModelEntry:
+    def __init__(self, slug: str, class_path: str) -> None:
+        self.slug = slug
+        self.class_path = class_path
+
+
+class _EdgeEntry:
+    def __init__(self, slug: str) -> None:
+        self.slug = slug
+        self.name = slug.title()
+        self.description = ""
+
+
+class _Manifest:
+    def __init__(self, models_: list[_ModelEntry], edges: list[_EdgeEntry]) -> None:
+        self.models = models_
+        self.edges = edges
+
+
+@pytest.fixture
+def import_untracked(untracked_model: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Make the fixture type importable by a class path, as a manifest entry names it."""
+    from django.utils import module_loading
+
+    real = module_loading.import_string
+
+    def _import(path: str) -> Any:
+        return untracked_model if path == _UNTRACKED_PATH else real(path)
+
+    monkeypatch.setattr(module_loading, "import_string", _import)
+    return untracked_model
+
+
+def _register(manifest: _Manifest) -> None:
+    from tap_plugins.base import TapPluginConfig
+
+    config = TapPluginConfig.__new__(TapPluginConfig)
+    config._manifest = manifest
+    config.name = "history_scope_plugin"
+    config._register_types_from_manifest()
+
+
+@SPEC_RECORD
+@pytest.mark.django_db
+def test_registration_stamps_track_history_from_the_class(import_untracked: Any) -> None:
+    from tap_grid.models import EntityType
+
+    _register(
+        _Manifest(
+            [_ModelEntry(UNTRACKED_TYPE, _UNTRACKED_PATH), _ModelEntry(ConstrainedSource.ENTITY_TYPE, _TRACKED_PATH)],
+            [_EdgeEntry("HISTORY_SCOPE_EDGE")],
+        )
+    )
+    assert EntityType.objects.get(slug=UNTRACKED_TYPE).track_history is False
+    assert EntityType.objects.get(slug=ConstrainedSource.ENTITY_TYPE).track_history is True
+    assert EntityType.objects.get(slug="HISTORY_SCOPE_EDGE").track_history is True
+
+
+@SPEC_RECORD
+@pytest.mark.django_db
+def test_re_registration_moves_a_stale_row_to_the_class(import_untracked: Any) -> None:
+    """The stamp runs on every load, so a row written while the type still kept history follows
+    the class at the next registration rather than outliving the flip."""
+    from tap_grid.models import EntityType, EntityTypeKind
+
+    EntityType.objects.create(slug=UNTRACKED_TYPE, name="x", kind=EntityTypeKind.NODE, track_history=True)
+    _register(_Manifest([_ModelEntry(UNTRACKED_TYPE, _UNTRACKED_PATH)], []))
+    assert EntityType.objects.get(slug=UNTRACKED_TYPE).track_history is False
+
+
+@SPEC_RECORD
+def test_the_field_defaults_true_and_core_search_is_stamped_from_its_class() -> None:
+    import inspect
+
+    from tap_grid import apps as grid_apps
+    from tap_grid.models import EntityType
+
+    field = EntityType._meta.get_field("track_history")
+    _, _, _, kwargs = field.deconstruct()
+    assert kwargs["default"] is True
+    assert kwargs["db_index"] is True
+    assert '"track_history": Search.TRACK_HISTORY' in inspect.getsource(grid_apps.TapCoreConfig.ready)
+
+
+# ---------------------------------------------------------------------------
+# -9 Agreement check and probe
+# ---------------------------------------------------------------------------
+
+
+@SPEC_AGREEMENT
+@pytest.mark.django_db
+def test_every_loaded_type_agrees() -> None:
+    """Class, catalog row and history model agree for every type this process loaded."""
+    from tap_grid.history import history_agreement_problems
+
+    assert history_agreement_problems() == []
+
+
+@SPEC_AGREEMENT
+def test_agreement_holds_for_an_opted_out_type_with_a_matching_row(untracked_model: Any) -> None:
+    from tap_grid.history import history_agreement_problems
+
+    assert history_agreement_problems(recorded={UNTRACKED_TYPE: False}) == []
+    assert history_agreement_problems(recorded={}) == [], "a missing row is not a disagreement"
+
+
+@SPEC_AGREEMENT
+def test_agreement_finds_a_row_that_disagrees_with_class_and_model(untracked_model: Any) -> None:
+    from tap_grid.history import history_agreement_problems
+
+    problems = history_agreement_problems(recorded={UNTRACKED_TYPE: True})
+    assert [p.entity_type for p in problems] == [UNTRACKED_TYPE]
+    (problem,) = problems
+    assert problem.declared is False and problem.recorded is True and problem.has_history_model is False
+    assert problem.disagreements == ("row vs class", "row vs model")
+
+
+@SPEC_AGREEMENT
+def test_agreement_finds_a_tracked_type_whose_row_says_untracked() -> None:
+    from tap_grid.history import history_agreement_problems
+
+    problems = history_agreement_problems(recorded={ConstrainedSource.ENTITY_TYPE: False})
+    assert [(p.entity_type, p.disagreements) for p in problems] == [
+        (ConstrainedSource.ENTITY_TYPE, ("row vs class", "row vs model"))
+    ]
+
+
+@SPEC_AGREEMENT
+def test_agreement_finds_a_class_whose_history_model_disagrees(
+    untracked_model: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A history model attached outside TapHistoricalRecords: the class says no history, yet a
+    Historical model exists. The row (stamped from the class) agrees with the class only."""
+    from tap_grid import history as history_mod
+
+    monkeypatch.setattr(history_mod, "is_history_enabled", lambda cls: cls is untracked_model or hasattr(cls, "history"))
+    problems = history_mod.history_agreement_problems(recorded={UNTRACKED_TYPE: False})
+    assert [(p.entity_type, p.disagreements) for p in problems] == [
+        (UNTRACKED_TYPE, ("class vs model", "row vs model"))
+    ]
+    assert "TRACK_HISTORY=False" in str(problems[0])
+
+
+@SPEC_AGREEMENT
+@pytest.mark.django_db
+def test_agreement_reads_the_catalog_rows(untracked_model: Any) -> None:
+    from tap_grid.history import history_agreement_problems
+    from tap_grid.models import EntityType, EntityTypeKind
+
+    EntityType.objects.create(slug=UNTRACKED_TYPE, name="x", kind=EntityTypeKind.NODE, track_history=True)
+    assert [p.entity_type for p in history_agreement_problems()] == [UNTRACKED_TYPE]
+    EntityType.objects.filter(slug=UNTRACKED_TYPE).update(track_history=False)
+    assert history_agreement_problems() == []
+
+
+@SPEC_AGREEMENT
+@pytest.mark.django_db
+def test_probe_reports_a_disagreement_and_is_healthy_without_one(untracked_model: Any) -> None:
+    from tap_grid.health import probe_history_agreement
+    from tap_grid.models import EntityType, EntityTypeKind
+    from tap_health.results import ProbeStatus
+
+    assert probe_history_agreement().status is ProbeStatus.HEALTHY
+    EntityType.objects.create(slug=UNTRACKED_TYPE, name="x", kind=EntityTypeKind.NODE, track_history=True)
+    result = probe_history_agreement()
+    assert result.status is ProbeStatus.UNHEALTHY
+    assert result.code == "grid.history_disagreement"
+    assert result.context["disagreements"] == [UNTRACKED_TYPE]
+    assert UNTRACKED_TYPE in (result.detail or "")
+
+
+@SPEC_AGREEMENT
+def test_probe_is_a_non_critical_readiness_probe() -> None:
+    from tap_health.registry import health_probe_registry
+    from tap_health.selection import READINESS
+
+    probe = health_probe_registry.get("grid.history_agreement")
+    assert probe.critical is False
+    assert READINESS in probe.sets
+    assert probe.group == "tap_grid"
+
+
+# ---------------------------------------------------------------------------
+# -10 validate_plugin lists opt-outs as info
+# ---------------------------------------------------------------------------
+
+
+def _validation_result() -> Any:
+    from tap_plugins.validate.service import ValidationResult
+
+    return ValidationResult(ok=True, level="loads", plugin_path="/nowhere", strict=True)
+
+
+@SPEC_VALIDATOR
+def test_validator_lists_opted_out_types_as_info(import_untracked: Any) -> None:
+    from tap_plugins.validate.service import _check_history_opt_outs
+
+    result = _validation_result()
+    _check_history_opt_outs(
+        _Manifest(
+            [_ModelEntry(UNTRACKED_TYPE, _UNTRACKED_PATH), _ModelEntry(ConstrainedSource.ENTITY_TYPE, _TRACKED_PATH)],
+            [],
+        ),
+        result,
+    )
+    (check,) = result.checks
+    assert check.id == "history-opt-outs"
+    assert check.status == "pass"
+    assert {m.severity for m in check.messages} == {"info"}
+    assert [m.path for m in check.messages] == [_UNTRACKED_PATH]
+    assert check.details == {"opted_out": [UNTRACKED_TYPE]}
+
+
+@SPEC_VALIDATOR
+def test_validator_says_so_when_nothing_opts_out() -> None:
+    from tap_plugins.validate.service import _check_history_opt_outs
+
+    result = _validation_result()
+    _check_history_opt_outs(_Manifest([_ModelEntry(ConstrainedSource.ENTITY_TYPE, _TRACKED_PATH)], []), result)
+    (check,) = result.checks
+    assert check.status == "pass" and check.details == {"opted_out": []}
+    assert check.messages[0].severity == "info"
+
+
+@SPEC_VALIDATOR
+@requires_plugins("validation_sample")  # the loads level imports the fixture plugin
+def test_the_check_runs_at_the_loads_level_and_passes_strict() -> None:
+    """Wired into the loads level, and an info listing never fails a ``--strict`` run."""
+    from pathlib import Path
+
+    import tap_plugins
+    from tap_plugins.validate.service import validate_plugin
+
+    root = Path(tap_plugins.__file__).resolve().parent / "tests" / "fixtures" / "validation_sample"
+    result = validate_plugin(root, level="loads", strict=True)
+    check = next(c for c in result.checks if c.id == "history-opt-outs")
+    assert check.status == "pass"
+    assert all(m.severity == "info" for m in check.messages)

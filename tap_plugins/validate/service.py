@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/43195c8e45c7 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/2fa4eb2d8b0c (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1461,7 +1461,7 @@ def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     """Run loads-level checks: class-path validation via Django imports.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/f16256bd98a6 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/4e03a7f4a5e2 (derivation) — the
         loads level's import-and-contract checks.
     """
     _check_model_classes(manifest, result)
@@ -1470,6 +1470,38 @@ def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     _check_search_callables(manifest, result)
     _check_falsifier_classes(manifest, result)
     _check_falsifier_coverage(manifest, result)
+    _check_history_opt_outs(manifest, result)
+
+
+def _check_history_opt_outs(manifest: Any, result: ValidationResult) -> None:
+    """List the plugin's node types that declare ``TRACK_HISTORY = False`` (req-grid-history-optout-10).
+
+    INFO only, never a warning: opting out is the plugin owner's decision, and conformance runs
+    ``--strict``, which would turn a warning into a failure. The listing makes the decision
+    visible where the plugin is reviewed. It reads the class attribute, the declaration's only
+    home; a class that does not import is ``model-classes``' failure, not this check's.
+    """
+    if not manifest.models:
+        return
+
+    check = CheckResult(id="history-opt-outs", name="Node types that keep no change history")
+
+    from django.utils.module_loading import import_string
+
+    opted_out: list[str] = []
+    for entry in manifest.models:
+        cls = _import_or_none(import_string, entry.class_path)
+        if cls is not None and getattr(cls, "TRACK_HISTORY", True) is False:
+            opted_out.append(entry.slug)
+            check.info(
+                f"{entry.slug} declares TRACK_HISTORY = False: no Historical model or table; "
+                "the spine and batch record still say who changed it and when, not what it was before",
+                path=entry.class_path,
+            )
+    if not opted_out:
+        check.info("Every node type keeps change history (none declares TRACK_HISTORY = False)")
+    check.details = {"opted_out": opted_out}
+    result.checks.append(check)
 
 
 def _check_model_classes(manifest: Any, result: ValidationResult) -> None:

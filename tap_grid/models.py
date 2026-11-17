@@ -614,6 +614,18 @@ class EntityType(models.Model):
         db_index=True,
         help_text="Whether this type describes a node or an edge; empty means not yet classified.",
     )
+    # req-grid-history-optout-8. A record of the class's TRACK_HISTORY declaration, stamped by
+    # the type's registration on every load; the class stays the authority (simple-history
+    # decides at class definition, and the migration generator reads the class). Edge types
+    # are always True: every edge type shares the one Edge history table.
+    track_history = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text=(
+            "Whether TAP keeps change history for this type: a record of the model class's "
+            "TRACK_HISTORY, stamped at registration. Always true for edge types."
+        ),
+    )
 
     class Meta:
         db_table = "tap_entity_type"

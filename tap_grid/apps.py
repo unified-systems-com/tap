@@ -83,7 +83,7 @@ class TapCoreConfig(AppConfig):
         # Register the grid-population probe from tap_grid's own boundary
         # (req-tap-health-probe-registry-3). Registration only appends a callable —
         # no DB here; the probe body runs later at run_health() time.
-        from tap_grid.health import probe_grid_tables
+        from tap_grid.health import probe_grid_tables, probe_history_agreement
         from tap_health.registry import register_health_probe
         from tap_health.selection import READINESS
 
@@ -96,17 +96,30 @@ class TapCoreConfig(AppConfig):
             group="tap_grid",
             critical=True,
         )
+        # Not critical (req-grid-history-optout-9): a disagreement between a type's
+        # TRACK_HISTORY, its EntityType.track_history and its history model is made visible
+        # (degraded), but every history consumer asks the class-built answer, so none of
+        # them is misled into a wrong result. The probe's docstring carries the reasoning.
+        register_health_probe(
+            "grid.history_agreement",
+            probe_history_agreement,
+            sets=(READINESS,),
+            group="tap_grid",
+            critical=False,
+        )
 
         try:
-            from tap_grid.models import EntityType, EntityTypeKind
+            from tap_grid.models import EntityType, EntityTypeKind, Search
 
             EntityType.objects.update_or_create(
-                slug="search",
+                slug=Search.ENTITY_TYPE,
                 defaults={
                     "name": "Search",
                     "plugin_name": "tap_grid",
                     "icon": "search",
                     "kind": EntityTypeKind.NODE,
+                    # Stamped from the class like a manifest model (req-grid-history-optout-8).
+                    "track_history": Search.TRACK_HISTORY,
                 },
             )
         except OperationalError, ProgrammingError:

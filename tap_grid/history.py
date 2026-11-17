@@ -22,6 +22,8 @@ History Scope Configuration:
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from simple_history.models import HistoricalRecords
@@ -102,7 +104,7 @@ class TapHistoricalRecords(HistoricalRecords):
     def finalize(self, sender: type, **kwargs: Any) -> None:
         """Build ``sender``'s history model unless it declares ``TRACK_HISTORY = False``.
 
-        TAP-IMPLEMENTS: req-grid-history-optout@da89a0e8b5f5/d68de3c234c5 (derivation) — the one place a type's history model is built or withheld
+        TAP-IMPLEMENTS: req-grid-history-optout@a19446d5c253/d68de3c234c5 (derivation) — the one place a type's history model is built or withheld
         """
         if sender is not self.cls and not getattr(sender, "TRACK_HISTORY", True):
             return
@@ -119,6 +121,92 @@ def is_history_enabled(model_class: type) -> bool:
     TapHistoricalRecords never attaches it.
     """
     return hasattr(model_class, "history")
+
+
+# ---------------------------------------------------------------------------
+# Agreement check (req-grid-history-optout-9)
+# ---------------------------------------------------------------------------
+
+#: The three places a node type's history status is visible, as named in a disagreement.
+_DECLARED = "class"  # the model class's TRACK_HISTORY — the authority
+_RECORDED = "row"  # EntityType.track_history — a record stamped at registration
+_BUILT = "model"  # a Historical<Type> model exists (is_history_enabled)
+
+
+@dataclass(frozen=True)
+class HistoryAgreementProblem:
+    """One node type whose class, catalog row and history model do not agree.
+
+    ``recorded`` is ``None`` when the type has no ``EntityType`` row: the in-code registry and
+    the catalog are different populations (see ``tap_grid.health``), so a missing row is not a
+    disagreement and never produces a problem on its own.
+    """
+
+    entity_type: str
+    declared: bool
+    recorded: bool | None
+    has_history_model: bool
+    disagreements: tuple[str, ...]
+
+    def __str__(self) -> str:
+        pairs = ", ".join(self.disagreements)
+        return (
+            f"{self.entity_type}: TRACK_HISTORY={self.declared}, "
+            f"EntityType.track_history={self.recorded}, Historical model "
+            f"{'present' if self.has_history_model else 'absent'} ({pairs})"
+        )
+
+
+def history_agreement_problems(*, recorded: Mapping[str, bool] | None = None) -> list[HistoryAgreementProblem]:
+    """Every registered node type whose history status disagrees between its three homes.
+
+    For each concrete type in the entity-model registry, compares the class's
+    ``TRACK_HISTORY`` (the declaration), its ``EntityType.track_history`` (the record
+    registration stamps from the class), and whether a ``Historical<Type>`` model exists
+    (:func:`is_history_enabled`, what every history consumer actually checks). Returns the
+    mismatches, sorted by type; an empty list means all three agree everywhere.
+
+    ``recorded`` maps slug to ``track_history`` for the catalog rows; ``None`` reads them from
+    ``EntityType``. The read is an ordinary ORM read: a caller with no actor (the health
+    probe) wraps the call in ``unguarded_read()``.
+
+    TAP-IMPLEMENTS: req-grid-history-optout@a19446d5c253/780f543f2798 (enforcement) — the one comparison of class, catalog row and history model
+    """
+    from tap_grid.models import EntityType, EntityTypeKind
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    if recorded is None:
+        recorded = dict(
+            EntityType.objects.exclude(kind=EntityTypeKind.EDGE).values_list("slug", "track_history")
+        )
+
+    problems: list[HistoryAgreementProblem] = []
+    for slug in list_entity_types():
+        cls = get_model_class(slug)
+        meta = getattr(cls, "_meta", None)
+        if meta is not None and meta.abstract:
+            continue
+        declared = bool(getattr(cls, "TRACK_HISTORY", True))
+        row = recorded.get(slug)
+        built = is_history_enabled(cls)
+        disagreements: list[str] = []
+        if declared != built:
+            disagreements.append(f"{_DECLARED} vs {_BUILT}")
+        if row is not None and row != declared:
+            disagreements.append(f"{_RECORDED} vs {_DECLARED}")
+        if row is not None and row != built:
+            disagreements.append(f"{_RECORDED} vs {_BUILT}")
+        if disagreements:
+            problems.append(
+                HistoryAgreementProblem(
+                    entity_type=slug,
+                    declared=declared,
+                    recorded=row,
+                    has_history_model=built,
+                    disagreements=tuple(disagreements),
+                )
+            )
+    return problems
 
 
 # ---------------------------------------------------------------------------

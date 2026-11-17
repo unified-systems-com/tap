@@ -63,7 +63,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/14cedc05e4e8 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/244899247bf0 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -238,6 +238,10 @@ class TapPluginConfig(AppConfig):
                         # (the manifest separates models from edges), so it stamps it
                         # here — req-grid-entity-type-kind.
                         "kind": EntityTypeKind.NODE,
+                        # A record of the class's declaration, never a second source of it
+                        # (req-grid-history-optout-8): stamped on every load so it follows
+                        # the class when the flag flips.
+                        "track_history": getattr(cls, "TRACK_HISTORY", True),
                     },
                 )
 
@@ -250,6 +254,9 @@ class TapPluginConfig(AppConfig):
                         "description": edge.description,
                         "plugin_name": self.name,
                         "kind": EntityTypeKind.EDGE,
+                        # Every edge type shares the one Edge history table, so an edge type
+                        # cannot opt out (req-grid-history-optout-8).
+                        "track_history": True,
                     },
                 )
 
