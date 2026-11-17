@@ -2039,6 +2039,10 @@ class TestDependencyPins:
             ('[project]\nname = "shell-sample-tap"\ndynamic = ["dependencies"]\n', "dynamic"),
             ('[project]\nname = "shell-sample-tap"\ndependencies = "boto3==1"\n', "not a list"),
             ('[project]\nname = "shell-sample-tap"\ndependencies = [1]\n', "not a requirement string"),
+            # Falsy but malformed is not "none" (PR 1222 review): only a missing key means no dependencies.
+            ('[project]\nname = "shell-sample-tap"\ndependencies = ""\n', "not a list"),
+            ('[project]\nname = "shell-sample-tap"\ndependencies = {}\n', "not a list"),
+            ('[project]\nname = "shell-sample-tap"\ndynamic = ""\n', "not a list of field names"),
         ],
     )
     def test_what_cannot_be_read_is_reported_not_passed(self, tmp_path: Path, raw: str, why: str) -> None:

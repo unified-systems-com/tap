@@ -2086,7 +2086,7 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
     A WARNING while ``DEPENDENCY_PINS_ENFORCED`` is False, a failure after; see that constant for
     the measurement the flip waits on.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/77479451741d (enforcement) — reads the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-pins@2e117256d8a9/1f2284dd7799 (enforcement) — reads the
         repository's declared requirements, reports each floating one with its fix, and applies the
         warn-then-fail phase.
     """
@@ -2109,8 +2109,14 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
 
     raw_project = data.get("project")
     project: dict[str, Any] = raw_project if isinstance(raw_project, dict) else {}
-    dynamic = project.get("dynamic") or []
-    if isinstance(dynamic, list) and "dependencies" in dynamic:
+    # A missing key and a present-but-malformed value differ: only the first means "none". A falsy
+    # malformed value (`""`, `{}`) must not read as an empty list (PR 1222 review, Codex).
+    dynamic = project.get("dynamic", [])
+    if not isinstance(dynamic, list):
+        report(f"`[project].dynamic` in {PYPROJECT} is not a list of field names", path=PYPROJECT)
+        result.checks.append(check)
+        return
+    if "dependencies" in dynamic:
         report(
             f"{PYPROJECT} declares `dependencies` as dynamic, so the requirements are computed at build time "
             "and cannot be read here; declare them statically so their pins can be checked",
@@ -2118,7 +2124,7 @@ def _check_dependency_pins(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
-    dependencies = project.get("dependencies") or []
+    dependencies = project.get("dependencies", [])
     if not isinstance(dependencies, list):
         report(f"`[project].dependencies` in {PYPROJECT} is not a list of requirement strings", path=PYPROJECT)
         result.checks.append(check)
