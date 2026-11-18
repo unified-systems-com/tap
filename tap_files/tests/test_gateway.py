@@ -262,6 +262,13 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
             "from tap_files.services.contract import FILES_READ\nfrom tap_files.config import configured_root\n"
         ),
         "tap_web/sideways.py": "from tap_files.services import _backend\nfrom tap_files.services import _record\n",
+        "tap_web/via_leak.py": "from tap_files.services.leak import get_store\nimport tap_files.services.leak\n",
+        "tap_files/services/leak.py": "from tap_files.store import get_store\n",
+        "tap_files/services/contract.py": (
+            "from tap_files.store.errors import ObjectExists\nfrom tap_files.store.protocol import OpenedFile\n"
+            "from tap_files.store import get_store\n"
+        ),
+        "tap_files/services/_backend.py": "from tap_files.store import get_store\n",
         "tap_web/tests/test_x.py": "from tap_files.store import get_store\n",
         "tap_files/apps.py": "",
         "tap_files/boot.py": "from tap_files.store import get_store\n",
@@ -279,7 +286,15 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
     assert "tap_web/download.py:1" in message and "tap_web/other.py:1" in message and "tap_web/other.py:2" in message
     assert "tap_web/sideways.py:1 imports tap_files.services._backend" in message
     assert "tap_web/sideways.py:2 imports tap_files.services._record" in message
-    assert "fine.py" not in message and "test_x.py" not in message and "tap_files/" not in message
+    # A public submodule of the gateway may not hold the backend, nor may a caller go through one;
+    # the contract may take the store's errors and result types, and nothing else.
+    assert "tap_files/services/leak.py:1 imports tap_files.store" in message
+    assert "tap_web/via_leak.py:1 imports tap_files.services.leak" in message
+    assert "tap_web/via_leak.py:2 imports tap_files.services.leak" in message
+    assert "tap_files/services/contract.py:3 imports tap_files.store" in message
+    assert "contract.py:1" not in message and "contract.py:2" not in message
+    assert "fine.py" not in message and "test_x.py" not in message
+    assert "boot.py" not in message and "services/__init__.py" not in message and "_backend.py" not in message
 
 
 # --------------------------------------------------------------------------- logging

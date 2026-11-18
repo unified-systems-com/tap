@@ -8,7 +8,9 @@ itself, only the gateway (`tap_files/services/`) and boot's initialisation and r
 download route, a collector or a plugin calls the gateway. Where the store lives is in
 `tap_files.config`, which hands out no backend. Importing anything from the gateway other than its
 gated operations and its contract module is refused too, since the gateway's own handle on the
-backend would otherwise be one import away. Tests are exempt: they exercise the backend directly.
+backend would otherwise be one import away; and inside the gateway package only `__init__.py` and
+its `_` modules hold the backend, so a public submodule added later cannot re-export it. The
+contract module may take the store's error and result types and nothing else. Tests are exempt: they exercise the backend directly.
 """
 
 from __future__ import annotations
@@ -22,8 +24,9 @@ from tap.source_scan import first_party_source_roots, iter_parsed_sources
 _BACKEND = "tap_files.store"
 _GATEWAY = "tap_files.services"
 _GATEWAY_INIT = "tap_files/services/__init__.py"
-_ALLOWED_DIRS = ("tap_files/store", "tap_files/services")
-_ALLOWED_FILES = frozenset({"tap_files/boot.py"})
+_CONTRACT = "tap_files/services/contract.py"
+# The store's types a contract may re-export: errors and result records, never a backend.
+_CONTRACT_SOURCES = frozenset({"tap_files.store.errors", "tap_files.store.protocol"})
 
 
 def _targets(node: ast.Import | ast.ImportFrom) -> list[str]:
@@ -49,19 +52,34 @@ def _gateway_exports(root: Path) -> frozenset[str]:
 
 
 def _off_gateway(node: ast.Import | ast.ImportFrom, exports: frozenset[str]) -> list[str]:
-    """Names taken from the gateway module that are not its gated operations or its contract.
+    """What an outside caller takes from the gateway package beyond its operations and contract.
 
-    Whatever else the module binds, such as its handle on the backend or its below-gate helpers,
-    is an implementation detail; importing one would carry a caller around the capability check.
+    Whatever else the package binds, such as its handle on the backend, its below-gate helpers or
+    a submodule added later, is an implementation detail; importing one would carry a caller
+    around the capability check.
     """
-    if not isinstance(node, ast.ImportFrom) or node.level or node.module != _GATEWAY:
+    if isinstance(node, ast.Import):
+        names = [a.name for a in node.names]
+        return [n for n in names if n.startswith(_GATEWAY + ".") and n != f"{_GATEWAY}.contract"]
+    if node.level or node.module is None:
         return []
-    return [f"{_GATEWAY}.{a.name}" for a in node.names if a.name not in exports]
+    if node.module == _GATEWAY:
+        return [f"{_GATEWAY}.{a.name}" for a in node.names if a.name not in exports]
+    if node.module.startswith(_GATEWAY + ".") and node.module != f"{_GATEWAY}.contract":
+        return [node.module]
+    return []
 
 
-def _allowed(rel: Path) -> bool:
+def _may_import_backend(rel: Path) -> bool:
+    """The store itself, boot, the gateway's ``__init__`` and its below-gate ``_`` modules."""
     posix = rel.as_posix()
-    return "tests" in rel.parts or posix in _ALLOWED_FILES or any(posix.startswith(d + "/") for d in _ALLOWED_DIRS)
+    if posix.startswith("tap_files/store/") or posix == "tap_files/boot.py":
+        return True
+    return posix.startswith("tap_files/services/") and (rel.name == "__init__.py" or rel.name.startswith("_"))
+
+
+def _inside_gateway(rel: Path) -> bool:
+    return rel.as_posix().startswith(("tap_files/services/", "tap_files/store/"))
 
 
 class FilesBackendReachGuard(Guard):
@@ -80,11 +98,18 @@ class FilesBackendReachGuard(Guard):
         exports = _gateway_exports(REPO_ROOT)
         for parsed in iter_parsed_sources(first_party_source_roots(REPO_ROOT)):
             rel = parsed.path.relative_to(REPO_ROOT)
-            if _allowed(rel):
+            if "tests" in rel.parts:
                 continue
             for node in ast.walk(parsed.tree):
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
-                    offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in _targets(node) if _reaches(t))
+                if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                    continue
+                if not _may_import_backend(rel):
+                    allowed = _CONTRACT_SOURCES if rel.as_posix() == _CONTRACT else frozenset()
+                    reached = [t for t in _targets(node) if _reaches(t)]
+                    module = node.module if isinstance(node, ast.ImportFrom) else None
+                    if not (reached and module in allowed):
+                        offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in reached)
+                if not _inside_gateway(rel):
                     offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in _off_gateway(node, exports))
         assert not offenders, (  # nosec B101
             f"File store backend imported outside its gateway ({len(offenders)}):\n  "
