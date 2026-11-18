@@ -22,13 +22,15 @@ What the harness provides (unchanged in behavior from the conftest era):
 
 * ``django_db_setup`` (session) — extends pytest-django's fixture to run the
   idempotent auth bootstrap (``sync_auth``) once per session, so the ``tap_test``
-  program actor + capabilities + groups exist as committed baseline data.
+  program actor + capabilities + groups exist as committed baseline data, and to
+  import the dimension vocabulary (core's and every installed plugin's dimension
+  bundle, then the test seed), since names resolve from live Dimension rows.
 * ``default_caller_context`` (autouse) — binds a ``CallerContext`` per test:
   DB tests run as ``tap_test`` (a ``tap_admin`` member holding every capability,
   satisfying the on-by-default service-boundary enforcement, req-tap-auth-policy);
   non-DB tests get a ``None``-actor context (they never cross the boundary).
   Transactional tests that flushed the baseline are self-healed by re-running
-  ``sync_auth``.
+  ``sync_auth`` and re-importing the dimension vocabulary.
 * ``pytest_collection_modifyitems`` — the baseline fixture-vocabulary gate
   (req-dev-validation-baseline-vocabulary): fails a core-test run once, loudly, when
   this stack lacks the vocabulary those tests are written against, instead of letting
@@ -164,6 +166,59 @@ def django_db_setup(django_db_setup: object, django_db_blocker: Any) -> None:  #
         from tap_auth.sync import sync_auth
 
         sync_auth()
+        _seed_test_dimensions()
+
+
+_TEST_DIMENSION_SEED = Path(__file__).resolve().parent.parent / "tap_grid/tests/data/test_dimensions.grift.json"
+_CORE_TAP_META = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap.meta, core's dimension bundle
+
+
+def _seed_test_dimensions() -> None:
+    """Give the test database its Dimension rows (req-grid-dimension-reference-9).
+
+    Names and knobs resolve from live Dimension rows, so the test database gets what boot gives a
+    grid: core's and every installed plugin's dimension bundle, through the same importer
+    (`tap_plugins.seeding.seed_dimension_vocabulary`). Then the test seed adds the names the suites
+    write (`{"zone": "north"}` needs `zone` declared) that no installed bundle already declares, so
+    a real declaration is never shadowed or made ambiguous.
+    """
+    import json
+
+    from tap_auth.actors import BOOTLOADER, acting_as, get_builtin_actor
+    from tap_grid.grift import grift_import
+    from tap_grid.live_dimensions import vocabulary
+    from tap_plugins.seeding import seed_dimension_vocabulary
+
+    actor = get_builtin_actor(BOOTLOADER)
+    with acting_as(actor):
+        for outcome in seed_dimension_vocabulary(actor=actor):
+            if not outcome.ok:
+                issues = getattr(outcome.result, "errors", [])
+                errors = outcome.read_error or [(i.code, i.path, i.message) for i in issues]
+                raise RuntimeError(f"test harness: dimension bundle {outcome.bundle_name} did not import: {errors}")
+        live = vocabulary()
+        document = json.loads(_TEST_DIMENSION_SEED.read_text(encoding="utf-8"))
+        for batch in document["batches"]:
+            batch["nodes"] = [
+                node
+                for node in batch["nodes"]
+                if node["node"]["name"] not in live.by_name and node["entity"]["entity_id"] not in live.known_ids
+            ]
+        result = grift_import(document, actor=actor)  # TAP-AUTHZ-COV: test-harness setup; not request-reachable
+        if not result.success:
+            errors = [(i.code, i.path, i.message) for i in result.errors]
+            raise RuntimeError(f"test harness: test dimension seed did not import: {errors}")
+
+
+def _ensure_test_dimensions() -> None:
+    """Re-seed the Dimension rows when a transactional test's flush removed them (one query)."""
+    from tap_grid.models import Dimension
+    from tap_grid.read_guard import unguarded_read
+
+    with unguarded_read():
+        present = Dimension.all_objects.filter(entity_id=_CORE_TAP_META).exists()
+    if not present:
+        _seed_test_dimensions()
 
 
 def _db_fixture_name(request: pytest.FixtureRequest) -> str | None:
@@ -250,37 +305,6 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         stack.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _test_dimension_vocabulary() -> Iterator[None]:
-    """Declare the dimension keys the test suites write (req-grid-dimension-reference-8).
-
-    Dimensions are declared, never minted, so a test writing `{"zone": "north"}` needs `zone` declared.
-    The installed seeds come first; the test seed adds only names no installed seed declares, so a
-    real declaration is never shadowed or made ambiguous.
-    """
-    from django.apps import apps
-
-    # A bare pytest run with no Django configured (the harness-lock probes) has no app registry and
-    # writes no dimensions: nothing to declare.
-    if not apps.ready:
-        yield
-        return
-    from tap_grid import dimension_vocabulary as vocab
-
-    real = vocab.build()
-    extra = vocab.build([("tests", Path(__file__).resolve().parent.parent / "tap_grid" / "tests" / "data" / "test_dimensions.grift.json")])
-    by_id = dict(real.by_id)
-    by_name = dict(real.by_name)
-    for name, ids in extra.by_name.items():
-        if name not in by_name:
-            by_name[name] = ids
-            for ident in ids:
-                by_id[ident] = extra.by_id[ident]
-    vocab.reset(vocab.Vocabulary(by_id=by_id, by_name=by_name))
-    yield
-    vocab.reset()
-
-
 @pytest.fixture(autouse=True)
 def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerContext]:
     """Bind a CallerContext for the duration of each test.
@@ -313,6 +337,7 @@ def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerCon
     request.getfixturevalue(db_fixture)
 
     actor = _resolve_test_actor()
+    _ensure_test_dimensions()
     ctx = CallerContext(user=actor, batch_id=str(uuid.uuid7()), **label)
     set_caller_context(ctx)
     audit = _HarnessLabelAudit(request, ctx) if labelled else None

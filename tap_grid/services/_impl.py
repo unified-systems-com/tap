@@ -818,6 +818,11 @@ def _execute_write_pipeline(
 
         # Step 6: Model validation (full_validate + Django full_clean).
         if not is_delete:
+            if is_create and op.entity_id is not None and instance.entity_id is None:
+                # The id this create will land under, so a whole-record check can tell the row
+                # from another one (Dimension.validate's duplicate-name rule; the spine row is
+                # created after validation, below).
+                instance._pending_entity_id = str(_coerce_uuid(op.entity_id))
             try:
                 instance.full_validate()
             except DjangoValidationError as exc:
@@ -964,6 +969,12 @@ def _execute_write_pipeline(
                 updated_at=now,
                 version=F("version") + 1,
             )
+            if getattr(model_cls, "ENTITY_TYPE", None) == "dimension":
+                # A queryset update sends no signal: tell the live vocabulary a node retired, so it
+                # stops resolving within this same write (req-grid-dimension-reference-9).
+                from tap_grid.live_dimensions import invalidate
+
+                invalidate()
             _flip_record_retirement(model_cls, [instance.entity_id], batch_id)
             # Edges to end, gathered under this node's lock. A plain delete locks them now,
             # in id order (a cascade already holds every edge of its closure); the ending

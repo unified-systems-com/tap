@@ -210,9 +210,14 @@ def service_write_scope() -> Iterator[None]:
     else should: code that needs to write calls `write_batch`, or is one of the named
     writers in `BELOW_PIPELINE_WRITERS`.
     """
+    from tap_grid.live_dimensions import scope as dimension_scope
+
     token = _service_write_active.set(True)
     try:
-        yield
+        # One currency check of the live dimension vocabulary for the whole write, not one per
+        # dimension per row (req-grid-dimension-reference-9).
+        with dimension_scope():
+            yield
     finally:
         _service_write_active.reset(token)
 

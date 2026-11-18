@@ -7,6 +7,7 @@ session `sync_auth` baseline runs first; each `run_boot` then converges it again
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -482,7 +483,7 @@ class TestCoreVocabulary:
         lines: list[str] = []
         run_boot(None, echo=lines.append)
         assert (Dimension.objects.count(), Batch.objects.count()) == (dimensions, batches)
-        assert any("Core vocabulary: already present" in line for line in lines)
+        assert any("Core vocabulary:" in line and "already present" in line for line in lines)
 
     def test_it_runs_before_any_population_step(self, monkeypatch) -> None:
         import tap_boot.orchestrator as orchestrator
@@ -528,3 +529,141 @@ class TestCoreVocabulary:
         }
         result = grift_import(doc)
         assert result.success, [(i.code, i.path, i.message) for i in result.errors]
+
+
+_FIXTURES = Path(__file__).resolve().parents[2] / "tap_plugins" / "tests" / "fixtures"
+_FIXTURE_PLUGIN_ROOT = _FIXTURES / "validation_sample" / "tap_plugin" / "validation_sample"
+_FIXTURE_DIMENSION_BATCH = "01a1d2db-fead-711e-9523-152c4218b1e2"
+_CORE_TAP_META_ID = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap_grid/data/dimensions.grift.json
+_FIXTURE_DIMENSION = "01a1d2db-fead-711e-9523-152d3ea4555d"  # tap.fixture
+
+
+@pytest.mark.spec("req-boot-phases-5")
+@pytest.mark.spec("req-tap-plugin-manifest-v0-grift-11")
+@pytest.mark.django_db
+class TestPluginDimensionVocabulary:
+    """unified-systems-com/tap#1188 (aws-build Q67c): the vocabulary phase imports every installed
+    plugin's `[grift] dimension` bundle after core's, whether or not the profile seeds the plugin."""
+
+    @pytest.fixture
+    def installed(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """The validation_sample fixture plugin as an installed plugin no profile seeds."""
+        from types import SimpleNamespace
+
+        import tap_plugins.seeding as seeding
+        from tap_plugins.manifest import load_manifest
+
+        real = seeding.all_tap_plugins()
+
+        def _is_sample(config: Any) -> bool:
+            manifest = getattr(config, "manifest", None)
+            return manifest is not None and manifest.slug == "validation_sample"
+
+        if any(_is_sample(c) for c in real):
+            # core_ci installs validation_sample for real: the test database's own vocabulary
+            # import (the same import_dimension_vocabulary boot runs) already holds its rows.
+            present = next(c for c in real if _is_sample(c))
+            monkeypatch.setattr(present, "really_installed", True, raising=False)
+            return present
+        added = SimpleNamespace(
+            manifest=load_manifest(_FIXTURE_PLUGIN_ROOT), name="validation_sample", really_installed=False
+        )
+        monkeypatch.setattr(seeding, "all_tap_plugins", lambda: [*real, added])
+        return added
+
+    def _fixture_rows(self) -> list[str]:
+        from tap_grid.models import Dimension
+
+        return list(Dimension.objects.filter(entity_id=_FIXTURE_DIMENSION).values_list("name", flat=True))  # type: ignore[misc]
+
+    def test_core_comes_first_then_plugins_in_installed_apps_order(self, installed: Any) -> None:
+        from tap_plugins.seeding import all_tap_plugins, dimension_bundles
+
+        bundles = dimension_bundles()
+        assert bundles[0].slug == "tap_grid"
+        declaring = [c.manifest for c in all_tap_plugins() if c.manifest is not None]
+        expected = [m.slug for m in declaring if any(e.name == "dimension" for e in m.grift)]
+        assert [b.slug for b in bundles[1:]] == expected
+        # Last when the test adds it; wherever INSTALLED_APPS puts it when core_ci installs it.
+        assert "validation_sample" in [b.slug for b in bundles[1:]]
+
+    def test_a_plugin_installed_but_not_seeded_gets_its_dimension_rows(self, installed: Any) -> None:
+        from tap_grid.dimension_names import resolve
+
+        if not installed.really_installed:
+            # Only provable where the test database did not already import it (the plugin is
+            # installed only for this test); under core_ci the harness import got there first.
+            assert self._fixture_rows() == []
+        run_boot(None)  # an auth-only standup: no profile, no seed-plugin step at all
+        assert self._fixture_rows() == ["tap.fixture"]
+        assert str(resolve("tap.fixture")) == _FIXTURE_DIMENSION
+
+    def test_boot_is_idempotent_on_re_run(self, installed: Any) -> None:
+        from tap_grid.models import Batch, Dimension
+
+        run_boot(None)
+        counts = (Dimension.all_objects.count(), Batch.all_objects.count())
+        lines: list[str] = []
+        run_boot(None, echo=lines.append)
+        assert (Dimension.all_objects.count(), Batch.all_objects.count()) == counts
+        assert any("Core vocabulary:" in line and "nothing written" in line for line in lines), lines
+
+    def test_the_plugins_own_seed_step_skips_the_bundle_already_imported(self, installed: Any) -> None:
+        from tap_plugins.seeding import seed_plugin
+
+        run_boot(None)
+        outcomes = seed_plugin(installed, actor=None, bundle_name="dimension")
+        assert [o.ok for o in outcomes] == [True]
+        result = outcomes[0].result
+        assert result is not None
+        assert [b.batch_entity_id for b in result.skipped_batches] == [_FIXTURE_DIMENSION_BATCH]
+        assert self._fixture_rows() == ["tap.fixture"]
+
+    @pytest.mark.parametrize(
+        "breakage", ["unreadable", "an-edge", "another-type", "a-bad-node", "a-retirement", "batches-not-a-list", "a-core-id"]
+    )
+    def test_a_failing_bundle_aborts_the_boot_naming_it(
+        self, installed: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, breakage: str
+    ) -> None:
+        import json
+
+        import tap_plugins.seeding as seeding
+
+        document = json.loads((_FIXTURE_PLUGIN_ROOT / "grift" / "dimension.grift.json").read_text(encoding="utf-8"))
+        batch = document["batches"][0]
+        batch["batch_entity"]["entity_id"] = "01a1d2db-fead-711e-9523-0000000000aa"  # unseen
+        bad = tmp_path / "dimension.grift.json"
+        if breakage == "unreadable":
+            bad.write_text("{ not json", encoding="utf-8")
+        else:
+            if breakage == "an-edge":
+                batch["edges"] = [{"entity": {}, "edge": {}}]
+            elif breakage == "another-type":
+                batch["nodes"][0]["entity"]["entity_type"] = "grid_fixtures__node"
+            elif breakage == "batches-not-a-list":
+                document["batches"] = 1  # valid JSON, malformed GRIFT: a named failure, not a TypeError
+            elif breakage == "a-core-id":
+                # Reusing core's `tap.meta` id would rename it grid-wide: core's ids are core's (Q85a).
+                batch["nodes"][0]["entity"]["entity_id"] = _CORE_TAP_META_ID
+            elif breakage == "a-retirement":
+                # A node-level retirement is a removal: refused before import, so nothing is retired.
+                batch["nodes"][0]["retirement"] = {
+                    "retired_at": "2026-01-01T00:00:00Z",
+                    "batch_id": batch["batch_entity"]["entity_id"],
+                }
+            else:
+                batch["nodes"][0]["node"]["values"] = "not-a-list"
+            bad.write_text(json.dumps(document), encoding="utf-8")
+        real = seeding.dimension_bundles
+        broken = seeding.DimensionBundle("validation_sample", "validation_sample/dimension (broken)", bad)
+        monkeypatch.setattr(seeding, "dimension_bundles", lambda: [*real()[:-1], broken])
+        with pytest.raises(BootError, match=r"validation_sample/dimension \(broken\)") as raised:
+            run_boot(None)
+        if breakage == "a-core-id":
+            assert "redeclares core's Dimension 'tap.meta'" in str(raised.value)
+            from tap_grid.models import Dimension
+
+            # Refused before import: core's row keeps its name.
+            names = Dimension.all_objects.filter(entity_id=_CORE_TAP_META_ID).values_list("name", flat=True)  # type: ignore[misc]
+            assert list(names) in ([], ["tap.meta"])
+

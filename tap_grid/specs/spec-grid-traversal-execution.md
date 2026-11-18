@@ -935,6 +935,8 @@ The seam lives in `tap_grid/gryphon/capture.py`:
   `SELECT` / `WITH` statement executed inside the block is recorded, in execution
   order, with its bound parameters. Transaction-management statements (SAVEPOINT,
   RELEASE, ...) are filtered out.
+- `uncaptured()` — a context manager whose reads the capture leaves out: grid metadata
+  reads that are not the query's plan (the live dimension vocabulary's currency check).
 - `gryphon_stage(label)` — a context manager the executor wraps each dispatch
   branch with, tagging that branch's statements (`type-scan`, `hub-and-spoke`,
   `edge-type-scan`, `advanced`). A no-op beyond a context-var set when no capture
@@ -964,6 +966,7 @@ requirement of `spec-gridkin-v0.md`, gryphon_playground plugin repo) and the fut
 | req-grid-traversal-exec-sql-capture-3 | Deterministic SQL | Implemented | The executor sorts `pk__in` / `entity_id__in` id collections so the captured SQL is byte-stable across processes. | |
 | req-grid-traversal-exec-sql-capture-4 | Read-Only And Inert | Implemented | The seam changes no execution behavior and is inert when no capture is active. | |
 | req-grid-traversal-exec-sql-capture-5 | Explain Entry Point | Implemented | `explain_gryphon_raw()` returns both the canonical envelope and the captured SQL. | |
+| req-grid-traversal-exec-sql-capture-6 | Grid Metadata Reads Left Out | Implemented | Reads inside `uncaptured()` are not recorded: the live dimension vocabulary's currency check and reload (`req-grid-dimension-reference-9`), which ride along with a run but are not its plan and run or not by cache warmth, the same reason psycopg's catalog reads are left out. | `tap_grid/gryphon/capture.py::uncaptured`; `tap_grid/tests/test_gryphon_sql_capture.py::TestVocabularyReadsAreNotCaptured`. Added by unified-systems-com/tap#1188. |
 
 #### Future
 Extend the seam with PostgreSQL `EXPLAIN ANALYZE` for query-plan and timing

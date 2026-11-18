@@ -67,6 +67,19 @@ class TapCoreConfig(AppConfig):
 
         post_migrate.connect(sync_after_migrate, sender=self, dispatch_uid="tap_grid.spine_natural_key_sync")
 
+        # The live dimension vocabulary (req-grid-dimension-reference-9) forgets its per-process table
+        # the moment a Dimension node is written, retired or purged here, so the next resolution reads
+        # the change (a tombstone is a queryset update, so the delete path invalidates explicitly too).
+        # Signal wiring only, no DB.
+        from django.db.models.signals import post_delete, post_save
+
+        from tap_grid.live_dimensions import invalidate, invalidate_entity
+        from tap_grid.models import Dimension, Entity
+
+        for label, signal in (("post_save", post_save), ("post_delete", post_delete)):
+            signal.connect(invalidate, sender=Dimension, dispatch_uid=f"tap_grid.live_dimensions.{label}.dimension")
+            signal.connect(invalidate_entity, sender=Entity, dispatch_uid=f"tap_grid.live_dimensions.{label}.entity")
+
         # Register the grid-population probe from tap_grid's own boundary
         # (req-tap-health-probe-registry-3). Registration only appends a callable —
         # no DB here; the probe body runs later at run_health() time.
