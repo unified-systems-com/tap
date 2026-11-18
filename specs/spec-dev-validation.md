@@ -117,6 +117,7 @@ whatever stage it runs in.
 | Direct-write exemption freshness | `req-tap-auth-policy-9-unused-exemption` | Per-commit (`pytest`) | CI-guarded | `tap.guards.direct_write` (via `tap/tests/test_guards.py`) |
 | Domain-article coverage | `req-domain-articles-coverage` | Per-commit (`pytest`) | CI-guarded | `tap.guards.domain_articles` (via `tap/tests/test_guards.py`) |
 | Family-B public surface (pre-boot/boot) | `req-service-boundary-family-b-surface` | Per-commit (`pytest`) | CI-guarded | `tap.guards.public_surface` (via `tap/tests/test_guards.py`) |
+| File and directory nodes written only by tap_files | `req-tap-files-node` | Per-commit (`pytest`) | CI-guarded | `tap_files.guards.files_internal_writers` (via `tap/tests/test_guards.py`) |
 | File store backend reached only through its gateway | `req-tap-files-gateway` | Per-commit (`pytest`) | CI-guarded | `tap_files.guards.files_backend_reach` (via `tap/tests/test_guards.py`) |
 | File store root single source | `req-tap-files-root` | Per-commit (`pytest`) | CI-guarded | `tap_files.guards.files_root_resolution` (via `tap/tests/test_guards.py`) |
 | FIPS mode enforcement (declared vs actual) | `req-cicd-base-image-lifecycle-6` | Per-boot (`docker/entrypoint.sh`) | Boot-gated (fail-closed) | `tap.fips` (`python -m tap.fips`): executes crypto and asserts a non-approved primitive is refused when TAP_FIPS_MODE=1 — proves the declared mode is enforced, never inspects files (D13/D15); TAP-ABORT on mismatch |

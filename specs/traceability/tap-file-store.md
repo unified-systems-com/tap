@@ -4,17 +4,19 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 12 |
-| unbuilt | 17 |
+| mapped | 13 |
+| unbuilt | 15 |
+| unaccounted | 1 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-tap-files-capabilities` | In Development | Tested | — | `req-tap-files-capabilities-1`, `req-tap-files-capabilities-2`, `req-tap-files-capabilities-3`, `req-tap-files-capabilities-4`, `req-tap-files-capabilities-5` |
+| `req-tap-files-capabilities` | Implemented | Tested | — | `req-tap-files-capabilities-1`, `req-tap-files-capabilities-2`, `req-tap-files-capabilities-3`, `req-tap-files-capabilities-4`, `req-tap-files-capabilities-5` |
 | `req-tap-files-gateway` | Implemented | Verified | `_writer` | `req-tap-files-gateway-1`, `req-tap-files-gateway-2`, `req-tap-files-gateway-3`, `req-tap-files-gateway-4`, `req-tap-files-gateway-5` |
 | `req-tap-files-history` | Implemented | Tested | — | `req-tap-files-history-1`, `req-tap-files-history-2` |
+| `req-tap-files-hold` | Implemented | Implemented | `hold_file` | — |
 | `req-tap-files-immutable` | Implemented | Tested | — | `req-tap-files-immutable-1`, `req-tap-files-immutable-2`, `req-tap-files-immutable-3`, `req-tap-files-immutable-4`, `req-tap-files-immutable-5`, `req-tap-files-immutable-6` |
 | `req-tap-files-interface` | Implemented | Tested | — | `req-tap-files-interface-1`, `req-tap-files-interface-2`, `req-tap-files-interface-3` |
 | `req-tap-files-logging` | In Development | Verified | `recorded` | `req-tap-files-logging-1`, `req-tap-files-logging-2`, `req-tap-files-logging-3`, `req-tap-files-logging-4` |
