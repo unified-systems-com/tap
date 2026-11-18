@@ -267,17 +267,22 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
             "import tap_files.services as svc\nfrom tap_files import services\nimport tap_files.services\n"
             "svc._backend.backend()\nservices._record.recorded\ntap_files.services._backend\nservices.open_file\n"
         ),
-        "tap_files/services/leak.py": "from tap_files.store import get_store\n",
+        "tap_files/services/leak.py": (
+            "from tap_files.store import get_store\nfrom tap_files.services._backend import backend\n"
+        ),
         "tap_files/services/contract.py": (
             "from tap_files.store.errors import ObjectExists\nfrom tap_files.store.protocol import OpenedFile\n"
-            "from tap_files.store import get_store\n"
+            "from tap_files.store import get_store\nfrom ..store import local\n"
         ),
+        "tap_files/services/nested/__init__.py": "from tap_files.store import get_store\n",
+        "tap_files/services/_record.py": "from tap_files.store.layout import check_identifier\n",
         "tap_files/services/_backend.py": "from tap_files.store import get_store\n",
         "tap_web/tests/test_x.py": "from tap_files.store import get_store\n",
         "tap_files/apps.py": "",
         "tap_files/boot.py": "from tap_files.store import get_store\n",
         "tap_files/services/__init__.py": (
-            'from tap_files.store import get_store\n__all__ = ["open_file", "store_file"]\n'
+            "from tap_files.services import _backend\nfrom tap_files.store.protocol import OpenedFile\n"
+            '__all__ = ["open_file", "store_file"]\n'
         ),
     }
     for rel, text in files.items():
@@ -303,6 +308,12 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
     assert "contract.py:1" not in message and "contract.py:2" not in message
     assert "fine.py" not in message and "test_x.py" not in message
     assert "boot.py" not in message and "services/__init__.py" not in message and "_backend.py" not in message
+    # Round 3 on PR# 1238 - tap: a public submodule taking the handle, a relative import and a
+    # nested package are refused; the gateway's own type imports are not.
+    assert "tap_files/services/leak.py:2 imports tap_files.services._backend" in message
+    assert "tap_files/services/contract.py:4 imports tap_files.store" in message
+    assert "tap_files/services/nested/__init__.py:1 imports tap_files.store" in message
+    assert "_record.py" not in message
 
 
 # --------------------------------------------------------------------------- logging
