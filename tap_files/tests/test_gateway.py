@@ -187,7 +187,7 @@ def test_refused_without_the_capability_and_no_backend_call(
     services.store_file(ident, "a.txt", io.BytesIO(b"one"), caller_context=_ctx(_holding("files.create")))
     others = [c for c in _FILE_CAPS if c != cap]
     calls: list[str] = []
-    monkeypatch.setattr(services, "get_store", lambda: calls.append("get_store"))
+    monkeypatch.setattr(services._backend, "backend", lambda: calls.append("backend"))
     with pytest.raises(CapabilityDenied):
         _call(op, ident, _ctx(_holding(*others)))
     assert calls == []
@@ -236,6 +236,17 @@ def test_no_operation_writes_the_grid(synced: None, root: Path) -> None:
 
 
 @pytest.mark.spec("req-tap-files-gateway-5")
+def test_the_gateway_module_binds_no_backend() -> None:
+    from tap_files import store
+    from tap_files.store import local
+
+    handles = {id(store.get_store), id(local.LocalBackend), id(store), id(local)}
+    public = {name: value for name, value in vars(services).items() if not name.startswith("_")}
+    assert not [name for name, value in public.items() if id(value) in handles], sorted(public)
+    assert not hasattr(services, "get_store")
+
+
+@pytest.mark.spec("req-tap-files-gateway-5")
 def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tap_files.guards import files_backend_reach as reach
 
@@ -246,11 +257,17 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
         "tap_web/apps.py": "",
         "tap_web/download.py": "from tap_files.store import get_store\n",
         "tap_web/other.py": "from tap_files import store\nimport tap_files.store.local\n",
-        "tap_web/fine.py": "from tap_files.services import open_file\nfrom tap_files.config import configured_root\n",
+        "tap_web/fine.py": (
+            "from tap_files.services import open_file\nfrom tap_files.services import contract\n"
+            "from tap_files.services.contract import FILES_READ\nfrom tap_files.config import configured_root\n"
+        ),
+        "tap_web/sideways.py": "from tap_files.services import _backend\nfrom tap_files.services import _record\n",
         "tap_web/tests/test_x.py": "from tap_files.store import get_store\n",
         "tap_files/apps.py": "",
         "tap_files/boot.py": "from tap_files.store import get_store\n",
-        "tap_files/services/__init__.py": "from tap_files.store import get_store\n",
+        "tap_files/services/__init__.py": (
+            'from tap_files.store import get_store\n__all__ = ["open_file", "store_file"]\n'
+        ),
     }
     for rel, text in files.items():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +277,8 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
         reach.FilesBackendReachGuard().check()
     message = str(caught.value)
     assert "tap_web/download.py:1" in message and "tap_web/other.py:1" in message and "tap_web/other.py:2" in message
+    assert "tap_web/sideways.py:1 imports tap_files.services._backend" in message
+    assert "tap_web/sideways.py:2 imports tap_files.services._record" in message
     assert "fine.py" not in message and "test_x.py" not in message and "tap_files/" not in message
 
 
