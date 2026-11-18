@@ -72,7 +72,7 @@ def _overlap_with_file_store(root: Path) -> VolumeVerdict | None:
     Two volumes by ruling (req-tap-plugin-datadir-scope-2): a backup treats them differently and an
     operator may size them apart, which one directory inside the other would silently defeat.
     """
-    from tap_files.store import configured_root
+    from tap_files.config import configured_root
 
     files_root = configured_root()
     if files_root is None:

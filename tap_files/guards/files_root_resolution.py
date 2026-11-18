@@ -1,7 +1,7 @@
 """File store root single-source guard — `req-tap-files-root` (`-root-1`) and `req-tap-files-interface-1`.
 
 `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` and nowhere else; the setting is
-read in `tap_files/store/__init__.py` and nowhere else; and no Python code names the compose mount
+read in `tap_files/config.py` and nowhere else; and no Python code names the compose mount
 path. So the only way to a path under the store root is through the store, which is what lets every
 write follow the write path and every read be verified. Needles are assembled by concatenation so
 this module never matches its own scan.
@@ -19,7 +19,7 @@ _MOUNT_LITERAL = "/var/lib/tap/" + "files"
 
 _ALLOWED: dict[str, tuple[str, ...]] = {
     "tap/settings.py": (*_ENV_READS, f'"{_NAME}"'),
-    "tap_files/store/__init__.py": _SETTING_READS,
+    "tap_files/config.py": _SETTING_READS,
 }
 _OWN_PATH = "tap_files/guards/files_root_resolution.py"
 
@@ -41,7 +41,7 @@ class FilesRootResolutionGuard(Guard):
     rid = "req-tap-files-root"
     description = (
         "Every path under the file store root must come from the store: TAP_FILES_ROOT is read from the "
-        "environment in tap/settings.py only, the setting is read in tap_files/store only, and no Python code "
+        "environment in tap/settings.py only, the setting is read in tap_files/config.py only, and no Python code "
         "names the compose mount path. A second reader could write outside the write path or read without "
         "verifying, which is exactly what the store exists to prevent."
     )
@@ -58,5 +58,5 @@ class FilesRootResolutionGuard(Guard):
         assert not violations, (  # nosec B101
             f"File store root read outside its homes ({len(violations)}):\n  "
             + "\n  ".join(violations)
-            + "\n\nUse tap_files.store.configured_root() or get_store() (req-tap-files-root, req-tap-files-interface-1)."
+            + "\n\nUse tap_files.config.configured_root() or the gateway, tap_files.services (req-tap-files-root, req-tap-files-interface-1)."
         )

@@ -1018,6 +1018,43 @@ def test_only_a_trustworthy_version_restores_the_root(store: LocalBackend) -> No
     assert read_all(store.open(ident)) == b"one"
 
 
+@pytest.mark.spec("req-tap-files-write-17")
+def test_a_root_naming_another_object_is_not_trusted(store: LocalBackend) -> None:
+    ident, other = new_id(), new_id()
+    store.create(ident, "a", data("one"), "t")
+    for n, text in ((1, "two"), (2, "three")):
+        store.add_version(ident, n, "a", data(text), "t")
+    store.create(other, "b", data("other"), "t")
+    objdir = store.ocfl / layout.object_path(ident)
+    foreign = store.ocfl / layout.object_path(other)
+    # The other object's root pair is valid, and its head (v1) would put v2 and v3 above it.
+    for name in (inv.INVENTORY, inv.SIDECAR):
+        (objdir / name).write_bytes((foreign / name).read_bytes())
+    actions = store.recover_object(ident, locked=False)
+    assert any("restored from v3" in a for a in actions), actions
+    assert not any("quarantine" in a.lower() or "above the head" in a for a in actions), actions
+    assert sorted(p.name for p in objdir.glob("v*")) == ["v1", "v2", "v3"]
+    assert read_all(store.open(ident)) == b"three"
+
+
+@pytest.mark.spec("req-tap-files-write-17")
+def test_a_foreign_root_with_no_version_to_restore_from_moves_nothing(store: LocalBackend) -> None:
+    ident, other = new_id(), new_id()
+    store.create(ident, "a", data("one"), "t")
+    store.add_version(ident, 1, "a", data("two"), "t")
+    store.create(other, "b", data("other"), "t")
+    objdir = store.ocfl / layout.object_path(ident)
+    foreign = store.ocfl / layout.object_path(other)
+    for target in (objdir, objdir / "v1", objdir / "v2"):
+        for name in (inv.INVENTORY, inv.SIDECAR):
+            (target / name).write_bytes((foreign / name).read_bytes())
+    before = sorted(str(p.relative_to(objdir)) for p in objdir.rglob("*"))
+    actions = store.recover_object(ident, locked=False)
+    assert any("invalid" in a for a in actions), actions
+    assert sorted(str(p.relative_to(objdir)) for p in objdir.rglob("*")) == before
+    assert not list(store.quarantine.iterdir())
+
+
 @pytest.mark.spec("req-tap-files-write-15")
 def test_short_writes_are_completed(store: LocalBackend, monkeypatch: pytest.MonkeyPatch) -> None:
     real_write = os.write

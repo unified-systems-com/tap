@@ -126,7 +126,7 @@ class LocalBackend:
     def initialise(self) -> str:
         """Initialise an empty root, accept this store's own, refuse anything else.
 
-        TAP-IMPLEMENTS: req-tap-files-mount-gate@74744dced61b/d039358d6d68 (derivation) — core never adopts
+        TAP-IMPLEMENTS: req-tap-files-mount-gate@58499b9fbc79/d039358d6d68 (derivation) — core never adopts
             content it did not create and never initialises over existing files.
 
         Returns ``"initialised"`` or ``"existing"``; raises :class:`StoreRootRefused` naming what it found.
@@ -307,7 +307,7 @@ class LocalBackend:
     ) -> StoredResult:
         """Store a new object at version 1 (put-if-absent).
 
-        TAP-IMPLEMENTS: req-tap-files-write@95be594ff629/1aa0c897b6da (derivation) — the write path: lock,
+        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/1aa0c897b6da (derivation) — the write path: lock,
             stream and hash into staging, build, sync, then move into place.
         """
         uuid_text = check_identifier(identifier)
@@ -654,7 +654,7 @@ class LocalBackend:
     def recover(self) -> list[str]:
         """Put right what interrupted writes left, for every object; skip any object being written.
 
-        TAP-IMPLEMENTS: req-tap-files-write@95be594ff629/8a88d5d86c16 (enforcement) — the recovery sweep:
+        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/8a88d5d86c16 (enforcement) — the recovery sweep:
             quarantine, never unlink; restore a root pair only from a verified version inventory.
         """
         actions: list[str] = []
@@ -701,11 +701,14 @@ class LocalBackend:
             self._prune_empty_parents(objdir.parent)
             return actions
         pair = self._read_pair(objdir)
-        if pair is None or inv.parse(*pair) is None:
+        parsed = inv.parse(*pair) if pair else None
+        if parsed is None or parsed["id"] != identifier:
+            # A well-formed root naming another object is as untrustworthy as a torn one: its head
+            # would decide which of this object's versions recovery quarantines.
             actions.extend(self._repair_root_pair(identifier, objdir, pair))
         pair = self._read_pair(objdir)
         data = inv.parse(*pair) if pair else None
-        if data is None:
+        if data is None or data["id"] != identifier:
             return actions
         head = len(data["versions"])
         for vdir in sorted(objdir.glob("v*")):

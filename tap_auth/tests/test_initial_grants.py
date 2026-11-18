@@ -45,7 +45,7 @@ class TestRoleAssignmentModel:
     def test_viewer_is_human_only_and_read_only(self):
         spec = roles.ROLES["tap_viewer"]
         assert spec.assignable_to == frozenset({"human"})
-        assert spec.capabilities == ("grid.read",)
+        assert spec.capabilities == ("grid.read", "files.read")
 
     def test_program_only_roles_are_not_login_grantable(self):
         for key in ("tap_bootloader", "tap_cares.collector", "tap_cares.scheduler"):
@@ -136,7 +136,7 @@ class TestViewerGroupSync:
         sync.sync_protected_groups()
         assert ProtectedGroup.objects.filter(builtin_key="tap_viewer", is_protected=True).exists()
         perms = set(Group.objects.get(name="tap_viewer").permissions.values_list("codename", flat=True))
-        assert perms == {codename_for("grid.read")}
+        assert perms == {codename_for("grid.read"), codename_for("files.read")}
 
     def test_program_actor_refuses_binding_to_human_only_group(self):
         # The complement to the login boundary: a program actor must not be bound

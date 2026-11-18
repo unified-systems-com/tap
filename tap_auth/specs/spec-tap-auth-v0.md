@@ -232,7 +232,7 @@ TAP-managed built-in actors and groups are protected security objects, not ordin
   - program actor: `tap_test`
 - `tap_bootloader` is v1, **not future**: the boot spec runs *every* boot service-layer write as it (`spec-tap-boot-v0.md`, `req-boot-phases`), and the named-actor sequencing constraint ([Named Actor Model](#named-actor-model)) makes the system program actors a hard prerequisite for `missing_actor` enforcement. It is created/resolved in the boot `bootstrap` pre-phase and granted an explicit least-privilege boot-capability bundle (`req-tap-auth-capabilities`, `req-boot-phases`) — no `grid.purge`/`grid.delete` — not the full `tap_admin` set.
 - Enforcement-coupled built-ins (promoted to v1 **in lockstep with the `missing_actor` enforcement flip**, not minted speculatively ahead of the enforcement that requires them) are **per-app-owned internal-app service actors**, named `<owning-app>.<component>` and granted a least-privilege bundle defined alongside the actor:
-  - `tap_cares.collector` — the collector runtime (reads to resolve links; writes/imports collected batches; holds `grid.delete`). Interim and deliberately global: replace this grant with per-collector / plugin permission sets (req-tap-auth-program-users and the per-collector actor split) once a second or third case justifies them. Was `tap_collector`.
+  - `tap_cares.collector` — the collector runtime (reads to resolve links; writes/imports collected batches; holds `grid.delete`, and `files.create`, `files.update` and `files.read` to store the files it fetches, `req-tap-files-capabilities-5`). Interim and deliberately global: replace this grant with per-collector / plugin permission sets (req-tap-auth-program-users and the per-collector actor split) once a second or third case justifies them. Was `tap_collector`.
   - `tap_cares.scheduler` — the scheduler (writes its own schedule/fire bookkeeping; triggers runs, which themselves execute as `tap_cares.collector`, not the scheduler). Was `tap_scheduler`.
   - `tap_bootloader` is owned by the boot app (`tap_boot`); it adopts the `tap_boot.*` namespace when the boot increment lands (left as-is until then to avoid churn ahead of that work).
   - A `tap_system` actor is added only if/when an unattended write path exists that is neither boot, scheduler, nor collector.
@@ -363,7 +363,7 @@ Roles are named, reusable capability bundles — the least-privilege capability 
   - `"*"` is admin-only.
 - **Every role declares `assignable_to`** — the principal classes it may be granted to: `"human"` (a person, via the deploy profile's `auth.initial_grants` login path), `"program"` (a built-in program actor bound in `sync.py`), or both. This makes the human/program boundary an explicit, mandatory, schema-validated property of each role rather than an implicit convention:
   - `tap_admin` is **both** — humans (initial admins/grants) and the test-only `tap_test` program actor.
-  - `tap_viewer` (read-only, `grid.read` only — the least-privilege bundle for an invited guest/viewer) is **human-only**.
+  - `tap_viewer` (read-only: `grid.read`, plus `files.read` so a viewer can download a stored file whose node it can see, `req-tap-files-capabilities-4` — the least-privilege bundle for an invited guest/viewer) is **human-only**.
   - `tap_bootloader` / `tap_cares.*` are **program-only** — they can never be handed to a person by login config.
 - The loader derives `HUMAN_ASSIGNABLE_ROLES` and `PROGRAM_ASSIGNABLE_ROLES` from the declarations. The boundary is enforced on **both** sides and guarded by tests:
   - **human side** — the `auth.initial_grants` role enum (auth-boot-section schema) is held in sync with `HUMAN_ASSIGNABLE_ROLES`; boot additionally fails loud if a grant names a non-human role (defense against schema/registry drift); and the social adapter refuses to apply a non-human-assignable role even if one leaks into the effective map at runtime.
@@ -382,7 +382,7 @@ Roles are named, reusable capability bundles — the least-privilege capability 
 | req-tap-auth-roles-6 | Descriptions Reach The Table | Implemented | A role's `description`/`description_json` hard-sync onto its `ProtectedGroup` row; built-in program actors' descriptions hard-sync onto their `User` rows. | |
 | req-tap-auth-roles-7 | Principal-Class Declared | Implemented | Every role declares a mandatory, non-empty `assignable_to` (`human`/`program`/both). The loader exposes `HUMAN_ASSIGNABLE_ROLES`/`PROGRAM_ASSIGNABLE_ROLES`; guarded by test. | |
 | req-tap-auth-roles-8 | Assignment Boundary Enforced | Implemented | A program-only role can never be granted to a person (schema enum in sync with the human set + boot validation + adapter refusal), and a human-only role can never be bound to a program actor (`_ensure_program_actor` guard). | |
-| req-tap-auth-roles-9 | Viewer Role | Implemented | `tap_viewer` is a human-only read-only role (`grid.read`), the least-privilege bundle for an invited guest/viewer. | |
+| req-tap-auth-roles-9 | Viewer Role | Implemented | `tap_viewer` is a human-only read-only role (`grid.read` and `files.read`), the least-privilege bundle for an invited guest/viewer. | `files.read` added by `req-tap-files-capabilities-4`. |
 
 ---
 

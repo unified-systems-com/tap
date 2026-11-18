@@ -118,6 +118,9 @@ def test_cares_bundles_are_least_privilege():
         "grid.delete",
         "cares.run_collectors",
         "cares.self_test_collectors",
+        "files.create",
+        "files.update",
+        "files.read",
     }
     assert set(roles.role_capabilities("tap_cares.scheduler")) == {
         "grid.read",

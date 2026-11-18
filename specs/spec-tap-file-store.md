@@ -71,21 +71,21 @@ which postpones that problem instead of solving it.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-files-scope | [Scope](#scope) | Proposed | One on-grid byte store in core; what it knows and what it leaves to plugins |
-| req-tap-files-root | [The Root](#the-root) | In Development | One setting, one mounted local volume, separate from plugin data |
-| req-tap-files-mount-gate | [Mount Gate And Initialisation](#mount-gate-and-initialisation) | In Development | Boot refuses an unmounted root; an empty root is initialised; unknown content is never adopted |
+| req-tap-files-root | [The Root](#the-root) | Implemented | One setting, one mounted local volume, separate from plugin data |
+| req-tap-files-mount-gate | [Mount Gate And Initialisation](#mount-gate-and-initialisation) | Implemented | Boot refuses an unmounted root; an empty root is initialised; unknown content is never adopted |
 | req-tap-files-ocfl | [On-Disk Format](#on-disk-format) | Implemented | A conformant OCFL 1.1 storage root, one object per stored file |
 | req-tap-files-naming | [Object And File Naming](#object-and-file-naming) | Implemented | Object directory from the identifier alone; stored filename carries name, identifier, version and digest |
 | req-tap-files-immutable | [Immutability And Versions](#immutability-and-versions) | Implemented | Write-once bytes; a change is a new version; nothing is deleted |
 | req-tap-files-interface | [Store Interface](#store-interface) | Implemented | Whole-file operations behind a backend protocol; local filesystem is the only backend |
 | req-tap-files-write | [Write Path](#write-path) | Implemented | Stream, hash, limit, stage, verify, move into place; recovery after a crash |
 | req-tap-files-read | [Read Path](#read-path) | Implemented | Verify the digest before releasing any byte |
-| req-tap-files-capabilities | [Capabilities](#capabilities) | Proposed | `files.create`, `files.read`, `files.update`, `files.delete` in the core registry |
-| req-tap-files-gateway | [Service Gateway](#service-gateway) | Proposed | The gated operations programs call; the identifier a file node shares with its object |
+| req-tap-files-capabilities | [Capabilities](#capabilities) | In Development | `files.create`, `files.read`, `files.update`, `files.delete` in the core registry |
+| req-tap-files-gateway | [Service Gateway](#service-gateway) | Implemented | The gated operations programs call; the identifier a file node shares with its object |
 | req-tap-files-node | [The Grid File](#the-grid-file) | Proposed | `tap_file`, a core type: every held file's node, found again by its directory and name |
 | req-tap-files-directory | [Directories](#directories) | Proposed | `tap_directory`, a core type: one parent, containment edges to its files and directories |
 | req-tap-files-format-record | [Format Records](#format-records) | Proposed | `FILE_CONTENTS` joins a file to the one node, of a plugin's type, that says what its bytes are |
 | req-tap-files-hold | [Holding A File](#holding-a-file) | Proposed | The one helper that stores bytes and shapes the nodes, bytes first; what changes when a file changes |
-| req-tap-files-logging | [Operation Logging](#operation-logging) | Proposed | One structured record per operation, reads and refusals included |
+| req-tap-files-logging | [Operation Logging](#operation-logging) | In Development | One structured record per operation, reads and refusals included |
 | req-tap-files-download | [Download Route](#download-route) | Proposed | A logged-in user with `files.read` downloads a file as an attachment |
 | req-tap-files-check | [Report-Only Check](#report-only-check) | Proposed | A command that validates the store and lists where it and the grid's file nodes disagree, both ways |
 | req-tap-files-health | [Health Probe](#health-probe) | Proposed | A probe that reports the root as usable or not |
@@ -143,7 +143,7 @@ sub-grid and has a different volume.
 ----
 RID: `req-tap-files-root`
 
-Status: `In Development`
+Status: `Implemented`
 
 The store lives under one root named by one core setting.
 
@@ -186,8 +186,8 @@ The store lives under one root named by one core setting.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-root-1 | One Setting, No Default | Implemented | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned. |
-| req-tap-files-root-2 | Repository Compose Enables It | Proposed | Every compose file in this repository that defines a service running store code mounts a named volume and sets the variable to that mount path; that volume is not the plugin data volume. | |
+| req-tap-files-root-1 | One Setting, No Default | Implemented | `TAP_FILES_ROOT` is read from the environment in `tap/settings.py` only; with the variable unset the setting is empty and no path literal stands in for it. | Guard-pinned: the setting is read in `tap_files/config.py` only. |
+| req-tap-files-root-2 | Repository Compose Enables It | Implemented | Every compose file in this repository that defines a service running store code mounts a named volume and sets the variable to that mount path; that volume is not the plugin data volume. | Includes the CI and build overlays, which merge into the base `web` service. Landed with the gateway (ruled 2026-11-17), so no instance runs a store without the capability check in front of it. |
 | req-tap-files-root-5 | Not Enabled Is One Clear Error | Implemented | With the variable unset, each gateway operation raises `FileStoreNotEnabled` and touches no path, and the download route answers not found. | |
 | req-tap-files-root-3 | Nothing Foreign Under The OCFL Root | Implemented | After any sequence of store operations, including interrupted ones, `ocfl/` contains only the storage-root marker, the layout declaration, the extensions directory and object hierarchy, with no empty directory. | OCFL section 4.1. |
 | req-tap-files-root-4 | Roots Do Not Overlap | Implemented | When both are set, the mount gate fails if the file store root and the plugin data root are the same path or one contains the other. | |
@@ -196,7 +196,7 @@ The store lives under one root named by one core setting.
 ----
 RID: `req-tap-files-mount-gate`
 
-Status: `In Development`
+Status: `Implemented`
 
 **Gate** (ruled 2026-11-16). The store is optional, a plugin declares when it needs it, and boot
 fails only when a need cannot be met or a configured volume is broken.
@@ -252,9 +252,9 @@ whoever is installed.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-files-mount-gate-1 | Unmounted Configured Root Aborts | Implemented | With the setting naming a path on the same device as `/`, boot exits non-zero after one `ABORT` record whose reason says the root is not a mounted volume, whether or not any plugin requires the store. | |
-| req-tap-files-mount-gate-6 | Required But Not Enabled Aborts | Proposed | With the setting unset and an installed plugin declaring `[file_store] required = true`, boot aborts and the reason names that plugin. | |
+| req-tap-files-mount-gate-6 | Required But Not Enabled Aborts | Implemented | With the setting unset and an installed plugin declaring `[file_store] required = true`, boot aborts and the reason names that plugin. | |
 | req-tap-files-mount-gate-7 | Not Enabled, Not Required, Boots | Implemented | With the setting unset and no installed plugin requiring the store, boot succeeds and creates nothing. | |
-| req-tap-files-mount-gate-8 | Manifest Table Strict | Proposed | A `[file_store]` table with a non-boolean `required` or any other key fails the manifest load. | |
+| req-tap-files-mount-gate-8 | Manifest Table Strict | Implemented | A `[file_store]` table with a non-boolean `required` or any other key fails the manifest load. | A table without `required` fails too: the key is the table's only meaning. |
 | req-tap-files-mount-gate-2 | Empty Root Initialised | Implemented | Booting against an empty mounted root leaves the four directories, and under `ocfl/` exactly the OCFL 1.1 storage-root marker, `ocfl_layout.json` naming the `0003` extension, and that extension's configuration. | An independent validator's verdict is `req-tap-files-ocfl-validation` (Backlog, ruled 2026-11-17). |
 | req-tap-files-mount-gate-3 | Foreign Content Refused | Implemented | Booting against a mounted root that contains a file and no storage-root marker aborts and changes nothing under the root. | |
 | req-tap-files-mount-gate-4 | Idempotent | Implemented | A second boot against an initialised root changes no file under `ocfl/`. | |
@@ -574,7 +574,8 @@ Under the lock, recovery:
 - moves an unowned staging directory to `quarantine/`, with a note saying what it was and when it
   was found;
 - **completes or restores the root inventory pair** when the root inventory does not match its
-  sidecar. If the root inventory's bytes equal the inventory in one of the object's version
+  sidecar, or when it is valid but names another object: a root naming another object would let
+  that object's head decide which of this one's versions are quarantined. If the root inventory's bytes equal the inventory in one of the object's version
   directories, and that version inventory matches its own sidecar and validates, the root sidecar
   is rewritten from that version's: the commit had happened and is finished. Otherwise both root
   files are restored from the highest version directory whose inventory matches its sidecar and
@@ -582,7 +583,8 @@ Under the lock, recovery:
   changed and the object is reported invalid. This is the only case in which recovery writes an
   inventory, and it only ever copies one the store had already written and can verify;
 - moves a version directory numbered above the head in the (now matching) root inventory to
-  `quarantine/`: the write was interrupted before its commit point;
+  `quarantine/`: the write was interrupted before its commit point. Where the root still names
+  another object, because nothing could restore it, no version is moved;
 - removes a hashed parent directory under `ocfl/` left empty by a create that did not finish, this
   being the one place the store removes a directory, and only an empty one.
 
@@ -614,6 +616,7 @@ first, and retries once when another create pruned an empty one between its `mkd
 | req-tap-files-write-14 | Only A Trustworthy Version Restores The Root | Implemented | With the root pair damaged, a version directory holding a valid inventory for another identifier, or one whose head is not its own directory's, or one naming content that is absent, is never used as the source; a genuine version is. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-write-15 | Short Writes Completed | Implemented | With the operating system writing at most one byte per call, a create completes and every inventory, sidecar and marker it wrote is whole and valid. | Raised by the AI review on PR# 1233 - tap. |
 | req-tap-files-write-16 | Shared Parents Do Not Collide | Implemented | Two creates of different objects whose directories share hashed parents, run concurrently in two processes, both succeed. | Raised by the AI review on PR# 1233 - tap. |
+| req-tap-files-write-17 | A Root Naming Another Object Is Not Trusted | Implemented | With an object's root inventory pair replaced by another object's valid pair, recovery restores the root from the object's own highest valid version and quarantines none of its versions; with no valid version of its own, recovery changes nothing and reports the object invalid. | Raised by the AI review on PR# 1233 - tap; landed in the next PR (ruled 2026-11-17). |
 | req-tap-files-write-13 | Retry After A Failed Grid Write | Implemented | After a stored version whose grid write was refused, repeating the write with the earlier expected version is a conflict; `stat` then shows the head, and a retry that offers the same bytes is told the version that already holds them and stores nothing new. | |
 
 ### Read Path
@@ -673,7 +676,7 @@ error.
 ----
 RID: `req-tap-files-capabilities`
 
-Status: `Proposed`
+Status: `In Development`
 
 Four capabilities join the core registry (`tap_auth/tap_auth.capabilities.json`,
 `req-tap-auth-capabilities`), each with a description and a risk (ruled 2026-11-16: create, read,
@@ -710,17 +713,17 @@ Grants follow the registry's existing rules, and no capability implies another:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-capabilities-1 | Registered With Descriptions | Proposed | The four capabilities are present in the registry file with a description and a risk, and the file validates against its schema. | |
-| req-tap-files-capabilities-2 | Grid Read Is Not Enough | Proposed | An actor holding `grid.read` and not `files.read` can read a file's node and is refused its bytes. | |
-| req-tap-files-capabilities-5 | Collector Actor Can Write | Proposed | The collector program actor holds `files.create`, `files.update` and `files.read`, and the roles file's description of that grant names it as global and interim. | Per-collector scoping: Issue# 1205 - tap. |
-| req-tap-files-capabilities-4 | Viewer Can Read | Proposed | The `tap_viewer` role holds `files.read` and none of the other three. | |
-| req-tap-files-capabilities-3 | No Implication | Proposed | Holding `files.update` does not permit a create, and holding `files.create` does not permit a read. | |
+| req-tap-files-capabilities-1 | Registered With Descriptions | Implemented | The four capabilities are present in the registry file with a description and a risk, and the file validates against its schema. | |
+| req-tap-files-capabilities-2 | Grid Read Is Not Enough | In Development | An actor holding `grid.read` and not `files.read` can read a file's node and is refused its bytes. | The refusal of the bytes is tested; reading a `tap_file` node needs the node type, which arrives with `req-tap-files-node` (Issue# 1228 - tap). |
+| req-tap-files-capabilities-5 | Collector Actor Can Write | Implemented | The collector program actor holds `files.create`, `files.update` and `files.read`, and the roles file's description of that grant names it as global and interim. | Per-collector scoping: Issue# 1205 - tap. |
+| req-tap-files-capabilities-4 | Viewer Can Read | Implemented | The `tap_viewer` role holds `files.read` and none of the other three. | |
+| req-tap-files-capabilities-3 | No Implication | Implemented | Holding `files.update` does not permit a create, and holding `files.create` does not permit a read. | |
 
 ### Service Gateway
 ----
 RID: `req-tap-files-gateway`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Programs use the store through a gateway of gated operations, following the guarded service boundary
 (`req-service-boundary-model`): every exported operation carries its capability check, and the
@@ -761,11 +764,11 @@ are stored as files here and not kept in a plugin's own directory (ruled 2026-11
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-gateway-1 | Every Export Gated | Proposed | Every name the gateway exports is an operation carrying a capability requirement; the boundary guard finds none ungated. | `req-service-boundary-contract-surface`. |
-| req-tap-files-gateway-2 | Refused Without The Capability | Proposed | Each gateway operation called by an actor without its capability raises the standard capability error and performs no backend call. | |
-| req-tap-files-gateway-3 | Actor From Context | Proposed | The writer recorded in a version's inventory entry is the caller context's actor, and no gateway operation accepts an actor argument. | |
-| req-tap-files-gateway-4 | No Grid Write | Proposed | No gateway operation creates, changes or deletes a node or an edge. | |
-| req-tap-files-gateway-5 | Nothing Else Reaches The Backend | Proposed | Outside the gateway, only the boot initialisation, recovery and the check command import the backend; the boundary guard finds no other importer, the download route included. | Ruled 2026-11-17. |
+| req-tap-files-gateway-1 | Every Export Gated | Implemented | Every name the gateway exports is an operation carrying a capability requirement; the boundary guard finds none ungated. | `req-service-boundary-contract-surface`. |
+| req-tap-files-gateway-2 | Refused Without The Capability | Implemented | Each gateway operation called by an actor without its capability raises the standard capability error and performs no backend call. | |
+| req-tap-files-gateway-3 | Actor From Context | Implemented | The writer recorded in a version's inventory entry is the caller context's actor, and no gateway operation accepts an actor argument. | |
+| req-tap-files-gateway-4 | No Grid Write | Implemented | No gateway operation creates, changes or deletes a node or an edge. | |
+| req-tap-files-gateway-5 | Nothing Else Reaches The Backend | Implemented | Outside the gateway, only the boot initialisation, recovery and the check command import the backend; the boundary guard finds no other importer, the download route included. | Ruled 2026-11-17. |
 
 ### The Grid File
 ----
@@ -982,7 +985,7 @@ that was one file is replaced.
 ----
 RID: `req-tap-files-logging`
 
-Status: `Proposed`
+Status: `In Development`
 
 Every gateway operation and every download produces one structured log record (ruled 2026-11-16:
 the interface is specified with strong logging). The record is a structured message object
@@ -1009,10 +1012,10 @@ Each log call carries a site token as every committed log call does (`req-tap-lo
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-logging-1 | One Record Per Operation | Proposed | Each gateway operation and each download emits exactly one record with the reserved code, whether it succeeds, is refused or fails. | |
-| req-tap-files-logging-2 | Read Names The Reader | Proposed | A successful read's record carries the reader's actor key, the identifier, the version and the digest. | |
-| req-tap-files-logging-3 | Refusal Recorded | Proposed | A read refused for lack of `files.read` produces a record with outcome refused and the actor's key. | |
-| req-tap-files-logging-4 | No Content In Logs | Proposed | Storing and reading a file whose bytes contain a marker string leaves that string in no log record at any level. | |
+| req-tap-files-logging-1 | One Record Per Operation | In Development | Each gateway operation and each download emits exactly one record with the reserved code, whether it succeeds, is refused or fails. | Built and tested for every gateway operation, with the code `FILE_OPERATION`; the download's record arrives with `req-tap-files-download` (Issue# 1210 - tap). |
+| req-tap-files-logging-2 | Read Names The Reader | Implemented | A successful read's record carries the reader's actor key, the identifier, the version and the digest. | |
+| req-tap-files-logging-3 | Refusal Recorded | Implemented | A read refused for lack of `files.read` produces a record with outcome refused and the actor's key. | |
+| req-tap-files-logging-4 | No Content In Logs | Implemented | Storing and reading a file whose bytes contain a marker string leaves that string in no log record at any level. | |
 
 ### Download Route
 ----

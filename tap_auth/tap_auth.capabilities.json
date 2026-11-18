@@ -111,6 +111,26 @@
       "name": "ai.delegate",
       "description": "Delegate bounded authority to AI actors acting on a user's behalf.",
       "risk": "high"
+    },
+    {
+      "name": "files.create",
+      "description": "Store a new file in the core file store (tap_files.services.store_file). Seeing a file's grid node needs only grid.read; storing bytes needs this. See specs/spec-tap-file-store.md req-tap-files-capabilities.",
+      "risk": "medium"
+    },
+    {
+      "name": "files.read",
+      "description": "Get a stored file's bytes or its version history from the core file store (open_file, file_info, file_exists). Deliberately separate from grid.read: a stored document can be more sensitive than the fact that it exists, so browsing the graph does not by itself let an actor pull every document off the instance.",
+      "risk": "medium"
+    },
+    {
+      "name": "files.update",
+      "description": "Add a version to a stored file, or rename it, in the core file store (add_file_version, rename_file). Implies neither files.create nor files.read.",
+      "risk": "medium"
+    },
+    {
+      "name": "files.delete",
+      "description": "Reserved: delete a stored file. No operation requires it in this release, because the file store deletes nothing (req-tap-files-retention); it is registered so the vocabulary is complete and grants need no revisiting when deletion arrives.",
+      "risk": "high"
     }
   ]
 }
