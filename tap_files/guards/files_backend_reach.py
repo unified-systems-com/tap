@@ -10,7 +10,10 @@ download route, a collector or a plugin calls the gateway. Where the store lives
 gated operations and its contract module is refused too, since the gateway's own handle on the
 backend would otherwise be one import away; and inside the gateway package only `__init__.py` and
 its `_` modules hold the backend, so a public submodule added later cannot re-export it. The
-contract module may take the store's error and result types and nothing else. Tests are exempt: they exercise the backend directly.
+contract module may take the store's error and result types and nothing else. Importing the
+gateway module whole is how its operations are called, so that is allowed, but reading an `_` name
+off it (`services._backend`) is refused like importing that name. An AST scan is a tripwire:
+`getattr` and `importlib` can still go around it, and the capability gate is the check that counts. Tests are exempt: they exercise the backend directly.
 """
 
 from __future__ import annotations
@@ -70,6 +73,42 @@ def _off_gateway(node: ast.Import | ast.ImportFrom, exports: frozenset[str]) -> 
     return []
 
 
+def _gateway_aliases(tree: ast.AST) -> set[str]:
+    """Dotted names a file binds to the gateway module itself: ``services``, ``tap_files.services``."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _GATEWAY:
+                    names.add(alias.asname or _GATEWAY)
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module == "tap_files":
+            names.update(a.asname or a.name for a in node.names if a.name == "services")
+    return names
+
+
+def _dotted(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _private_reads(tree: ast.AST) -> list[tuple[int, str]]:
+    """``services._backend`` and the like: a below-gate name read through the gateway module.
+
+    Importing the gateway module whole is how its operations are called, so it is allowed; reading
+    an ``_`` name off it is the same reach as importing that name, and is refused like one.
+    """
+    aliases = _gateway_aliases(tree)
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("_") and _dotted(node.value) in aliases:
+            found.append((node.lineno, f"{_GATEWAY}.{node.attr}"))
+    return found
+
+
 def _may_import_backend(rel: Path) -> bool:
     """The store itself, boot, the gateway's ``__init__`` and its below-gate ``_`` modules."""
     posix = rel.as_posix()
@@ -111,6 +150,8 @@ class FilesBackendReachGuard(Guard):
                         offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in reached)
                 if not _inside_gateway(rel):
                     offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in _off_gateway(node, exports))
+            if not _inside_gateway(rel):
+                offenders.extend(f"{rel}:{line} reads {name}" for line, name in _private_reads(parsed.tree))
         assert not offenders, (  # nosec B101
             f"File store backend imported outside its gateway ({len(offenders)}):\n  "
             + "\n  ".join(sorted(set(offenders)))

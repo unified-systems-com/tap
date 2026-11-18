@@ -263,6 +263,10 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
         ),
         "tap_web/sideways.py": "from tap_files.services import _backend\nfrom tap_files.services import _record\n",
         "tap_web/via_leak.py": "from tap_files.services.leak import get_store\nimport tap_files.services.leak\n",
+        "tap_web/wholesale.py": (
+            "import tap_files.services as svc\nfrom tap_files import services\nimport tap_files.services\n"
+            "svc._backend.backend()\nservices._record.recorded\ntap_files.services._backend\nservices.open_file\n"
+        ),
         "tap_files/services/leak.py": "from tap_files.store import get_store\n",
         "tap_files/services/contract.py": (
             "from tap_files.store.errors import ObjectExists\nfrom tap_files.store.protocol import OpenedFile\n"
@@ -291,6 +295,10 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
     assert "tap_files/services/leak.py:1 imports tap_files.store" in message
     assert "tap_web/via_leak.py:1 imports tap_files.services.leak" in message
     assert "tap_web/via_leak.py:2 imports tap_files.services.leak" in message
+    # Importing the gateway whole is how operations are called; reading an `_` name off it is not.
+    for line, name in ((4, "_backend"), (5, "_record"), (6, "_backend")):
+        assert f"tap_web/wholesale.py:{line} reads tap_files.services.{name}" in message
+    assert "wholesale.py:1" not in message and "wholesale.py:7" not in message
     assert "tap_files/services/contract.py:3 imports tap_files.store" in message
     assert "contract.py:1" not in message and "contract.py:2" not in message
     assert "fine.py" not in message and "test_x.py" not in message
