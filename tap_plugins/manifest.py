@@ -697,9 +697,6 @@ def _parse_data_directory(raw_value: Any, manifest_path: Path) -> DataDirectoryD
 def _parse_file_store(raw_value: Any, manifest_path: Path) -> FileStoreDeclaration | None:
     """Parse the optional ``[file_store]`` table (``req-tap-files-mount-gate``).
 
-    TAP-IMPLEMENTS: req-tap-files-mount-gate@58499b9fbc79/bfb5dba13311 (enforcement) — the table's one
-        key and its type are refused here, at manifest load.
-
     ``required`` is the only key and must be a TOML boolean; any other key is refused by name.
     """
     if raw_value is None:

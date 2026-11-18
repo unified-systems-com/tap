@@ -19,7 +19,7 @@ from tap_files.store.errors import FileIntegrityError, FileStoreError, StoreBusy
 from tap_files.store.layout import check_identifier
 from tap_files.store.protocol import ObjectStat, OpenedFile, StoredResult
 
-logger = logging.getLogger("tap_files.operations")
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
