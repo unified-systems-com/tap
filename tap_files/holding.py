@@ -107,6 +107,9 @@ def _directory_ops(
 ) -> tuple[list[WriteOperation], uuid.UUID | None]:
     """Create each directory on the path that does not exist yet, under the identity lock.
 
+    TAP-IMPLEMENTS: req-tap-files-directory@8885f6a339b3/3ca8d3ee7bfc (enforcement) — one parent, the right ends, no
+        cycle and a path that agrees with its edges, held by the only writer of both containment edges.
+
     A directory is made only together with its one containment edge from its parent, so no
     directory gains a second parent here. Returns the operations and the innermost directory's id.
     """
@@ -215,7 +218,7 @@ def _hold_new(
 def _hold_version(
     node: TapFile, stream: BinaryIO, media_type: str | None, reason: str, ctx: CallerContext | None
 ) -> HeldFile:
-    from tap_grid.models import Edge
+    from tap_grid.models import Edge, Entity
 
     entity_id = node.entity_id
     identifier = identifier_for(entity_id)
@@ -228,18 +231,23 @@ def _hold_version(
     payload: dict[str, object] = {"sha256": stored.digest, "size_bytes": stored.size, "file_version": stored.version}
     if media_type is not None:
         payload["media_type"] = media_type
-    ops = [
-        WriteOperation(
-            verb="patch_node",
-            target=entity_id,
-            payload=payload,
-            entity_expected_version=node.entity.version,
-        )
-    ]
-    # The old bytes' format record no longer describes this file (req-tap-files-hold-9).
-    for edge in Edge.objects.filter(from_entity_id=entity_id, edge_type=FILE_CONTENTS):
-        ops.append(WriteOperation(verb="delete_edge", target=edge.entity_id, reason="resolved"))
-    _write(ops, ctx, f"hold {node.path} v{stored.version}")
+    with transaction.atomic():
+        # Lock the file's row before reading its format records. Attaching an edge locks both
+        # endpoints (tap_grid/services/_impl.py, _lock_rows), so an attach either committed before
+        # this lock, and its edge is read and removed here, or waits until the patch has committed.
+        Entity.objects.select_for_update().filter(pk=entity_id).first()
+        ops = [
+            WriteOperation(
+                verb="patch_node",
+                target=entity_id,
+                payload=payload,
+                entity_expected_version=node.entity.version,
+            )
+        ]
+        # The old bytes' format record no longer describes this file (req-tap-files-hold-9).
+        for edge in Edge.objects.filter(from_entity_id=entity_id, edge_type=FILE_CONTENTS):
+            ops.append(WriteOperation(verb="delete_edge", target=edge.entity_id, reason="resolved"))
+        _write(ops, ctx, f"hold {node.path} v{stored.version}")
     return _held(entity_id, stored, True)
 
 

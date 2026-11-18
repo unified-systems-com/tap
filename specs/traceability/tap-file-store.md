@@ -4,9 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 13 |
+| mapped | 14 |
 | unbuilt | 15 |
-| unaccounted | 1 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
@@ -14,6 +13,7 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-tap-files-capabilities` | Implemented | Tested | — | `req-tap-files-capabilities-1`, `req-tap-files-capabilities-2`, `req-tap-files-capabilities-3`, `req-tap-files-capabilities-4`, `req-tap-files-capabilities-5` |
+| `req-tap-files-directory` | Implemented | Implemented | `_directory_ops` | — |
 | `req-tap-files-gateway` | Implemented | Verified | `_writer` | `req-tap-files-gateway-1`, `req-tap-files-gateway-2`, `req-tap-files-gateway-3`, `req-tap-files-gateway-4`, `req-tap-files-gateway-5` |
 | `req-tap-files-history` | Implemented | Tested | — | `req-tap-files-history-1`, `req-tap-files-history-2` |
 | `req-tap-files-hold` | Implemented | Implemented | `hold_file` | — |
