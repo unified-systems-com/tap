@@ -2943,11 +2943,14 @@ class TestGryphonBareMatchExecutor:
             edge_type="KNOWS",
         )
         result = execute_search(self._search("MATCH (n)"), inputs={})
-        assert sorted({node["entity_type"] for node in result["nodes"]}) == [
+        # Every grid holds its dimension vocabulary and the batches that imported it
+        # (req-grid-dimension-reference-9); set them aside.
+        nodes = [node for node in result["nodes"] if node["entity_type"] not in ("dimension", "batch")]
+        assert sorted({node["entity_type"] for node in nodes}) == [
             "grid_fixtures__constrained_source",
             "grid_fixtures__node",
         ]
-        assert len(result["nodes"]) == 4
+        assert len(nodes) == 4
 
     def test_bare_match_field_absence_is_silently_non_matching(self):
         """req-grid-traversal-lang-bare-match-3: a type lacking the data field matches nothing, no error.

@@ -55,8 +55,9 @@ def _edge(source: uuid.UUID, target: uuid.UUID, edge_type: str) -> uuid.UUID:
 
 def _empty_the_grid() -> None:
     """Hard-reset to an empty grid, the import target (no service verb destroys a spine)."""
-    Entity.objects.all().delete()
-    assert Entity.objects.count() == 0
+    # The dimension vocabulary stays: boot imports it onto every grid (req-grid-dimension-reference-9).
+    Entity.objects.exclude(entity_type="dimension").delete()
+    assert not Entity.objects.exclude(entity_type="dimension").exists()
 
 
 def _batch(export: Any) -> dict[str, Any]:
@@ -228,7 +229,7 @@ class TestContentsDeclaration:
         _empty_the_grid()
         result = grift_import(document)
         assert not result.success
-        assert Entity.objects.count() == 0
+        assert not Entity.objects.exclude(entity_type="dimension").exists()
         return {issue.code for issue in result.errors}
 
     @pytest.mark.spec("req-grift-contents-2")

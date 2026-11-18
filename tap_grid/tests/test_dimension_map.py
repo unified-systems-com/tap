@@ -9,7 +9,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from tap_grid import dimension_vocabulary as vocab
+from tap_grid import live_dimensions as vocab
 from tap_grid.dimension_map import DimensionWriteError, patch, rederive, stamp, supplied
 
 OPEN = "01a1d150-2222-7000-8000-000000000001"
@@ -19,19 +19,18 @@ EMPTY_OK = "01a1d150-2222-7000-8000-000000000003"
 
 @pytest.fixture
 def table() -> Iterator[None]:
-    saved = vocab.vocabulary()
-    vocab.reset(
-        vocab.Vocabulary(
-            by_id={
-                OPEN: vocab.DeclaredDimension(OPEN, "tap.test.open", None, False, "test"),
-                BOUNDED: vocab.DeclaredDimension(BOUNDED, "tap.test.bounded", ("a", "b"), False, "test"),
-                EMPTY_OK: vocab.DeclaredDimension(EMPTY_OK, "tap.test.empty_ok", None, False, "test", empty_is_meaningful=True),
-            },
-            by_name={"tap.test.open": (OPEN,), "tap.test.bounded": (BOUNDED,), "tap.test.empty_ok": (EMPTY_OK,)},
+    """A fixed vocabulary, no database: these tests are about the write rules, not the rows."""
+    vocab.pin(
+        vocab.Vocabulary.of(
+            [
+                vocab.LiveDimension(OPEN, "tap.test.open", None, False),
+                vocab.LiveDimension(BOUNDED, "tap.test.bounded", ("a", "b"), False),
+                vocab.LiveDimension(EMPTY_OK, "tap.test.empty_ok", None, False, empty_is_meaningful=True),
+            ]
         )
     )
     yield
-    vocab.reset(saved)
+    vocab.pin(None)
 
 
 @pytest.mark.spec("req-grid-dimension-reference-3")

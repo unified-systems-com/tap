@@ -180,7 +180,12 @@ def execute_gryphon_raw(
     Raises:
         SearchExecutionError: If the query is malformed, unsupported, or execution fails.
     """
-    return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock)
+    from tap_grid.live_dimensions import scope as dimension_scope
+
+    # One currency check of the live dimension vocabulary for the whole read, not one per row
+    # presented (req-grid-dimension-reference-9).
+    with dimension_scope():
+        return _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock)
 
 
 def _execute_gryphon_raw_impl(
@@ -330,7 +335,7 @@ def explain_gryphon_raw(
 ) -> dict[str, Any]:
     """Execute a raw gryphon query and return both the envelope and the SQL it ran.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@6f701679bd50/d05d384dc51c (surface) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-sql-capture@31705bf323bb/e20247cce2ca (surface) — the
         read-only seam that records issued SQL; snapshot tests and `gryphon explain` read it.
 
     Returns ``{"envelope": <canonical envelope>, "sql": <SqlCapture>}``. The
@@ -374,7 +379,12 @@ def explain_gryphon_raw(
     # directly — routing through the gated execute_gryphon_raw would record a
     # second, redundant authz query inside the capture.
     with capture_sql() as capture:
-        envelope = _execute_gryphon_raw_impl(query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock)
+        from tap_grid.live_dimensions import scope as dimension_scope
+
+        with dimension_scope():
+            envelope = _execute_gryphon_raw_impl(
+                query, inputs, db_alias=db_alias, layer=layer, scope=scope, clock=clock
+            )
     return {"envelope": envelope, "sql": capture}
 
 

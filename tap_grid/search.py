@@ -35,6 +35,30 @@ _SEARCH_DB_ALIAS = SEARCH_READONLY
 _ENVELOPE_KEYS = frozenset({"nodes", "edges"})
 
 
+def _dispatch(
+    search: Search,
+    validated_inputs: dict[str, Any],
+    effective_limit: int | None,
+    effective_offset: int,
+    layer: SubgraphLayer,
+) -> Any:
+    """Run the Search in its mode (see :func:`execute_search`)."""
+    if search.search_type == "module":
+        return _execute_module_search(search, validated_inputs, _SEARCH_DB_ALIAS, layer=layer)
+    if search.search_type == "orm":
+        return _execute_orm_search(
+            search,
+            validated_inputs,
+            _SEARCH_DB_ALIAS,
+            effective_limit,
+            effective_offset,
+            layer=layer,
+        )
+    if search.search_type == "gryphon":
+        return _execute_gryphon_search(search, validated_inputs, _SEARCH_DB_ALIAS, layer=layer)
+    raise SearchExecutionError(f"Unknown search_type: {search.search_type!r}")
+
+
 @requires_capability(READ_CAPABILITY, operation="execute_search")
 def execute_search(
     search: Search,
@@ -76,21 +100,12 @@ def execute_search(
 
     start_time = time.monotonic()
 
-    if search.search_type == "module":
-        raw_result = _execute_module_search(search, validated_inputs, _SEARCH_DB_ALIAS, layer=layer)
-    elif search.search_type == "orm":
-        raw_result = _execute_orm_search(
-            search,
-            validated_inputs,
-            _SEARCH_DB_ALIAS,
-            effective_limit,
-            effective_offset,
-            layer=layer,
-        )
-    elif search.search_type == "gryphon":
-        raw_result = _execute_gryphon_search(search, validated_inputs, _SEARCH_DB_ALIAS, layer=layer)
-    else:
-        raise SearchExecutionError(f"Unknown search_type: {search.search_type!r}")
+    # One currency check of the live dimension vocabulary for the whole search: every row's
+    # envelope presents its dimensions by name (req-grid-dimension-reference-9).
+    from tap_grid.live_dimensions import scope as dimension_scope
+
+    with dimension_scope():
+        raw_result = _dispatch(search, validated_inputs, effective_limit, effective_offset, layer)
 
     elapsed_ms = round((time.monotonic() - start_time) * 1000)
 

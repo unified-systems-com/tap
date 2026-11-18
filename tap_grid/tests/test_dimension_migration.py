@@ -63,49 +63,112 @@ class TestTheMigration:
             migration.backwards(apps, _editor())
         assert META in Entity.objects.get(pk=node.entity_id).dimensions
 
-    def _with_alias(self) -> Any:
-        """The real table plus a renamed dimension declared under its old and new name (Q56)."""
-        from tap_grid import dimension_vocabulary as vocab
-
-        saved = vocab.vocabulary()
+    def _with_alias(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        """The installed seeds plus a renamed dimension declared under its old and new name (Q56)."""
+        real = migration._vocabulary()
         ident = "01a1d150-3333-7000-8000-000000000001"
-        node = vocab.DeclaredDimension(ident, "tap.test.new-name", None, False, "test")
-        vocab.reset(
-            vocab.Vocabulary(
-                by_id={**saved.by_id, ident: node},
-                by_name={**saved.by_name, "tap.test.old-name": (ident,), "tap.test.new-name": (ident,)},
-            )
+        aliased = migration._SeedVocabulary(
+            by_name={**real.by_name, "tap.test.old-name": (ident,), "tap.test.new-name": (ident,)},
+            name_of={**real.name_of, ident: "tap.test.new-name"},
         )
-        return saved, ident
+        monkeypatch.setattr(migration, "_vocabulary", lambda: aliased)
+        return ident
 
-    def test_two_names_of_one_dimension_with_different_values_stop_it(self) -> None:
-        from tap_grid import dimension_vocabulary as vocab
-
-        saved, _ident = self._with_alias()
-        try:
-            node = Dimension.objects.create(name="tap.test.aliased")
-            _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "b"})
-            with pytest.raises(RuntimeError, match="two names of one dimension"):
-                migration.forwards(apps, _editor())
-        finally:
-            vocab.reset(saved)
-
-    def test_two_names_of_one_dimension_with_equal_values_merge(self) -> None:
-        from tap_grid import dimension_vocabulary as vocab
-
-        saved, ident = self._with_alias()
-        try:
-            node = Dimension.objects.create(name="tap.test.aliased-equal")
-            _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "a"})
+    def test_two_names_of_one_dimension_with_different_values_stop_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._with_alias(monkeypatch)
+        node = Dimension.objects.create(name="tap.test.aliased")
+        _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "b"})
+        with pytest.raises(RuntimeError, match="two names of one dimension"):
             migration.forwards(apps, _editor())
-            assert Entity.objects.get(pk=node.entity_id).dimensions[ident] == {"v": "a", "src": "declared"}
-        finally:
-            vocab.reset(saved)
+
+    def test_two_names_of_one_dimension_with_equal_values_merge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ident = self._with_alias(monkeypatch)
+        node = Dimension.objects.create(name="tap.test.aliased-equal")
+        _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.old-name": "a", "tap.test.new-name": "a"})
+        migration.forwards(apps, _editor())
+        assert Entity.objects.get(pk=node.entity_id).dimensions[ident] == {"v": "a", "src": "declared"}
+
+    def test_it_resolves_a_seeded_name_that_has_no_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """unified-systems-com/tap#1188: the migration runs before boot imports any Dimension row, so
+        it resolves names from the installed seed files with its own frozen reader, never the rows."""
+        ident = self._with_alias(monkeypatch)
+        assert not Dimension.all_objects.filter(entity_id=ident).exists()
+        node = Dimension.objects.create(name="tap.test.seed-only")
+        _set_raw(node.entity_id, {"tap.meta": "dimension", "tap.test.new-name": "x"})
+        migration.forwards(apps, _editor())
+        assert Entity.objects.get(pk=node.entity_id).dimensions[ident] == {"v": "x", "src": "declared"}
 
     def test_backwards_restores_names_and_plain_values(self) -> None:
         node = Dimension.objects.create(name="tap.test.reversed")
         migration.backwards(apps, _editor())
         assert Entity.objects.get(pk=node.entity_id).dimensions == {"tap.meta": "dimension"}
+
+
+RENAMED = "019dd143-3e8f-73e4-b0fa-e62ac923065d"  # aws-build Q56: tap.cloud became tap.computing.cloud
+
+
+def _seed(tmp_path: Any, file: str, batch: str, name: str, ident: str = RENAMED) -> tuple[str, Any]:
+    import json
+
+    doc = {
+        "batches": [
+            {
+                "batch_entity": {"entity_id": batch},
+                "nodes": [
+                    {
+                        "entity": {"entity_id": ident, "entity_type": "dimension", "name": name},
+                        "node": {"name": name, "description": "d"},
+                    }
+                ],
+            }
+        ]
+    }
+    path = tmp_path / file
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return (file, path)
+
+
+@pytest.mark.spec("req-grid-dimension-reference-0")
+class TestTheMigrationsSeedReader:
+    """The frozen reader 0012 keeps for itself (moved from the retired runtime table, #1188)."""
+
+    def test_a_renamed_node_keeps_its_id_and_the_latest_batch_names_it(self, tmp_path: Any) -> None:
+        """aws-build Q56: both names resolve to the one id while both seeds are installed."""
+        old = _seed(tmp_path, "aws.json", "019dd143-3e8f-73e4-b0fa-e629e288cd8f", "tap.cloud")
+        new = _seed(tmp_path, "computing.json", "01a1d1d0-0000-7000-8000-000000000001", "tap.computing.cloud")
+        for files in ([old, new], [new, old]):
+            seeds = migration._read_seeds(files)
+            assert seeds.name_of[RENAMED] == "tap.computing.cloud"
+            assert seeds.by_name["tap.cloud"] == seeds.by_name["tap.computing.cloud"] == (RENAMED,)
+
+    def test_one_name_under_two_ids_stops_it_naming_both(self, tmp_path: Any) -> None:
+        first = _seed(tmp_path, "a.json", "01a1d1d0-0000-7000-8000-000000000001", "tap.test.clash")
+        clash = "01a1d1d0-0000-7000-8000-0000000000ee"
+        other = _seed(tmp_path, "b.json", "01a1d1d0-0000-7000-8000-000000000002", "tap.test.clash", clash)
+        with pytest.raises(RuntimeError, match="tap.test.clash") as raised:
+            migration._read_seeds([first, other])
+        assert "01a1d1d0-0000-7000-8000-0000000000ee" in str(raised.value)
+
+    @pytest.mark.parametrize("breakage", ["not-json", "bad-id", "no-name", "missing"])
+    def test_a_malformed_seed_stops_it_naming_the_file(self, tmp_path: Any, breakage: str) -> None:
+        import json
+
+        source, path = _seed(tmp_path, "newer.json", "01a1d1d0-0000-7000-8000-000000000002", "tap.computing.cloud")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        node = doc["batches"][0]["nodes"][0]
+        if breakage == "not-json":
+            path.write_text("{ not json", encoding="utf-8")
+        elif breakage == "bad-id":
+            node["entity"]["entity_id"] = "not-a-uuid"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+        elif breakage == "no-name":
+            node["entity"]["name"] = ""
+            node["node"]["name"] = ""
+            path.write_text(json.dumps(doc), encoding="utf-8")
+        else:
+            path.unlink()
+        with pytest.raises(RuntimeError, match="newer.json"):
+            migration._read_seeds([(source, path)])
 
 
 def _doc(entity_id: str, dims: dict[str, Any], name: str = "replace-me") -> dict[str, Any]:

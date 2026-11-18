@@ -1,8 +1,8 @@
 """Dimension names at the edges (req-grid-dimension-names; unified-systems-com/tap#711).
 
-One resolver maps a dimension name to its stored key (the declared node's uuid) and a stored map to a
-name-keyed view, through the static vocabulary, with no query: declared nodes only, never minted, an
-ambiguous name refused.
+One resolver maps a dimension name to its stored key (the live node's uuid) and a stored map to a
+name-keyed view, through the live vocabulary (unified-systems-com/tap#1188): live nodes only, never
+minted, an ambiguous name refused, one currency check per scope rather than a query per lookup.
 """
 
 from __future__ import annotations
@@ -24,24 +24,22 @@ TAP_META = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # core's seed (tap_grid/data/
 
 @pytest.fixture
 def table() -> Iterator[None]:
-    """A vocabulary of three declared names, one of them declared twice."""
-    from tap_grid import dimension_vocabulary as vocab
-
-    saved = vocab.vocabulary()
-
-    def declared(ident: str, name: str) -> vocab.DeclaredDimension:
-        return vocab.DeclaredDimension(id=ident, name=name, values=None, usable_in_keys=False, source="test")
+    """A fixed vocabulary of three names, one of them on two nodes (no database)."""
+    from tap_grid import live_dimensions as vocab
 
     one = "01a1d150-1111-7000-8000-000000000001"
     twice = ("01a1d150-1111-7000-8000-000000000002", "01a1d150-1111-7000-8000-000000000003")
-    vocab.reset(
-        vocab.Vocabulary(
-            by_id={one: declared(one, "tap.test.resolves"), twice[0]: declared(twice[0], "tap.test.twice"), twice[1]: declared(twice[1], "tap.test.twice")},
-            by_name={"tap.test.resolves": (one,), "tap.test.twice": twice},
+    vocab.pin(
+        vocab.Vocabulary.of(
+            [
+                vocab.LiveDimension(one, "tap.test.resolves", None, False),
+                vocab.LiveDimension(twice[0], "tap.test.twice", None, False),
+                vocab.LiveDimension(twice[1], "tap.test.twice", None, False),
+            ]
         )
     )
     yield
-    vocab.reset(saved)
+    vocab.pin(None)
 
 
 @pytest.mark.spec("req-grid-dimension-names-2")
@@ -50,13 +48,21 @@ class TestTheStoredShapeIsKeyedByNode:
         assert dimension_names.STORAGE_IS_NAME_KEYED is False
 
     @pytest.mark.django_db
-    def test_storage_key_and_containment_resolve_with_no_query(self) -> None:
-        with CaptureQueriesContext(connection) as queries:
-            assert dimension_names.storage_key("tap.meta") == TAP_META
-            assert dimension_names.storage_key(TAP_META) == TAP_META
-            assert dimension_names.containment("tap.meta", "dimension") == {TAP_META: {"v": "dimension"}}
-        assert len(queries) == 0
+    def test_many_resolutions_in_a_scope_cost_one_currency_check(self) -> None:
+        """req-grid-dimension-reference-9: not a query per dimension per write."""
+        from tap_grid.live_dimensions import scope
 
+        dimension_names.storage_key("tap.meta")  # warm the per-process table
+        with scope(), CaptureQueriesContext(connection) as queries:
+            for _ in range(50):
+                assert dimension_names.storage_key("tap.meta") == TAP_META
+                assert dimension_names.storage_key(TAP_META) == TAP_META
+                assert dimension_names.containment("tap.meta", "dimension") == {TAP_META: {"v": "dimension"}}
+                stored = {TAP_META: {"v": "dimension", "src": "default"}}
+                assert dimension_names.view(stored) == {"tap.meta": "dimension"}
+        assert len(queries) == 1, [q["sql"] for q in queries]
+
+    @pytest.mark.django_db
     def test_view_presents_names_and_values_as_a_copy(self) -> None:
         stored: dict[str, Any] = {TAP_META: {"v": "dimension", "src": "default"}, "not-a-declared-key": "legacy"}
         shown = dimension_names.view(stored)
@@ -90,6 +96,23 @@ class TestNamesResolveToDeclaredNodesOnly:
             dimension_names.resolve("tap.test.twice")
         assert "01a1d150-1111-7000-8000-000000000002" in str(raised.value)
         assert "01a1d150-1111-7000-8000-000000000003" in str(raised.value)
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-dimension-names-3")
+@pytest.mark.spec("req-grid-dimension-reference-9")
+class TestOnlyLiveNodesResolve:
+    def test_a_retired_node_does_not_resolve(self) -> None:
+        from tap_grid.services import delete_node
+
+        node = Dimension.objects.create(name="tap.test.retired")
+        assert str(dimension_names.resolve("tap.test.retired")) == str(node.entity_id)
+        assert delete_node(node.entity_id, reason="operator").success
+        with pytest.raises(UnknownDimension):
+            dimension_names.resolve("tap.test.retired")
+        with pytest.raises(UnknownDimension):
+            dimension_names.resolve(str(node.entity_id))
+        assert dimension_names.name_of(str(node.entity_id)) is None
 
 
 @pytest.mark.django_db

@@ -516,6 +516,9 @@ MIDDLEWARE = [
     # populates it) so the service boundary can authorize the request actor
     # (req-tap-auth-service-boundary). Must precede any view that reads the grid.
     "tap_auth.middleware.CallerContextMiddleware",
+    # One currency check of the live dimension vocabulary per request, not one per row presented
+    # (req-grid-dimension-reference-9).
+    "tap_grid.middleware.DimensionVocabularyScopeMiddleware",
     # allauth account middleware — required by django-allauth (handles account
     # state / login-flow redirects). Must follow AuthenticationMiddleware.
     "allauth.account.middleware.AccountMiddleware",

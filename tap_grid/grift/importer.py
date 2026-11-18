@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/752b6a2d678a (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f166ce9b109d (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -5450,6 +5450,66 @@ def _grift_import_impl(
                 warnings=[],
             )
 
+    # A document may use the Dimension nodes it declares (core's seed stamps tap.meta on the node that
+    # declares tap.meta), so those declarations resolve for this import, laid over the live
+    # vocabulary, and the vocabulary is checked current once for the whole import, not once per
+    # dimension per row (req-grid-dimension-reference-9). A batch already imported declares nothing
+    # new: its rows are on the grid already, or were retired since, and retired stays retired.
+    from tap_grid import live_dimensions
+
+    declared = live_dimensions.declared_in(document, skip_batches=_already_imported(document, force_batches_set))
+    with live_dimensions.scope(), live_dimensions.declaring(declared):
+        return _grift_import_parsed(
+            document,
+            reference_time=reference_time,
+            dangling_edge_mode=dangling_edge_mode,
+            actor=actor,
+            force_batches_set=force_batches_set,
+            sweep_strict=sweep_strict,
+            purge=purge,
+            read_boundary=read_boundary,
+        )
+
+
+def _already_imported(document: Any, force_batches: set[str]) -> set[str]:
+    """The document's batch ids already on the grid (and not forced), which an import skips."""
+    if not isinstance(document, dict):
+        return set()
+    ids: set[str] = set()
+    batches = document.get("batches")
+    # Not yet validated: a malformed `batches` is the validator's to report, not a TypeError here.
+    for batch in batches if isinstance(batches, list) else []:
+        if isinstance(batch, dict) and isinstance(batch.get("batch_entity"), dict):
+            ident = batch["batch_entity"].get("entity_id")
+            if isinstance(ident, str):
+                try:
+                    ids.add(str(uuid.UUID(ident)))
+                except ValueError:
+                    continue
+    if not ids:
+        return set()
+    from tap_grid.models import Batch
+    from tap_grid.read_guard import unguarded_read
+
+    # Unguarded, like every other vocabulary read: if the read guard filtered this lookup, an
+    # already-imported batch would look new and its declarations could revive a retired name.
+    with unguarded_read():
+        seen = {str(i) for i in Batch.all_objects.filter(entity_id__in=ids).values_list("entity_id", flat=True)}
+    return seen - force_batches
+
+
+def _grift_import_parsed(
+    document: Any,
+    *,
+    reference_time: datetime,
+    dangling_edge_mode: Literal["strict", "permissive"],
+    actor: Any,
+    force_batches_set: set[str],
+    sweep_strict: bool,
+    purge: bool,
+    read_boundary: datetime | None,
+) -> GriftImportResult:
+    """The import proper, on a parsed document (see :func:`_grift_import_impl`)."""
     # Extract grift_version before full validation (best effort).
     grift_version = ""
     if isinstance(document, dict):

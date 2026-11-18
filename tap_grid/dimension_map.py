@@ -7,13 +7,14 @@ edge type's ``default_dimensions``) or ``derived`` (a trusted collector run comp
 Every writer goes through :func:`stamp`, which is the whole provenance rule (#712, George 2026-11-12):
 
 - a declaration or caller map may key by dimension name or node uuid; both resolve through the
-  static vocabulary (never minted, aws-build Q48a);
+  live vocabulary, the Dimension rows (never minted, aws-build Q48a; unified-systems-com/tap#1188);
 - defaults are stamped ``src: default``, a caller's values ``src: declared``, and a caller value beats
   a default, including an empty one (#712);
 - ``src: default`` is never accepted from a caller (Q48d); ``src: derived`` only inside
   ``collector_derivation_scope()`` (Q48e, Q54 D3), otherwise it is reset to ``declared``;
 - a value outside a bounded dimension's ``values`` is refused (Q47), and so is an empty value unless
-  the dimension declares ``empty_is_meaningful`` (Q46a, Q59 D5);
+  the dimension declares ``empty_is_meaningful`` (Q46a, Q59 D5); both knobs are read from the live
+  row, so an edit to them is enforced on the next write;
 - null is never stored (Q46a).
 """
 
@@ -181,17 +182,23 @@ def rederive(stored: Mapping[str, Any] | None, derived_values: Mapping[str, str]
 
 def refuse_unstored_shape(stored: Any, *, where: str = "dimensions") -> None:
     """Refuse a map that is not the stored shape (req-grid-dimension-reference-1): every key a
-    declared Dimension node id, every value exactly ``{"v": <string>, "src": declared|default|derived}``.
+    Dimension node id, every value exactly ``{"v": <string>, "src": declared|default|derived}``.
     The structural backstop under every writer: ``Entity.save`` calls it, so a direct ORM write of a
-    name-keyed or malformed map fails instead of landing."""
-    from tap_grid.dimension_vocabulary import vocabulary
+    name-keyed or malformed map fails instead of landing.
+
+    A key may name a retired Dimension node: this checks shape, not resolution. A row stamped before
+    its dimension was retired stays writable (a later edit to any other field saves the whole map);
+    a writer cannot newly set a retired dimension, because every new value resolves live first."""
+    from tap_grid.live_dimensions import vocabulary
 
     if not isinstance(stored, Mapping):
         raise DimensionWriteError(f"{where}: dimensions must be a map, got {type(stored).__name__}")
+    if not stored:
+        return
     table = vocabulary()
     for key, entry in stored.items():
-        if key not in table.by_id:
-            raise DimensionWriteError(f"{where}: dimension key {key!r} is not a declared Dimension node id")
+        if key not in table.known_ids:
+            raise DimensionWriteError(f"{where}: dimension key {key!r} is not a Dimension node id")
         if not (
             isinstance(entry, Mapping)
             and set(entry) == {"v", "src"}

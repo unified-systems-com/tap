@@ -119,10 +119,29 @@ def _format_sql(sql: str) -> str:
 # The executor stage currently in scope. None outside a labelled stage.
 _current_stage: contextvars.ContextVar[str | None] = contextvars.ContextVar("gryphon_sql_capture_stage", default=None)
 
+# Set inside uncaptured(): grid metadata reads that are not the query's own plan.
+_uncaptured: contextvars.ContextVar[bool] = contextvars.ContextVar("gryphon_sql_capture_uncaptured", default=False)
+
 # The active capture, or None. Set only inside a capture_sql() block.
 _active_capture: contextvars.ContextVar[SqlCapture | None] = contextvars.ContextVar(
     "gryphon_sql_capture_active", default=None
 )
+
+
+@contextlib.contextmanager
+def uncaptured() -> Iterator[None]:
+    """Leave the reads in this block out of any active capture (req-grid-traversal-exec-sql-capture-6).
+
+    For grid metadata reads that ride along with a run but are not the query's plan, and whose
+    presence depends on cache warmth, the way psycopg's type registration does: the live dimension
+    vocabulary's currency check and reload (req-grid-dimension-reference-9). A context-var set, so
+    inert when no capture is active.
+    """
+    token = _uncaptured.set(True)
+    try:
+        yield
+    finally:
+        _uncaptured.reset(token)
 
 
 @contextlib.contextmanager
@@ -144,6 +163,7 @@ def _capture_wrapper(execute: Any, sql: str, params: Any, many: bool, context: A
     capture = _active_capture.get()
     if (
         capture is not None
+        and not _uncaptured.get()
         and not many
         and _READ_STATEMENT_RE.match(sql or "")
         and not _DRIVER_SETUP_RE.search(sql or "")

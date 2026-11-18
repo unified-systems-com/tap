@@ -140,3 +140,32 @@ class TestGryphonSqlCapture:
                 cur.fetchone()
         leaked = [s.sql for s in cap.statements if "pg_type" in s.sql]
         assert not leaked, f"driver catalog query leaked into the capture: {leaked}"
+
+
+@pytest.mark.django_db(databases=["default", "search_readonly"])
+@pytest.mark.spec("req-grid-traversal-exec-sql-capture-6")
+class TestVocabularyReadsAreNotCaptured:
+    """The live dimension vocabulary's currency check and reload ride along with a run but are not
+    its plan, and run or not by cache warmth (req-grid-dimension-reference-9), so a capture leaves
+    them out, as it leaves out psycopg's type registration."""
+
+    def test_a_cold_vocabulary_adds_nothing_to_the_capture(self) -> None:
+        from tap_grid import live_dimensions
+
+        live_dimensions.invalidate()
+        with capture_sql("default") as capture:
+            live_dimensions.vocabulary()  # a currency check and a reload
+            with live_dimensions.scope():
+                live_dimensions.vocabulary()
+        assert capture.statements == []
+
+    def test_reads_around_it_are_still_captured(self) -> None:
+        from tap_grid.gryphon.capture import uncaptured
+        from tap_grid.models import Entity
+
+        with capture_sql("default") as capture:
+            with uncaptured():
+                list(Entity.objects.filter(entity_type="dimension")[:1])
+            list(Entity.objects.filter(entity_type="batch")[:1])
+        assert len(capture.statements) == 1
+        assert "batch" in capture.statements[0].params

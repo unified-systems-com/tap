@@ -19,7 +19,7 @@
 | `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
 | `req-tap-plugin-manifest-v0-falsifiers` | Implemented | Verified | `_parse_falsifiers` | `req-tap-plugin-manifest-v0-falsifiers-1`, `req-tap-plugin-manifest-v0-falsifiers-2`, `req-tap-plugin-manifest-v0-falsifiers-3`, `req-tap-plugin-manifest-v0-falsifiers-4` |
 | `req-tap-plugin-manifest-v0-file` | Implemented | Implemented | `load_manifest` | — |
-| `req-tap-plugin-manifest-v0-grift` | Implemented | Implemented | `_parse_grift` | — |
+| `req-tap-plugin-manifest-v0-grift` | Implemented | Verified | `_parse_grift` | `req-tap-plugin-manifest-v0-grift-11` |
 | `req-tap-plugin-manifest-v0-models` | Implemented | Implemented | `_parse_models` | — |
 | `req-tap-plugin-manifest-v0-searches` | Implemented | Implemented | `_parse_searches` | — |
 | `req-tap-plugin-manifest-v0-top` | Implemented | Implemented | `PluginManifest` | — |
