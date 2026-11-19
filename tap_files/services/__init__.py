@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 def _writer(caller_context: CallerContext | None) -> str:
     """The version's writer: the actor the capability gate authorised, never one the caller names.
 
-    TAP-IMPLEMENTS: req-tap-files-gateway@fbeb4b71f4b9/69af235e2438 (enforcement) — the writer recorded in
+    TAP-IMPLEMENTS: req-tap-files-gateway@0eceb0d29ed1/69af235e2438 (enforcement) — the writer recorded in
         a version's inventory entry comes from the caller context, here and nowhere else.
     """
     key = _actor_key(_acting_user(caller_context))

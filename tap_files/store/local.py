@@ -36,6 +36,7 @@ from tap_files.store import inventory as inv
 from tap_files.store.errors import (
     DigestMismatch,
     FileIntegrityError,
+    FileStoreError,
     ObjectExists,
     StoreBusy,
     StoredFileNotFound,
@@ -52,13 +53,22 @@ from tap_files.store.layout import (
     parse_stored_filename,
     stored_filename,
 )
-from tap_files.store.protocol import ObjectStat, OpenedFile, StoredResult, VerifyResult, VersionInfo
+from tap_files.store.protocol import (
+    ObjectStat,
+    OpenedFile,
+    StoredResult,
+    StoreSurvey,
+    SurveyedObject,
+    VerifyResult,
+    VersionInfo,
+)
 
 logger = logging.getLogger(__name__)
 
 OCFL_DIR, STAGING_DIR, QUARANTINE_DIR, LOCKS_DIR = "ocfl", "staging", "quarantine", "locks"
 ROOT_DIRS = (OCFL_DIR, STAGING_DIR, QUARANTINE_DIR, LOCKS_DIR)
 LAYOUT_FILE = "ocfl_layout.json"
+_NOTE_SUFFIX = ".note.json"
 CHUNK = 1024 * 1024
 #: How long a writer, or a reader confirming a mismatch, waits for an object's lock.
 LOCK_WAIT_S = 10.0
@@ -170,6 +180,27 @@ class LocalBackend:
         if layout.get("extension") != LAYOUT_EXTENSION or config != LAYOUT_CONFIG:
             return "the storage root uses a different layout"
         return ""
+
+    def root_problem(self) -> str:
+        """Why the root is not this store's initialised root, or ``""``; reads markers and writes nothing.
+
+        The health probe's question (`req-tap-files-health-2`): an empty root is not yet initialised,
+        which boot would put right, and is still not a usable store.
+        """
+        try:
+            entries = sorted(p.name for p in self.root.iterdir())
+        except OSError as exc:
+            return f"the root cannot be listed ({type(exc).__name__})"
+        if not entries:
+            return "the root is empty: not initialised"
+        return self._foreign(entries)
+
+    def quarantine_count(self) -> int:
+        """How many items recovery has quarantined; lists ``quarantine/`` and descends into nothing."""
+        try:
+            return sum(1 for name in os.listdir(self.quarantine) if not name.endswith(_NOTE_SUFFIX))
+        except FileNotFoundError:
+            return 0
 
     def _not_real_dirs(self) -> str:
         """Each of the four controlled directories must be a real directory, never a link.
@@ -582,8 +613,10 @@ class LocalBackend:
 
     def _content_size(self, identifier: str, data: dict[str, Any], digest: str) -> int:
         paths = data["manifest"].get(digest) or []
+        if not paths or self._linked(self._object_dir(identifier) / paths[0]) is not None:
+            return -1
         try:
-            return os.lstat(self._object_dir(identifier) / paths[0]).st_size if paths else -1
+            return os.lstat(self._object_dir(identifier) / paths[0]).st_size
         except FileNotFoundError:
             return -1
 
@@ -647,6 +680,10 @@ class LocalBackend:
                 except FileNotFoundError:
                     findings.append(f"{rel} is missing")
                     continue
+                if not stat.S_ISREG(st.st_mode):
+                    # A link or anything else in a content file's place is never opened or hashed.
+                    findings.append(f"{rel} is not a regular file (a link or other)")
+                    continue
                 if stat.S_IMODE(st.st_mode) != CONTENT_MODE:
                     findings.append(f"{rel} is not read-only")
                 try:
@@ -698,6 +735,20 @@ class LocalBackend:
         pruned (`req-tap-files-mount-gate-10`): following it would sweep, and empty, directories
         outside the store.
         """
+
+        def refuse(where: Path) -> None:
+            logger.error("[5e88] files: recovery refused %s: a symbolic link below ocfl/ is never followed", where)
+            actions.append(f"refused {where}: a symbolic link below ocfl/ is never followed")
+
+        for objdir in self._walk(refuse, self._prune_empty_parents):
+            yield unquote(objdir.name)
+
+    def _walk(self, on_link: Any, on_empty: Any = None) -> Iterator[Path]:
+        """Each entry at the object level of the layout, never through a symbolic link.
+
+        *on_link* is called with each linked hashed level's path from the root, and *on_empty* with
+        each empty third level; neither is descended.
+        """
         if not self.ocfl.is_dir():
             return
 
@@ -705,11 +756,7 @@ class LocalBackend:
             for entry in sorted(parent.iterdir()):
                 mode = os.lstat(entry).st_mode
                 if stat.S_ISLNK(mode):
-                    where = entry.relative_to(self.root)
-                    logger.error(
-                        "[5e88] files: recovery refused %s: a symbolic link below ocfl/ is never followed", where
-                    )
-                    actions.append(f"refused {where}: a symbolic link below ocfl/ is never followed")
+                    on_link(entry.relative_to(self.root))
                 elif stat.S_ISDIR(mode):
                     yield entry
 
@@ -719,10 +766,84 @@ class LocalBackend:
             for second in levels(first):
                 for third in levels(second):
                     children = sorted(third.iterdir())
-                    if not children:
-                        self._prune_empty_parents(third)
-                    for objdir in children:
-                        yield unquote(objdir.name)
+                    if not children and on_empty is not None:
+                        on_empty(third)
+                    yield from children
+
+    # ------------------------------------------------------------------ the check's survey
+
+    def survey(self, deep: bool = False) -> StoreSurvey:
+        """Read the whole store for the check: no write, no move, no lock (`req-tap-files-check-4`).
+
+        TAP-IMPLEMENTS: req-tap-files-check@a14e155b461a/c2b9c284bcb6 (derivation) — the store half of the report: invalid and
+            damaged objects, what recovery would act on, quarantine and links, read as they are.
+
+        An object caught mid-write is reported as it is seen; a second run tells a write in progress
+        from damage.
+        """
+        links: list[str] = []
+        interrupted: list[tuple[str, str]] = []
+        objects: list[SurveyedObject] = []
+        damaged: list[tuple[str, str]] = []
+        for entry in sorted(self.staging.iterdir()) if self.staging.is_dir() else []:
+            interrupted.append((str(entry.relative_to(self.root)), "staging left by an interrupted write"))
+        for objdir in self._walk(lambda where: links.append(str(where))):
+            where = str(objdir.relative_to(self.root))
+            if stat.S_ISLNK(os.lstat(objdir).st_mode):
+                links.append(where)
+                continue
+            identifier = unquote(objdir.name)
+            try:
+                check_identifier(identifier)
+            except FileStoreError:
+                damaged.append((where, "not a stored identifier"))
+                continue
+            if self._object_dir(identifier) != objdir:
+                damaged.append((where, f"{identifier} does not belong at this path"))
+                continue
+            linked = [p for p in sorted(objdir.iterdir()) if stat.S_ISLNK(os.lstat(p).st_mode)]
+            if linked:
+                # Checked before anything in the object is opened: a linked inventory, sidecar,
+                # marker or version directory would carry the reads and the deep hash outside the
+                # store. The object is reported and not read further.
+                links.extend(str(p.relative_to(self.root)) for p in linked)
+                damaged.append((identifier, "holds a symbolic link; not read further"))
+                continue
+            pair = self._read_pair(objdir)
+            data = inv.parse(*pair) if pair else None
+            if data is None or data["id"] != identifier:
+                damaged.append((identifier, "root inventory pair missing, mismatched or naming another object"))
+                interrupted.append((identifier, "root inventory pair; recovery would restore it from a version"))
+                continue
+            head = len(data["versions"])
+            for vdir in sorted(objdir.glob("v*")):
+                if vdir.is_dir() and vdir.name[1:].isdigit() and int(vdir.name[1:]) > head:
+                    interrupted.append(
+                        (identifier, f"{vdir.name} above the head v{head}; recovery would quarantine it")
+                    )
+            versions = tuple(
+                (record.digest, self._content_size(identifier, data, record.digest)) for record in inv.records(data)
+            )
+            objects.append(SurveyedObject(identifier, head, versions, self.verify(identifier, deep=deep).findings))
+        return StoreSurvey(tuple(objects), tuple(damaged), tuple(interrupted), self._quarantined(), tuple(links))
+
+    def _quarantined(self) -> tuple[dict[str, str], ...]:
+        try:
+            names = sorted(os.listdir(self.quarantine))
+        except FileNotFoundError:
+            return ()
+        found = []
+        for name in names:
+            if name.endswith(_NOTE_SUFFIX):
+                continue
+            item = {"item": name, "was": "", "why": "no note"}
+            try:
+                note = json.loads((self.quarantine / f"{name}{_NOTE_SUFFIX}").read_text(encoding="utf-8"))
+                item.update(was=str(note.get("was", "")), why=str(note.get("why", "")))
+            except OSError, ValueError:
+                pass
+            found.append(item)
+        return tuple(found)
 
     def recover_object(self, identifier: str, *, locked: bool) -> list[str]:
         """Recover one object; *locked* says the caller already holds its lock."""
@@ -809,7 +930,9 @@ class LocalBackend:
         target = self.quarantine / f"{stamp}-{path.name}"
         os.rename(path, target)
         note = {"was": str(path.relative_to(self.root)), "why": why, "found_at": _now()}
-        _write_new(self.quarantine / f"{target.name}.note.json", (json.dumps(note, indent=2) + "\n").encode("utf-8"))
+        _write_new(
+            self.quarantine / f"{target.name}{_NOTE_SUFFIX}", (json.dumps(note, indent=2) + "\n").encode("utf-8")
+        )
         _fsync_dir(self.quarantine)
         logger.warning("[ec1d] files: recovery moved %s to quarantine: %s", note["was"], why)
         return f"quarantined {note['was']}: {why}"

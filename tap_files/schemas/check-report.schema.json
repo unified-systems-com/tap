@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tap.dev/schemas/tap.files.check-report.schema.json",
+  "title": "TAP file store check report",
+  "description": "What `manage.py files check --json` prints (specs/spec-tap-file-store.md, req-tap-files-check). A finding is a fault, which makes the exit status non-zero, or a notice, which does only under --strict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["root", "deep", "findings", "quarantine", "totals"],
+  "properties": {
+    "root": {"type": "string", "description": "The store root that was checked."},
+    "deep": {"type": "boolean", "description": "Whether every content file was re-hashed."},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "kind", "subject", "detail"],
+        "properties": {
+          "severity": {"enum": ["fault", "notice"]},
+          "kind": {
+            "enum": [
+              "link_below_ocfl",
+              "damaged_object",
+              "interrupted_write",
+              "invalid_object",
+              "orphan_object",
+              "node_without_bytes",
+              "node_ahead_of_store",
+              "store_ahead_of_node",
+              "node_disagrees",
+              "format_record_wrong_source",
+              "format_record_stale",
+              "format_record_duplicate"
+            ]
+          },
+          "subject": {"type": "string", "description": "The object identifier, edge id or path the finding is about."},
+          "detail": {"type": "string"},
+          "path": {"type": "string", "description": "The tap_file's logical path, where a node is involved."}
+        }
+      }
+    },
+    "quarantine": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "was", "why"],
+        "properties": {
+          "item": {"type": "string"},
+          "was": {"type": "string", "description": "Where the item was, from the root; empty when its note is missing."},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objects", "versions", "bytes", "nodes"],
+      "properties": {
+        "objects": {"type": "integer", "minimum": 0},
+        "versions": {"type": "integer", "minimum": 0},
+        "bytes": {"type": "integer", "minimum": 0},
+        "nodes": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

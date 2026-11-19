@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 16 |
-| unbuilt | 13 |
+| mapped | 18 |
+| unbuilt | 11 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
@@ -13,9 +13,11 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-tap-files-capabilities` | Implemented | Tested | — | `req-tap-files-capabilities-1`, `req-tap-files-capabilities-2`, `req-tap-files-capabilities-3`, `req-tap-files-capabilities-4`, `req-tap-files-capabilities-5` |
+| `req-tap-files-check` | Implemented | Implemented | `LocalBackend.survey` | — |
 | `req-tap-files-directory` | Implemented | Implemented | `_directory_ops` | — |
 | `req-tap-files-download` | Implemented | Implemented | `download` | — |
 | `req-tap-files-gateway` | Implemented | Verified | `_writer` | `req-tap-files-gateway-1`, `req-tap-files-gateway-2`, `req-tap-files-gateway-3`, `req-tap-files-gateway-4`, `req-tap-files-gateway-5` |
+| `req-tap-files-health` | Implemented | Implemented | `probe_files` | — |
 | `req-tap-files-history` | Implemented | Tested | — | `req-tap-files-history-1`, `req-tap-files-history-2` |
 | `req-tap-files-hold` | Implemented | Implemented | `hold_file` | — |
 | `req-tap-files-immutable` | Implemented | Tested | — | `req-tap-files-immutable-1`, `req-tap-files-immutable-2`, `req-tap-files-immutable-3`, `req-tap-files-immutable-4`, `req-tap-files-immutable-5`, `req-tap-files-immutable-6` |

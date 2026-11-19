@@ -66,6 +66,35 @@ class VerifyResult:
     findings: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class SurveyedObject:
+    """One object as the check sees it: its head, each version's digest and size, and what is wrong."""
+
+    identifier: str
+    head: int
+    #: ``(digest, size)`` for versions 1 to the head; a size of -1 means the content file is missing.
+    versions: tuple[tuple[str, int], ...]
+    findings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StoreSurvey:
+    """Everything the check reads from a store, gathered without a write or a lock (`req-tap-files-check`)."""
+
+    #: Objects whose root inventory could be read, valid or not.
+    objects: tuple[SurveyedObject, ...]
+    #: ``(identifier or path, why)`` for each object directory with no usable root inventory, or
+    #: that is not an object at all.
+    damaged: tuple[tuple[str, str], ...]
+    #: ``(subject, what)`` for each thing recovery would act on: a staging entry, a version above a
+    #: head, a mismatched root pair.
+    interrupted: tuple[tuple[str, str], ...]
+    #: Each quarantined item and what its note says it was.
+    quarantine: tuple[dict[str, str], ...]
+    #: Symbolic links found below ``ocfl/``, by path from the root; never followed.
+    links: tuple[str, ...]
+
+
 class StoreBackend(Protocol):
     """Every operation the store offers; the gateway (tap#1209) is the only caller outside tests."""
 
@@ -105,4 +134,13 @@ class StoreBackend(Protocol):
     def verify(self, identifier: str, deep: bool = False) -> VerifyResult: ...
 
 
-__all__ = ["ObjectStat", "OpenedFile", "StoreBackend", "StoredResult", "VerifyResult", "VersionInfo"]
+__all__ = [
+    "ObjectStat",
+    "OpenedFile",
+    "StoreBackend",
+    "StoreSurvey",
+    "StoredResult",
+    "SurveyedObject",
+    "VerifyResult",
+    "VersionInfo",
+]

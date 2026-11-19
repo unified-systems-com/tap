@@ -461,13 +461,34 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         status=(
             "Gate-guarded (fail-closed) — a configured store root must pass the shared mount test and hold either "
             "nothing or this store's own OCFL storage root; an empty root is initialised and every object recovered. "
-            "Inert until the compose files set TAP_FILES_ROOT (req-tap-files-root-2); an independent OCFL validator "
-            "is Backlog (req-tap-files-ocfl-validation)"
+            "Live wherever the compose files set TAP_FILES_ROOT (req-tap-files-root-2); an independent OCFL "
+            "validator is Backlog (req-tap-files-ocfl-validation)"
         ),
         enforced_by=(
             "`tap_boot/orchestrator.py::_phase_files` → `tap_files/boot.py::run_gate`, deciding with "
             "`tap/volume_mount.py::check_volume`; `tap_files/tests/test_store.py`"
         ),
+    ),
+    DeclaredSurface(
+        surface="File store health probe",
+        rid="req-tap-files-health",
+        cadence="Per-commit (`pytest`) + per-spawn and per-120s in-container (the readiness set it joins)",
+        status=(
+            "CI-guarded units; non-critical — unhealthy when an enabled root fails the mount test or is not this "
+            "store's initialised root, or when the store is off and a plugin requires it; never for quarantine"
+        ),
+        enforced_by="`tap_files/health.py::probe_files`; `tap_files/tests/test_check.py`",
+    ),
+    DeclaredSurface(
+        surface="File store report-only check",
+        rid="req-tap-files-check",
+        cadence="On demand (`manage.py files check [--deep] [--json] [--strict]`, operator-run) + per-commit (`pytest`)",
+        status=(
+            "CI-guarded units (a seeded defect of every reported class); against a real store it runs only when "
+            "an operator runs it — reports the store against itself and the grid, both directions, and the "
+            "FILE_CONTENTS edges the grid cannot yet refuse (Issue# 1237 - tap); changes nothing"
+        ),
+        enforced_by="`tap_files/check.py::run_check`, `LocalBackend.survey`; `tap_files/tests/test_check.py`",
     ),
     DeclaredSurface(
         surface="Plugin data health probe",
