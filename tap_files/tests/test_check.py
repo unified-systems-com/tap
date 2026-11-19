@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any, cast
@@ -227,38 +228,47 @@ def test_a_link_below_ocfl_is_reported_and_not_followed(store: LocalBackend, tmp
 
 
 @SPEC("req-tap-files-check-5")
-@pytest.mark.parametrize("where", ["version", "content_dir", "content_file"])
+@pytest.mark.parametrize("where", ["version", "content_dir", "content_file", "inventory"])
 def test_a_link_inside_an_object_is_reported_and_never_read(store: LocalBackend, tmp_path: Path, where: str) -> None:
-    # Round 1 of the AI review on PR# 1242 - tap: the survey and a deep check must not stat or hash
-    # through a link inside an object. The targets are unreadable, so following one would raise.
+    # Rounds 1 and 2 of the AI review on PR# 1242 - tap: the survey and a deep check must not read
+    # through a link inside an object. Each target is readable and differs from what it replaces,
+    # so a followed link would surface as a digest or inventory finding; the findings must name
+    # the link instead.
     held = _hold("/linked.txt", b"inside")
     objdir = _objdir(store, held.identifier)
     (content,) = list((objdir / "v1" / "content").iterdir())
     outside = tmp_path / f"outside-{where}"
-    (outside / "content").mkdir(parents=True)
-    secret = outside / "content" / content.name
-    secret.write_bytes(b"outside")
-    secret.chmod(0)
+    shutil.copytree(objdir / "v1", outside)
+    (outside / "content" / content.name).chmod(0o640)
+    (outside / "content" / content.name).write_bytes(b"outside")
     if where == "version":
-        os.rename(objdir / "v1", tmp_path / "moved-v1")
+        os.rename(objdir / "v1", tmp_path / "moved")
         (objdir / "v1").symlink_to(outside, target_is_directory=True)
     elif where == "content_dir":
-        os.rename(objdir / "v1" / "content", tmp_path / "moved-content")
+        os.rename(objdir / "v1" / "content", tmp_path / "moved")
         (objdir / "v1" / "content").symlink_to(outside / "content", target_is_directory=True)
-    else:
+    elif where == "content_file":
         content.chmod(0o640)
         content.unlink()
-        content.symlink_to(secret)
+        content.symlink_to(outside / "content" / content.name)
+    else:
+        # Unreadable, so opening it would raise: the survey must refuse it before reading.
+        (objdir / inv.INVENTORY).unlink()
+        (objdir / inv.INVENTORY).symlink_to(outside / inv.INVENTORY)
+        (outside / inv.INVENTORY).chmod(0)
     try:
         report = run_check(deep=True)
     finally:
-        secret.chmod(0o600)
-    faults = [(f.kind, f.subject) for f in report.findings if f.severity == FAULT]
-    assert faults, report.findings
-    if where == "version":
-        assert ("link_below_ocfl", str((objdir / "v1").relative_to(store.root))) in faults
+        (outside / inv.INVENTORY).chmod(0o600)
+    details = " | ".join(f.detail for f in report.findings)
+    assert "does not match its digest" not in details, details
+    if where in ("version", "inventory"):
+        linked = str((objdir / ("v1" if where == "version" else inv.INVENTORY)).relative_to(store.root))
+        assert ("link_below_ocfl", linked) in _kinds(report)
+        assert ("damaged_object", held.identifier) in _kinds(report)
     else:
-        assert ("invalid_object", held.identifier) in faults
+        assert ("invalid_object", held.identifier) in _kinds(report)
+        assert "symbolic link" in details or "not a regular file" in details, details
 
 
 @SPEC("req-tap-files-check-5")

@@ -775,7 +775,7 @@ class LocalBackend:
     def survey(self, deep: bool = False) -> StoreSurvey:
         """Read the whole store for the check: no write, no move, no lock (`req-tap-files-check-4`).
 
-        TAP-IMPLEMENTS: req-tap-files-check@a14e155b461a/87ffc33392a9 (derivation) — the store half of the report: invalid and
+        TAP-IMPLEMENTS: req-tap-files-check@a14e155b461a/c2b9c284bcb6 (derivation) — the store half of the report: invalid and
             damaged objects, what recovery would act on, quarantine and links, read as they are.
 
         An object caught mid-write is reported as it is seen; a second run tells a write in progress
@@ -801,6 +801,14 @@ class LocalBackend:
             if self._object_dir(identifier) != objdir:
                 damaged.append((where, f"{identifier} does not belong at this path"))
                 continue
+            linked = [p for p in sorted(objdir.iterdir()) if stat.S_ISLNK(os.lstat(p).st_mode)]
+            if linked:
+                # Checked before anything in the object is opened: a linked inventory, sidecar,
+                # marker or version directory would carry the reads and the deep hash outside the
+                # store. The object is reported and not read further.
+                links.extend(str(p.relative_to(self.root)) for p in linked)
+                damaged.append((identifier, "holds a symbolic link; not read further"))
+                continue
             pair = self._read_pair(objdir)
             data = inv.parse(*pair) if pair else None
             if data is None or data["id"] != identifier:
@@ -808,13 +816,6 @@ class LocalBackend:
                 interrupted.append((identifier, "root inventory pair; recovery would restore it from a version"))
                 continue
             head = len(data["versions"])
-            linked = [p for p in sorted(objdir.iterdir()) if stat.S_ISLNK(os.lstat(p).st_mode)]
-            if linked:
-                # A linked version directory would carry the size reads and the deep hash outside
-                # the store; the object is reported and not read further.
-                links.extend(str(p.relative_to(self.root)) for p in linked)
-                damaged.append((identifier, "holds a symbolic link; not read further"))
-                continue
             for vdir in sorted(objdir.glob("v*")):
                 if vdir.is_dir() and vdir.name[1:].isdigit() and int(vdir.name[1:]) > head:
                     interrupted.append(
