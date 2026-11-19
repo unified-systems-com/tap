@@ -15,7 +15,8 @@ one named holder per role, so that a module added later is refused until someone
 - **Outside callers** take the gated operations in the gateway's `__all__` and its `contract` module,
   and nothing else from the package. Importing the gateway module whole is how its operations are
   called, so that is allowed; reading an `_` name off it (`services._backend`) is refused like
-  importing that name.
+  importing that name, in every module but the gateway's own `__init__`: its contract and
+  submodules included, since they could otherwise pass the handle on.
 
 Relative imports are resolved before any of this is checked. Where the store lives is in
 `tap_files.config`, which hands out no backend. Tests are exempt: they exercise the backend directly.
@@ -105,7 +106,7 @@ def _import_offences(node: ast.Import | ast.ImportFrom, rel: Path, exports: froz
     return found
 
 
-def _gateway_aliases(tree: ast.AST) -> set[str]:
+def _gateway_aliases(tree: ast.AST, rel: Path) -> set[str]:
     """Dotted names a file binds to the gateway module itself: ``services``, ``tap_files.services``."""
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -113,7 +114,7 @@ def _gateway_aliases(tree: ast.AST) -> set[str]:
             for alias in node.names:
                 if alias.name == _GATEWAY:
                     names.add(alias.asname or _GATEWAY)
-        elif isinstance(node, ast.ImportFrom) and not node.level and node.module == "tap_files":
+        elif isinstance(node, ast.ImportFrom) and _from_module(node, rel) == "tap_files":
             names.update(a.asname or a.name for a in node.names if a.name == "services")
     return names
 
@@ -127,9 +128,9 @@ def _dotted(node: ast.expr) -> str | None:
     return None
 
 
-def _private_reads(tree: ast.AST) -> list[tuple[int, str]]:
+def _private_reads(tree: ast.AST, rel: Path) -> list[tuple[int, str]]:
     """``services._backend`` and the like: a below-gate name read through the gateway module."""
-    aliases = _gateway_aliases(tree)
+    aliases = _gateway_aliases(tree, rel)
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr.startswith("_") and _dotted(node.value) in aliases:
@@ -158,8 +159,9 @@ class FilesBackendReachGuard(Guard):
             for node in ast.walk(parsed.tree):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     offenders.extend(f"{rel}:{node.lineno} imports {t}" for t in _import_offences(node, rel, exports))
-            if not rel.as_posix().startswith(("tap_files/services/", "tap_files/store/")):
-                offenders.extend(f"{rel}:{line} reads {name}" for line, name in _private_reads(parsed.tree))
+            # Every module but the gateway's own `__init__`, its contract and submodules included.
+            if rel.as_posix() != _GATEWAY_INIT:
+                offenders.extend(f"{rel}:{line} reads {name}" for line, name in _private_reads(parsed.tree, rel))
         assert not offenders, (  # nosec B101
             f"File store backend imported outside its gateway ({len(offenders)}):\n  "
             + "\n  ".join(sorted(set(offenders)))
