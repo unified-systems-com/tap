@@ -2,127 +2,119 @@
 
 ## Philosophy
 
-`org-bots` runs two fleet-wide automations against every TAP plugin and product repository:
-Renovate (dependency updates) and release-please (version bumps and releases). Both need an
-answer to the same two questions, and this spec exists because the current answer to each is
-the thing most likely to rot silently: **which repositories does this touch**, and **what can
-go wrong if the credential behind it leaks**.
+`org-bots` runs two fleet-wide automations against `tap` and every TAP plugin and product
+repository: Renovate (dependency updates, including fixes for known vulnerabilities) and
+release-please (version bumps and releases). Both need an answer to the same two questions:
+**which repositories does this touch**, and **what can go wrong if the credential behind it
+leaks**.
 
-**A hand-maintained list is a promise nobody is on the hook to keep.** Today, Renovate reads a
-hardcoded `FLEET` array in `org-bots/renovate/global.js`; release-please reads a hardcoded
-`RELEASE_REPOS` string in its own workflow. Neither is derived from anything — a new plugin
-repo gets no coverage from either tool unless a human remembers to add its name to a file in a
-*different* repository. This is the same failure shape `spec-tap-serving.md` names for `DEBUG`
-and `spec-tap-plugin-dependency-resolution.md` names for hand-authored install lists: a fact
-about the fleet, restated by hand, in a place nothing checks against the fleet's actual state.
+**A hand-maintained list is a promise nobody is on the hook to keep.** The first version of
+`org-bots` read a hardcoded `FLEET` array in `renovate/global.js` and a hardcoded `RELEASE_REPOS`
+string in the release-please workflow. Neither was derived from anything, so a new plugin
+repository got no coverage from either tool unless a human remembered to add its name to a file
+in a *different* repository. This is the same failure shape `spec-tap-serving.md` names for
+`DEBUG` and `spec-tap-plugin-dependency-resolution.md` names for hand-authored install lists: a
+fact about the fleet, restated by hand, in a place nothing checks against the fleet's actual
+state.
 
-**A credential's blast radius is what decides whether sharing it is safe — not how it's stored.**
-The two tools this spec covers sit on opposite sides of that line, and conflating them is the
-mistake this spec exists to prevent, stated because an earlier draft of the release-please design
-made exactly it: a credential that holds **no role on any repository** (the org-bots fork bot)
-is safe to reuse across the whole fleet, because forking a repo and opening a PR from that fork
-needs no write grant on the target at all — the same credential used by one repo or by twenty
-carries an identical, already-bounded worst case. A credential that holds a **real, org-wide
-installed role** (a GitHub App's private key, `contents: write` + `pull-requests: write`
-everywhere it's installed) is the opposite: copying it into N repositories' own secret stores
-turns N places into a leak surface for one org-wide-privileged key. The fix for "no hardcoded
-list" must never be "give every repo its own copy of a powerful credential" — that trades one
-problem for a worse one.
+**Discovery is a property the repository declares about itself, not a separate list.** A
+repository is in scope for automation because of something visible ON that repository (a topic),
+never because a different repository's config file happens to still mention its name.
 
-**Discovery should be a property the repository declares about itself, not a separate list.**
-Both fixes below converge on this: a repository is in scope for automation because of something
-visible ON that repository (a topic), never because a different repository's config file happens
-to still mention its name.
+**The standard configuration, run plainly.** Each bot is one scheduled job that covers the whole
+fleet in one run, as an org-owned GitHub App. That is how `org-bots` first ran (2026-09-25), and
+it is the configuration these tools are documented and tested in by their own projects. Between
+2026-09-27 and 2026-11-05 the fleet tried a different design, a separate outside account with no
+role on any repository that opened every PR from its own forks, so that no org App needed write.
+GitHub's anti-abuse flagged that account on its first fleet-wide run and later suspended it, and
+the slicing, rotation and pacing added to protect it made both bots slow and fragile: Renovate's
+schedule stayed off for two weeks, and a rotation that advanced only on success left scheduled
+release-please stuck on one slice for days. The fork design is retired (George, 2026-11-19). The
+paragraphs that argued for it are gone from this spec; `git log` keeps them.
 
-**"Safe to share" and "safe to distribute" are not the same claim, and an earlier draft of this
-spec conflated them too.** A no-role fork-mode credential is safe to *use* across the whole
-fleet — its blast radius is capped regardless of how many repositories rely on it. It does not
-follow that it is safe to *distribute* as a broadly-visible secret: GitHub cannot scope an
-organization secret by topic (visibility is only `all` / `private` / an explicit repository
-list), so making it an org secret either recreates a hand-maintained list (defeating
-`req-cicd-fleet-bot-discovery`'s own point) or hands the credential to every workflow in every
-repository that secret's visibility reaches — not only the one workflow meant to use it. Both
-fixes below therefore keep the credential exactly where it already lives — a single environment
-in `org-bots`, never copied anywhere — and have `org-bots` act *on behalf of* each discovered
-repository rather than handing the repository the means to act for itself.
+**A write credential is bounded by where it lives and what each run asks for, not by having no
+role.** The Apps hold real write access. What keeps that acceptable is stated as requirements
+below rather than assumed: each App's private key exists in exactly one place; every run mints a
+short-lived token that names only that run's repositories and only the permissions the job needs;
+and neither bot merges anything, so a human reads every change before it reaches a default
+branch.
+
+**A powerful credential is never copied to where it is used.** The fix for "no hardcoded list"
+must never be "give every repository its own copy of the key". An App installed on every
+repository can mint a token for any of them, so a copy of its key in N repositories' secret
+stores is N leak surfaces for one org-wide credential. `org-bots` acts *on behalf of* each
+discovered repository; no repository is handed the means to act for itself.
 
 ## Goals
 
 |   |   |  |
 | :---: | --- | --- |
 | 1. | No Hand-Maintained Fleet List | Neither tool's scope is a list a human must remember to update when a repository is created. |
-| 2. | Credential Blast Radius And Exposure Are Both Named | Every fleet-shared credential holds no role anywhere (bounding its capability) AND is never distributed beyond the single place it already lives (bounding its exposure); neither bound is assumed to follow from the other. |
-| 3. | Automation Stops At "A PR Exists" | Neither tool merges, tags, or publishes anything itself; a human reviews and merges every change, and cuts every release, exactly as today. |
-| 4. | Release Cutting Stays Human-Attested | `scripts/cut-release.sh` (Phase 2: tag + publish) is unchanged by this spec — this is entirely a Phase 1 (PR creation) and discovery redesign. |
+| 2. | Both Bots Run Unattended Over The Whole Fleet | A scheduled run of each bot covers `tap` and every discovered repository, with no slicing, no rotation and no hand dispatch needed to keep coverage current. |
+| 3. | Credential Reach And Exposure Are Both Named | Each App's key lives in one place and is never distributed; each run's token names only that run's repositories and the permissions its job needs. Neither bound is assumed to follow from the other. |
+| 4. | A Human Merges Every Change | Neither tool merges anything. A dependency update and a release PR each wait for a human; a release is tagged only after a human has merged its release PR. |
 
 ## Requirements
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-cicd-fleet-bot-discovery | [Renovate Discovers By Topic](#renovate-discovers-by-topic) | Proposed | Replaces `renovate/global.js`'s hardcoded `FLEET` array |
+| req-cicd-fleet-bot-discovery | [The Fleet Is Discovered By Topic](#the-fleet-is-discovered-by-topic) | Proposed | Replaces `renovate/global.js`'s hardcoded `FLEET` array |
 | req-cicd-fleet-bot-discovery-core-pinned | [Core Stays Explicitly Pinned](#core-stays-explicitly-pinned) | Proposed | `tap` is a singleton, not part of a growing list — no drift risk in naming it directly |
-| req-cicd-fleet-bot-release-phase1 | [Release-PR Creation Stays Centralized, Discovers By The Same Topic](#release-pr-creation-stays-centralized-discovers-by-the-same-topic) | Proposed | Same `release-please release-pr --fork` mechanism, same credential, already run today from `org-bots` — only `RELEASE_REPOS` is replaced, by the identical topic discovery `req-cicd-fleet-bot-discovery` uses for Renovate |
-| req-cicd-fleet-bot-release-phase2 | [Release Cutting Stays Manual And Unchanged](#release-cutting-stays-manual-and-unchanged) | Proposed | `scripts/cut-release.sh` is untouched by this spec |
-| req-cicd-fleet-bot-no-app-key-distribution | [No Org GitHub App Holds Write](#no-org-github-app-holds-write) | Proposed | End state: `tap-renovate` and `tap-release-please` are uninstalled org-wide once nothing needs them, not merely kept un-copied |
-| req-cicd-fleet-bot-shared-credential-bound | [A Fleet-Shared Credential Holds No Role Anywhere](#a-fleet-shared-credential-holds-no-role-anywhere) | Proposed | The general rule `req-cicd-fleet-bot-no-app-key-distribution` is the specific instance of |
-| req-cicd-fleet-bot-paced | [Fleet-Wide Actions Are Paced And Randomized](#fleet-wide-actions-are-paced-and-randomized) | Proposed | Added 2026-09-29 after GitHub flagged the fork bot on its first fleet-wide burst |
+| req-cicd-fleet-bot-release-phase1 | [Release PRs Are Opened Centrally, Over The Same Discovery](#release-prs-are-opened-centrally-over-the-same-discovery) | Proposed | `release-please release-pr` run from `org-bots` as the `tap-release-please` App, over the same topic discovery Renovate uses |
+| req-cicd-fleet-bot-release-phase2 | [A Merged Release PR Is Tagged By The App](#a-merged-release-pr-is-tagged-by-the-app) | Proposed | Rewritten 2026-11-19: tagging moved from a maintainer's machine to the same hourly run; `scripts/cut-release.sh` stays as the hand fallback |
+| req-cicd-fleet-bot-no-app-key-distribution | [App Keys Live Only In `org-bots`](#app-keys-live-only-in-org-bots) | Proposed | Rewritten 2026-11-19: the Apps hold write again; the key is still never copied |
+| req-cicd-fleet-bot-shared-credential-bound | [A Run's Token Is Bounded By What The Run Asks For](#a-runs-token-is-bounded-by-what-the-run-asks-for) | Proposed | Rewritten 2026-11-19: replaces "a fleet-shared credential holds no role anywhere" |
+| req-cicd-fleet-bot-paced | [The Bots Run Unpaced; Hand-Run Fleet Changes Are Paced](#the-bots-run-unpaced-hand-run-fleet-changes-are-paced) | Proposed | Added 2026-09-29 after GitHub flagged the fork bot; the bot half reversed 2026-11-19 |
 
-### Renovate Discovers By Topic
+### The Fleet Is Discovered By Topic
 
 ----
 RID: `req-cicd-fleet-bot-discovery`
 
 Status: `Proposed`
 
-Renovate's self-hosted run (`org-bots/.github/workflows/renovate.yml`, `renovate/global.js`)
-reads a hardcoded `FLEET` array of ~24 repository names. Replace it with topic discovery: a
-deterministic step in `org-bots` (`scripts/discover_fleet.py`) lists
+A deterministic step in `org-bots` (`scripts/discover_fleet.py`) lists
 `GET /orgs/unified-systems-com/repos`, keeps each repository whose owner is `unified-systems-com`
 and whose topics include `tap-plugin`, drops archived and disabled repositories, and hands the
-result to Renovate's global configuration as an explicit `repositories` list (`autodiscover`
-stays off). Every repository carrying that GitHub topic is processed, and nothing else.
+result to each bot. Renovate receives it as an explicit `repositories` list in its global
+configuration (`autodiscover` stays off). Every repository carrying that GitHub topic is
+processed, and nothing else.
 
 **Why not Renovate's own `autodiscover` + `autodiscoverTopics`.** On GitHub, Renovate
-autodiscovers from `GET /user/repos` (or `GET /installation/repositories` for an App): the
-repositories the token's *user* owns, collaborates on, or reaches through org membership
-(`fetchRepositories`/`getRepos` in `modules/platform/github/index.js`, read from the Renovate
-44.115.10 image `org-bots` pins).
-The fork-mode credential holds no role on any repository, so that list is the bot's own forks —
-which carry no topics — and `autodiscoverTopics` filters it to nothing. `autodiscoverNamespaces`
-is not applied by the GitHub platform at all. Autodiscovery therefore cannot see the fleet with
-the one credential this spec allows, and discovery is done from the org's own repository list
-instead, which is public and needs no credential beyond a workflow's read-only `GITHUB_TOKEN`.
-The search API is not used either: right after the topic was first applied its index briefly
-returned 22 of the 24 tagged repositories, while the org repository list returned all 24.
+autodiscovers from `GET /installation/repositories` for an App token (`fetchRepositories`/`getRepos`
+in `modules/platform/github/index.js`, read from the Renovate 44.115.10 image `org-bots` pins):
+whatever the token can see. Each run's token is deliberately narrowed before Renovate starts
+([`req-cicd-fleet-bot-shared-credential-bound`](#a-runs-token-is-bounded-by-what-the-run-asks-for)),
+so what the token can see is a consequence of discovery, not a definition of the fleet, and
+release-please has no autodiscovery at all. One discovery, done once from the org's own
+repository list with a workflow's read-only `GITHUB_TOKEN`, serves both bots and scopes both
+tokens. The search API is not used either: right after the topic was first applied its index
+briefly returned 22 of the 24 tagged repositories, while the org repository list returned all 24.
 
 **Discovery refuses rather than guesses.** No repository carrying the topic, a tagged repository
 whose name is not a plain repository name, or `org-bots` itself carrying the topic each stop
 discovery with an error — never an empty or partial run. `org-bots` is refused by name: the
 repository that runs the automation is never one of its targets.
 
-**Why a topic filter, not every repository in the organization.** Renovate's fork-mode
-credential holds no role on any repository — it forks the target and opens a PR from there, so
-it needs no write grant on anything it touches ([`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)).
-That already bounds the worst case of a mis-scoped discovery. The topic narrows scope further
-than "every repository in the organization" for a separate reason: hygiene, not safety — a
-repository that was never meant to be part of the fleet (an archived experiment, a private
-customer repo with no plugin in it) should not get dependency-bump PRs it did not ask for. The
-topic is a repository declaring "I am a TAP plugin" about itself, which is the same bar setting
-`FLEET` in `global.js` today requires (write access to that config), just moved onto the
-repository the decision is actually about.
+**Why a topic filter, not every repository in the organization.** The Apps are installed on
+every repository so that a new plugin needs no installation step
+([`req-cicd-fleet-bot-no-app-key-distribution`](#app-keys-live-only-in-org-bots)), which makes
+the topic the only thing standing between "the App can reach it" and "the bots act on it". A
+repository that was never meant to be part of the fleet (an archived experiment, the org's
+website, a supply-chain repository that pins by hand) must not get dependency-bump PRs it did not
+ask for, and must not be named in a write token. The topic is a repository declaring "I am a TAP
+plugin" about itself, moved onto the repository the decision is actually about.
 
-**Setting the topic is a one-time bulk action for the current fleet**, and folds into
-`new-plugin`'s scaffold going forward (`Issue# 203 - tap`, "new-plugin emits the baseline by
-default") so a plugin repository's 14th sibling self-registers at creation rather than needing a
-second step anyone can forget.
+**Setting the topic** is part of `new-plugin`'s scaffold (`Issue# 203 - tap`, "new-plugin emits
+the baseline by default"), so a new plugin repository self-registers at creation rather than
+needing a second step anyone can forget.
 
-**The `only` workflow-dispatch input** (a pilot run narrowed to one named repository) needs a
-small adjustment, and "bypasses topic discovery" must not mean "bypasses the owner qualifier too."
-With discovery on, `only=<name>` means "run against exactly this repository" — but that repository
-must still be `unified-systems-com`-owned and still carry the `tap-plugin` topic, checked the same
-way a discovered repository is, refusing a name that fails either check the same way today's
-`global.js` already refuses a name not on its list. `only` narrows *which* in-scope repository runs
-today; it must never be a second path into scope for a repository discovery itself would exclude.
+**The `only` workflow-dispatch input** narrows a hand-dispatched run to one named repository,
+and "bypasses the fleet run" must not mean "bypasses the owner qualifier too". `only=<name>`
+means "run against exactly this repository" — but that repository must be `tap` or a discovered
+one, checked the same way, and any other name is refused. `only` narrows *which* in-scope
+repository runs; it must never be a second path into scope for a repository discovery itself
+would exclude.
 
 **A GitHub topic is a global, public string — nothing about it is scoped to this organization on
 its own.** Any repository anywhere on GitHub could carry a `tap-plugin` topic for reasons that
@@ -137,9 +129,9 @@ happened to be called.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from topic discovery (`org-bots/scripts/discover_fleet.py`), handed to Renovate as its `repositories` list. | Renovate's native `autodiscoverTopics` cannot see the fleet with a no-role credential; see the section text |
+| req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from topic discovery (`org-bots/scripts/discover_fleet.py`), handed to Renovate as its `repositories` list. | Renovate's native autodiscovery reads what the token can see, which discovery itself decides; see the section text |
 | req-cicd-fleet-bot-discovery-2 | New Plugins Self-Register | Proposed | `new-plugin`'s scaffold applies the topic to a repository it creates, with no separate registration step. | Pairs with `Issue# 203 - tap` |
-| req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Narrows, Never Widens Scope | Proposed | `only=<name>` restricts a manual run to one named repository, but that repository must still pass the same `unified-systems-com`-ownership and `tap-plugin`-topic checks discovery itself applies — a name failing either is refused, the same property `global.js` already has for a name not on its list today. | `only` narrows within scope; it is not a second, unqualified path into scope |
+| req-cicd-fleet-bot-discovery-3 | Dispatch Narrows, Never Widens Scope | Proposed | `only=<name>` restricts a manual run to one named repository, but that repository must be `tap` or pass the same `unified-systems-com`-ownership and `tap-plugin`-topic checks discovery itself applies — any other name is refused. | `only` narrows within scope; it is not a second, unqualified path into scope |
 | req-cicd-fleet-bot-discovery-4 | Discovery Is Owner-Qualified, Not Topic-Alone | Proposed | The topic match is explicitly restricted to `unified-systems-com`-owned repositories (listing the organization's own repositories and checking each entry's owner), verified as a stated requirement rather than assumed from the token's incidental reach. | The topic string alone is global and public; anything outside this org sharing it must never be discovered |
 
 ### Core Stays Explicitly Pinned
@@ -150,11 +142,13 @@ RID: `req-cicd-fleet-bot-discovery-core-pinned`
 Status: `Proposed`
 
 `tap` core keeps its own explicit entry in `renovate/global.js` (`SELF_CONFIGURED`) rather than
-being topic-discovered. It is a singleton with its own concurrency limits and its own
-`renovate.json5`, not one member of a growing fleet — the drift `req-cicd-fleet-bot-discovery`
-exists to close is specifically about a list that grows and is forgotten; a list of one repository
-that never changes carries none of that risk, and topic-tagging core alongside every plugin would
-blur the distinction between "the host" and "the fleet" for no safety gain.
+being topic-discovered, and is named beside the discovered repositories for release-please the
+same way. It is a singleton with its own `renovate.json5`, not one member of a growing fleet —
+the drift `req-cicd-fleet-bot-discovery` exists to close is specifically about a list that grows
+and is forgotten; a list of one repository that never changes carries none of that risk, and
+topic-tagging core alongside every plugin would blur the distinction between "the host" and "the
+fleet" for no safety gain. Named or discovered, `tap` is covered by the same scheduled run as
+every other repository.
 
 #### Acceptance Criteria
 
@@ -162,96 +156,192 @@ blur the distinction between "the host" and "the fleet" for no safety gain.
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-discovery-core-pinned-1 | Core Is Named, Not Discovered | Proposed | `tap`'s own Renovate configuration is an explicit `SELF_CONFIGURED` entry, never gated on a topic. | |
 
-### Release-PR Creation Stays Centralized, Discovers By The Same Topic
+### Release PRs Are Opened Centrally, Over The Same Discovery
 
 ----
 RID: `req-cicd-fleet-bot-release-phase1`
 
 Status: `Proposed`
 
-**Revision note.** An earlier draft of this requirement moved Phase 1 into a reusable workflow
-each plugin repository calls, with the fork-bot credential held as an org-level secret every
-caller reads directly. That design does not hold up: GitHub cannot scope an organization secret
-by topic, so it either recreates a hand-maintained repository list (as a `selected`-visibility
-secret's grant list) or exposes the credential to every workflow in every repository the secret
-reaches (as an `all`-visibility secret), not only the intended caller. This section replaces it
-with the centralized design below, which needs no organization secret at all.
+Release-please's PR-creation stage (`release-please release-pr`) runs from `org-bots`, hourly,
+as the org-owned `tap-release-please` GitHub App, over the identical topic discovery
+[`req-cicd-fleet-bot-discovery`](#the-fleet-is-discovered-by-topic) provides for Renovate (the
+same `tap-plugin` topic, found by the same `org-bots/scripts/discover_fleet.py`, then iterated).
+One discovery mechanism serves both tools; a repository tagged once gets both Renovate and
+release-please coverage, with nothing for `new-plugin` to scaffold beyond the topic itself. There
+is no reusable per-repository workflow file, so there is no separate enrollment gap to close for
+release-please. A discovered repository that does not yet carry release-please's own
+`release-please-config.json` and `.release-please-manifest.json` has nothing to release and is
+skipped with a visible notice, not a failure; those two files are the release definition itself,
+not a registration step. `tap` is named alongside the discovered repositories exactly as for
+Renovate ([`req-cicd-fleet-bot-discovery-core-pinned`](#core-stays-explicitly-pinned)).
 
-Release-please's PR-creation stage (`release-please release-pr --fork`) already runs fork-mode,
-from `org-bots`, using the same `FORK_BOT_TOKEN` Renovate already uses — this does not change.
-What changes is only how `org-bots` decides *which repositories* to run it against: replace the
-hardcoded `RELEASE_REPOS` string with the identical topic discovery
-[`req-cicd-fleet-bot-discovery`](#renovate-discovers-by-topic) already uses for Renovate (the
-same `tap-plugin` topic, found by the same `org-bots/scripts/discover_fleet.py`, then iterated). One
-discovery mechanism serves both tools; a repository tagged once gets both Renovate and
-release-please coverage, with nothing new for `new-plugin` to scaffold beyond the topic itself —
-unlike the reverted per-repo design, **this shape needs no reusable per-repo workflow file at
-all**, so there is no separate enrollment gap to close for release-please the way there is for
-Renovate: coverage is inherited from the same topic tag, automatically. A discovered repository
-that does not yet carry release-please's own `release-please-config.json` and
-`.release-please-manifest.json` has nothing to release and is skipped with a visible notice, not
-a failure; those two files are the release definition itself, not a registration step. `tap` is
-named alongside the discovered repositories exactly as for Renovate
-([`req-cicd-fleet-bot-discovery-core-pinned`](#core-stays-explicitly-pinned)), and is skipped
-while it still runs its own `release-please.yml`.
+**One run covers every repository.** The run is not sliced, rotated or capped: a scheduled run
+iterates `tap` and every discovered repository, and one repository failing does not stop the
+others (the run still ends red and names it).
 
-**The credential is unchanged from what `org-bots` already holds today** — see
-[`req-cicd-fleet-bot-no-app-key-distribution`](#no-org-github-app-holds-write) for
-why a GitHub App's private key was the wrong direction, and
-[`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)
-for why this credential is safe to *use* fleet-wide precisely because it is never *distributed*
-anywhere — it stays in the single `org-bots` environment it already lives in, and `org-bots` acts
-on each discovered repository's behalf rather than handing the repository a means to act for
-itself.
+**Why a per-repository workflow was rejected, and stays rejected.** An earlier draft moved this
+stage into a reusable workflow each plugin repository calls, with the credential held as an
+org-level secret every caller reads directly. GitHub cannot scope an organization secret by
+topic (visibility is only `all`, `private`, or an explicit repository list), so that design
+either recreates a hand-maintained repository list or exposes the credential to every workflow
+in every repository the secret reaches. The centralized design needs no organization secret at
+all; see [`req-cicd-fleet-bot-no-app-key-distribution`](#app-keys-live-only-in-org-bots).
 
-**The resulting release PR is fork-authored, so it triggers CI the same way any external
-contributor's PR does** — this is a real and separately-solved problem, not assumed: a PR pushed
-with a repository's own ambient `GITHUB_TOKEN` does **not** trigger new workflow runs (GitHub's
-own rule, and the reason `tap`'s own `release-please.yml` uses a GitHub App token instead of
-`GITHUB_TOKEN` for its own release PRs). Fork-authored PRs do not have this problem — they trigger
-checks normally, subject to the "Approve and run" gate every fork PR waits behind.
-
-**That gate's actual behavior has two distinct parts, and stating only one of them the way an
-earlier draft did makes the model read as contradictory.** *When* the approval step runs is a
-human decision: George invokes `scripts/approve_bot_runs.py` himself, at his own discretion
-(`Q51`, ruled) — there is no schedule and no automated invocation. *What gets approved within
-that run* is not a human decision at all: the script approves **every** currently-waiting run
-that passes its rule set (bot identity by numeric id, fork parentage, head sha match, file
-allowlist) in one pass — nothing about which specific runs get approved is selected by a human
-per run. So the credential's exposure is: possession of it lets a forged PR pass those rules and
-be approved automatically **the next time George runs the batch** — narrower than "an automated
-approver runs constantly," but not "each approval is individually reviewed" either.
+**The release PR is authored by the App, so the repository's own checks run on it.** A PR
+pushed with a repository's ambient `GITHUB_TOKEN` does **not** trigger new workflow runs
+(GitHub's own rule). A PR opened with an App installation token does, with no "Approve and run"
+step, because its branch is in the target repository itself and its author is an account of
+type `Bot`. A repository whose sign-off or issue-link check exempts bot authors must name the
+App's bot user by id; the bot never adds a `Signed-off-by` trailer, because an automated system
+does not certify the DCO.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-release-phase1-1 | Same Mechanism, Same Credential | Proposed | `release-please release-pr --fork` continues to run from `org-bots`, authenticated exactly as it is today — this requirement changes discovery only. | |
-| req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | `RELEASE_REPOS` is replaced by querying the same `tap-plugin` topic `req-cicd-fleet-bot-discovery` uses, under the same `unified-systems-com` owner qualifier (`req-cicd-fleet-bot-discovery-4`) — not the topic alone. | Inherits the org-scoping requirement, doesn't restate a separate one |
-| req-cicd-fleet-bot-release-phase1-3 | Credential Never Leaves `org-bots` | Proposed | The fork-bot credential is not made an organization secret, not copied to any repository, and not passed to any per-repo workflow — it is read only inside `org-bots`' own run. | Supersedes the reverted org-secret design |
-| req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR, Approval Model Stated Precisely | Proposed | Checks run normally on the fork-authored PR because a `GITHUB_TOKEN`-authored PR (which would not trigger checks at all) is never used for this stage. Approval is a human-*initiated*, rule-*decided* batch: a human chooses when to run `approve_bot_runs.py`; within that run, every waiting run passing its identity/structural rules is approved, none individually selected. | Verified against `tap`'s own `release-please.yml` (`GITHUB_TOKEN` limitation) and `scripts/approve_bot_runs.py`'s own approval loop directly |
+| req-cicd-fleet-bot-release-phase1-1 | Same Mechanism, Same Credential | Retired | `release-please release-pr --fork` continues to run from `org-bots`, authenticated exactly as it is today — this requirement changes discovery only. | Reversed 2026-11-19: fork mode is retired; `-6` states the App mechanism |
+| req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | The repositories release-please runs on come from the same `tap-plugin` topic discovery `req-cicd-fleet-bot-discovery` provides, under the same `unified-systems-com` owner qualifier (`req-cicd-fleet-bot-discovery-4`) — not the topic alone. | Inherits the org-scoping requirement, doesn't restate a separate one |
+| req-cicd-fleet-bot-release-phase1-3 | Credential Never Leaves `org-bots` | Proposed | The `tap-release-please` App's private key is not made an organization secret, not copied to any repository, and not passed to any per-repository workflow — it is read only inside `org-bots`' own run. | Same rule, restated for the App key; the fork bot's token it once described is gone |
+| req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR, Approval Model Stated Precisely | Retired | Checks run normally on the fork-authored PR because a `GITHUB_TOKEN`-authored PR (which would not trigger checks at all) is never used for this stage. Approval is a human-*initiated*, rule-*decided* batch: a human chooses when to run `approve_bot_runs.py`; within that run, every waiting run passing its identity/structural rules is approved, none individually selected. | Retired 2026-11-19 with fork mode: an App-authored PR waits behind no "Approve and run" gate; `-7` states what replaces it |
 | req-cicd-fleet-bot-release-phase1-5 | One Topic Covers Both Tools | Proposed | A repository tagged for Renovate discovery is, by the same tag, in scope for release-please discovery — no second registration step, no per-repo workflow file to forget. | Replaces the reverted `new-plugin`-scaffolds-a-caller-workflow approach |
+| req-cicd-fleet-bot-release-phase1-6 | Release PRs Are Opened By The App, Whole Fleet Per Run | Proposed | `release-please release-pr` runs from `org-bots` on a schedule, authenticated with a `tap-release-please` installation token, over `tap` and every discovered repository in one run, with no slice, rotation or cap on new release PRs. | `org-bots#41` |
+| req-cicd-fleet-bot-release-phase1-7 | The Repository's Own Checks Run On The Release PR | Proposed | The release PR is opened with the App's token, never a `GITHUB_TOKEN`, so the target repository's checks run on it without an approval step; the bot adds no `Signed-off-by` trailer. | A check that exempts bots must name the App's bot user by id |
 
-### Release Cutting Stays Manual And Unchanged
+### A Merged Release PR Is Tagged By The App
 
 ----
 RID: `req-cicd-fleet-bot-release-phase2`
 
 Status: `Proposed`
 
-`scripts/cut-release.sh` — tagging the merged release PR and publishing the GitHub Release — is
-untouched by this spec. It still runs from a maintainer's machine, with their own `gh auth token`,
-after they have merged the release PR by hand. Nothing in `req-cicd-fleet-bot-release-phase1`
-grants any fleet-shared credential the `contents: write` this stage needs; that boundary is
-deliberate; see [`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere).
+Nothing is released until a human merges a repository's release PR. Once one has been merged,
+the same hourly run that opens release PRs tags the merge commit and publishes the GitHub Release
+(`release-please github-release`), with the same `tap-release-please` installation token. The tag
+is created with the App's token so that the repository's tag-push workflows (`release-sbom.yml`)
+run on it; a tag made with a `GITHUB_TOKEN` would trigger nothing.
+
+The human act this stage rests on is the merge, not the tag. Merging the release PR is a
+reviewed, attributed decision on the target repository; the tag that follows is the mechanical
+record of it, and is made within the hour without anyone having to remember.
+
+`scripts/cut-release.sh` — the same two steps from a maintainer's machine, with their own
+`gh auth token` — stays as the hand fallback for a repository the App cannot serve or a release
+that cannot wait for the next run. It is not the normal road.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-release-phase2-1 | Cut-Release Is Unchanged | Proposed | `scripts/cut-release.sh`'s behavior, invocation, and credential model are identical before and after this spec lands. | |
+| req-cicd-fleet-bot-release-phase2-1 | Cut-Release Is Unchanged | Retired | `scripts/cut-release.sh`'s behavior, invocation, and credential model are identical before and after this spec lands. | Retired 2026-11-19: cutting by hand is the fallback, not the road; `-2` and `-3` state the road |
+| req-cicd-fleet-bot-release-phase2-2 | Only A Human-Merged Release PR Is Tagged | Proposed | The scheduled run tags and publishes a release only for a release PR a human has merged; it never merges one itself. | |
+| req-cicd-fleet-bot-release-phase2-3 | The Tag Starts The Repository's Tag Workflows | Proposed | The tag is created with the App's installation token, not a `GITHUB_TOKEN`, so the target repository's tag-push workflows run on it. | `release-sbom.yml` is the consumer today |
 
-### Fleet-Wide Actions Are Paced And Randomized
+### App Keys Live Only In `org-bots`
+
+----
+RID: `req-cicd-fleet-bot-no-app-key-distribution`
+
+Status: `Proposed`
+
+Two org-owned GitHub Apps hold write on the fleet: `tap-renovate` (`contents`, `pull-requests`
+and `workflows` write, `vulnerability-alerts` read) and `tap-release-please` (`contents` and
+`pull-requests` write). Both are installed on **all repositories** in the organization (George,
+2026-11-19), so a new plugin repository is covered the moment it carries the topic and no run can
+fail because someone forgot to add a repository to an installation.
+
+**An App installed on every repository can mint a token for any of them, which is exactly why
+its key is held in one place.** Each App's private key exists only as a secret of the `bots`
+environment of `org-bots`, which deploys from `main` only, so the key is handed to nothing but a
+workflow already merged to `main` there. It is never an organization secret, never copied into a
+plugin repository's or `tap`'s own secret store, and never passed to a workflow in another
+repository. Copying it into twenty-plus repositories' secret stores would turn each into an
+independent leak surface for one organization-wide-write credential.
+
+**From 2026-09-27 to 2026-11-19 this requirement said the opposite end state**: that neither App
+should hold write at all, with both uninstalled once the fork bot covered their work. That end
+state is withdrawn with the fork design. What survives is the half that was always sound — the
+key is not distributed.
+
+**`tap`'s own copies are deleted.** `tap` once ran its own Renovate and release-please workflows
+with App credentials held as `tap`-repository secrets (retired 2026-09-29). Those secrets are
+named, so their absence is checked by name: `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY`,
+`TAP_RELEASE_PLEASE_APP_PRIVATE_KEY`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-no-app-key-distribution-1 | No Org App Holds Write, Enforced | Retired | A periodic check queries `GET /orgs/unified-systems-com/installations` and fails if any installed GitHub App's `permissions` object holds `write` or `admin` for any resource. No allowlist: an App that needs to be there anyway is `-2`'s named, sequenced exception, not an entry in this check. | Reversed 2026-11-19: the two bot Apps hold write by design |
+| req-cicd-fleet-bot-no-app-key-distribution-2 | Removal Is Sequenced, Not Assumed | Retired | The Apps are uninstalled and their keys deleted only after `tap`'s own `renovate.yml` and `release-please.yml` are retired (amended 2026-09-29: `tap` is served by hand in the meantime, not by the fork bot); until then `-1`'s check is expected to fail rather than being treated as broken. | Retired 2026-11-19 with `-1`: the Apps are not removed |
+| req-cicd-fleet-bot-no-app-key-distribution-3 | `tap`'s Own App Secrets Are Deleted | Proposed | `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY` and `TAP_RELEASE_PLEASE_APP_PRIVATE_KEY` are absent from `tap`'s repository secrets, checked by the known name of each — not an inventory. | Narrowed 2026-11-19 from five names: the two `org-bots` environment secrets are where the keys now live |
+| req-cicd-fleet-bot-no-app-key-distribution-4 | Secret-Name Inventory Stays Supplementary | Proposed | A periodic allowlist-based inventory of plugin repositories' secret names (catching an unexpected name, not just a missing canonical one) remains as a *supplementary* detective check, not the primary enforcement. | |
+| req-cicd-fleet-bot-no-app-key-distribution-5 | Each App Key Lives In One Environment | Proposed | Each App's private key exists only as a secret of `org-bots`' `bots` environment, which deploys from `main` only; it is not an organization secret and is not present in any other repository's secrets. | The primary rule since 2026-11-19 |
+| req-cicd-fleet-bot-no-app-key-distribution-6 | Both Apps Are Installed On All Repositories | Proposed | `tap-renovate` and `tap-release-please` are installed with repository access "All repositories", so adding a repository to the fleet has no installation step. | George, 2026-11-19; which repositories a run acts on is discovery's decision, not the installation's |
+
+### A Run's Token Is Bounded By What The Run Asks For
+
+----
+RID: `req-cicd-fleet-bot-shared-credential-bound`
+
+Status: `Proposed`
+
+An App installed on every repository is the widest credential in the organization. What a single
+run can reach is narrowed at the moment its token is minted, and that narrowing — not the App's
+installation — is the bound this requirement states.
+
+- **The token names only the run's repositories.** The mint step passes an explicit
+  `repositories` list: `tap` plus the discovered fleet for a scheduled run, or the one repository
+  a dispatch names. It is never minted for the whole installation, and an empty or malformed list
+  stops the run before the mint, because an unscoped mint would cover every repository the App is
+  installed on.
+- **The token carries only the permissions its job needs.** Renovate's: `contents`,
+  `pull-requests` and `workflows` write (`workflows` so it can bump the pinned `uses:` SHAs under
+  `.github/workflows`) and `vulnerability-alerts` read (so it sees each repository's Dependabot
+  alerts and opens the fix as a `security` PR). Release-please's: `contents` and `pull-requests`
+  write, and no `workflows` permission, so it cannot edit a workflow file. Neither holds
+  administration.
+- **The token lasts for the run.** It expires within the hour and is revoked when the job ends.
+- **Nothing merges on its own.** `automerge` is off for Renovate and release-please never merges
+  a release PR, so a token's worst case on a protected default branch is a pull request a human
+  has to accept.
+- **A target repository's own config cannot run commands with the token.** Renovate's global
+  configuration allows exactly one post-upgrade command, anchored and argument-free, from a
+  read-only mount (the boot-record digest refresh), and the shell executor is off.
+- **The code that holds the token is pinned.** The Renovate image is pinned by digest and every
+  action by commit SHA, so a moved tag cannot swap what receives the token.
+
+**What this does not bound, stated so it is not assumed.** One scheduled run holds a write token
+over the whole fleet for up to an hour. A compromise of that job — the pinned image, a pinned
+action, or the runner — reaches every fleet repository's branches in one token lifetime, not a
+slice of them. The fork design and the slicing after it were both attempts to shrink that reach,
+and both were given up for reliability (George, 2026-11-19). The controls above reduce the ways
+to get there; they do not make the reach small.
+
+**From 2026-09-27 to 2026-11-19 this requirement was "A Fleet-Shared Credential Holds No Role
+Anywhere"**, and its guards on fork-triggered jobs (`-2`, `-4`, `-5`, `-6`, `-7`) were moved to
+`unified-systems-com/git-serious-double-tap#63` as a proposal for a TAP-specific watch ruleset
+(George, Q68c, 2026-09-28). Those guards are about what a fork-triggered job can reach, which
+matters for every outside contributor's PR whether or not a fork bot exists, so the proposal
+stands on its own there. The rows stay below, retired, so their ids are never reused.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Retired | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | Reversed 2026-11-19: the Apps hold write; `-8` to `-11` state the bound |
+| req-cicd-fleet-bot-shared-credential-bound-2 | `pull_request_target` Is Fleet-Guarded, Not Just Absent | Retired | A CI guard fails closed if any fleet workflow adds `pull_request_target`, rather than the fleet merely happening not to use it today. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28) |
+| req-cicd-fleet-bot-shared-credential-bound-3 | Auto-Approval Is Named As A Capability | Retired | The credential's threat model documents "bypasses the human Approve-and-run click for this identity" as a real capability the credential grants, not an absence of one. | Retired 2026-11-19 with fork mode: no identity is auto-approved; `scripts/approve_bot_runs.py` is unused by the App lane |
+| req-cicd-fleet-bot-shared-credential-bound-4 | Effective Token Permission Is Fleet-Guarded, Not Just The Org Default | Retired | A guard fails closed if the *effective* permission a fork-triggered job runs with is ever write — covering the organization default, any explicit job- or workflow-level `permissions:` block that widens it, and GitHub's separate "workflows can approve pull requests" / write-back setting for fork PRs — not the org default alone. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28) |
+| req-cicd-fleet-bot-shared-credential-bound-5 | No Credential Path Into Fork-Triggered Jobs Is Fleet-Guarded | Retired | A guard fails closed if any fleet workflow's `pull_request`-triggered job gains a credential through *any* path — a direct `secrets.*` reference, a reusable-workflow call that inherits or is passed secrets, `id-token: write` (OIDC-minted cloud credentials, which exist outside GitHub's own secret-withholding guarantee), or a self-hosted runner (which does not carry GitHub-hosted runners' isolation guarantees at all). `pull_request_target` and direct `secrets.*` references are the sharpest versions of this failure, not the only ones. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28) |
+| req-cicd-fleet-bot-shared-credential-bound-6 | The Fork Bot's Own Standing Is Audited, Not Assumed | Retired | A periodic check queries the GitHub API for the fork bot account's (id 334543231) actual organization membership, base permission level, collaborator grants, and team memberships across the fleet, and fails loudly if any of them is ever non-empty. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28); the account is since suspended |
+| req-cicd-fleet-bot-shared-credential-bound-7 | `workflow_run` Consumers Are Allowlisted And Data-Only, Enforced | Retired | A guard fails closed on any fleet workflow triggered by `workflow_run` unless it is on an explicit allowlist of reusable workflows pinned by commit SHA — today, `unified-ai-review`'s `review.yml` only. Every allowlisted consumer must never check out the triggering run's PR head ref or sha, never execute, install, or shell-source content the fork-triggered run produced, and keep every secrets-bearing job in it read-only. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28) |
+| req-cicd-fleet-bot-shared-credential-bound-8 | The Token Names Only The Run's Repositories | Proposed | Each run's installation token is minted with an explicit `repositories` list — `tap` plus the discovered fleet, or the one repository a dispatch names — and a run with an empty or malformed list stops before the mint. | The App is installed on all repositories; an unscoped mint would cover all of them |
+| req-cicd-fleet-bot-shared-credential-bound-9 | The Token Carries Only The Job's Permissions | Proposed | Renovate's token holds `contents`, `pull-requests` and `workflows` write and `vulnerability-alerts` read; release-please's holds `contents` and `pull-requests` write; neither holds any other permission. | Stated on the mint step, not inherited from the App's full grant |
+| req-cicd-fleet-bot-shared-credential-bound-10 | Neither Bot Merges | Proposed | Renovate runs with `automerge` off and release-please never merges a release PR, so no change reaches a default branch without a human merging it. | Goal 4 |
+| req-cicd-fleet-bot-shared-credential-bound-11 | Repository Config Cannot Run Commands With The Token | Proposed | Renovate's global configuration allows only the one anchored, argument-free boot-record refresh command from a read-only mount, with the shell executor off, so a target repository's own Renovate config cannot execute anything else while the token is held. | `allowedCommands`, `allowShellExecutorForPostUpgradeCommands` in `renovate/global.js` |
+
+### The Bots Run Unpaced; Hand-Run Fleet Changes Are Paced
 
 ----
 RID: `req-cicd-fleet-bot-paced`
@@ -261,19 +351,23 @@ Status: `Proposed`
 On 2026-09-28 the fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
 twenty minutes, and GitHub's anti-abuse flagged the two-day-old account: the account and
 everything it had created went invisible to everyone else, and the pipeline stopped until an
-appeal. The single-repository pilots before it never came close. A burst of cross-repository
-activity from one account is the spam shape, whichever account it is. So every fleet-wide action
-is paced, and the pacing is randomized so that no two runs share a rhythm (George, 2026-09-29:
-"make sure that the randomized / delayed processing is baked into the documentation and the
-process going forward").
+appeal. Everything fleet-wide was then paced: the bots covered one slice of the fleet per run,
+rotated, behind random delays and per-run caps, and people were held to the same rule.
 
-This binds the bots and people alike. A maintainer's own account doing a fleet-wide change by
-hand (a pin bump, a rename pass, a config sweep) is the same burst from GitHub's side, and losing
-the maintainer's account would be worse than losing the bot's.
+**The bots are no longer paced (George, 2026-11-19).** That account is gone. Renovate and
+release-please run as org-owned GitHub Apps, which are not a young user account and are the
+configuration both tools are built for. The slices cost more than they protected: a full pass of
+the fleet took eight runs, Renovate's schedule was left off for two weeks, and a rotation that
+moved only on success pinned scheduled release-please to one failing slice for days. Each bot
+now covers the whole fleet in every scheduled run — Renovate nightly, release-please hourly —
+with no slicing, rotation, random start, per-run cap, or pause, and with Renovate's own default
+pull-request limits.
 
-- **The bots** (`org-bots`): Renovate covers one slice of the fleet per run, rotated by run number,
-  and starts each run after a random delay; release-please opens a capped number of new release
-  PRs per run with a random pause after each and defers the rest. `org-bots` README, "The ramp".
+**People are still paced.** A maintainer's own account doing a fleet-wide change by hand (a pin
+bump, a rename pass, a config sweep) is a burst of cross-repository activity from one user
+account, which is the shape that was flagged, and losing a maintainer's account would be worse
+than losing a bot's.
+
 - **By hand**: one repository at a time; a pilot repository first, and the batch stops if the
   pilot is not green or a PR fails to open; PRs opened minutes apart at random, merges spaced at
   random. The 2026-09-28 fleet pin bump (24 repositories, bom-bom Q74) is the worked example.
@@ -284,185 +378,27 @@ the maintainer's account would be worse than losing the bot's.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-paced-1 | Bot Runs Are Sliced And Randomly Paced | Proposed | Renovate touches at most one slice of the fleet per run and starts after a random delay; release-please caps new release PRs per run and pauses a random interval after each. | `org-bots` PR "pace the fork bot (the ramp)" |
-| req-cicd-fleet-bot-paced-2 | Hand-Run Fleet Changes Follow The Same Rule | Proposed | A fleet-wide change made from a person's account is piloted on one repository, stops on the first failure, and opens and merges one repository at a time with random gaps. | Documented in `org-bots` README, "The ramp" |
+| req-cicd-fleet-bot-paced-1 | Bot Runs Are Sliced And Randomly Paced | Retired | Renovate touches at most one slice of the fleet per run and starts after a random delay; release-please caps new release PRs per run and pauses a random interval after each. | Reversed 2026-11-19; `-4` states what replaces it |
+| req-cicd-fleet-bot-paced-2 | Hand-Run Fleet Changes Follow The Same Rule | Proposed | A fleet-wide change made from a person's account is piloted on one repository, stops on the first failure, and opens and merges one repository at a time with random gaps. | Documented in `org-bots` README, "The ramp"; confirmed standing 2026-11-19 |
 | req-cicd-fleet-bot-paced-3 | A Run's PRs Are Checked To Exist | Proposed | After a bot run, at least one of the PRs it reports opening resolves for an account other than the bot. | A green run is not evidence its PRs are visible |
-
-### No Org GitHub App Holds Write
-
-----
-RID: `req-cicd-fleet-bot-no-app-key-distribution`
-
-Status: `Proposed`
-
-**A per-repo copy of an org-wide-installed App's private key was the first thing this section
-ruled out** — `tap` core's own `.github/workflows/release-please.yml` mints an installation token
-from the `tap-release-please` GitHub App, using a private key held as a `tap`-repo-level secret.
-That works for `tap` alone. It does not generalize to giving every plugin repository the same
-pattern: the App is installed **org-wide** (`repository_selection: all`), so its private key can
-mint a token for *any* repository in the org, and copying that key into twenty-plus repositories'
-secret stores would turn each into an independent leak surface for one organization-wide-write
-credential.
-
-**The stronger fix, not just the narrower one: neither org GitHub App needs to hold write at
-all, once the fork-bot path covers what they were doing.** `req-cicd-fleet-bot-release-phase1`
-already moves release-PR creation onto the no-role fork bot; Renovate already runs that way.
-Release *cutting* already uses the maintainer's own token (`scripts/cut-release.sh`), never an
-App. Once that is true everywhere the Apps are used today, neither `tap-renovate` nor
-`tap-release-please` has a job left that requires org-wide write — so the end state is that both
-Apps are **uninstalled from the organization and their private keys deleted**, not merely kept
-un-copied. A capability nothing needs is a capability worth removing, not one worth guarding
-forever.
-
-**Sequencing — the Apps exist today for a real reason, and removing them is a later step, not
-this one.** `tap`'s own `renovate.yml` and `release-please.yml` still use them. The Apps are
-removed only after those two workflows are retired and the fork-bot path is proven working on
-`tap` itself; until then, `req-cicd-fleet-bot-no-app-key-distribution-1`'s check is *expected* to
-fail, because the Apps are still legitimately installed with write. This requirement documents
-the end state and its enforcement; it does not claim the end state holds today.
-
-**Amended 2026-09-29 (George, bom-bom Q75a): `tap` does not wait for the fork bot.** Its two
-workflows retire now and `tap` is served by hand in the meantime (`org-bots`
-`scripts/run-as-maintainer.sh`, the maintainer's own token, randomly paced and rate-limited
-by the script itself),
-so the Apps come out as soon as that lands; `tap` joins the fork-bot path later (tap#879).
-
-**The known secrets these Apps back are deleted in the same step, and that check is cheap because
-the names are known, not inventoried:** `tap`'s own `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY`,
-`TAP_RELEASE_PLEASE_APP_PRIVATE_KEY`, and `org-bots`' `TAP_RENOVATE_PRIVATE_KEY`,
-`TAP_RELEASE_PLEASE_PRIVATE_KEY` — five specific, named secrets, checked for absence by name,
-which is a different (and stronger, because it is exhaustive over a known list rather than
-detective over an unbounded one) kind of check than the org-wide App-installation guard below.
-
-#### Acceptance Criteria
-
-| ACID | Title | Status | Description | Notes |
-| --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-no-app-key-distribution-1 | No Org App Holds Write, Enforced | Proposed | A periodic check queries `GET /orgs/unified-systems-com/installations` and fails if any installed GitHub App's `permissions` object holds `write` or `admin` for any resource. No allowlist: an App that needs to be there anyway is `-2`'s named, sequenced exception, not an entry in this check. | Enforcement moved from a per-repo secret scan (which the API's name-only responses can't make airtight) to the org's own installation list, which the API states authoritatively; scanning the whole permissions object rather than a fixed resource-name list means an unanticipated write-capable permission can't slip past a list that forgot to name it — and an allowlist can't quietly become the place a write-holding App gets to stay forever |
-| req-cicd-fleet-bot-no-app-key-distribution-2 | Removal Is Sequenced, Not Assumed | Proposed | The Apps are uninstalled and their keys deleted only after `tap`'s own `renovate.yml` and `release-please.yml` are retired (amended 2026-09-29: `tap` is served by hand in the meantime, not by the fork bot); until then `-1`'s check is expected to fail rather than being treated as broken. | Names the precondition so a later reader doesn't read a failing `-1` as a regression |
-| req-cicd-fleet-bot-no-app-key-distribution-3 | The Five Known Secrets Are Deleted Together | Proposed | `RENOVATE_APP_ID`, `RENOVATE_APP_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_APP_PRIVATE_KEY` (in `tap`) and `TAP_RENOVATE_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_PRIVATE_KEY` (in `org-bots`) are all absent once removal completes, checked by the known name of each — not an inventory. | Five specific names, not a scan |
-| req-cicd-fleet-bot-no-app-key-distribution-4 | Secret-Name Inventory Stays Supplementary | Proposed | A periodic allowlist-based inventory of plugin repositories' secret names (catching an unexpected name, not just a missing canonical one) remains as a *supplementary* detective check, not the primary enforcement — `-1` is. | Downgraded from primary enforcement once `-1` gave the fleet a check the API can actually make authoritative |
-
-### A Fleet-Shared Credential Holds No Role Anywhere
-
-----
-RID: `req-cicd-fleet-bot-shared-credential-bound`
-
-Status: `Proposed`
-
-The general rule `req-cicd-fleet-bot-no-app-key-distribution` is one instance of: any credential
-used identically across many repositories in this fleet must hold **no role on any of them** —
-its only capability is to fork a repository and open a PR from that fork, which needs no write
-grant on the target at all. This is what makes the fork-bot credential (Renovate, and now
-release-please's Phase 1) safe to *use* fleet-wide: its blast radius is identical whether one
-repository is discovered or twenty, because forking plus opening a PR is all it can ever do, and
-a human still reviews and merges every PR it produces.
-
-**"No role anywhere" bounds the credential's capability; it does not by itself bound its
-*exposure*, and the two were conflated in an earlier draft.** GitHub cannot scope an organization
-secret by topic, so making a no-role credential broadly visible as an org secret still means
-every workflow in every repository that visibility reaches can read it — a wider exposure than
-the credential's *capability* alone would suggest is necessary. `req-cicd-fleet-bot-release-phase1-3`
-closes that the direct way: the credential is never made a secret any repository's own workflow
-can read at all. It stays inside `org-bots`, which is what "no role anywhere" is describing —
-not "safe to hand out broadly," but "safe for `org-bots` to keep using on the fleet's behalf."
-
-A credential that holds a *real* role on a repository — write access, an installed App with
-`contents: write` — is the opposite case, and this spec's decisions never share one of those
-across repositories. Where a stage genuinely needs write access (`scripts/cut-release.sh`), it
-stays scoped to exactly one operator's own credential, invoked by hand, never distributed.
-
-**"No role" is not the whole blast-radius model, and stating it that way understates the
-credential.** `scripts/approve_bot_runs.py`
-recognizes this exact identity by numeric id and auto-approves its fork PRs' workflow runs,
-fleet-wide. Possessing the credential therefore grants an *indirect* capability beyond "fork and
-open a PR": it lets whoever holds it pass as the one identity that skips the human
-"Approve and run" click every other outside contributor faces. That is a real capability, not
-nothing, and the credential's safety rests on what that capability can reach being small — never
-on the capability not existing.
-
-**Worked check, done directly rather than assumed** (feeds `req-cicd-fleet-bot-release-phase1-4`):
-what a forged, auto-approved run can reach *directly, inside its own job*, is bounded by three
-separate facts, each verified against this fleet rather than assumed generically — the resulting
-workflow run holds no secrets (GitHub does not forward repository/organization secrets to a
-`pull_request`-triggered run originating from a fork, and no workflow in this fleet uses
-`pull_request_target`, the pattern that would defeat that protection) and a read-only
-`GITHUB_TOKEN` (the organization's own default). The worst case *inside that job* is unattributed,
-sandboxed compute — not write access, not secret exposure, not a path to merging anything. **That
-claim is scoped to the fork-triggered job itself, and does not by itself cover a *second* workflow
-that later consumes something the first one produced** — see the `workflow_run` check below,
-which closes that separate path. **All three facts are load-bearing simultaneously**: if
-any one stops holding — a workflow starts using `pull_request_target`, the org default flips to
-write, or a secret gets passed into a fork-triggered job — the credential's safety argument no
-longer holds, which is exactly why `-2` below is an enforced guard and not a documented
-assumption.
-
-**The guards below are retired here, and moved.** `-2`, `-4`, `-5`, `-6` and `-7` went to
-`unified-systems-com/git-serious-double-tap#63` as a proposal for a TAP-specific watch ruleset
-(George, Q68c, 2026-09-28): a good idea, but not critical path for the fleet bots. The reasoning
-below stays, because it is still why the bot is safe; enforcing it is that proposal's job now.
-
-**All three of the facts the worked check above relies on must be enforced, not just one of
-them** — naming three load-bearing facts and gating only one lets an implementation pass every
-stated criterion while quietly losing either of the other two. Each of the three needs its own
-guard, and each guard needs to check more than its narrowest reading — see `-2`, `-4`, and `-5`
-below, and the fourth invariant this section was missing entirely (`-6`): that "no role anywhere"
-is itself audited, not assumed to hold just because nobody granted a role on purpose.
-
-**A fifth path exists that none of the above cover, because it is not about what a fork-triggered
-job can reach directly — it is about a *second*, separately-triggered workflow consuming
-something the first one produced.** `workflow_run` fires a new workflow, in the *base* repository's
-context (which can carry real secrets and write permissions), after an earlier workflow completes
-— and that earlier workflow can be the fork-triggered one this whole section is about. If the
-`workflow_run` consumer downloads an artifact the fork job produced and then *executes* it (runs
-it, installs it as a package, restores it into a cache later builds trust) rather than only
-*reading* it as inert data, a forged/auto-approved fork PR reaches privileged execution
-transitively — exactly the class of bypass the rest of this section works to rule out directly.
-
-**Checked directly against this fleet rather than assumed: exactly one workflow uses
-`workflow_run` today** — `.github/workflows/ai-review.yml`, calling
-`unified-systems-com/unified-ai-review/.github/workflows/review.yml`, pinned by commit SHA. It
-downloads the fork job's artifact and handles it only as **data** — parsed as JSON by inline
-script, never executed, never installed, never sourced into a shell command. The only
-`actions/checkout` in that workflow checks out the trusted prompts repository, never the
-triggering PR's own head. The job holding API-key secrets runs `contents: read`; the separate job
-that writes the review comment holds `pull-requests: write` and `issues: write`, nothing more.
-So: PR-controlled text does reach a secrets-bearing job as **input to a model** — that is
-prompt injection, the surface this whole reviewing system is already built to expect and treat as
-untrusted data — but it is never *executed*, so it does not cross into the write-access or
-secret-exfiltration territory the rest of this section rules out. That distinction — data versus
-execution — is the actual invariant, and it needs to be checked, not assumed to hold for whatever
-`workflow_run` consumer exists next.
-
-#### Acceptance Criteria
-
-| ACID | Title | Status | Description | Notes |
-| --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Proposed | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | Stated, not enforced here: its audit (`-6`) moved to git-serious-double-tap#63 (Q68c). Today it holds because the one such credential, the fork bot's, was created with no role (bom-bom r121). |
-| req-cicd-fleet-bot-shared-credential-bound-2 | `pull_request_target` Is Fleet-Guarded, Not Just Absent | Retired | A CI guard fails closed if any fleet workflow adds `pull_request_target`, rather than the fleet merely happening not to use it today. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28). One of three facts the worked check depends on — see `-4`/`-5` for the other two |
-| req-cicd-fleet-bot-shared-credential-bound-3 | Auto-Approval Is Named As A Capability | Proposed | The credential's threat model documents "bypasses the human Approve-and-run click for this identity" as a real capability the credential grants, not an absence of one. | This ACID; no code changes it, it exists so the model is stated honestly |
-| req-cicd-fleet-bot-shared-credential-bound-4 | Effective Token Permission Is Fleet-Guarded, Not Just The Org Default | Retired | A guard fails closed if the *effective* permission a fork-triggered job runs with is ever write — covering the organization default, any explicit job- or workflow-level `permissions:` block that widens it, and GitHub's separate "workflows can approve pull requests" / write-back setting for fork PRs — not the org default alone. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28). The second of the three load-bearing facts; a job-level override or the fork write-token setting can grant write even when the org default stays read-only |
-| req-cicd-fleet-bot-shared-credential-bound-5 | No Credential Path Into Fork-Triggered Jobs Is Fleet-Guarded | Retired | A guard fails closed if any fleet workflow's `pull_request`-triggered job gains a credential through *any* path — a direct `secrets.*` reference, a reusable-workflow call that inherits or is passed secrets, `id-token: write` (OIDC-minted cloud credentials, which exist outside GitHub's own secret-withholding guarantee), or a self-hosted runner (which does not carry GitHub-hosted runners' isolation guarantees at all). `pull_request_target` and direct `secrets.*` references are the sharpest versions of this failure, not the only ones. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28). The third of the three load-bearing facts |
-| req-cicd-fleet-bot-shared-credential-bound-6 | The Fork Bot's Own Standing Is Audited, Not Assumed | Retired | A periodic check queries the GitHub API for the fork bot account's (id 334543231) actual organization membership, base permission level, collaborator grants, and team memberships across the fleet, and fails loudly if any of them is ever non-empty. "No role anywhere" is a claim about the account's current standing, and standing can drift (a mistaken invite, a team add) independently of anything this spec's other guards would catch — `approve_bot_runs.py` does not check this today, and neither did any earlier draft of this section. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28). The fourth invariant, distinct from `-2`/`-4`/`-5`: those bound what a *forged run* can reach; this bounds what the *account itself* can reach if its standing ever silently changes |
-| req-cicd-fleet-bot-shared-credential-bound-7 | `workflow_run` Consumers Are Allowlisted And Data-Only, Enforced | Retired | A guard fails closed on any fleet workflow triggered by `workflow_run` unless it is on an explicit allowlist of reusable workflows pinned by commit SHA — today, `unified-ai-review`'s `review.yml` only. Every allowlisted consumer must never check out the triggering run's PR head ref or sha, never execute, install, or shell-source content the fork-triggered run produced (no `run:` sourcing it, no package install from it, no cache restore keyed on it), and keep every secrets-bearing job in it read-only. Feeding PR-controlled content to a model as input (prompt injection) is accepted and named explicitly; feeding it to an interpreter or installer is not. | Moved to git-serious-double-tap#63 as a proposal (George, Q68c, 2026-09-28). The fifth path: not what a fork-triggered job reaches directly, but what a *second*, base-context workflow does with what the first one produced |
+| req-cicd-fleet-bot-paced-4 | Each Scheduled Bot Run Covers The Whole Fleet | Proposed | Renovate runs on a daily schedule and release-please on an hourly one; each scheduled run covers `tap` and every discovered repository, with no slice, rotation, random delay, per-run cap or pause, and Renovate's pull-request limits are its defaults. | `org-bots#41` |
 
 ## Non-Goals
 
-- **Redesigning `scripts/approve_bot_runs.py`'s allowlist or trust model.** It already makes its
-  decision from structured API fields only and already excludes new-workflow-file additions;
-  this spec does not change it, only names the bound on what an auto-approved run can reach
-  (`req-cicd-fleet-bot-shared-credential-bound`).
-- **The mechanics of migrating `tap` core's own `renovate.yml` and `release-please.yml` off the
-  App-token pattern.** `req-cicd-fleet-bot-no-app-key-distribution-2` states that this migration
-  is a *precondition* for uninstalling the Apps, because `tap` is the one remaining consumer of
-  them today — but *how* that migration happens (whether core moves onto the same fork-bot shape
-  as the fleet, or something else that also drops its need for the App) is not decided here.
-- **Deciding the exact topic string, or the shape of the small script/workflow inside `org-bots`
-  that queries the topic and iterates `release-please release-pr --fork` over the result.** Those
-  are implementation details for the PR that builds this, not spec-level facts.
+- **Shrinking a run's reach below "the whole fleet".** One job per repository with a
+  single-repository token each would bound a compromised run to one repository. It was considered
+  on 2026-11-19 and not taken: the goal is the standard configuration, run plainly.
+- **The fork-triggered-job guards.** They moved to `unified-systems-com/git-serious-double-tap#63`
+  and concern every outside contributor's PR, not the bots.
+- **`scripts/approve_bot_runs.py`.** It served the fork bot's "Approve and run" gate and is
+  unused by the App lane; removing it from `org-bots` is that repository's housekeeping.
+- **Each repository's own Renovate rules.** How dependencies are grouped, pinned and labelled is
+  repository configuration (`org-bots/renovate/preset.js`, or a repository's own
+  `renovate.json5`), not a fleet-credential question.
 
 ## Related
 
-`Issue# 200 - tap` (the plugin-fleet housekeeping epic), `Issue# 854 - tap` (release-please,
-tracked ahead of this spec landing), `Issue# 856 - tap` (Renovate discovery, same). This spec is
-the canonical write-up both issues point back to.
+`Issue# 200 - tap` (the plugin-fleet housekeeping epic), `Issue# 854 - tap` (release-please),
+`Issue# 856 - tap` (Renovate discovery). `Issue# 879 - tap` tracked finishing the fork-bot
+rollout and was closed as not planned on 2026-11-19. `org-bots#41` is the change that returns
+both bots to whole-fleet scheduled runs.
