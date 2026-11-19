@@ -72,6 +72,40 @@ def test_no_store_operation_takes_a_type() -> None:
 
 
 @SPEC("req-tap-files-scope-3")
+def test_the_same_bytes_are_stored_the_same_whatever_the_name(tmp_path: Path) -> None:
+    # Round 2 of the AI review on PR# 1247 - tap: one payload under names that claim different
+    # types must give the same object in every respect but its name and identifier.
+    store = LocalBackend(tmp_path)
+    store.initialise()
+    data = b"<html><script>alert(1)</script></html>"
+    shapes = []
+    for name in ("page.html", "program.exe", "program", "report.pdf", "archive.tar.gz", ".hidden"):
+        identifier = layout.urn(str(uuid.uuid4()))
+        result = store.create(identifier, name, io.BytesIO(data), "t")
+        objdir = store.ocfl / layout.object_path(identifier)
+        (content,) = list((objdir / "v1" / "content").iterdir())
+        layout_shape = sorted("/".join(p.relative_to(objdir).parts[:2]) for p in objdir.rglob("*") if p.is_file())
+        modes = {
+            p.relative_to(objdir).as_posix().replace(content.name, "<content>"): oct(p.stat().st_mode & 0o777)
+            for p in objdir.rglob("*")
+            if p.is_file()
+        }
+        stat = store.stat(identifier)
+        shapes.append(
+            (
+                result.digest,
+                result.size,
+                layout_shape,
+                modes,
+                content.stat().st_size,
+                stat.head,
+                store.verify(identifier, deep=True).ok,
+            )
+        )
+    assert all(shape == shapes[0] for shape in shapes), shapes
+
+
+@SPEC("req-tap-files-scope-3")
 @pytest.mark.parametrize(
     ("name", "data"),
     [
