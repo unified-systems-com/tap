@@ -6,8 +6,9 @@ every operation on stored bytes with no capability check and no log record. The 
 one named holder per role, so that a module added later is refused until someone names it here:
 
 - **The backend handle.** Outside the store itself, only `tap_files/services/_backend.py` (the
-  gateway's one handle) and `tap_files/boot.py` (initialisation and recovery) import
-  `tap_files.store`. The operator's check command will join them (tap#1211).
+  gateway's one handle), `tap_files/boot.py` (initialisation and recovery), `tap_files/check.py`
+  (the operator's check command) and `tap_files/health.py` (the health probe, which reads the
+  root's markers and no object) import `tap_files.store`.
 - **Types, not the backend.** Any other module of the gateway package may take the store's errors,
   result records and naming helpers (`errors`, `protocol`, `layout`), which hold no backend.
 - **The handle stays inside.** Only the gateway's `__init__.py` imports `_backend`, so no public
@@ -37,7 +38,9 @@ _BACKEND = "tap_files.store"
 _GATEWAY = "tap_files.services"
 _HANDLE = f"{_GATEWAY}._backend"
 _GATEWAY_INIT = "tap_files/services/__init__.py"
-_HOLDERS = frozenset({"tap_files/services/_backend.py", "tap_files/boot.py"})
+_HOLDERS = frozenset(
+    {"tap_files/services/_backend.py", "tap_files/boot.py", "tap_files/check.py", "tap_files/health.py"}
+)
 # The store's modules a gateway module may take: errors, result records and naming, never a backend.
 _TYPE_MODULES = frozenset({f"{_BACKEND}.errors", f"{_BACKEND}.protocol", f"{_BACKEND}.layout"})
 
@@ -145,7 +148,8 @@ class FilesBackendReachGuard(Guard):
     description = (
         "Importing tap_files.store hands over every operation on stored bytes with no capability check and "
         "no log record. Only the gateway's handle (tap_files/services/_backend.py), boot's initialisation and "
-        "recovery (tap_files/boot.py) and tests may import it; everything else, the download route included, "
+        "recovery (tap_files/boot.py), the check command (tap_files/check.py), the health probe "
+        "(tap_files/health.py) and tests may import it; everything else, the download route included, "
         "calls the gateway."
     )
 

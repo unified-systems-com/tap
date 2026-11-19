@@ -57,3 +57,11 @@ class TapFilesConfig(AppConfig):
         from tap_plugins.base import register_edge_types_from_list
 
         register_edge_types_from_list(self.edge_types)
+
+        from tap_files.health import probe_files
+        from tap_health.registry import register_health_probe
+        from tap_health.selection import READINESS
+
+        # Not critical: an unusable store breaks file operations, not the instance, and boot has
+        # already refused a configured store that fails its gate (req-tap-files-health).
+        register_health_probe("files", probe_files, sets=(READINESS,), group="tap_files")

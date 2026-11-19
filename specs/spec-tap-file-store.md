@@ -87,8 +87,8 @@ which postpones that problem instead of solving it.
 | req-tap-files-hold | [Holding A File](#holding-a-file) | Implemented | The one helper that stores bytes and shapes the nodes, bytes first; what changes when a file changes |
 | req-tap-files-logging | [Operation Logging](#operation-logging) | Implemented | One structured record per operation, reads and refusals included |
 | req-tap-files-download | [Download Route](#download-route) | Implemented | A logged-in user with `files.read` downloads a file as an attachment |
-| req-tap-files-check | [Report-Only Check](#report-only-check) | Proposed | A command that validates the store and lists where it and the grid's file nodes disagree, both ways |
-| req-tap-files-health | [Health Probe](#health-probe) | Proposed | A probe that reports the root as usable or not |
+| req-tap-files-check | [Report-Only Check](#report-only-check) | Implemented | A command that validates the store and lists where it and the grid's file nodes disagree, both ways |
+| req-tap-files-health | [Health Probe](#health-probe) | Implemented | A probe that reports the root as usable or not |
 | req-tap-files-history | [History Stays Possible](#history-stays-possible) | Implemented | Nothing in this release prevents reading any earlier version |
 | req-tap-files-size-limit | [File Size Limit](#file-size-limit) | Backlog | A ceiling on the size of one stored file |
 | req-tap-files-retention | [Deletion And Retention](#deletion-and-retention) | Backlog | Removing content, retention periods, and what a tombstone means for bytes |
@@ -748,10 +748,12 @@ store is format-blind, and the node is written by the helper through the grid's 
 
 **What reaches the store, and how** (ruled 2026-11-17). Every operation a program or a request makes
 on stored bytes goes through this gateway, and every write of a grid file node goes through the grid
-service layer. Three things reach the store below the gate, on purpose, and nothing else does: boot's
-initialisation of an empty root (`req-tap-files-mount-gate`), recovery (`req-tap-files-write`), and
-the operator's `manage.py files check` (`req-tap-files-check`). Boot runs before the capability system
-exists, and the check is an operator command, as `manage.py health` is. Plugin data directories are
+service layer. Four things reach the store below the gate, on purpose, and nothing else does: boot's
+initialisation of an empty root (`req-tap-files-mount-gate`), recovery (`req-tap-files-write`), the
+operator's `manage.py files check` (`req-tap-files-check`), and the health probe, which reads the
+root's markers and the quarantine count and no object (`req-tap-files-health`). Boot runs before the
+capability system exists, the check is an operator command, as `manage.py health` is, and the probe
+runs without an actor, as every health probe does. Plugin data directories are
 not part of this store and are outside the service layer by their own specification.
 
 **Writers in this release are programs** (ruled 2026-11-16): collectors and other processes running
@@ -768,7 +770,7 @@ are stored as files here and not kept in a plugin's own directory (ruled 2026-11
 | req-tap-files-gateway-2 | Refused Without The Capability | Implemented | Each gateway operation called by an actor without its capability raises the standard capability error and performs no backend call. | |
 | req-tap-files-gateway-3 | Actor From Context | Implemented | The writer recorded in a version's inventory entry is the caller context's actor, and no gateway operation accepts an actor argument. | |
 | req-tap-files-gateway-4 | No Grid Write | Implemented | No gateway operation creates, changes or deletes a node or an edge. | |
-| req-tap-files-gateway-5 | Nothing Else Reaches The Backend | Implemented | Outside the gateway, only the boot initialisation, recovery and the check command import the backend; the boundary guard finds no other importer, the download route included. | Ruled 2026-11-17. |
+| req-tap-files-gateway-5 | Nothing Else Reaches The Backend | Implemented | Outside the gateway, only the boot initialisation, recovery, the check command and the health probe import the backend; the boundary guard finds no other importer, the download route included. | Ruled 2026-11-17. The health probe was named with Issue# 1211 - tap: it must read the storage-root marker (`req-tap-files-health-2`). |
 
 ### The Grid File
 ----
@@ -1102,7 +1104,7 @@ makes the saved file open in the right program; it is not what the safety rests 
 ----
 RID: `req-tap-files-check`
 
-Status: `Proposed`
+Status: `Implemented`
 
 `manage.py files check` examines the store and reports. It changes nothing at all: it writes no
 file, moves nothing and takes no lock, so it is safe to run against a store in use. Recovery is a
@@ -1142,22 +1144,22 @@ told its users to write their own.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-check-1 | Clean Store Is Clean | Proposed | Against a store of valid objects each with a live node, the check reports nothing and exits zero. | |
-| req-tap-files-check-2 | Finds An Orphan Object | Proposed | An object with no matching live entity is listed by identifier. | |
-| req-tap-files-check-3 | Deep Finds A Changed Byte | Proposed | With one content byte changed, the check without `--deep` may pass and with `--deep` names the object and version. | |
-| req-tap-files-check-4 | Changes Nothing | Proposed | After the check runs against a store with findings, including a staging directory and a version directory above its head, every file and directory under the root is unchanged and in place. | |
-| req-tap-files-check-6 | Reports What Recovery Would Do | Proposed | A leftover staging directory, a version directory above the head and a mismatched root pair are each listed, and none is moved or repaired. | |
-| req-tap-files-check-7 | Finds A Node With No Bytes | Proposed | A live `tap_file` whose object is absent from the store is listed by identifier and path. | |
-| req-tap-files-check-8 | Finds A Disagreement | Proposed | A live `tap_file` whose `sha256` differs from the store's digest for its version is listed with both values, and one whose `file_version` is ahead of the store's head is listed. | |
-| req-tap-files-check-9 | A Head Ahead Is A Notice | Proposed | A store head one version ahead of its `tap_file` is listed as a notice, and alone does not make the exit status non-zero; with `--strict` it does. | The node's own version is intact. `--strict` raised by the AI review on PR# 1229 - tap. |
-| req-tap-files-check-10 | Finds A Format Record The Grid Allowed | Proposed | A `FILE_CONTENTS` edge from a node that is not a `tap_file`, a second `FILE_CONTENTS` edge out of one file, and one whose `sha256` differs from its file's are each listed as a fault. | Detects what `req-tap-files-format-record-6`, `-2` and `-5` cannot yet refuse (Issue# 1237 - tap). |
-| req-tap-files-check-5 | Seeded Defect Fails | Proposed | The check's own test seeds a defect of each reported class and asserts each is reported, so a passing check is not vacuous. | |
+| req-tap-files-check-1 | Clean Store Is Clean | Implemented | Against a store of valid objects each with a live node, the check reports nothing and exits zero. | |
+| req-tap-files-check-2 | Finds An Orphan Object | Implemented | An object with no matching live entity is listed by identifier. | |
+| req-tap-files-check-3 | Deep Finds A Changed Byte | Implemented | With one content byte changed, the check without `--deep` may pass and with `--deep` names the object and version. | |
+| req-tap-files-check-4 | Changes Nothing | Implemented | After the check runs against a store with findings, including a staging directory and a version directory above its head, every file and directory under the root is unchanged and in place. | |
+| req-tap-files-check-6 | Reports What Recovery Would Do | Implemented | A leftover staging directory, a version directory above the head and a mismatched root pair are each listed, and none is moved or repaired. | |
+| req-tap-files-check-7 | Finds A Node With No Bytes | Implemented | A live `tap_file` whose object is absent from the store is listed by identifier and path. | |
+| req-tap-files-check-8 | Finds A Disagreement | Implemented | A live `tap_file` whose `sha256` differs from the store's digest for its version is listed with both values, and one whose `file_version` is ahead of the store's head is listed. | |
+| req-tap-files-check-9 | A Head Ahead Is A Notice | Implemented | A store head one version ahead of its `tap_file` is listed as a notice, and alone does not make the exit status non-zero; with `--strict` it does. | The node's own version is intact. `--strict` raised by the AI review on PR# 1229 - tap. |
+| req-tap-files-check-10 | Finds A Format Record The Grid Allowed | Implemented | A `FILE_CONTENTS` edge from a node that is not a `tap_file`, a second `FILE_CONTENTS` edge out of one file, and one whose `sha256` differs from its file's are each listed as a fault. | Detects what `req-tap-files-format-record-6`, `-2` and `-5` cannot yet refuse (Issue# 1237 - tap). |
+| req-tap-files-check-5 | Seeded Defect Fails | Implemented | The check's own test seeds a defect of each reported class and asserts each is reported, so a passing check is not vacuous. | |
 
 ### Health Probe
 ----
 RID: `req-tap-files-health`
 
-Status: `Proposed`
+Status: `Implemented`
 
 One health probe reports the store. Where the store is not enabled it reports healthy and says so, unless an installed plugin requires it, in which case it is unhealthy. Where the store is enabled it reports it as usable or not: the mount test's verdict and reason, the
 presence and validity of the storage-root marker and layout declaration, the filesystem type, and
@@ -1174,10 +1176,10 @@ the Validation Map (`req-dev-validation-map`).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-health-1 | Unmounted Is Unhealthy | Proposed | With the store enabled and its test failing, the probe is unhealthy and its detail carries the reason. | |
-| req-tap-files-health-4 | Not Enabled Is Healthy | Proposed | With the store not enabled and no installed plugin requiring it, the probe is healthy and its context says the store is not enabled. | |
-| req-tap-files-health-2 | Missing Marker Is Unhealthy | Proposed | With the storage-root marker removed from an initialised root, the probe is unhealthy. | |
-| req-tap-files-health-3 | Quarantine Is Reported, Not Failed | Proposed | With one item in `quarantine/` the probe is healthy and its context gives the count. | |
+| req-tap-files-health-1 | Unmounted Is Unhealthy | Implemented | With the store enabled and its test failing, the probe is unhealthy and its detail carries the reason. | |
+| req-tap-files-health-4 | Not Enabled Is Healthy | Implemented | With the store not enabled and no installed plugin requiring it, the probe is healthy and its context says the store is not enabled. | |
+| req-tap-files-health-2 | Missing Marker Is Unhealthy | Implemented | With the storage-root marker removed from an initialised root, the probe is unhealthy. | |
+| req-tap-files-health-3 | Quarantine Is Reported, Not Failed | Implemented | With one item in `quarantine/` the probe is healthy and its context gives the count. | |
 
 ### History Stays Possible
 ----
