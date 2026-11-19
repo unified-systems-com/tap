@@ -7,6 +7,7 @@ plugin, only the store reaches under the root, and no store operation looks at w
 from __future__ import annotations
 
 import ast
+import hashlib
 import inspect
 import io
 import uuid
@@ -71,16 +72,63 @@ def test_no_store_operation_takes_a_type() -> None:
 
 
 @SPEC("req-tap-files-scope-3")
-def test_a_file_is_stored_the_same_whatever_it_claims_to_be(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("name", "data"),
+    [
+        ("page.html", b"<html><script>alert(1)</script></html>"),
+        ("report.pdf", b"%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF"),
+        ("archive.zip", b"PK\x03\x04" + bytes(range(64))),
+        ("program", b"\x7fELF\x02\x01\x01" + bytes(57)),
+        ("sbom.json", b'{"bomFormat": "CycloneDX", "specVersion": "1.7"}'),
+        ("empty.txt", b""),
+        ("noise.bin", bytes(range(256)) * 4),
+        ("mislabelled.pdf", b"<html>not a pdf</html>"),
+    ],
+)
+def test_every_kind_of_content_is_stored_the_same_way(tmp_path: Path, name: str, data: bytes) -> None:
+    # Round 1 of the AI review on PR# 1247 - tap: different content and claimed types, each shaped
+    # to trip a sniffing branch, must produce the same structure; only the digest and size differ,
+    # and they are the bytes' own.
     store = LocalBackend(tmp_path)
     store.initialise()
-    data = b"<html><script>alert(1)</script></html>"
-    shapes = []
-    for name in ("page.html", "page.exe", "page"):
-        identifier = layout.urn(str(uuid.uuid4()))
-        result = store.create(identifier, name, io.BytesIO(data), "t")
-        objdir = store.ocfl / layout.object_path(identifier)
-        files = sorted(p.relative_to(objdir).parts[:2] for p in objdir.rglob("*") if p.is_file())
-        modes = sorted(oct(p.stat().st_mode & 0o777) for p in objdir.rglob("*") if p.is_file())
-        shapes.append((result.digest, result.size, files, modes, store.verify(identifier, deep=True).ok))
-    assert shapes[0] == shapes[1] == shapes[2]
+    identifier = layout.urn(str(uuid.uuid4()))
+    result = store.create(identifier, name, io.BytesIO(data), "t")
+    objdir = store.ocfl / layout.object_path(identifier)
+    files = sorted("/".join(p.relative_to(objdir).parts[:2]) for p in objdir.rglob("*") if p.is_file())
+    (content,) = list((objdir / "v1" / "content").iterdir())
+    assert (result.digest, result.size) == (hashlib.sha256(data).hexdigest(), len(data))
+    assert files == [
+        "0=ocfl_object_1.1",
+        "inventory.json",
+        "inventory.json.sha256",
+        "v1/content",
+        "v1/inventory.json",
+        "v1/inventory.json.sha256",
+    ]
+    assert oct(content.stat().st_mode & 0o777) == "0o440"
+    assert store.verify(identifier, deep=True).ok
+    opened = store.open(identifier)
+    try:
+        assert opened.stream.read() == data and opened.name == name
+    finally:
+        opened.close()
+
+
+@SPEC("req-tap-files-scope-3")
+def test_no_store_code_looks_at_a_type_or_a_suffix() -> None:
+    # The stored filename copies a logical name's extension (req-tap-files-naming), which is naming,
+    # not a branch on type; nothing else in the store or the gateway reads a suffix or a type.
+    forbidden = {"suffix", "suffixes", "splitext", "mimetypes", "guess_type", "magic", "media_type", "content_type"}
+    allowed = {("tap_files/store/layout.py", "stored_filename")}
+    found = []
+    for path in [*(REPO_ROOT / "tap_files/store").glob("*.py"), *(REPO_ROOT / "tap_files/services").glob("*.py")]:
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+            names |= {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+            if names & forbidden and (rel, fn.name) not in allowed:
+                found.append(f"{rel}::{fn.name}: {sorted(names & forbidden)}")
+        if "import mimetypes" in path.read_text(encoding="utf-8"):
+            found.append(f"{rel}: imports mimetypes")
+    assert not found, found
