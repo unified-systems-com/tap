@@ -227,6 +227,41 @@ def test_a_link_below_ocfl_is_reported_and_not_followed(store: LocalBackend, tmp
 
 
 @SPEC("req-tap-files-check-5")
+@pytest.mark.parametrize("where", ["version", "content_dir", "content_file"])
+def test_a_link_inside_an_object_is_reported_and_never_read(store: LocalBackend, tmp_path: Path, where: str) -> None:
+    # Round 1 of the AI review on PR# 1242 - tap: the survey and a deep check must not stat or hash
+    # through a link inside an object. The targets are unreadable, so following one would raise.
+    held = _hold("/linked.txt", b"inside")
+    objdir = _objdir(store, held.identifier)
+    (content,) = list((objdir / "v1" / "content").iterdir())
+    outside = tmp_path / f"outside-{where}"
+    (outside / "content").mkdir(parents=True)
+    secret = outside / "content" / content.name
+    secret.write_bytes(b"outside")
+    secret.chmod(0)
+    if where == "version":
+        os.rename(objdir / "v1", tmp_path / "moved-v1")
+        (objdir / "v1").symlink_to(outside, target_is_directory=True)
+    elif where == "content_dir":
+        os.rename(objdir / "v1" / "content", tmp_path / "moved-content")
+        (objdir / "v1" / "content").symlink_to(outside / "content", target_is_directory=True)
+    else:
+        content.chmod(0o640)
+        content.unlink()
+        content.symlink_to(secret)
+    try:
+        report = run_check(deep=True)
+    finally:
+        secret.chmod(0o600)
+    faults = [(f.kind, f.subject) for f in report.findings if f.severity == FAULT]
+    assert faults, report.findings
+    if where == "version":
+        assert ("link_below_ocfl", str((objdir / "v1").relative_to(store.root))) in faults
+    else:
+        assert ("invalid_object", held.identifier) in faults
+
+
+@SPEC("req-tap-files-check-5")
 def test_quarantine_is_listed_and_is_not_a_fault(store: LocalBackend) -> None:
     _seed_interrupted(store)
     store.recover()

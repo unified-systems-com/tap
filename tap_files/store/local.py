@@ -613,8 +613,10 @@ class LocalBackend:
 
     def _content_size(self, identifier: str, data: dict[str, Any], digest: str) -> int:
         paths = data["manifest"].get(digest) or []
+        if not paths or self._linked(self._object_dir(identifier) / paths[0]) is not None:
+            return -1
         try:
-            return os.lstat(self._object_dir(identifier) / paths[0]).st_size if paths else -1
+            return os.lstat(self._object_dir(identifier) / paths[0]).st_size
         except FileNotFoundError:
             return -1
 
@@ -677,6 +679,10 @@ class LocalBackend:
                     st = os.lstat(path)
                 except FileNotFoundError:
                     findings.append(f"{rel} is missing")
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    # A link or anything else in a content file's place is never opened or hashed.
+                    findings.append(f"{rel} is not a regular file (a link or other)")
                     continue
                 if stat.S_IMODE(st.st_mode) != CONTENT_MODE:
                     findings.append(f"{rel} is not read-only")
@@ -769,7 +775,7 @@ class LocalBackend:
     def survey(self, deep: bool = False) -> StoreSurvey:
         """Read the whole store for the check: no write, no move, no lock (`req-tap-files-check-4`).
 
-        TAP-IMPLEMENTS: req-tap-files-check@a14e155b461a/b08d1cc839a5 (derivation) — the store half of the report: invalid and
+        TAP-IMPLEMENTS: req-tap-files-check@a14e155b461a/87ffc33392a9 (derivation) — the store half of the report: invalid and
             damaged objects, what recovery would act on, quarantine and links, read as they are.
 
         An object caught mid-write is reported as it is seen; a second run tells a write in progress
@@ -802,6 +808,13 @@ class LocalBackend:
                 interrupted.append((identifier, "root inventory pair; recovery would restore it from a version"))
                 continue
             head = len(data["versions"])
+            linked = [p for p in sorted(objdir.iterdir()) if stat.S_ISLNK(os.lstat(p).st_mode)]
+            if linked:
+                # A linked version directory would carry the size reads and the deep hash outside
+                # the store; the object is reported and not read further.
+                links.extend(str(p.relative_to(self.root)) for p in linked)
+                damaged.append((identifier, "holds a symbolic link; not read further"))
+                continue
             for vdir in sorted(objdir.glob("v*")):
                 if vdir.is_dir() and vdir.name[1:].isdigit() and int(vdir.name[1:]) > head:
                     interrupted.append(

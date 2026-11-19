@@ -171,13 +171,14 @@ def _format_record_findings() -> list[Finding]:
             kind = edge.from_entity.entity_type
             found.append(Finding(FAULT, "format_record_wrong_source", subject, f"from a {kind}, not a tap_file"))
             continue
-        if (edge.properties or {}).get("sha256") != node.sha256:
+        properties = edge.properties if isinstance(edge.properties, dict) else {}
+        if properties.get("sha256") != node.sha256:
             found.append(
                 Finding(
                     FAULT,
                     "format_record_stale",
                     subject,
-                    f"edge sha256 {edge.properties.get('sha256')}, file sha256 {node.sha256}",
+                    f"edge sha256 {properties.get('sha256')}, file sha256 {node.sha256}",
                     node.path,
                 )
             )
