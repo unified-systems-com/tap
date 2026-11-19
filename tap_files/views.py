@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 ROUTE = "GET /files/<identifier>/download"
 # A media type of plain token characters (RFC 9110 tchar), no parameters: anything else could
 # carry a second header or a charset the browser would act on (`req-tap-files-download-9`).
-_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
-_MEDIA_TYPE = re.compile(rf"{_TOKEN}/{_TOKEN}")
+_TCHAR = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_MEDIA_TYPE = re.compile(rf"{_TCHAR}/{_TCHAR}")
 _FALLBACK_TYPE = "application/octet-stream"
 
 
@@ -113,7 +113,7 @@ def _live_file(identifier: str) -> TapFile | None:
 def download(request: HttpRequest, identifier: str) -> HttpResponseBase:
     """Serve the version the `tap_file` records, verified against the node, as an attachment.
 
-    TAP-IMPLEMENTS: req-tap-files-download@d3d0e97245a1/15b20411db43 (enforcement) — the node's version only, checked
+    TAP-IMPLEMENTS: req-tap-files-download@d3d0e97245a1/d8fc3aac2a2e (enforcement) — the node's version only, checked
         against the node before the first byte, always an attachment, and refused alike whether
         or not the file exists when the user may not read it.
     """
@@ -138,7 +138,11 @@ def download(request: HttpRequest, identifier: str) -> HttpResponseBase:
 
     file_id = identifier_for(node.entity_id)
     try:
-        opened = open_file(file_id, node.file_version, route=ROUTE)
+        # The gateway checks the bytes against the node before returning, so a disagreement is
+        # recorded as the failed read it is (`req-tap-files-download-11`).
+        opened = open_file(
+            file_id, node.file_version, route=ROUTE, expected_digest=node.sha256, expected_size=node.size_bytes
+        )
     except AuthzError:
         raise PermissionDenied from None
     except StoredFileNotFound:
@@ -146,19 +150,10 @@ def download(request: HttpRequest, identifier: str) -> HttpResponseBase:
     except FileIntegrityError:
         return HttpResponseServerError("The file could not be served.", content_type="text/plain")
 
-    if opened.digest != node.sha256 or opened.size != node.size_bytes:
-        opened.close()
-        logger.error(
-            "[d4a9] files: integrity finding for %s version %s: the store's digest or size differs from the node's",
-            file_id,
-            node.file_version,
-        )
-        return HttpResponseServerError("The file could not be served.", content_type="text/plain")
-
     response: HttpResponseBase
     if request.method == "HEAD":
         opened.close()
-        response = HttpResponse(b"")
+        response = HttpResponse(b"")  # nosemgrep — an empty body: HEAD sends the headers alone
     else:
         response = FileResponse(opened.stream)
     response["Content-Type"] = content_type_for(node.media_type)

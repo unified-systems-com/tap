@@ -260,6 +260,8 @@ def test_node_and_store_must_agree(root: Path, field: str, caplog: pytest.LogCap
         response = _reader().get(_url(held.entity_id))
     assert response.status_code == 500 and b"agreed" not in _body(response)
     assert any("integrity finding" in r.getMessage() for r in caplog.records)
+    # The download's one record says the read failed, not that it was done.
+    assert [(r["outcome"], r["reason_class"]) for r in _records(caplog)] == [("failed", "FileIntegrityError")]
 
 
 @SPEC("req-tap-files-download-8")
