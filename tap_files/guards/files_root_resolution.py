@@ -47,6 +47,11 @@ class FilesRootResolutionGuard(Guard):
     )
 
     def check(self) -> None:
+        """Fail on any read of the root setting or the mount path outside the allowed modules.
+
+        TAP-IMPLEMENTS: req-tap-files-scope@e49e8f296b0d/af301a402300 (enforcement) — one store: no module but the store's
+            own config reaches the root, so every byte under it follows the store's write and read paths.
+        """
         needles = (*_ENV_READS, *_SETTING_READS, _MOUNT_LITERAL)
         violations: list[str] = []
         for rel in _python_files():
