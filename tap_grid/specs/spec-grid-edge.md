@@ -31,6 +31,7 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-identity | [Edge Identity](#edge-identity) | Implemented | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
 | req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Implemented | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
 | req-grid-edge-internal | [Internal-Only Edge Types](#internal-only-edge-types) | Implemented | An edge type may be declared internal-only: the generic edge verbs and GRIFT import refuse it, subsystem code writes it through a trusted-internal path, and GRIFT export leaves it out. The node rule (`req-grid-entity-internal`) applied to edges |
+| req-grid-edge-type-validation | [Per-Type Validation In The Write](#per-type-validation-in-the-write) | Backlog | An edge type registers a check the write pipeline runs on create and replace, inside the transaction with the endpoints locked; a refusal rolls the batch back. First consumer: `FILE_CONTENTS` (Issue# 1237 - tap) |
 
 
 ## Explanation
@@ -688,6 +689,31 @@ As for nodes, this is a tripwire against accidental writes, not a wall against i
 | req-grid-edge-internal-6 | Export Leaves Them Out | Implemented | GRIFT export does not emit an internal-only edge and records it in the skip ledger as `internal_only_entity_type`. | `tap_grid/grift/exporter.py`. `tap_grid/tests/test_edge_internal.py::TestExportLeavesThemOut`. |
 | req-grid-edge-internal-7 | They End With Their Endpoint | Implemented | Deleting an endpoint node ends its internal-only edges as it ends any other edge. | `tap_grid/tests/test_edge_internal.py::TestTheyEndWithTheirEndpoint`. |
 
+
+### Per-Type Validation In The Write
+----
+RID: `req-grid-edge-type-validation`
+
+Status: `Backlog`
+
+An edge type cannot today refuse a write that breaks a rule of its own. The pipeline checks endpoint
+type permission (`req-grid-edge-constraints`) and the property schema (`req-grid-edge-properties`),
+and nothing else: a type's `sources` and `targets` grant and never refuse on their own, and there is
+no rule for how many edges of a type a node may have, no cycle rule, and no place to compare a
+property with a field of an endpoint. A rule like that can only be kept by a subsystem that is the
+type's sole writer, which is what internal-only types are for (`req-grid-edge-internal`). An
+ordinary edge, written in anyone's batch, has no such keeper.
+
+The need, recorded for design later (ruled 2026-11-17, Issue# 1237 - tap): an edge type registers a
+check that the pipeline calls for `create_edge` and `replace_edge`, after the endpoint rows are
+locked and inside the write's transaction, with the endpoints and the proposed properties; a refusal
+is an ordinary validation error and rolls the batch back.
+
+**First consumer.** The file store's `FILE_CONTENTS` (`specs/spec-tap-file-store.md`,
+`req-tap-files-format-record`): an ordinary edge plugins write in their own batch, which should be
+refused from anything but a `tap_file`, when a second one leaves the same file, and when its `sha256`
+property differs from the file's current digest. Until this exists those three are detected by the
+file store's check rather than prevented.
 
 ## Future
 
