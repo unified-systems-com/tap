@@ -275,6 +275,9 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
             "from tap_files.store import get_store\nfrom ..store import local\n"
         ),
         "tap_files/services/nested/__init__.py": "from tap_files.store import get_store\n",
+        "tap_files/services/wholesale.py": (
+            "import tap_files.services as s\nfrom .. import services\ns._backend.backend()\nservices._backend\n"
+        ),
         "tap_files/services/_record.py": "from tap_files.store.layout import check_identifier\n",
         "tap_files/services/_backend.py": "from tap_files.store import get_store\n",
         "tap_web/tests/test_x.py": "from tap_files.store import get_store\n",
@@ -314,6 +317,10 @@ def test_nothing_else_reaches_the_backend(tmp_path: Path, monkeypatch: pytest.Mo
     assert "tap_files/services/contract.py:4 imports tap_files.store" in message
     assert "tap_files/services/nested/__init__.py:1 imports tap_files.store" in message
     assert "_record.py" not in message
+    # Round 4 on PR# 1238 - tap: inside the gateway package too, reading the handle off the gateway
+    # module whole, relative import included, is refused.
+    assert "tap_files/services/wholesale.py:3 reads tap_files.services._backend" in message
+    assert "tap_files/services/wholesale.py:4 reads tap_files.services._backend" in message
 
 
 # --------------------------------------------------------------------------- logging

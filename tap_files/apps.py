@@ -9,6 +9,8 @@ class TapFilesConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "tap_files"
     verbose_name = "TAP Files"
+    # Top-level URL prefix this app mounts, reserved against Page slugs (req-tap-auth-app-4).
+    reserved_url_prefixes: list[str] = ["/files"]
 
     # The grid file's edges (specs/spec-tap-file-store.md, req-tap-files-directory and
     # req-tap-files-format-record). The two containment edges are internal-only, written by the

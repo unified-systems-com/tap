@@ -12,6 +12,7 @@ backend (`req-tap-files-gateway-5`, guard: files-backend-reach).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, BinaryIO
 
 from tap_auth.enforcement import requires_capability
@@ -20,13 +21,15 @@ from tap_files.services import _backend
 from tap_files.services._record import acting_user as _acting_user
 from tap_files.services._record import actor_key as _actor_key
 from tap_files.services._record import recorded as _recorded
-from tap_files.services.contract import FILES_CREATE, FILES_READ, FILES_UPDATE
+from tap_files.services.contract import FILES_CREATE, FILES_READ, FILES_UPDATE, FileIntegrityError
 from tap_files.store.protocol import ObjectStat, OpenedFile, StoredResult
 
 if TYPE_CHECKING:
     from tap_grid.caller_context import CallerContext
 
 __tap_contract_modules__ = ("contract",)
+
+logger = logging.getLogger(__name__)
 
 
 def _writer(caller_context: CallerContext | None) -> str:
@@ -99,10 +102,37 @@ def rename_file(
 @_recorded("open_file")
 @requires_capability(FILES_READ, operation="open_file")
 def open_file(
-    identifier: str, version: int | None = None, *, caller_context: CallerContext | None = None
+    identifier: str,
+    version: int | None = None,
+    *,
+    route: str | None = None,
+    expected_digest: str | None = None,
+    expected_size: int | None = None,
+    caller_context: CallerContext | None = None,
 ) -> OpenedFile:
-    """A verified read of *version* (the head when omitted); the caller closes the stream."""
-    return _backend.backend().open(identifier, version)
+    """A verified read of *version* (the head when omitted); the caller closes the stream.
+
+    *route* names the route a download was requested by, for its log record; it changes nothing else.
+    *expected_digest* and *expected_size* are what the caller's record says the version holds (a
+    node's ``sha256`` and ``size_bytes``): a read that disagrees is an integrity failure, closed and
+    raised here, so the operation's record says failed and not done.
+    """
+    opened = _backend.backend().open(identifier, version)
+    mismatched = [
+        name
+        for name, expected, actual in (("digest", expected_digest, opened.digest), ("size", expected_size, opened.size))
+        if expected is not None and expected != actual
+    ]
+    if mismatched:
+        opened.close()
+        logger.error(
+            "[d4a9] files: integrity finding for %s version %s: the store's %s differs from the caller's record",
+            identifier,
+            opened.version,
+            " and ".join(mismatched),
+        )
+        raise FileIntegrityError(identifier, opened.version, "record_mismatch", f"{' and '.join(mismatched)} differ")
+    return opened
 
 
 @_recorded("file_info")

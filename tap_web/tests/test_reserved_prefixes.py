@@ -43,6 +43,7 @@ class TestReservedRegistry:
         assert "/viz" in reserved
         assert "/panel" in reserved
         assert "/object" in reserved
+        assert "/files" in reserved  # req-tap-files-download-7
 
     def test_result_is_sorted_and_deduped(self):
         result = get_reserved_url_prefixes()

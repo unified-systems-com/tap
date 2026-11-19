@@ -821,8 +821,9 @@ def test_destination_directories_are_synced(store: LocalBackend, monkeypatch: py
     ident = new_id()
     store.create(ident, "a", data("one"), "t")
     objdir = store.ocfl / layout.object_path(ident)
-    parents = [objdir.parent, objdir.parent.parent, objdir.parent.parent.parent]
-    assert all(p in synced for p in parents)
+    # ocfl/ too: the first hashed level is an entry in it (Codex on PR# 1238 - tap).
+    parents = [objdir.parent, objdir.parent.parent, objdir.parent.parent.parent, store.ocfl]
+    assert all(p in synced for p in parents), [p for p in parents if p not in synced]
     synced.clear()
     store.add_version(ident, 1, "a", data("two"), "t")
     assert synced.count(objdir) >= 3  # after the version move and after each root replacement
@@ -1127,3 +1128,33 @@ def test_no_link_below_the_ocfl_root(store: LocalBackend, tmp_path: Path, level:
             with pytest.raises(FileIntegrityError, match="symbolic link"):
                 call()
     assert tree(outside) == before
+
+
+@pytest.mark.spec("req-tap-files-mount-gate-10")
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_the_recovery_sweep_never_follows_a_linked_level(store: LocalBackend, tmp_path: Path, depth: int) -> None:
+    # Codex on PR# 1238 - tap: the sweep followed a linked hashed level and pruned empty
+    # directories outside the store.
+    outside = tmp_path / f"outside-{depth}"
+    (outside / "bbb" / "ccc").mkdir(parents=True)
+    (outside / "ddd").mkdir()
+    level = store.ocfl
+    for name in ("aaa", "eee", "fff")[: depth - 1]:
+        level = level / name
+        level.mkdir(exist_ok=True)
+    link = level / ("aaa", "eee", "fff")[depth - 1]
+    link.symlink_to(outside, target_is_directory=True)
+    kept = store.create(new_id(), "a", data("kept"), "t")
+    actions = store.recover()
+    assert (outside / "bbb" / "ccc").is_dir() and (outside / "ddd").is_dir()
+    assert any(a.startswith(f"refused {link.relative_to(store.root)}") for a in actions), actions
+    assert store.stat(kept.identifier).head == 1
+
+
+@pytest.mark.spec("req-tap-files-mount-gate-10")
+def test_pruning_never_passes_through_a_link(store: LocalBackend, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    (outside / "bbb" / "ccc").mkdir(parents=True)
+    (store.ocfl / "aaa").symlink_to(outside, target_is_directory=True)
+    store._prune_empty_parents(store.ocfl / "aaa" / "bbb" / "ccc")
+    assert (outside / "bbb" / "ccc").is_dir()

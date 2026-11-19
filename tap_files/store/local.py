@@ -230,15 +230,9 @@ class LocalBackend:
 
     def _refuse_links(self, identifier: str, target: Path) -> None:
         """Raise when any existing component between ``ocfl/`` and *target* is a symbolic link."""
-        cursor = self.ocfl
-        for part in target.relative_to(self.ocfl).parts:
-            cursor = cursor / part
-            try:
-                mode = os.lstat(cursor).st_mode
-            except FileNotFoundError:
-                return
-            if stat.S_ISLNK(mode):
-                raise self._integrity(identifier, None, "link", f"{cursor.relative_to(self.root)} is a symbolic link")
+        linked = self._linked(target)
+        if linked is not None:
+            raise self._integrity(identifier, None, "link", f"{linked.relative_to(self.root)} is a symbolic link")
 
     def _read_pair(self, objdir: Path, where: str = "") -> tuple[bytes, bytes] | None:
         base = objdir / where if where else objdir
@@ -307,7 +301,7 @@ class LocalBackend:
     ) -> StoredResult:
         """Store a new object at version 1 (put-if-absent).
 
-        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/1aa0c897b6da (derivation) — the write path: lock,
+        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/57841e75b86d (derivation) — the write path: lock,
             stream and hash into staging, build, sync, then move into place.
         """
         uuid_text = check_identifier(identifier)
@@ -353,7 +347,9 @@ class LocalBackend:
                     made += self._make_parents(objdir.parent)
                     os.rename(staged_obj, objdir)
                 self._step("renamed")
-                for path in [objdir.parent, *made]:
+                # Every level from the object's parent up to and including ocfl/: a level made here
+                # is an entry in the level above it, ocfl/ itself for the first hashed level.
+                for path in dict.fromkeys([*made, *self._ancestors_through_ocfl(objdir.parent)]):
                     _fsync_dir(path)
                 self._step("dirs_synced")
             except Exception:
@@ -495,8 +491,30 @@ class LocalBackend:
                 pass  # another writer made this shared level first
         return made
 
+    def _ancestors_through_ocfl(self, path: Path) -> list[Path]:
+        """*path* and each directory above it, up to and including ``ocfl/``."""
+        return [path, *(p for p in path.parents if p == self.ocfl or self.ocfl in p.parents)]
+
+    def _linked(self, path: Path) -> Path | None:
+        """The first level between ``ocfl/`` and *path*, inclusive, that is a symbolic link, if any."""
+        cursor = self.ocfl
+        for part in path.relative_to(self.ocfl).parts:
+            cursor = cursor / part
+            try:
+                if stat.S_ISLNK(os.lstat(cursor).st_mode):
+                    return cursor
+            except FileNotFoundError:
+                return None
+        return None
+
     def _prune_empty_parents(self, parent: Path) -> None:
-        """Remove empty hashed parents left by a create that did not finish; only empty ones, only under ocfl/."""
+        """Remove empty hashed parents left by a create that did not finish; only empty ones, only under ocfl/.
+
+        Never through a symbolic link: containment is checked on the path's text, which a linked
+        level would carry outside the store.
+        """
+        if self._linked(parent) is not None:
+            return
         cursor = parent
         while cursor != self.ocfl and self.ocfl in cursor.parents:
             try:
@@ -654,7 +672,7 @@ class LocalBackend:
     def recover(self) -> list[str]:
         """Put right what interrupted writes left, for every object; skip any object being written.
 
-        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/8a88d5d86c16 (enforcement) — the recovery sweep:
+        TAP-IMPLEMENTS: req-tap-files-write@58a2c5586a29/254238d16810 (enforcement) — the recovery sweep:
             quarantine, never unlink; restore a root pair only from a verified version inventory.
         """
         actions: list[str] = []
@@ -666,22 +684,40 @@ class LocalBackend:
                         actions.append(self._quarantine(entry, "staging left by an interrupted write"))
             except StoreBusy:
                 continue
-        for identifier in list(self._object_candidates()):
+        for identifier in list(self._object_candidates(actions)):
             try:
                 actions.extend(self.recover_object(identifier, locked=False))
             except StoreBusy:
                 continue
         return actions
 
-    def _object_candidates(self) -> Iterator[str]:
-        """Every object directory, and every hashed parent chain, under ocfl/ (markers optional)."""
+    def _object_candidates(self, actions: list[str]) -> Iterator[str]:
+        """Every object directory, and every hashed parent chain, under ocfl/ (markers optional).
+
+        A hashed level that is a symbolic link is reported in *actions* and neither descended nor
+        pruned (`req-tap-files-mount-gate-10`): following it would sweep, and empty, directories
+        outside the store.
+        """
         if not self.ocfl.is_dir():
             return
-        for first in sorted(self.ocfl.iterdir()):
-            if first.name == "extensions" or not first.is_dir():
+
+        def levels(parent: Path) -> Iterator[Path]:
+            for entry in sorted(parent.iterdir()):
+                mode = os.lstat(entry).st_mode
+                if stat.S_ISLNK(mode):
+                    where = entry.relative_to(self.root)
+                    logger.error(
+                        "[5e88] files: recovery refused %s: a symbolic link below ocfl/ is never followed", where
+                    )
+                    actions.append(f"refused {where}: a symbolic link below ocfl/ is never followed")
+                elif stat.S_ISDIR(mode):
+                    yield entry
+
+        for first in levels(self.ocfl):
+            if first.name == "extensions":
                 continue
-            for second in sorted(first.iterdir()):
-                for third in sorted(second.iterdir()):
+            for second in levels(first):
+                for third in levels(second):
                     children = sorted(third.iterdir())
                     if not children:
                         self._prune_empty_parents(third)
