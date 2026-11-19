@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 4 |
+| mapped | 5 |
 | unbuilt | 3 |
 | unaccounted | 7 |
 | 0-ACID (payable) | 0 |
@@ -17,3 +17,4 @@
 | `req-web-page-compact-width` | Implemented | Tested | — | `req-web-page-compact-width-1`, `req-web-page-compact-width-2`, `req-web-page-compact-width-3` |
 | `req-web-page-dim` | Implemented | Implemented | `<module>` | — |
 | `req-web-page-landing` | Implemented | Verified | `resolve_landing` | `req-web-page-landing-10`, `req-web-page-landing-11`, `req-web-page-landing-13`, `req-web-page-landing-14`, `req-web-page-landing-9` |
+| `req-web-page-plugin-urls` | Implemented | Tested | — | `req-web-page-plugin-urls-1`, `req-web-page-plugin-urls-2`, `req-web-page-plugin-urls-3` |
