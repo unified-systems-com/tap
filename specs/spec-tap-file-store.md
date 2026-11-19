@@ -81,12 +81,12 @@ which postpones that problem instead of solving it.
 | req-tap-files-read | [Read Path](#read-path) | Implemented | Verify the digest before releasing any byte |
 | req-tap-files-capabilities | [Capabilities](#capabilities) | Implemented | `files.create`, `files.read`, `files.update`, `files.delete` in the core registry |
 | req-tap-files-gateway | [Service Gateway](#service-gateway) | Implemented | The gated operations programs call; the identifier a file node shares with its object |
-| req-tap-files-node | [The Grid File](#the-grid-file) | In Development | `tap_file`, a core type: every held file's node, found again by its directory and name |
+| req-tap-files-node | [The Grid File](#the-grid-file) | Implemented | `tap_file`, a core type: every held file's node, found again by its directory and name |
 | req-tap-files-directory | [Directories](#directories) | Implemented | `tap_directory`, a core type: one parent, containment edges to its files and directories |
 | req-tap-files-format-record | [Format Records](#format-records) | In Development | `FILE_CONTENTS` joins a file to the one node, of a plugin's type, that says what its bytes are |
 | req-tap-files-hold | [Holding A File](#holding-a-file) | Implemented | The one helper that stores bytes and shapes the nodes, bytes first; what changes when a file changes |
-| req-tap-files-logging | [Operation Logging](#operation-logging) | In Development | One structured record per operation, reads and refusals included |
-| req-tap-files-download | [Download Route](#download-route) | Proposed | A logged-in user with `files.read` downloads a file as an attachment |
+| req-tap-files-logging | [Operation Logging](#operation-logging) | Implemented | One structured record per operation, reads and refusals included |
+| req-tap-files-download | [Download Route](#download-route) | Implemented | A logged-in user with `files.read` downloads a file as an attachment |
 | req-tap-files-check | [Report-Only Check](#report-only-check) | Proposed | A command that validates the store and lists where it and the grid's file nodes disagree, both ways |
 | req-tap-files-health | [Health Probe](#health-probe) | Proposed | A probe that reports the root as usable or not |
 | req-tap-files-history | [History Stays Possible](#history-stays-possible) | Implemented | Nothing in this release prevents reading any earlier version |
@@ -774,7 +774,7 @@ are stored as files here and not kept in a plugin's own directory (ruled 2026-11
 ----
 RID: `req-tap-files-node`
 
-Status: `In Development`
+Status: `Implemented`
 
 A file TAP holds is represented on the grid by a node of a core type, `tap_file`, owned by this app
 (ruled 2026-11-17). It is TAP-native in the way `layout` and `dimension` are: core declares and
@@ -825,7 +825,7 @@ every change.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-node-1 | Core Type, No Plugin | In Development | `tap_file` is declared and registered by `tap_files`, and in an instance with no plugin installed a file can be stored, its node written and the file downloaded. | `tap_file` is declared and registered by `tap_files` and the helper holds a file with no plugin involved; the download half arrives with `req-tap-files-download` (Issue# 1210 - tap), and then the lean-boot gate covers it. |
+| req-tap-files-node-1 | Core Type, No Plugin | Implemented | `tap_file` is declared and registered by `tap_files`, and in an instance with no plugin installed a file can be stored, its node written and the file downloaded. | `tap_files` declares the type, the helper holds a file and the route downloads it with no plugin code involved (`tap_files/tests/test_download.py`); the lean-boot gate boots the zero-plugin `core` profile with all three present. |
 | req-tap-files-node-2 | Fields Declared | Implemented | `tap_file` declares `name`, `path`, `media_type`, `size_bytes`, `sha256` and `file_version` in its field schemas; `media_type` may be null and the others may not. | |
 | req-tap-files-node-3 | Digest And Version Shape | Implemented | A `sha256` that is not 64 lower-case hex characters, a negative `size_bytes`, and a `file_version` below 1 are each refused. | |
 | req-tap-files-node-4 | Found Again By Path | Implemented | Writing a file twice with the same path resolves to one node; one name in two directories is two nodes. | |
@@ -994,7 +994,7 @@ that was one file is replaced.
 ----
 RID: `req-tap-files-logging`
 
-Status: `In Development`
+Status: `Implemented`
 
 Every gateway operation and every download produces one structured log record (ruled 2026-11-16:
 the interface is specified with strong logging). The record is a structured message object
@@ -1021,7 +1021,7 @@ Each log call carries a site token as every committed log call does (`req-tap-lo
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-logging-1 | One Record Per Operation | In Development | Each gateway operation and each download emits exactly one record with the reserved code, whether it succeeds, is refused or fails. | Built and tested for every gateway operation, with the code `FILE_OPERATION`; the download's record arrives with `req-tap-files-download` (Issue# 1210 - tap). |
+| req-tap-files-logging-1 | One Record Per Operation | Implemented | Each gateway operation and each download emits exactly one record with the reserved code, whether it succeeds, is refused or fails. | Code `FILE_OPERATION`. A download carries its route on the gateway's `open_file` record; one refused before the gateway is asked leaves the route's own record, operation `download`, in the same shape. |
 | req-tap-files-logging-2 | Read Names The Reader | Implemented | A successful read's record carries the reader's actor key, the identifier, the version and the digest. | |
 | req-tap-files-logging-3 | Refusal Recorded | Implemented | A read refused for lack of `files.read` produces a record with outcome refused and the actor's key. | |
 | req-tap-files-logging-4 | No Content In Logs | Implemented | Storing and reading a file whose bytes contain a marker string leaves that string in no log record at any level. | |
@@ -1030,7 +1030,7 @@ Each log call carries a site token as every committed log call does (`req-tap-lo
 ----
 RID: `req-tap-files-download`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A logged-in user downloads a stored file from the browser (ruled 2026-11-16).
 
@@ -1082,21 +1082,21 @@ makes the saved file open in the right program; it is not what the safety rests 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-download-1 | Bytes And Digest | Proposed | A permitted user receives bytes whose SHA-256 equals the `ETag` and the digest on the file's node. | Closes the done-test of Issue# 1035 - tap. |
-| req-tap-files-download-2 | Always An Attachment | Proposed | Every successful response carries `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, for a file recorded as `text/html` as for any other. | |
-| req-tap-files-download-9 | Recorded Type Sent, Safely | Proposed | The `Content-Type` equals the node's `media_type` when that is a well-formed media type, and is `application/octet-stream` when the field is absent, empty, or contains a space, a control character, a newline or a semicolon. | The last cases are header injection attempts. |
-| req-tap-files-download-3 | Login Required | Proposed | An unauthenticated request receives the login wall's response and no bytes, and the route is absent from the login-exempt prefixes. | |
-| req-tap-files-download-4 | Capability Required | Proposed | A logged-in user without `files.read` is refused, and the response is the same whether or not the identifier exists. | |
-| req-tap-files-download-5 | Tombstoned Not Served | Proposed | After the file's node is tombstoned, the route refuses and the object is still present in the store. | |
-| req-tap-files-download-6 | Hostile Name Safe In Header | Proposed | A logical name containing a quote, a newline, a semicolon and non-ASCII letters produces one well-formed `Content-Disposition` header and no additional header. | Header injection. |
-| req-tap-files-download-7 | Prefix Reserved | Proposed | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
-| req-tap-files-download-10 | The Node's Version Is Served | Proposed | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
-| req-tap-files-download-15 | Through The Gateway | Proposed | A download calls `open_file` and emits the gateway's operation record; the route imports no backend module and reads the node through the service layer as the requesting user. | Ruled 2026-11-17. |
-| req-tap-files-download-12 | No Version Chosen By The Caller | Proposed | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
-| req-tap-files-download-13 | No Recorded Version Is Refused | Proposed | With versions 1 and 2 stored and the node's `file_version` field removed, a download returns a server error naming `file_version`, sends no file bytes, and logs a finding; it does not return version 2's bytes. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
-| req-tap-files-download-14 | Recorded Version Not Stored Is Not Found | Proposed | With the node recording version 3 and the store holding versions 1 and 2, and again with the store holding no object for the identifier, the route answers not found, sends no file bytes, and serves no other version. | Raised by the AI review on PR# 1218 - tap. |
-| req-tap-files-download-11 | Node And Store Must Agree | Proposed | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
-| req-tap-files-download-8 | Changed File Fails Visibly | Proposed | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
+| req-tap-files-download-1 | Bytes And Digest | Implemented | A permitted user receives bytes whose SHA-256 equals the `ETag` and the digest on the file's node. | Closes the done-test of Issue# 1035 - tap. |
+| req-tap-files-download-2 | Always An Attachment | Implemented | Every successful response carries `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, for a file recorded as `text/html` as for any other. | |
+| req-tap-files-download-9 | Recorded Type Sent, Safely | Implemented | The `Content-Type` equals the node's `media_type` when that is a well-formed media type, and is `application/octet-stream` when the field is absent, empty, or contains a space, a control character, a newline or a semicolon. | The last cases are header injection attempts. |
+| req-tap-files-download-3 | Login Required | Implemented | An unauthenticated request receives the login wall's response and no bytes, and the route is absent from the login-exempt prefixes. | |
+| req-tap-files-download-4 | Capability Required | Implemented | A logged-in user without `files.read` is refused, and the response is the same whether or not the identifier exists. | |
+| req-tap-files-download-5 | Tombstoned Not Served | Implemented | After the file's node is tombstoned, the route refuses and the object is still present in the store. | |
+| req-tap-files-download-6 | Hostile Name Safe In Header | Implemented | A logical name containing a quote, a newline, a semicolon and non-ASCII letters produces one well-formed `Content-Disposition` header and no additional header. | Header injection. |
+| req-tap-files-download-7 | Prefix Reserved | Implemented | `/files` is in the reserved URL prefixes, and the reserved-prefix test passes. | |
+| req-tap-files-download-10 | The Node's Version Is Served | Implemented | With version 2 stored and the node still recording version 1, a download with no `version` returns version 1's bytes with an `ETag` equal to the node's `sha256`; after the node is updated to version 2 it returns version 2's. | The stored-then-refused case. |
+| req-tap-files-download-15 | Through The Gateway | Implemented | A download calls `open_file` and emits the gateway's operation record; the route imports no backend module and reads the node through the service layer as the requesting user. | Ruled 2026-11-17. |
+| req-tap-files-download-12 | No Version Chosen By The Caller | Implemented | With version 2 stored after a refused grid write and the node at version 3, a request carrying `?version=2`, or any other query parameter, returns version 3's bytes or is refused; no request to the route returns version 2's bytes, and none returns version 3's before the node records it. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-download-13 | No Recorded Version Is Refused | Implemented | With versions 1 and 2 stored and the node's `file_version` field removed, a download returns a server error naming `file_version`, sends no file bytes, and logs a finding; it does not return version 2's bytes. | Ruled 2026-11-17 in answer to the AI review on PR# 1213 - tap. |
+| req-tap-files-download-14 | Recorded Version Not Stored Is Not Found | Implemented | With the node recording version 3 and the store holding versions 1 and 2, and again with the store holding no object for the identifier, the route answers not found, sends no file bytes, and serves no other version. | Raised by the AI review on PR# 1218 - tap. |
+| req-tap-files-download-11 | Node And Store Must Agree | Implemented | With the node's `sha256` or `size_bytes` differing from the store's for the node's version, the route returns a server error with no bytes and logs an integrity finding. | |
+| req-tap-files-download-8 | Changed File Fails Visibly | Implemented | With the content altered on disk the route returns a server error with no file bytes, and an integrity finding is logged. | The integrity half of the Issue# 1035 - tap done-test. |
 
 ### Report-Only Check
 ----

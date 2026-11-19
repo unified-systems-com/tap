@@ -99,9 +99,16 @@ def rename_file(
 @_recorded("open_file")
 @requires_capability(FILES_READ, operation="open_file")
 def open_file(
-    identifier: str, version: int | None = None, *, caller_context: CallerContext | None = None
+    identifier: str,
+    version: int | None = None,
+    *,
+    route: str | None = None,
+    caller_context: CallerContext | None = None,
 ) -> OpenedFile:
-    """A verified read of *version* (the head when omitted); the caller closes the stream."""
+    """A verified read of *version* (the head when omitted); the caller closes the stream.
+
+    *route* names the route a download was requested by, for its log record; it changes nothing else.
+    """
     return _backend.backend().open(identifier, version)
 
 

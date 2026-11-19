@@ -53,6 +53,9 @@ class TapFile(BaseModel):
     Found again by its path, which is its directory's path, a ``/`` and its name. It carries what the
     store returned about the bytes and nothing of the bytes themselves; what they are is recorded on
     a format record joined by ``FILE_CONTENTS``.
+
+    TAP-IMPLEMENTS: req-tap-files-node@0719d00cb09d/facdff69600b (derivation) — the one declaration of
+        the core file type: its fields and their shapes, internal-only, found again by its path.
     """
 
     ENTITY_TYPE: ClassVar[str] = "tap_file"

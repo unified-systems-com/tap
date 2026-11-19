@@ -5,6 +5,7 @@ URL structure:
     /admin/         Django admin interface
     /api/...        Versioned API — see tap_api/urls.py
     /auth/...       Authentication (login/logout/OIDC) — see tap_auth/urls.py
+    /files/...      Held-file downloads — see tap_files/urls.py
     /viz/...        Visualization views
     /               Web interface (catch-all — must come last)
 """
@@ -25,6 +26,8 @@ urlpatterns = [
     # rather than allauth's default /accounts/ (req-tap-auth-app-3). Must precede
     # the tap_web catch-all (path("") matches everything).
     path("auth/", include("tap_auth.urls")),
+    # File downloads owned by tap_files (req-tap-files-download), behind the login wall.
+    path("files/", include("tap_files.urls")),
     # viz must come before the tap_web catch-all (path("") matches everything)
     path("viz/", include("tap_viz.urls")),
     path("", include("tap_web.urls")),

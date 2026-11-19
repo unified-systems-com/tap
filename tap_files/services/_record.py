@@ -76,7 +76,7 @@ def _entity_id(identifier: Any) -> str | None:
 def recorded(operation: str) -> Callable[[F], F]:
     """Emit exactly one ``FILE_OPERATION`` record for every call, whatever its outcome.
 
-    TAP-IMPLEMENTS: req-tap-files-logging@904e177b50b7/572e3a096f8a (enforcement) — one record per
+    TAP-IMPLEMENTS: req-tap-files-logging@6d9415cfad69/189338a2d2d4 (enforcement) — one record per
         gateway operation, refusals and reads included, and never the content.
     """
 
@@ -91,6 +91,8 @@ def recorded(operation: str) -> Callable[[F], F]:
                 "actor": actor_key(user),
                 "actor_kind": getattr(user, "user_kind", None),
             }
+            if kwargs.get("route"):
+                data["route"] = kwargs["route"]
             try:
                 result = fn(*args, **kwargs)
             except BaseException as exc:
