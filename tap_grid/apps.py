@@ -50,6 +50,13 @@ class TapCoreConfig(AppConfig):
 
         register_core_edges()
 
+        # Migration state keeps its own swappable-settings cache instead of emptying the global
+        # registry's on every model it re-renders, which roughly halved every state reload with
+        # ~2,000 models (unified-systems-com/tap#1251). Class attribute on StateApps only, no DB.
+        from tap_grid.migration_state import install_state_apps_swappable_cache
+
+        install_state_apps_swappable_cache()
+
         # Generate the natural-key search index for every registered model from its
         # NATURAL_KEY declaration (req-grid-entity-natural-key-12). Pure _meta writes,
         # no DB. ready() is the first moment every model has its fields, and every
