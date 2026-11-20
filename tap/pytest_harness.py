@@ -169,6 +169,42 @@ def django_db_setup(django_db_setup: object, django_db_blocker: Any) -> None:  #
         _seed_test_dimensions()
 
 
+def _install_model_built_test_db_hook() -> None:
+    """Finish a test database built from the models the moment Django creates it (tap#1258).
+
+    tap.test_settings sets TEST.MIGRATE=False, so Django's ``create_test_db`` creates the tables
+    with every migration switched off and records none. Wrapped here, at the one place every test
+    database is made (serial, each xdist worker, a template clone), so it happens once, outside
+    any test's transaction, and whichever fixture won the name ``django_db_setup``:
+
+    * every migration is then recorded as applied (``record_all_migrations``; a template clone
+      already carries the rows and is left alone), so the database answers like a migrated one;
+    * the verbosity Django hands to ``migrate`` is held at 0. pytest-django passes pytest's own
+      (``-vv`` reaches ``migrate`` as 2), and at 1 or above ``migrate`` follows "No migrations to
+      apply" with the autodetector's "your models have changes" check, which with migrations off
+      diffs an empty state against every model: minutes, not seconds, with aws_core installed.
+      pytest-django's own ``--nomigrations`` silences ``migrate`` for the same reason.
+    """
+    from django.db.backends.base.creation import BaseDatabaseCreation
+
+    if getattr(BaseDatabaseCreation.create_test_db, "tap_model_built", False):
+        return
+    original = BaseDatabaseCreation.create_test_db
+
+    def create_test_db(self: Any, verbosity: int = 1, *args: Any, **kwargs: Any) -> str:
+        test = self.connection.settings_dict.get("TEST") or {}
+        if test.get("MIGRATE") is not False:
+            return str(original(self, verbosity, *args, **kwargs))
+        name = str(original(self, min(verbosity, 1), *args, **kwargs))
+        from tap_boot.model_schema import record_all_migrations
+
+        record_all_migrations(self.connection.alias)
+        return name
+
+    create_test_db.tap_model_built = True  # type: ignore[attr-defined]
+    BaseDatabaseCreation.create_test_db = create_test_db  # type: ignore[method-assign]
+
+
 _TEST_DIMENSION_SEED = Path(__file__).resolve().parent.parent / "tap_grid/tests/data/test_dimensions.grift.json"
 _CORE_TAP_META = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap.meta, core's dimension bundle
 
@@ -277,6 +313,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "req-grid-service-batch-label-required itself",
     )
     _take_stack_lock(config)
+    _install_model_built_test_db_hook()
 
 
 def _take_stack_lock(config: pytest.Config) -> None:

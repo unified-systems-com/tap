@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Build a fully-migrated PostgreSQL TEMPLATE database that per-worker pytest test
-# DBs clone from (Django TEST.TEMPLATE -> `CREATE DATABASE ... WITH TEMPLATE`).
+# Build a complete PostgreSQL TEMPLATE database that per-worker pytest test DBs clone
+# from (Django TEST.TEMPLATE -> `CREATE DATABASE ... WITH TEMPLATE`).
+#
+# Built from the MODELS, not by replaying migrations (req-boot-schema-from-models-4,
+# tap#1258): `manage.py migrate_from_models` creates every table from the models and
+# records every migration as applied — seconds, against ~20 minutes of migrating from zero
+# once aws_core is installed. TAP_TEST_MIGRATIONS=1 replays the real migrations instead;
+# the nightly parity job (tap.schema_parity) keeps the two schemas equal.
 #
 # Why: pytest-django + xdist creates one test DB per worker, each migrated from
 # zero. That is slow (full migrate x N workers) and carries a rare concurrent-
@@ -45,7 +51,7 @@ with admin.cursor() as c:
 print(f"created template database: {template}")
 PY
 
-# Migrate the template with test settings (same app set the test run will use).
+# Build the template with test settings (same app set the test run will use).
 TEMPLATE_URL="$(uv run python - "$TEMPLATE" <<'PY'
 import os, sys
 from urllib.parse import urlparse, urlunparse
@@ -54,8 +60,12 @@ print(urlunparse(u._replace(path="/" + sys.argv[1])))
 PY
 )"
 
-echo "migrating template ${TEMPLATE} ..."
+case "${TAP_TEST_MIGRATIONS:-}" in
+    1 | true | yes | on) BUILD_COMMAND=migrate ;;
+    *) BUILD_COMMAND=migrate_from_models ;;
+esac
+echo "building template ${TEMPLATE} (manage.py ${BUILD_COMMAND}) ..."
 DATABASE_URL="$TEMPLATE_URL" DJANGO_SETTINGS_MODULE=tap.test_settings \
-    uv run python manage.py migrate --noinput
+    uv run python manage.py "$BUILD_COMMAND" --noinput
 
 echo "template ${TEMPLATE} ready — set TAP_TEST_DB_TEMPLATE=${TEMPLATE} for the pytest run."
