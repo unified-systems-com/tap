@@ -434,10 +434,15 @@ LIBRARY_DEFAULTS_ACKNOWLEDGED = {
     # worker type", so they are unreachable rather than merely unused. `root_path`, the
     # fourth setting the ASGI work introduced, is ASSIGNED above: the question it asks —
     # where is this application mounted — has a WSGI answer, and deserves one.
+    #
+    # `websocket_max_message_size` (added 26.3.0, first seen here with 27.0.1) belongs with
+    # them: gunicorn documents it as the largest WebSocket message "the `asgi` worker
+    # accepts". A sync worker speaks no WebSocket, so the limit has nothing to bound.
     "asgi_worker": (
         "asgi_disconnect_grace_period",
         "asgi_lifespan",
         "asgi_loop",
+        "websocket_max_message_size",
     ),
     # The DIRTY ARBITER (25.0.0, beta): a SECOND process tree beside the HTTP workers, for
     # long-blocking work — an ML model, a heavy computation — held in memory across calls.
@@ -600,6 +605,7 @@ LIBRARY_DEFAULTS_OBSERVED = {
     "threads": 1,
     "tmp_upload_dir": None,
     "umask": 0,
+    "websocket_max_message_size": 16777216,
     "worker_connections": 1000,
     "wsgi_app": None,
 }
