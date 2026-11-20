@@ -23,6 +23,7 @@ from django.apps.registry import Apps
 from django.conf import settings
 from django.db.migrations.state import ModelState, ProjectState, StateApps
 from django.db.models.fields.related import RelatedField
+from django.test import override_settings
 
 from tap_grid.migration_state import PerRegistrySwappableCache, install_state_apps_swappable_cache
 
@@ -130,6 +131,31 @@ def test_state_apps_cache_is_per_registry_and_invalidated_by_its_own_registratio
     empty.unregister_model("auth", "user")
     empty.clear_cache()
     assert empty.get_swappable_settings_name(USER_LABEL) is None
+
+
+def test_a_settings_change_reaches_a_state_apps_cache_as_it_does_in_stock_django(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A StateApps answer cached before ``override_settings(AUTH_USER_MODEL=...)`` is not reused after it.
+
+    Stock Django gets this from the shared cache: the ``AUTH_USER_MODEL`` receiver clears the global
+    registry, which empties every registry. Here a ``setting_changed`` generation does it (PR review on
+    unified-systems-com/tap#1253). Checked against stock by removing the patch and asking again.
+    """
+    declarer = ModelState.from_model(global_apps.get_model(SWAPPABLE_DECLARER), exclude_rels=True)
+
+    def answers() -> tuple[str | None, str | None]:
+        registry = StateApps([], {})
+        registry.render_multiple([declarer.clone()])
+        before = registry.get_swappable_settings_name(USER_LABEL)
+        with override_settings(AUTH_USER_MODEL=SWAPPABLE_DECLARER):
+            after = registry.get_swappable_settings_name(USER_LABEL)
+        return before, after
+
+    patched = answers()
+    assert patched == ("AUTH_USER_MODEL", None), "a StateApps answered from settings that had changed"
+    monkeypatch.delattr(StateApps, "get_swappable_settings_name")
+    assert answers() == patched
 
 
 # --- equivalence -----------------------------------------------------------------------------------

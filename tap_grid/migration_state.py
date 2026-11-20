@@ -22,6 +22,13 @@ The patch: ``StateApps`` gets its own per-registry cache for ``get_swappable_set
 the one its own models could invalidate. The global registry and any other ``Apps`` keep the stock
 shared cache and still clear it themselves when they change. Nothing is patched on ``Apps``.
 
+The answer also reads settings (``Options.swapped`` reads ``AUTH_USER_MODEL`` at call time). In stock
+Django a settings change reaches every registry because the cache is shared: the ``setting_changed``
+receiver for ``AUTH_USER_MODEL`` clears the global registry, which empties it for all. Here every
+``setting_changed`` bumps a generation instead, and a per-registry cache filled under an older
+generation is dropped on its next read, so no registry answers from settings that have changed.
+Settings change only under ``override_settings``, so this costs nothing in a migrate.
+
 This is worth sending upstream. Django ticket #37214 ("Performance regression with end to end
 migrations on v5.x", open) reports migrations doubling in time after 4.2 and suspects the
 swappable-settings caching change from #34687; the mechanism above is a likely cause (not confirmed
@@ -39,6 +46,7 @@ from collections.abc import Callable
 from typing import Any
 
 from django.apps.registry import Apps
+from django.core.signals import setting_changed
 from django.db.migrations.state import StateApps
 
 logger = logging.getLogger(__name__)
@@ -48,6 +56,14 @@ _CACHE_ATTR = "_tap_swappable_settings_cache"
 
 #: The Django method this module overrides on StateApps (and reads from Apps).
 _PATCHED_NAME = "get_swappable_settings_name"
+
+#: Bumped on every ``setting_changed``; a per-registry cache from an older generation is stale.
+_settings_generation = 0
+
+
+def _settings_changed(**_kwargs: object) -> None:
+    global _settings_generation
+    _settings_generation += 1
 
 
 class _BoundSwappableCache:
@@ -64,7 +80,11 @@ class _BoundSwappableCache:
         self._compute = compute
 
     def __call__(self, to_string: str) -> str | None:
-        cache: dict[str, str | None] = self._registry.__dict__.setdefault(_CACHE_ATTR, {})
+        cached: tuple[int, dict[str, str | None]] | None = self._registry.__dict__.get(_CACHE_ATTR)
+        generation, cache = cached if cached is not None else (None, None)
+        if generation != _settings_generation or cache is None:
+            cache = {}
+            self._registry.__dict__[_CACHE_ATTR] = (_settings_generation, cache)
         if to_string not in cache:
             cache[to_string] = self._compute(self._registry, to_string)
         return cache[to_string]
@@ -107,5 +127,6 @@ def install_state_apps_swappable_cache() -> bool:
             "swappable-cache speedup (tap#1251) is not installed"
         )
         return False
+    setting_changed.connect(_settings_changed, dispatch_uid="tap_grid.migration_state.settings_changed")
     setattr(StateApps, _PATCHED_NAME, PerRegistrySwappableCache(compute))
     return True
