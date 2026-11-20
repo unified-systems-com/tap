@@ -294,7 +294,7 @@ jobs:
       # restated a version the lock owns (it had drifted to 4.23.0 vs 4.26.0) and
       # verified no bytes (tap#507, SonarCloud S8541). No Actions cache: this lane
       # feeds a signing job, so it restores nothing another run wrote.
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: false
       - name: Sync the SBOM tooling's locked dependency group
@@ -544,7 +544,7 @@ jobs:
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"   # report-only — the gate flip changes this pre-push, not here
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}
