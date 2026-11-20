@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.2](https://github.com/unified-systems-com/tap/compare/v0.4.1...v0.4.2) (2026-11-20)
+
+
+### Features
+
+* **boot:** build an empty database from the models, opt-in per boot variable ([f5cf6be](https://github.com/unified-systems-com/tap/commit/f5cf6be3814405551aa374b39f530fa074050e53))
+
+
+### Bug Fixes
+
+* **deps:** update browser libraries (package-lock.json) ([7b8e74c](https://github.com/unified-systems-com/tap/commit/7b8e74c6ca683356d67022a3209ebff2586b5a4b))
+* **dev:** parity accepts only the id width, and a migration diff runs it on the PR ([3168e1a](https://github.com/unified-systems-com/tap/commit/3168e1ab25d38c94e17c147e3c92beccbadd0dfc))
+* **dev:** schema parity quotes identifiers and runs no shell; preboot exports the schema resolver ([a61d840](https://github.com/unified-systems-com/tap/commit/a61d840dec51342236d31fdb06d141c5fb42f4c7))
+
+
+### Performance Improvements
+
+* **dev:** CI, dev and test schemas are built from the models instead of migrating [via aws-build] ([1afdb97](https://github.com/unified-systems-com/tap/commit/1afdb972b0acd198a652a7a9b7ca186cdd86c1da))
+
+
+### Reverts
+
+* **grid:** drop the StateApps swappable cache (PR 1253 closed) ([9b7d9fa](https://github.com/unified-systems-com/tap/commit/9b7d9fa3ac080faa757ca0110281658cc2a71e06))
+
+
+### Documentation
+
+* **spec:** the fleet-bot spec names two paths a run's token reaches short of a merge [via coley] ([7046904](https://github.com/unified-systems-com/tap/commit/7046904b47c021e2040ee06fd634e4dbcbd553a7))
+
 ## [0.4.1](https://github.com/unified-systems-com/tap/compare/v0.4.0...v0.4.1) (2026-11-20)
 
 
