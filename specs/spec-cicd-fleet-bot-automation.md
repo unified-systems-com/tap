@@ -301,10 +301,12 @@ installation — is the bound this requirement states.
   alerts and opens the fix as a `security` PR). Release-please's: `contents` and `pull-requests`
   write, and no `workflows` permission, so it cannot edit a workflow file. Neither holds
   administration.
-- **The token lasts for the run.** It expires within the hour and is revoked when the job ends.
+- **The token lasts for the run.** It expires within the hour, and the mint action revokes it
+  in its post step when the job ends (`actions/create-github-app-token`, `skip-token-revoke`
+  left at its default of false).
 - **Nothing merges on its own.** `automerge` is off for Renovate and release-please never merges
-  a release PR, so a token's worst case on a protected default branch is a pull request a human
-  has to accept.
+  a release PR, so nothing reaches a default branch without a human merging it. That is a bound
+  on default branches only; the next paragraphs say what a token can do short of a merge.
 - **A target repository's own config cannot run commands with the token.** Renovate's global
   configuration allows exactly one post-upgrade command, anchored and argument-free, from a
   read-only mount (the boot-record digest refresh), and the shell executor is off.
@@ -316,7 +318,26 @@ over the whole fleet for up to an hour. A compromise of that job — the pinned 
 action, or the runner — reaches every fleet repository's branches in one token lifetime, not a
 slice of them. The fork design and the slicing after it were both attempts to shrink that reach,
 and both were given up for reliability (George, 2026-11-19). The controls above reduce the ways
-to get there; they do not make the reach small.
+to get there; they do not make the reach small. Two paths in particular stop short of a merge
+and are not closed by "a human merges every change":
+
+- **A bot PR runs the target's workflows before anyone reads it.** An App-authored PR is a
+  branch in the target repository, so the repository's `pull_request` workflows run on it at
+  once, from the PR's own copy of the workflow files, with whatever secrets and token
+  permissions those workflows are given. Renovate's token can write workflow files. A
+  compromised Renovate run can therefore execute code in a target repository's Actions when the
+  PR opens. Under the fork design, fork isolation and the "Approve and run" gate stopped this;
+  nothing in this spec replaces them, and `allowedCommands` does not reach it, because the code
+  runs in the target's Actions, not in Renovate.
+- **The release token can tag without a merged release PR.** "Only a human-merged release PR is
+  tagged" ([`req-cicd-fleet-bot-release-phase2`](#a-merged-release-pr-is-tagged-by-the-app))
+  describes what the run does. The token's `contents` write would let a compromised run create
+  a tag and a release directly, which starts the tag-push workflows. No tag ruleset is required
+  here to bind tags to a merged release PR.
+
+Both are accepted with the App model, not solved by it. A control for either (secrets held
+behind environments on PR workflows, a tag ruleset) would be a new requirement, not an
+implication of the ones above.
 
 **From 2026-09-27 to 2026-11-19 this requirement was "A Fleet-Shared Credential Holds No Role
 Anywhere"**, and its guards on fork-triggered jobs (`-2`, `-4`, `-5`, `-6`, `-7`) were moved to
