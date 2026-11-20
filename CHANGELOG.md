@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.1](https://github.com/unified-systems-com/tap/compare/v0.4.0...v0.4.1) (2026-11-20)
+
+
+### Features
+
+* **files:** manage.py files check and the files health probe ([34a2749](https://github.com/unified-systems-com/tap/commit/34a2749c75d8d9807fa5b5a7b1257cb233aefd7f))
+
+
+### Bug Fixes
+
+* **files:** One Store states the mount probe's exception; same bytes compared across names ([b6fcef8](https://github.com/unified-systems-com/tap/commit/b6fcef802617b9a92f6381d54560c92de64a92bd))
+* **files:** the check reads nothing through a link inside an object ([a2c70cb](https://github.com/unified-systems-com/tap/commit/a2c70cb104c770f81f87df970a13ab8fca55f218))
+* **files:** the survey refuses a link in an object before opening anything in it ([d2c1e18](https://github.com/unified-systems-com/tap/commit/d2c1e188e1a578864ed0810c5b80ed246bf04cea))
+
+
+### Documentation
+
+* **files:** One Store's note gives the probe exception its reason, not a review citation ([d5ae721](https://github.com/unified-systems-com/tap/commit/d5ae721481969d977e88c5de5e2e33dfd0fbf876))
+* **files:** the scope criteria are Implemented; computing-core leaves the store optional ([523b6fb](https://github.com/unified-systems-com/tap/commit/523b6fbdb57272e149738dfe629706cb95989421))
+* **spec:** fleet bots run as org Apps over the whole fleet; the fork-bot design is retired ([53fc043](https://github.com/unified-systems-com/tap/commit/53fc0435de588eb92bacc256a85d7dafbe2e66a7))
+* **spec:** fleet bots run as org Apps over the whole fleet; the fork-bot design is retired [via coley] ([ecce3f7](https://github.com/unified-systems-com/tap/commit/ecce3f79a3d19d77bf9bdf0d568bafe2ce507c2c))
+
 ## [0.4.0](https://github.com/unified-systems-com/tap/compare/v0.3.4...v0.4.0) (2026-11-16)
 
 
