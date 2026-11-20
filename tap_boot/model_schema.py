@@ -1,6 +1,6 @@
 """Build a database schema from the models instead of replaying every migration (tap#1258).
 
-TAP-IMPLEMENTS: req-boot-schema-from-models@d02dc3aa8ae0/350ccb67d4ad (derivation) — the one
+TAP-IMPLEMENTS: req-boot-schema-from-models@0481fbc263d3/350ccb67d4ad (derivation) — the one
     build-from-models routine the boot entrypoint, the cold-boot gate, the test-DB template and
     the per-run test database all use.
 

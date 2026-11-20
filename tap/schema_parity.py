@@ -1,6 +1,6 @@
 """Prove a model-built database equals a migrated one (req-boot-schema-from-models-5, tap#1258).
 
-TAP-IMPLEMENTS: req-boot-schema-from-models@d02dc3aa8ae0/6da8d5f6f148 (enforcement) — the nightly
+TAP-IMPLEMENTS: req-boot-schema-from-models@0481fbc263d3/44a94aa89a4c (enforcement) — the nightly
     check that the real migrations still run from zero and still produce exactly the schema the
     models build.
 
@@ -93,9 +93,11 @@ def _recreate(database: str, *, drop_only: bool = False) -> None:
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s AND pid <> pg_backend_pid()",
             (database,),
         )
-        cursor.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database)))
+        drop = sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database))
+        cursor.execute(drop)  # nosemgrep  # nosec B608 — the name is quoted by psycopg.sql.Identifier
         if not drop_only:
-            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+            create = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database))
+            cursor.execute(create)  # nosemgrep  # nosec B608 — the name is quoted by psycopg.sql.Identifier
 
 
 def _start(build: Build) -> subprocess.Popen[str]:
@@ -150,7 +152,9 @@ _TOP_LEVEL_COMMA = re.compile(r", (?![^()]*\))")
 
 _M2M_QUIRK = "auto-created M2M id: bigint migrated, integer from the models (Django state quirk)"
 
-#: Differences that are real, understood, and accepted — each with the reason. Keyed by table.
+#: Differences that are real, understood, and accepted — each with the reason. Keyed by table, but
+#: only the id width is accepted: a table's statements must match exactly once the id column's
+#: bigint/integer is set aside (``_id_width_neutral``), so any other drift there still fails.
 #: Django renders the migration state with stub app configs that carry no ``default_auto_field``,
 #: so an auto-created many-to-many table of an app whose AppConfig pins ``AutoField`` (auth,
 #: socialaccount) gets ``settings.DEFAULT_AUTO_FIELD`` (bigint) when MIGRATED and the app's own
@@ -159,6 +163,14 @@ KNOWN_DIFFERENCES: dict[str, str] = {
     "public.auth_group_permissions": _M2M_QUIRK,
     "public.socialaccount_socialapp_sites": _M2M_QUIRK,
 }
+
+
+_ID_WIDTH = re.compile(r"\b(id (?:bigint|integer)|AS (?:bigint|integer))\b")
+
+
+def _id_width_neutral(statement: str) -> str:
+    """The statement with the id column's width (and its identity sequence's) set aside."""
+    return _ID_WIDTH.sub(lambda m: m.group(1).rsplit(" ", 1)[0] + " <int>", statement)
 
 
 def schema_statements(dump: str) -> list[str]:
@@ -192,8 +204,9 @@ def _dump_schema(database: str) -> str:
     pg_dump = shutil.which("pg_dump")
     if pg_dump is None:
         raise RuntimeError("pg_dump is not on PATH; the schema comparison needs it")
+    argv = [pg_dump, "--schema-only", "--no-owner", "--no-privileges", "--dbname", _url_for(database)]
     result = subprocess.run(  # nosec B603  # nosemgrep — fixed argv: the resolved pg_dump + a scratch database URL
-        [pg_dump, "--schema-only", "--no-owner", "--no-privileges", "--dbname", _url_for(database)],
+        argv,  # nosemgrep
         capture_output=True,
         text=True,
         check=True,
@@ -216,10 +229,12 @@ def _table_rows(cursor: Any, table: str) -> tuple[int, str]:
     )
     columns = [name for name, kind in cursor.fetchall() if name != "id" and not kind.startswith("timestamp")]
     if not columns:
-        cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
+        count = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
+        cursor.execute(count)  # nosemgrep  # nosec B608 — the name is quoted by psycopg.sql.Identifier
         return int(cursor.fetchone()[0]), ""
     selected = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
-    cursor.execute(sql.SQL("SELECT {} FROM {}").format(selected, sql.Identifier(table)))
+    query = sql.SQL("SELECT {} FROM {}").format(selected, sql.Identifier(table))
+    cursor.execute(query)  # nosemgrep  # nosec B608 — every name is quoted by psycopg.sql.Identifier
     rows = sorted(json.dumps(row, default=str, sort_keys=True) for row in cursor.fetchall())
     return len(rows), hashlib.sha256("\n".join(rows).encode()).hexdigest()
 
@@ -251,7 +266,7 @@ def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]
     for table, reason in sorted(KNOWN_DIFFERENCES.items()):
         mine = [s for s in only_migrated if _table_of(s) == table]
         theirs = [s for s in only_models if _table_of(s) == table]
-        if mine or theirs:
+        if (mine or theirs) and Counter(map(_id_width_neutral, mine)) == Counter(map(_id_width_neutral, theirs)):
             notes.append(f"accepted difference in {table}: {reason}")
             for statement in mine:
                 del only_migrated[statement]
@@ -268,7 +283,8 @@ def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]
         for s in sorted(set(migrated.statements) ^ set(models.statements))
         if canonical(s) not in only_migrated
         and canonical(s) not in only_models
-        and _table_of(s) not in KNOWN_DIFFERENCES
+        and canonical(s) in left
+        and canonical(s) in right
     ]
     if cosmetic:
         notes.append(f"{len(cosmetic)} statement(s) differ only in column order or generated names, e.g.:")

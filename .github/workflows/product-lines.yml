@@ -87,6 +87,10 @@ jobs:
       # it. Fail-closed: empty/unknown diffs are `full` (so a dispatch on a ref
       # equal to main runs everything — "prove the world green" stays honest).
       tier: ${{ steps.pick.outputs.tier }}
+      # "true" when the diff vs origin/main adds or changes a migration file: such a PR also
+      # runs the migrations-from-zero parity job (req-boot-schema-from-models-5), because
+      # every other CI lane now builds its schema from the models.
+      migrations_changed: ${{ steps.pick.outputs.migrations_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -105,6 +109,14 @@ jobs:
           tier="$(scripts/change-tier origin/main)"
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"
+          base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+          if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE '(^|/)migrations/[^/]+\.py$'; then
+            migrations_changed=true
+          else
+            migrations_changed=false
+          fi
+          echo "migrations_changed=$migrations_changed" >> "$GITHUB_OUTPUT"
+          echo "migrations changed: $migrations_changed"
           # One line runs on every non-docs tier: core_ci (core + the three fixture plugins;
           # tap#366/#374, tap#638), defined in core-ci.yml and shared with the release gate.
           # The union PR line was eliminated 2026-09-10 (tap#369), the `samsite` product line
@@ -369,7 +381,7 @@ jobs:
   # schema, rows or recorded migrations. A red reaches `gate`, so the nightly owner issue
   # carries it.
   migrations:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.setup.outputs.migrations_changed == 'true'
     needs: [setup, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -474,6 +486,7 @@ jobs:
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
           R_MIGRATIONS: ${{ needs.migrations.result }}
+          MIGRATIONS_CHANGED: ${{ needs.setup.outputs.migrations_changed }}
         run: |
           echo "tier=$TIER event=$EVENT_NAME setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ migrations=$R_MIGRATIONS"
           die() { echo "::error::$1"; exit 1; }
@@ -533,14 +546,14 @@ jobs:
             skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "api-fuzz skipped on a full-tier diff" ;;
             *) die "api-fuzz finished '$R_FUZZ'" ;;
           esac
-          # The migrations-from-zero parity job runs nightly and on dispatch only
-          # (req-boot-schema-from-models-5); on those events it is required.
+          # The migrations-from-zero parity job runs nightly, on dispatch, and on any diff that
+          # changes a migration file (req-boot-schema-from-models-5); where it runs it is required.
           case "$R_MIGRATIONS" in
             success) : ;;
             skipped)
               case "$EVENT_NAME" in
                 schedule | workflow_dispatch) die "migrations skipped on '$EVENT_NAME', where it must run" ;;
-                *) : ;;
+                *) if [ "$MIGRATIONS_CHANGED" = "true" ]; then die "migrations skipped on a diff that changes a migration"; fi ;;
               esac
               ;;
             *) die "migrations finished '$R_MIGRATIONS'" ;;

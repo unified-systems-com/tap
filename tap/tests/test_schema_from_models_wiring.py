@@ -70,7 +70,10 @@ def test_the_test_template_is_built_from_the_models() -> None:
 def test_one_nightly_job_replays_the_real_migrations_and_proves_parity() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/product-lines.yml").read_text(encoding="utf-8"))
     job = workflow["jobs"]["migrations"]
-    assert job["if"] == "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+    assert job["if"] == (
+        "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+        " || needs.setup.outputs.migrations_changed == 'true'"
+    )
     assert job["env"][ENV] == "false" and job["env"]["TAP_BOOT_PROFILE"] == "core_ci"
     runs = "\n".join(str(step.get("run", "")) for step in job["steps"])
     assert "python -m tap.schema_parity" in runs
@@ -80,3 +83,6 @@ def test_one_nightly_job_replays_the_real_migrations_and_proves_parity() -> None
     arm = verdict[verdict.index('case "$R_MIGRATIONS" in') :]
     arm = arm[: arm.index("*) die \"migrations finished")]
     assert "schedule | workflow_dispatch) die" in arm, "a skip on the nightly must not read green"
+    assert 'if [ "$MIGRATIONS_CHANGED" = "true" ]; then die' in arm, "a skip on a migration diff must not read green"
+    pick = "\n".join(str(step.get("run", "")) for step in workflow["jobs"]["setup"]["steps"])
+    assert "migrations_changed=" in pick and "migrations/" in pick

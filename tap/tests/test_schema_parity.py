@@ -95,3 +95,12 @@ def test_a_type_difference_fails_unless_it_is_a_known_one() -> None:
     known = "public.auth_group_permissions"
     problems, notes = schema_parity.compare(table(known, "bigint"), table(known, "integer"))
     assert problems == [] and notes == [f"accepted difference in {known}: {schema_parity.KNOWN_DIFFERENCES[known]}"]
+
+
+def test_a_known_table_still_fails_on_any_drift_but_the_id_width() -> None:
+    known = "public.auth_group_permissions"
+    migrated = Snapshot([f"CREATE TABLE {known} ( id bigint NOT NULL, group_id integer NOT NULL )"])
+    models = Snapshot([f"CREATE TABLE {known} ( id integer NOT NULL, group_id integer NOT NULL, extra text )"])
+    problems, notes = schema_parity.compare(migrated, models)
+    assert problems and "schema differs" in problems[0]
+    assert not any("accepted difference" in note for note in notes)
