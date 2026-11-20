@@ -61,5 +61,7 @@ CVE-2026-23949
 #   image holds one OpenSSL 3.6 core for the FIPS provider (Dockerfile, the
 #   revision-pin notes; tap#931, tap#932). Accepted George Chamales,
 #   2026-11-19. Revisit when a python-3.14 apk built on OpenSSL 3 carries the
-#   fix, or when the image moves to OpenSSL 4.
-CVE-2026-119170
+#   fix, or when the image moves to OpenSSL 4. Expires 2026-12-20: thirty days
+#   from the maintainer's ruling of 2026-11-20, so the waiver lapses and the
+#   release gate blocks on this id again unless it is re-accepted.
+CVE-2026-119170 exp:2026-12-20
