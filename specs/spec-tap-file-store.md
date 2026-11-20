@@ -97,6 +97,7 @@ which postpones that problem instead of solving it.
 | req-tap-files-slices | [Reading Inside Files](#reading-inside-files) | Backlog | Searching stored files and returning addressed parts of them |
 | req-tap-files-version-download | [Downloading An Earlier Version](#downloading-an-earlier-version) | Backlog | A browser surface for a version the node's history once recorded |
 | req-tap-files-ocfl-validation | [Independent OCFL Validation](#independent-ocfl-validation) | Backlog | Running a third-party OCFL validator over the store |
+| req-tap-files-rename | [Renaming And Moving A Held File](#renaming-and-moving-a-held-file) | Backlog | Changing a held file's name or folder without new bytes |
 | req-tap-files-dimensions | [Dimensions For Files And Directories](#dimensions-for-files-and-directories) | Backlog | Which dimensions held files and directories should carry |
 | req-tap-files-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this specification deliberately does not do |
 
@@ -963,10 +964,10 @@ one: that record described the old bytes, and leaving it would let a reader take
 parse result for the new ones. The caller's own batch then attaches the record for the new bytes. If
 that batch fails, the file has no format record, which is the state already accepted for a new file,
 and never a record for bytes it no longer holds. The old record itself is untouched
-(`req-tap-files-format-record`). A renamed or moved file is likewise one node: the helper records the new name in the store
-(`rename_file`) and patches `name`, `path`, `file_version` and its containment edge. The grid's history
-keeps each earlier state, so the digest and version a file had at any past moment can be read from
-history and the store still returns those bytes (`req-tap-files-history`).
+(`req-tap-files-format-record`). Renaming or moving a held file is not in this release
+(`req-tap-files-rename`, Backlog). The grid's history keeps each earlier state of a node, so the
+digest and version a file had at any past moment can be read from history and the store still returns
+those bytes (`req-tap-files-history`).
 
 **Retrying after a refused write.** A refused grid write leaves the store one version ahead of the node.
 The node still names the current version, and downloads follow the node. On the next attempt the
@@ -1331,6 +1332,32 @@ failing on any error or any warning beyond the accepted SHA-512 recommendation
 the choices to settle are which validator, and how it runs: the reference validator is a Java tool,
 which is a new dependency needing the maintainer's approval, while the OCFL project's published
 conformance fixtures could instead be vendored as data and read by the store's own reader.
+
+### Renaming And Moving A Held File
+----
+RID: `req-tap-files-rename`
+
+Status: `Backlog`
+
+A program changing a held file's name, or the folder it sits in, without storing new bytes. Ruled
+Backlog 2026-11-19: no consumer needs it yet. Collectors hold a file where it belongs, and downloads
+go by identifier, not by path.
+
+The intended shape: the file stays one node. The helper records the new name in the store with
+`rename_file`, a new store version that adds no bytes (`req-tap-files-immutable-2`, already built),
+then patches the node's `name`, `path` and `file_version` and moves its containment edge. Its
+`FILE_CONTENTS` edge and digest stay valid, because the bytes do not change.
+
+What its criteria must decide before it is built:
+
+- **A taken destination.** Whether a move to a path that already holds a file is refused. A path finds
+  exactly one node (`req-tap-files-node-4`).
+- **Folders.** Whether missing destination folders are created, as holding creates them, and that an
+  emptied source folder is left in place, since nothing is deleted.
+- **Moving a folder.** Whether a directory can be moved at all. It changes the path of everything
+  beneath it, which is a much larger operation than moving one file.
+- **A partial failure.** The store's rename recorded and the grid write refused, the same shape as
+  holding's retry case (`req-tap-files-hold-7`).
 
 ### Dimensions For Files And Directories
 ----
