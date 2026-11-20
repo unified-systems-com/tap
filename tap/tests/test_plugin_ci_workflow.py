@@ -282,10 +282,33 @@ def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -
     main = plugin_nightly["jobs"]["main"]
     assert str(main["uses"]).endswith("plugin-ci.yml")
     assert main["with"]["harness_ref"] == "main"
-    assert "inputs.latest_ref != ''" in str(plugin_nightly["jobs"]["latest"]["if"])
     owner = plugin_nightly["jobs"]["owner-issue"]
     assert owner["needs"] == ["main", "latest"]
     assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-16")
+def test_the_reusable_nightly_tests_the_newest_release_every_night(plugin_nightly: dict[str, Any]) -> None:
+    """The release row is no longer opt-in: with no `latest_ref` it follows core's newest release.
+
+    The tag comes from the API and becomes a ref plugin-ci checks out, so the job that resolves
+    it holds no scope, checks out nothing, and lets only `vX.Y.Z` through.
+    """
+    jobs = plugin_nightly["jobs"]
+    latest = jobs["latest"]
+    assert "if" not in latest, "the release row must run every night, not only when a caller names a tag"
+    assert latest["needs"] == "newest-release"
+    assert str(latest["uses"]).endswith("plugin-ci.yml")
+    assert latest["with"]["harness_ref"] == "${{ needs.newest-release.outputs.tag }}"
+
+    resolve = jobs["newest-release"]
+    assert resolve["permissions"] == {}
+    steps = _steps(resolve)
+    assert not any("uses" in step for step in steps), "the resolving job runs no action and checks out nothing"
+    run = "\n".join(step.get("run", "") for step in steps)
+    assert "releases/latest" in run
+    assert "'^v[0-9]+\\.[0-9]+\\.[0-9]+$'" in run
+    assert "${{" not in run, "inputs reach the script through env, never by interpolation"
 
 
 REPO_SCOPE_JOB = "repo-scope"
