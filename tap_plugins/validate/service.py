@@ -743,7 +743,7 @@ def _edge_naming_violations(slug: str) -> list[str]:
 def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
     """Edge slugs name a mechanical action on a destination noun.
 
-    TAP-IMPLEMENTS: req-tap-plugin-edge-naming@0f80ae4bdaca/b35967050808 (enforcement) — the
+    TAP-IMPLEMENTS: req-tap-plugin-edge-naming@421a4dc2d4ad/b35967050808 (enforcement) — the
         one place the `<ACTION>_<OBJECT>` convention is enforced. Core's guard harness cannot
         do it: it walks REPO_ROOT and evicted plugins are not in that tree.
 

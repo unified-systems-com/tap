@@ -626,12 +626,17 @@ def _closure_observed_since(entity_id: uuid.UUID, since: datetime, produced_batc
     observed since the record was derived by any batch that has not failed — an OPEN batch may
     commit a moment after this check, and only a FAILED batch is known to have rolled back
     (Codex and Grok on PR# 663 - tap). An unknown closure (over the cap) is refused here by
-    name rather than left for the cascade to refuse by size."""
+    name rather than left for the cascade to refuse by size.
+
+    Containment only (``compound_dependents=False``): a compound edge's middle node that the
+    cascade retires with an end is not evidence against the end's retirement
+    (``req-grid-edge-compound-7``), at derivation or here. The cascade that follows still
+    retires it, under its own locks."""
     from tap_grid.candidates import observed_by
     from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
     from tap_grid.services import contained_closure_locked
 
-    closure = contained_closure_locked(entity_id)
+    closure = contained_closure_locked(entity_id, compound_dependents=False)
     if closure is None:
         return "the nodes contained under the target exceed the cascade cap; the closure cannot be checked"
     if not closure:

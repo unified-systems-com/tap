@@ -13,4 +13,4 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-viz-system-display-hints` | In Development | Tested | — | `req-viz-system-display-hints-10`, `req-viz-system-display-hints-9` |
+| `req-viz-system-display-hints` | In Development | Tested | — | `req-viz-system-display-hints-10`, `req-viz-system-display-hints-11`, `req-viz-system-display-hints-9` |

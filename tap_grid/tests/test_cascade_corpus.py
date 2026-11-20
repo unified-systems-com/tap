@@ -43,6 +43,7 @@ def test_every_family_present() -> None:
         "undeclared",
         "ownership",
         "reconcile",
+        "compound",
     }
 
 
@@ -63,6 +64,10 @@ def test_every_covers_entry_names_a_requirement_that_exists() -> None:
     reconcile_spec = (specs_dir / "spec-grid-reconcile.md").read_text(encoding="utf-8")
     known |= set(re.findall(r"\| (req-grid-reconcile[a-z0-9-]*) \|", reconcile_spec))
     assert "req-grid-reconcile-candidates-6" in known, "the reconcile scan read nothing"
+    # The compound family (Issue# 1261 - tap) covers the compound-edge rows of the edge spec.
+    edge_spec = (specs_dir / "spec-grid-edge.md").read_text(encoding="utf-8")
+    known |= set(re.findall(r"\| (req-grid-edge-compound[a-z0-9-]*) \|", edge_spec))
+    assert "req-grid-edge-compound-5" in known, "the edge-spec scan read nothing"
     unknown = sorted({rid for s in SCENARIOS for rid in s.covers if rid not in known})
     assert unknown == [], f"scenarios cite requirements the spec does not have: {unknown}"
 

@@ -120,7 +120,7 @@ def derive_candidates(
 ) -> dict[str, Any]:
     """Derive the candidate record for a run from its completeness statement — no write.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-candidates@122cccd2c7d9/a0b7ba9e0554 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-candidates@6d2e5dfdffd5/a0b7ba9e0554 (derivation) — the one
     place the candidate set is computed: fan-out through the declared containment edge type,
     minus the run's committed observations, per-parent prerequisite, withdrawal from the
     previous statement.
@@ -329,6 +329,11 @@ def _contradiction_of(candidate_id: uuid.UUID, entity_type: str, observed: set[u
     Walks only when the candidate's type declares containment — a leaf has no closure — and
     reads the closure through the service layer's own discovery (``contained_closure``), so
     what "under it" means is the cascade's definition and nobody else's.
+
+    Compound edges' middle nodes are left out (``compound_dependents=False``,
+    ``req-grid-edge-compound-7``): a middle node the cascade would retire with an end is a
+    consequence of the end retiring, not part of what the end contains, and the source that
+    observed it (a scanner's finding, say) is not the evidence the candidate's own listing is.
     """
     from tap_grid.registry import get_model_class
     from tap_grid.services import contained_closure
@@ -339,7 +344,7 @@ def _contradiction_of(candidate_id: uuid.UUID, entity_type: str, observed: set[u
         return None
     if not edge_types_in("CONTAINMENT_EDGES", getattr(model_cls, "CONTAINMENT_EDGES", ())):
         return None
-    closure = contained_closure(candidate_id)
+    closure = contained_closure(candidate_id, compound_dependents=False)
     if closure is None:
         logger.warning(
             "[3617] candidate %s: its contained closure exceeds the cascade cap and cannot be checked against "

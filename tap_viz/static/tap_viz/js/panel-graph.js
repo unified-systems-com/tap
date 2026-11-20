@@ -443,6 +443,10 @@ function initGraph(panelId) {
         // its line) and a border width in px. Absent keys leave the renderer defaults.
         if (typeof tapViz.fill_opacity === "number") data.fill_opacity = tapViz.fill_opacity;
         if (typeof tapViz.border_width === "number") data.border_width = tapViz.border_width;
+        // A compound edge's middle node carries its role edge types, computed server-side from the
+        // type's COMPOUND_EDGE declaration (req-viz-system-display-hints-11), so runtime/compound-edge.js
+        // draws it as one arrow without a layout restating the roles.
+        if (tapViz.compound_edge && typeof tapViz.compound_edge === "object") data.compound_edge = tapViz.compound_edge;
 
         // Label-position hint: valign/halign + inside/outside -> Cytoscape
         // text-valign, text-halign, text-margin-y (inside uses positive margin,
@@ -593,7 +597,11 @@ function initGraph(panelId) {
                 //    deferred this element to a lower-altitude elevation
                 //  - tap-stack-collapsed: collapsed into a stack pile, the
                 //    representative + count chip stand in for it
-                selector: ".tap-nesting-hidden, .tap-hidden-containment, .tap-elevation-hidden, .tap-stack-collapsed",
+                //  - tap-compound-collapsed: a compound edge's middle node and role
+                //    edges, drawn as one arrow (runtime/compound-edge.js)
+                selector:
+                    ".tap-nesting-hidden, .tap-hidden-containment, .tap-elevation-hidden, .tap-stack-collapsed, "
+                    + ".tap-compound-collapsed",
                 style: { "display": "none" },
             },
             {
@@ -914,6 +922,14 @@ function initGraph(panelId) {
                 style: {
                     "background-blacken": -0.3,
                     "border-width": 4,
+                },
+            },
+            {
+                // A compound edge drawn as one arrow (req-viz-compound-edge): the one synthetic line on a
+                // page, marked by its weight so it reads as more than a plain edge. Tap expands it.
+                selector: "edge[?_is_compound_edge]",
+                style: {
+                    "width": 3.5,
                 },
             },
             {

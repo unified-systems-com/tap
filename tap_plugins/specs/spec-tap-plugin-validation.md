@@ -328,6 +328,15 @@ destination type" flagged 18 of 34 edges, a ~53% false-positive rate. Abbreviati
 because it would have shipped as permanently baselined noise, and a check nobody can clear
 is a check everybody scrolls past.
 
+**The one official exception: compound-edge role names.** A compound edge's middle node carries
+the action, so its role edges name roles rather than actions: `<KIND>_SOURCE`,
+`<KIND>_DESTINATION` and `<KIND>_CARRIER`, after computing_core's `APPLICATION_FLOW_SOURCE` /
+`APPLICATION_FLOW_DESTINATION`, with the source always the initiator; the path role is
+`TRAVERSES_COMPONENT` (`req-grid-edge-compound-4`). The exception is from the convention's
+meaning, not from these structural rules, which the role names already pass. It is closed by
+the declaration rather than by this check: `COMPOUND_EDGE`'s parser refuses a role edge named any
+other way, and an edge that is not a declared compound edge's role edge gets no exception.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -336,6 +345,7 @@ is a check everybody scrolls past.
 | req-tap-plugin-edge-naming-2 | Reserved Suffix Honoured | Implemented | `_FROM` exempts a slug from the trailing-preposition rule only when an object noun precedes it; `VERB_FROM` alone still fails. | Otherwise the data-reversal marker becomes an opt-out. |
 | req-tap-plugin-edge-naming-3 | Debt Is Baselined, Never Waived | Implemented | Known violations live in `<plugin>/guards/baselines/edge_naming.txt` as `SLUG::rule` and report as INFO. Anything unbaselined fails. | Per-plugin, matching the domain-article baseline, so a plugin carries its own debt and takes it away on eviction. |
 | req-tap-plugin-edge-naming-4 | The Baseline Only Shrinks | Implemented | An entry that no longer violates fails the check. | An exemption that exempts nothing misstates how strict the check above it is. |
+| req-tap-plugin-edge-naming-5 | Compound-Edge Role Names Pass | Implemented | `<KIND>_SOURCE`, `<KIND>_DESTINATION`, `<KIND>_CARRIER` and `TRAVERSES_COMPONENT` pass the structural rules unbaselined; the role-name exception to `<ACTION>_<OBJECT>` is enforced by the `COMPOUND_EDGE` parser (`req-grid-edge-compound-4`), not by a waiver here. | `tap_grid/tests/test_compound_edge.py::TestDeclaration::test_role_names_pass_the_structural_naming_check` |
 
 ### Compatibility Floor
 ----

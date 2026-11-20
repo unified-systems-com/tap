@@ -20,6 +20,14 @@ choice (Issue# 586 - tap). The rules, as the spec words them
   equal depth;
 - a cascaded node's consequence_of is a containing parent one level nearer the root —
   any of them, because sibling order within a level is the database's, not the spec's.
+
+Compound edges (``req-grid-edge-compound-5``, family ``compound``): a middle node whose type
+declares ``retires_with`` an end retires when that end does — the end at the FROM side of a
+live source-role edge into it, or the TO side of a live destination-role edge out of it —
+by a plain delete or a cascade, as one more relation the same level-ordered walk follows.
+A plain delete walks that relation only; a walk that retired anything beyond its root
+records its ended edges as a cascade does. Reconcile's contradiction check reads
+containment alone (``-7``).
 """
 
 from __future__ import annotations
@@ -47,7 +55,9 @@ DELETE_REASONS = frozenset(
 )
 CASCADE_MODES = frozenset({"none", "contained"})
 #: Keys the walk writes itself on every cascaded record; an inherited value never overrides them.
-RESERVED_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason"})
+RESERVED_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason", "compound_end"})
+#: The relation that brought a node into the closure when it was not containment.
+VIA_CONTAINMENT = "containment"
 
 
 class AmbiguousScenario(ValueError):
@@ -62,6 +72,8 @@ class Graph:
     blocked_types: frozenset[str]
     pre_retired: frozenset[str]  # node refs tombstoned before the operation
     pre_retired_edges: frozenset[str] = frozenset()  # edge refs ended before the operation
+    #: middle-node type → (source edge type, destination edge type, retires_with)
+    compound: dict[str, tuple[str, str, tuple[str, ...]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -77,6 +89,11 @@ class Outcome:
     node_parents: dict[str, frozenset[str]] = field(default_factory=dict)
     #: edge ref → every endpoint that may legitimately have ended it
     edge_parents: dict[str, frozenset[str]] = field(default_factory=dict)
+    #: node ref → how it may have entered the closure: "containment", "source" or "destination"
+    node_via: dict[str, frozenset[str]] = field(default_factory=dict)
+    #: the delete walked (a contained cascade, or a plain delete that retired a middle node):
+    #: its ended edges carry unlink records
+    walked: bool = False
     #: reconcile only: the one candidate the scenario yields, and the contradiction on it
     candidate: str | None = None
     contradiction: dict[str, Any] | None = None
@@ -86,19 +103,44 @@ def _live_edges(graph: Graph, live: set[str]) -> list[tuple[str, str, str, str]]
     return [e for e in graph.edges if e[1] in live and e[2] in live and e[0] not in graph.pre_retired_edges]
 
 
-def _depths(graph: Graph, root: str, live: set[str]) -> dict[str, int]:
-    """Breadth-first distance from the root over declared containment among live nodes.
+def _children(
+    graph: Graph, node: str, edges: list[tuple[str, str, str, str]], *, contained: bool, compound: bool
+) -> list[tuple[str, str]]:
+    """``(child, via)`` for every node the walk takes with ``node``: its declared contained
+    children (when ``contained``) and the middle nodes it retires as a declared end (when
+    ``compound``)."""
+    out: list[tuple[str, str]] = []
+    declared = set(graph.containment.get(graph.node_type[node], ())) if contained else set()
+    for _, a, b, edge_type in edges:
+        if a == node and edge_type in declared:
+            out.append((b, VIA_CONTAINMENT))
+        if not compound:
+            continue
+        if a == node and graph.node_type[b] in graph.compound:
+            source, _dest, retires = graph.compound[graph.node_type[b]]
+            if edge_type == source and "source" in retires:
+                out.append((b, "source"))
+        if b == node and graph.node_type[a] in graph.compound:
+            _source, dest, retires = graph.compound[graph.node_type[a]]
+            if edge_type == dest and "destination" in retires:
+                out.append((a, "destination"))
+    return out
+
+
+def _depths(
+    graph: Graph, root: str, live: set[str], *, contained: bool = True, compound: bool = True
+) -> dict[str, int]:
+    """Breadth-first distance from the root over the walk's relations among live nodes.
     Level order is the one thing the walk fixes; within a level, nothing is fixed."""
     edges = _live_edges(graph, live)
     depth = {root: 0}
     frontier: deque[str] = deque([root])
     while frontier:
         node = frontier.popleft()
-        declared = set(graph.containment.get(graph.node_type[node], ()))
-        for _, a, b, edge_type in edges:
-            if a == node and edge_type in declared and b not in depth:
-                depth[b] = depth[node] + 1
-                frontier.append(b)
+        for child, _via in _children(graph, node, edges, contained=contained, compound=compound):
+            if child not in depth:
+                depth[child] = depth[node] + 1
+                frontier.append(child)
     return depth
 
 
@@ -143,7 +185,7 @@ def reconcile(
     if len(candidates) != 1:
         raise AmbiguousScenario(f"a reconcile scenario holds exactly one candidate; {target!r} yields {candidates}")
     [candidate] = candidates
-    depth = _depths(graph, candidate, live)
+    depth = _depths(graph, candidate, live, compound=False)  # containment alone (req-grid-edge-compound-7)
     if len(depth) > cap:
         return Outcome(
             "contradicted",
@@ -183,10 +225,9 @@ def cascade(graph: Graph, target: str, *, mode: str = "none", reason: str | None
         # Repeat delete of a tombstoned target: idempotent and silent (tombstone-6).
         return Outcome("success", None, [], [], effective_reason)
 
-    if mode == "none":
-        depth = {target: 0}
-    else:
-        depth = _depths(graph, target, live)
+    depth = _depths(graph, target, live, contained=mode == "contained")
+    walked = mode == "contained" or len(depth) > 1
+    if walked:
         blocked = [n for n in depth if graph.node_type[n] in graph.blocked_types]
         overflow = len(depth) > cap
         if blocked and overflow:
@@ -199,21 +240,21 @@ def cascade(graph: Graph, target: str, *, mode: str = "none", reason: str | None
         if blocked:
             return Outcome("refused", BLOCKED_CODE)
 
-    out = Outcome("success", None, root_reason=effective_reason)
+    out = Outcome("success", None, root_reason=effective_reason, walked=walked)
     retired = sorted(depth, key=lambda n: (depth[n], n))
     out.retired_nodes = retired
     out.node_reason = {n: (effective_reason if n == target else "cascaded") for n in retired}
     edges = _live_edges(graph, live)
+    parents: dict[str, set[str]] = {}
+    vias: dict[str, set[str]] = {}
+    for parent in retired:
+        for child, via in _children(graph, parent, edges, contained=mode == "contained", compound=True):
+            if child in depth and depth[child] == depth[parent] + 1:
+                parents.setdefault(child, set()).add(parent)
+                vias.setdefault(child, set()).add(via)
     for node in retired:
-        if node == target:
-            out.node_parents[node] = frozenset()
-            continue
-        declared_parents = {
-            a
-            for _, a, b, edge_type in edges
-            if b == node and a in depth and edge_type in set(graph.containment.get(graph.node_type[a], ()))
-        }
-        out.node_parents[node] = frozenset(p for p in declared_parents if depth[p] == depth[node] - 1)
+        out.node_parents[node] = frozenset() if node == target else frozenset(parents.get(node, ()))
+        out.node_via[node] = frozenset() if node == target else frozenset(vias.get(node, ()))
     closure = set(depth)
     for ref, a, b, _ in edges:
         if a in closure or b in closure:
