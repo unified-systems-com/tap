@@ -66,6 +66,19 @@ _NOT_ROUND_TRIPPED = frozenset({"id", "entity_id", "batch_id", "flip_map"})
 # Independent snapshot oracle
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def whole_skip_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the export's per-reason sample cap, for a test that looks for one id in the sample.
+
+    Every grid starts with its Dimension nodes, and an export that leaves them behind lists them
+    first. The sample keeps the first ``SKIP_SAMPLE_CAP`` ids per reason, so on a grid with enough
+    dimensions a row the test wrote is counted but not listed. The cap is the exporter's bound on
+    report size, not what these tests are about.
+    """
+    from tap_grid.grift import exporter
+
+    monkeypatch.setattr(exporter, "SKIP_SAMPLE_CAP", 10**9)
+
 
 def _model(entity_type: str) -> type[BaseModel]:
     """The registered model class, typed — `get_model_class` returns a bare `type`."""
@@ -463,7 +476,7 @@ def test_excluding_tombstones_leaves_them_out_and_counts_them() -> None:
 
 
 @pytest.mark.django_db
-def test_a_time_bound_keeps_the_document_self_contained() -> None:
+def test_a_time_bound_keeps_the_document_self_contained(whole_skip_sample: None) -> None:
     """A bound that drops a node drops its edges too — and counts both losses.
 
     The interesting case is an edge that IS inside the window while one of its
