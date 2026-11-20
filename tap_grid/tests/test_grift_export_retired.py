@@ -33,6 +33,19 @@ CONSTRAINED = "CONSTRAINED_LINK__grid_fixtures"
 ALT = "ALT_LINK__grid_fixtures"
 NESTING = "NESTING_LINK__grid_fixtures"
 
+@pytest.fixture
+def whole_skip_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the export's per-reason sample cap, for a test that looks for one id in the sample.
+
+    Every grid starts with its Dimension nodes, and an export that leaves them behind lists them
+    first. The sample keeps the first ``SKIP_SAMPLE_CAP`` ids per reason, so on a grid with enough
+    dimensions a row the test wrote is counted but not listed. The cap is the exporter's bound on
+    report size, not what these tests are about.
+    """
+    from tap_grid.grift import exporter
+
+    monkeypatch.setattr(exporter, "SKIP_SAMPLE_CAP", 10**9)
+
 
 def _node(entity_type: str, name: str, dimensions: dict[str, str] | None = None, batch_name: str = "") -> uuid.UUID:
     op = WriteOperation(verb="create_node", type_slug=entity_type, payload={"name": name}, dimensions=dimensions or {})
@@ -279,7 +292,7 @@ class TestContentsDeclaration:
 class TestSubsets:
     @pytest.mark.spec("req-grift-export-4")
     @pytest.mark.spec("req-grift-export-6")
-    def test_a_dimension_selects_exactly_its_nodes(self, grid: dict[str, Any]) -> None:
+    def test_a_dimension_selects_exactly_its_nodes(self, grid: dict[str, Any], whole_skip_sample: None) -> None:
         ids = grid["ids"]
         export = export_grid(selection=ExportSelection(dimensions=(("dcom", "design"),)))
         nodes = {n["entity"]["entity_id"] for n in _batch(export)["nodes"]}
@@ -321,7 +334,9 @@ class TestSubsets:
             export_grid(selection=ExportSelection(batches=("never ran",)))
 
     @pytest.mark.spec("req-grift-export-4")
-    def test_reachability_follows_edges_both_ways_and_across_retired_ones(self, grid: dict[str, Any]) -> None:
+    def test_reachability_follows_edges_both_ways_and_across_retired_ones(
+        self, grid: dict[str, Any], whole_skip_sample: None
+    ) -> None:
         ids = grid["ids"]
         lone = _node(TARGET, "lone")
         export = export_grid(selection=ExportSelection(reachable_from=(str(ids["delta"]),)))
