@@ -65,7 +65,7 @@ dependencies = [
     "django-simple-history>=3.4,<4",
     "jsonschema>=4.26.0,<5",
     "lark>=1.3.1,<2",
-    "croniter>=6.2.2,<7",
+    "croniter>=7,<8",
     "steady-queue>=0.2.0,<0.3",
     # NOTE: plugin-owned third-party deps are NOT listed here — they live in the
     # owning plugin's pyproject.toml and resolve via the workspace `members`
@@ -100,7 +100,7 @@ dependencies = [
     # gunicorn with SYNC workers, chosen over granian precisely because granian is Rust and
     # would pull ring/aws-lc-rs into the cryptographic boundary for throughput nothing is
     # asking for.
-    "gunicorn>=26,<27",
+    "gunicorn>=27,<28",
     # whitenoise WITHOUT the [brotli] extra, deliberately: the extra is a C extension, and
     # gzip-vs-brotli on 660K of JS+CSS does not justify adding a native dependency to the
     # crypto-BOM conversation (req-tap-serving-server-crypto-2).
