@@ -29,6 +29,11 @@ services:
     # a fork that installs PRIVATE plugins (req-tap-plugin-arch-source-secret-5). All default
     # empty, so this overlay passes nothing unless a caller sets them.
     environment:
+      # CI builds an empty database from the models (req-boot-schema-from-models, tap#1258):
+      # every CI database is new, and replaying the migrations from zero is what one nightly
+      # job keeps doing (product-lines.yml `migrations`, which sets this to false). A caller
+      # can still set it false here.
+      TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS: ${TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS:-true}
       TAP_SECRET_SOURCE_DISTS: ${TAP_SECRET_SOURCE_DISTS:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

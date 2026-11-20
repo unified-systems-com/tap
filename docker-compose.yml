@@ -472,6 +472,13 @@ services:
       # pre-migrate snapshot is pure overhead). Prod/customer standups leave it unset.
       TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "${TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE:-}"
 
+      # Schema-from-models switch (req-boot-schema-from-models, tap#1258). Same boot-variable
+      # shape: empty here means "unset", so the profile field / default-false wins and a real
+      # install keeps its real migrations. spawn-session.sh writes =true into a dev worktree's
+      # .env.local and docker-compose.ci.yml defaults it to true, so dev and CI stacks build
+      # an empty database from the models in seconds instead of replaying every migration.
+      TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS: "${TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS:-}"
+
       # Public base URL of this instance (req-tap-auth-providers-7). Used by auth
       # provider self-tests + boot validation to derive the OIDC callback URL.
       # allauth itself derives the runtime redirect_uri from the request. Empty
