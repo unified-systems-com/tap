@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 18 |
-| unbuilt | 11 |
+| mapped | 19 |
+| unbuilt | 10 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
@@ -29,4 +29,5 @@
 | `req-tap-files-ocfl` | Implemented | Tested | — | `req-tap-files-ocfl-3`, `req-tap-files-ocfl-4`, `req-tap-files-ocfl-5` |
 | `req-tap-files-read` | Implemented | Verified | `LocalBackend.open` | `req-tap-files-read-1`, `req-tap-files-read-2`, `req-tap-files-read-3`, `req-tap-files-read-4`, `req-tap-files-read-5`, `req-tap-files-read-6`, `req-tap-files-read-7`, `req-tap-files-read-8` |
 | `req-tap-files-root` | Implemented | Verified | `get_store` | `req-tap-files-root-1`, `req-tap-files-root-2`, `req-tap-files-root-3`, `req-tap-files-root-4`, `req-tap-files-root-5` |
+| `req-tap-files-scope` | Implemented | Implemented | `FilesRootResolutionGuard.check` | — |
 | `req-tap-files-write` | Implemented | Verified | `LocalBackend.create`, `LocalBackend.recover` | `req-tap-files-write-1`, `req-tap-files-write-10`, `req-tap-files-write-11`, `req-tap-files-write-12`, `req-tap-files-write-13`, `req-tap-files-write-14`, `req-tap-files-write-15`, `req-tap-files-write-16`, `req-tap-files-write-17`, `req-tap-files-write-2`, `req-tap-files-write-3`, `req-tap-files-write-4`, `req-tap-files-write-5`, `req-tap-files-write-6`, `req-tap-files-write-7`, `req-tap-files-write-8`, `req-tap-files-write-9` |
