@@ -154,7 +154,7 @@ def hold_file(
 ) -> HeldFile:
     """Hold the bytes in *stream* as the file at *path*, and return what was written.
 
-    TAP-IMPLEMENTS: req-tap-files-hold@95d4c1ff3a4e/2fa7aa5d4175 (enforcement) — bytes are stored
+    TAP-IMPLEMENTS: req-tap-files-hold@97567898abd3/2fa7aa5d4175 (enforcement) — bytes are stored
         before any node, the node carries only what the store returned, and a replacement drops the
         old bytes' format record in the same write.
 
