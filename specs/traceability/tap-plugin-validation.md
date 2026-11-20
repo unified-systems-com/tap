@@ -12,7 +12,7 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-tap-plugin-edge-naming` | Implemented | Implemented | `_check_edge_naming` | — |
+| `req-tap-plugin-edge-naming` | Implemented | Verified | `_check_edge_naming` | `req-tap-plugin-edge-naming-5` |
 | `req-tap-plugin-validate-cli` | Implemented | Implemented | `main` | — |
 | `req-tap-plugin-validate-codepaths` | Implemented | Verified | `_check_manifest_parse` | `req-tap-plugin-validate-codepaths-4`, `req-tap-plugin-validate-codepaths-5` |
 | `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |

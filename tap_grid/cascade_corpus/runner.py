@@ -48,7 +48,8 @@ class Built:
 
 
 def apply_containment(scenario: Scenario, monkeypatch: Any) -> None:
-    """Set CONTAINMENT_EDGES on the fixture model classes for this scenario (before the build)."""
+    """Set CONTAINMENT_EDGES and COMPOUND_EDGE on the fixture model classes for this scenario
+    (before the build). A type the scenario does not name as a middle node gets ``None``."""
     from tap_grid.registry import get_model_class
 
     for entity_type in sorted(set(scenario.graph.node_type.values())):
@@ -56,6 +57,13 @@ def apply_containment(scenario: Scenario, monkeypatch: Any) -> None:
         monkeypatch.setattr(
             model, "CONTAINMENT_EDGES", tuple(scenario.graph.containment.get(entity_type, ())), raising=False
         )
+        compound = scenario.graph.compound.get(entity_type)
+        declaration = (
+            None
+            if compound is None
+            else {"source": compound[0], "destination": compound[1], "retires_with": list(compound[2])}
+        )
+        monkeypatch.setattr(model, "COMPOUND_EDGE", declaration, raising=False)
         monkeypatch.setattr(model, "INTERNAL_ONLY", False, raising=False)
 
 
@@ -371,8 +379,11 @@ def check(
     unexpected_new = sorted(str(eid) for eid in set(after) - set(before))
     if unexpected_new:
         failures.append(f"unexpected new entities: {unexpected_new}")
-    # (c) the records, as deltas: exactly the expected events on exactly the retired refs
-    contained = scenario.cascade == "contained"
+    # (c) the records, as deltas: exactly the expected events on exactly the retired refs. A
+    # walk — a contained cascade, or a plain delete that retired a compound edge's middle node
+    # (req-grid-edge-compound-5) — records the edges it ends; a plain delete does not.
+    model = scenario.oracle
+    contained = scenario.cascade == "contained" or model.walked
     expected_delta: dict[tuple[uuid.UUID, str], int] = {}
     for ref in expected["retired_nodes"]:
         n = spots.get(ref, {}).get("count", 1)
@@ -384,7 +395,6 @@ def check(
             expected_delta[(built.edge_ids[ref], BatchEventType.UNLINK)] = n
     if delta != expected_delta:
         failures.append(f"events recorded {describe(delta, built)}, expected {describe(expected_delta, built)}")
-    model = scenario.oracle
     target_id = str(built.node_ids[scenario.target])
     inherited = {k: v for k, v in scenario.metadata.items() if k not in RESERVED_KEYS}
     for ref in expected["retired_nodes"]:
@@ -411,6 +421,11 @@ def check(
             failures.append(f"{ref}: cascade_root {meta.get('cascade_root')!r} is not the target")
         if meta.get("root_reason") != model.root_reason:
             failures.append(f"{ref}: root_reason {meta.get('root_reason')!r}, expected {model.root_reason!r}")
+        # Which relation brought it in: a compound edge's end names itself; containment names nothing.
+        via = model.node_via.get(ref, frozenset())
+        end = meta.get("compound_end")
+        if (end is None and "containment" not in via) or (end is not None and end not in via):
+            failures.append(f"{ref}: compound_end {end!r}, expected one of {sorted(via)} (None for containment)")
     if contained:
         for ref in expected["retired_edges"]:
             if not spots.get(ref, {}).get("count", 1):

@@ -53,6 +53,30 @@ def dangerously_ignore_validator(fn: Any) -> Any:
 _DJANGO_VALIDATE_METHODS: frozenset[str] = frozenset({"validate_unique", "validate_constraints"})
 
 
+def _check_compound_edge(cls: type, containment: Iterable[str]) -> None:
+    """Refuse a malformed ``COMPOUND_EDGE`` at class creation (req-grid-edge-compound-2).
+
+    The declaration's own rules live in its one parser; the rule that needs the class beside it
+    is checked here: a role edge is never containment. A destination, carrier or path edge in
+    ``CONTAINMENT_EDGES`` would make a contained cascade from the middle node retire its
+    receiver, a lower layer or a component, which is the opposite of what a compound edge means.
+    """
+    from tap_grid.compound_edges import CompoundEdgeDeclarationError, parse_compound_edge
+
+    try:
+        declared = parse_compound_edge(cls.__name__, cls.__dict__["COMPOUND_EDGE"])
+    except CompoundEdgeDeclarationError as exc:
+        raise ImproperlyConfigured(str(exc)) from exc
+    if declared is None:
+        return
+    contained = sorted(set(declared.role_edges().values()) & set(containment))
+    if contained:
+        raise ImproperlyConfigured(
+            f"{cls.__name__}.CONTAINMENT_EDGES names role edge(s) {contained} of its own COMPOUND_EDGE; a role edge "
+            "is a reference, never containment (req-grid-edge-compound-2)."
+        )
+
+
 def _check_field_schemas(cls: type) -> None:
     """Enforce FIELD_VALIDATION_SCHEMA startup invariants at class definition time.
 
@@ -947,6 +971,12 @@ class BaseModel(models.Model):
     # Every type named here must also be a permitted outbound edge type (guarded at
     # class creation). Undeclared means reference: never followed by a cascade.
     CONTAINMENT_EDGES: ClassVar[tuple[str, ...]] = ()
+    # Compound edge (req-grid-edge-compound): set on the MIDDLE node's model, never on an end. A
+    # dict naming the role edges — "source" (sender → this node), "destination" (this node →
+    # receiver), optional "carrier" and "path" — and "retires_with", the ends whose retirement
+    # retires this node too, by a plain delete or a cascade. None: this type is not a middle node.
+    # Parsed by tap_grid.compound_edges.parse_compound_edge, at class creation and at every read.
+    COMPOUND_EDGE: ClassVar[dict[str, Any] | None] = None
     FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, dict]] = {}
     # Write surface declarations — concrete subclasses override these.
     # SERVICE_CRUD_SCHEMA is synthesized from them at class definition time.
@@ -1073,6 +1103,8 @@ class BaseModel(models.Model):
                     f"{cls.__name__}.CONTAINMENT_EDGES names {unknown}, which OUTBOUND_EDGES does not "
                     "permit. Containment is a subset of permission (req-grid-service-delete-cascade-12)."
                 )
+        if "COMPOUND_EDGE" in cls.__dict__:
+            _check_compound_edge(cls, containment)
         if outbound is not None or inbound is not None:
             from tap_grid.constraints import register_constraints
 

@@ -31,6 +31,7 @@ Edges are the connective tissue of the grid. They model directed, typed relation
 | req-grid-edge-identity | [Edge Identity](#edge-identity) | Implemented | A live edge is found by (type, source id, target id, discriminator values) under an advisory lock; ambiguity fails the batch; an incomplete key is rejected; no unique index; a returning edge gets a new id |
 | req-grid-edge-produced-batch-claims | [PRODUCED_BATCH Claims](#produced_batch-claims) | Implemented | `PRODUCED_BATCH` is a plain key (job, batch); at most one `imported` edge per batch; a violation is a loud error recorded on the job |
 | req-grid-edge-internal | [Internal-Only Edge Types](#internal-only-edge-types) | Implemented | An edge type may be declared internal-only: the generic edge verbs and GRIFT import refuse it, subsystem code writes it through a trusted-internal path, and GRIFT export leaves it out. The node rule (`req-grid-entity-internal`) applied to edges |
+| req-grid-edge-compound | [Compound Edges](#compound-edges) | Implemented | A middle node per kind plus ordinary role edges, declared by `COMPOUND_EDGE` on the middle model; `<KIND>_SOURCE` / `_DESTINATION` / `_CARRIER` and `TRAVERSES_COMPONENT`; the middle node retires with a declared end in the delete walk; left out of reconcile's contradiction check; drawn as one arrow |
 | req-grid-edge-type-validation | [Per-Type Validation In The Write](#per-type-validation-in-the-write) | Backlog | An edge type registers a check the write pipeline runs on create and replace, inside the transaction with the endpoints locked; a refusal rolls the batch back. First consumer: `FILE_CONTENTS` (Issue# 1237 - tap) |
 
 
@@ -715,87 +716,102 @@ refused from anything but a `tap_file`, when a second one leaves the same file, 
 property differs from the file's current digest. Until this exists those three are detected by the
 file store's check rather than prevented.
 
-## Future
+### Compound Edges
+----
+RID: `req-grid-edge-compound`
 
-### Compound Edges (proposed shape, not built)
+Status: `Implemented`
 
-Recorded 2026-10-13 so the context is here when the idea is made official. It carries no requirement ID on purpose: nothing below is decided or built, and a RID would put it in the traceability accounting as if it were.
+A **compound edge** records a fact one binary edge cannot carry: a sender, a thing in the middle with an identity of its own, and a receiver. It is stored as a **middle node** plus ordinary binary edges, never as one edge with several ends, so `req-grid-edge-nono` and every other edge rule hold unchanged. Each kind of compound edge has its own middle-node type, owned by the plugin that owns the concept, and the middle-node model says that it is one with a `COMPOUND_EDGE` declaration. Core contributes the declaration, its checks, the retire rule in the delete walk and the viz runtime that draws it (`tap_viz/specs/spec-viz-compound-edge.md`); it adds no base type.
+
+#### Status Details
+Promoted from the proposed shape recorded here on 2026-10-13 (PR# 1021 - tap), with every open decision ruled by the maintainer on Issue# 1261 - tap. This is the core half. The first two kinds adopt the declaration in their own plugin PRs: computing_core's `application_flow` (its delete rule, `req-computing-core-application-flow-6`, is this requirement's `-5`) and aws_core's Inspector network-reachability finding (aws-core-tap#261), whose destination will be the network interface and whose source a closed list of gateway types. The issue closes when one of them is written by its plugin and drawn.
 
 #### The problem
+An edge joins two nodes, and an edge may not join an edge (`req-grid-edge-nono`). The grid records *where things are and how they are placed* (an ALB resides in a subnet, a role trusts an account). Some facts are not that: they involve a sender, a thing that happens, and a receiver. A backup process sends data to a vault; a customer's computer opens a TCP session to a load balancer; a scanner finds a port reachable from the internet. A single binary edge cannot carry the thing in the middle: it has no identity of its own, nothing else can attach to it, and it cannot sit above or below another such fact.
 
-An edge joins two nodes, and an edge may not join an edge (`req-grid-edge-nono`). The grid so far records *where things are and how they are placed* (an ALB resides in a subnet, a role trusts an account). Some facts are not that: they involve a sender, a thing that happens, and a receiver. A backup process sends data to a vault; a customer's computer opens a TCP session to a load balancer; a deploy delivers an image to a service. A single binary edge cannot carry the thing in the middle: it has no identity of its own, nothing else can attach to it, and it cannot sit above or below another such fact (a backup process, carried over a TCP session, carried over IP traffic between two addresses).
+#### Implementation
+**The shape.** A compound edge is a middle node and up to four roles of ordinary edge:
 
-#### The shape
+| Role | Direction | Count | Retires the middle node? |
+| --- | --- | --- | --- |
+| `source` | sender → middle node. The sender is always the **initiator**, as for any edge. | required | when `retires_with` names it |
+| `destination` | middle node → receiver | required | when `retires_with` names it |
+| `carrier` | middle node → the compound edge one level down that carries it | optional | never (undecided, below) |
+| `path` | middle node → a component the traffic passes through | optional | never: a reference |
 
-A **compound edge** is stored as a node plus ordinary edges, not as one edge with several ends:
+Because the middle is a node it has its own identity, fields and dimensions, and other nodes and edges can attach to it (a region can contain it; a finding's severity is a field on it). Its required fields are its kind's own. Data that flows from destination to source (a pull) is a property of the kind, never a `_FROM` on a role edge.
 
-- a *source* edge from the sender to the compound edge's node;
-- an *outbound* edge from that node to the destination;
-- optionally, edges from that node to the compound edges one level down (or up), so a higher-level flow can be tied to the lower-level ones that carry it.
+**The declaration** sits on the middle-node model, beside `CONTAINMENT_EDGES`, and defaults to `None`:
 
-Because the middle is a node, it has its own identity, properties and dimensions, and other nodes and edges can attach to it. The grid's rules do not change: every stored edge is still binary and still between two nodes.
+```python
+COMPOUND_EDGE: ClassVar[dict[str, Any] | None] = {
+    "source": "REACHABILITY_SOURCE__aws_core",
+    "destination": "REACHABILITY_DESTINATION__aws_core",
+    "carrier": None,
+    "path": "TRAVERSES_COMPONENT__aws_core",
+    "retires_with": ("source", "destination"),
+}
+```
 
-#### Deleting one side, and compound stacks
+It is a dict literal so the author-time reader (`tap.edge_declarations`) can read it without importing the model. One parser, `tap_grid.compound_edges.parse_compound_edge`, checks it at class creation and at every read, so a declaration set any other way (a test's monkeypatch) meets the same rules: exactly the keys above; `source`, `destination` and `retires_with` present; each role an edge-type slug, or `None` for the two optional ones; `retires_with` a list of distinct ends. A role edge may not also be one of the model's `CONTAINMENT_EDGES`: a contained cascade from the middle node must never retire its receiver, a lower layer or a component.
 
-A compound edge has to retire sensibly when something it connects goes away. If a host that was making a TCP session is deleted, the session's node should not be left standing with one end gone; and what rode on the session should go with it. The behaviour needs thought and will be decided case by case, so this records the constraints, not the answer.
+**Role edge names: the one official exception to `<ACTION>_<OBJECT>`.** The middle node carries the action, so its edges name roles, following the precedent computing_core set with `APPLICATION_FLOW_SOURCE` and `APPLICATION_FLOW_DESTINATION`: `<KIND>_SOURCE`, `<KIND>_DESTINATION` and `<KIND>_CARRIER`, one kind and one owning plugin for all three. The path role is always named `TRAVERSES_COMPONENT`, which is a real `<ACTION>_<OBJECT>`. The parser refuses any other name, so the exception exists only for the role edges of a declared compound edge (`tap_grid/skills/add-edge/SKILL.md`; `req-tap-plugin-edge-naming-5`). These names already pass the structural naming check.
 
-What the grid does today (read from `spec-grid-service-delete.md` and the `add-model` skill, not run). Deleting a node ends every edge attached to it. A cascade (`cascade="contained"`) additionally retires far nodes, but only through the edge types a model lists in `CONTAINMENT_EDGES`, and that list must be a subset of the model's `OUTBOUND_EDGES`, so containment follows **outbound** edges only. A node with two live parents retires with the first parent that cascades. The closure is capped (`TAP_CASCADE_MAX_CLOSURE`, default 5000), and a read-only plan before apply (`req-grid-service-delete-cascade-plan`) is Backlog.
+**Role edges resolve and reach the middle node.** `COMPOUND_EDGE` is one of the declaration attributes the boot check `tap_grid.E004` and `validate_plugin`'s `edge-declarations` check resolve (`req-grid-service-delete-cascade-17`). The boot check `tap_grid.E006` adds what resolution cannot see: under the permission union (`req-grid-edge-constraints`) each role edge must be writable onto the middle node, admitted at the middle node's end by the edge definition (listed or open) or by the middle model's own `INBOUND_EDGES` / `OUTBOUND_EDGES`, and the middle node must not block that direction outright.
 
-What that means for a compound edge:
+**Retirement.** When a declared end retires, the middle node retires too, whether the end went by a plain `delete_node` (the default `cascade="none"`, which every GRIFT delete and reconcile retirement also rides) or by a contained cascade. It is built into the delete walk itself (`_discover_closure` and `_closure_under_locks` in `tap_grid/services/_impl.py`), not added beside it: the middle node is discovered in the same breadth-first pass as contained children, counted against the same `TAP_CASCADE_MAX_CLOSURE`, locked in the same global order (`req-grid-service-delete-cascade-19`), re-discovered under the locks (`-6`, `-7`), and retired through the same pipeline, with the same records: reason `cascaded`, `consequence_of` the end that took it, `cascade_root` and `root_reason`, plus `compound_end` (`source` or `destination`) saying which end. Its own edges end with it, recorded as the walk records any edge. A middle node reachable from both ends of one walk is retired once. A plain delete that retires no middle node keeps its pre-existing records exactly. Which ends retire is per kind: `retires_with` may name both ends, one, or none (a kind whose middle node should outlive an end).
 
-- **Sender side** fits the existing mechanism: the sender's model could declare the source edge as containment, so deleting the sender retires the middle node.
-- **Receiver side** does not. The middle node reaches the destination through an outbound edge of its own, so deleting the destination cannot walk back to the middle node through containment. Ending the incident edges leaves the middle node with only its source edge. Either the middle node declares itself retired when either end goes, or the grid grows a way to follow the other direction. Undecided.
-- **Which end retires the middle node is not the same answer every time.** A TCP session ends when either host does. A backup process may well outlive a deleted vault and merit a flag, not a retirement. The rule is per kind of compound edge.
-- **Gone versus not seen:** a host that stops being observed is not a host that was deleted. Retirement of the ends, and of the middle node with them, has to respect how the grid distinguishes the two (reconciliation and tombstoning, `spec-grid-reconcile.md`).
+**What never retires anything.** A path edge and a carrier edge are references in both directions: deleting a component or a lower layer ends the edge and leaves the middle node; deleting the middle node ends its edges and leaves its ends, components and lower layers. An end that `retires_with` does not name behaves the same way. The rule is read only through the declared role edge and only onto the declared middle type, so an open-ended role edge that points at some other type never retires it.
 
-A **compound stack** is a set of compound edges linked vertically, each riding on the one below (an application-level exchange over a TCP session over IP traffic between two addresses). The maintainer's inclination is to call this a *compound-stack* and to make the vertical link carry the delete rule:
+**The closure read shows it.** `contained_closure` (and its locked form) is the delete walk's own discovery offered as a read, so what a delete takes with it is derived once (`req-grid-service-delete-cascade-6`). It includes the middle nodes by default; `compound_dependents=False` asks for containment alone. A full plan before apply remains `req-grid-service-delete-cascade-plan` (Backlog).
 
-- Deleting a **lower** compound edge retires the compound edges above that depend on it. If the TCP session goes, the application-level exchange it carried goes.
-- Deleting an **upper** one leaves the lower alone: the session may carry other things.
-- A lower compound edge carrying several upper ones retires all of them; an upper one riding on more than one lower one runs into the first-parent-retires rule above, which may or may not be what is wanted.
-- Whether a stack needs a name or a node of its own, or is simply what the vertical edges already say, is undecided. Nothing here asks for one yet.
-- A stack's closure is bounded by the cascade cap, and a plan-before-apply preview would matter more here than for ordinary containment.
+**Reconcile leaves middle nodes out of its contradiction check.** A candidate is refused as contradicted when its contained closure holds a node the same run observed live (`req-grid-reconcile-candidates-6`, `req-grid-reconcile-verb-9`). Both checks read the closure with `compound_dependents=False`. A middle node is a consequence of its end retiring, not something the end contains, and it is usually observed by a different source on a different clock (an Inspector finding can be twelve hours old when the EC2 listing that dropped its interface is fresh), so it is not evidence against the end's retirement. The cascade that follows still retires it, with reason `cascaded`.
 
-#### What is deliberately undecided
+**History stays on.** A middle node is an ordinary `BaseModel` and keeps its history like any other (`req-grid-history-optout` is the type owner's choice, and nothing here makes it). A kind that is re-observed on a schedule records its source's own observation times as typed fields of its own; the general convention for observation time belongs to the time-and-observation work (Issue# 886 - tap), not to compound edges.
 
-- Cascade behaviour for compound edges and compound stacks, as above, including receiver-side deletion and per-kind rules.
-- The node type or types for the middle node (one base type, or one per kind of activity or traffic), and what plugin owns them.
-- The names of the source, outbound and layering edges, under the existing `<ACTION>_<OBJECT>` convention (`tap_grid/skills/add-edge/SKILL.md`), including how an action whose data flows backwards is marked.
-- Whether a compound edge is a standing fact or an observation with a time, and how that interacts with grid provenance.
-- How the viz layer draws one: three pieces on the grid should read as one arrow on a page, with the middle node collapsible and expandable at zoom.
-- Whether the network-layer node types `computing_core` already has (`host`, `ip_address`, `port`, `network_interface`, `tcp_connection`) are the lower layers of the stack or need rework. They were listed, not read.
+**Gone versus not seen.** Only a real retirement of an end retires a middle node. An end that a run merely did not see is not retired unless reconciliation authority retires it (`req-grid-reconcile-verb-2`), and then through this same walk. Whether a middle node is a standing fact or a dated observation is the kind's to say: a reachability finding is a dated observation of a standing, falsifiable condition, keyed by its finding id and re-observed by upsert.
 
-#### Until this is official
+**Drawn as one arrow.** `tap_viz/static/tap_viz/js/runtime/compound-edge.js` hides the middle node and its role edges and draws one synthetic arrow from sender to receiver, expandable on tap (`req-viz-compound-edge`). The graph panel reads the role edges from the declaration through the display lane (`req-viz-system-display-hints-11`), so no layout restates them.
 
-A plugin does not mint an ad hoc edge to stand for a flow or an action. The structural edges the grid already has (placement, containment, trust, ownership) are drawn as they are; an arrow that would need a compound edge is recorded as a gap and left out. If a build seems to need one now, stop and bring it to the maintainer.
+#### Development
+**Still undecided, deliberately.** A **compound stack** is a set of compound edges linked vertically, each riding on the one below (an application exchange over a TCP session over IP traffic). The maintainer's inclination is that deleting a lower compound edge retires the ones above it and deleting an upper one leaves the lower alone, and that a stack's closure is bounded by the cascade cap. Until that is ruled, a carrier edge retires nothing and `retires_with` refuses to name it. Also undecided: whether deleting a role edge by itself (not its end) should retire the middle node; today it ends that edge only. Whether computing_core's `host`, `ip_address`, `port`, `network_interface` and `tcp_connection` are the lower layers of a stack was asked by Issue# 1261 - tap and answered for the first kind only: a reachability is a possibility, not a session, so it has no lower layer, and those types need natural keys before anything can ride on them.
 
-#### The name
+**Plugins mint compound edges, not flow edges.** A plugin does not mint an ad hoc edge to stand for a flow or an action. An arrow that needs one is a compound edge, declared as above in the plugin that owns the concept; if a build seems to need something else, stop and bring it to the maintainer.
 
-"Compound edge" was chosen by the maintainer over the alternatives considered: *flow edge* (misleading: the middle is a node, and ArchiMate already uses "Flow" for a plain edge), *intermediate node* (Neo4j's term), *association* (UML, PROV-O), *activity* (PROV-O, OCSF) and *reified relation* (W3C). An aside: it was also called *hyperedge*, which sounds cool, and was set aside. A hyperedge is one edge with many ends, and the grid does not store that; the plain name says what is stored.
-
-Collisions checked (searched 2026-10-13, secondary sources for the first two):
+**The name.** "Compound edge" was chosen by the maintainer over the alternatives considered: *flow edge* (misleading: the middle is a node, and ArchiMate already uses "Flow" for a plain edge), *intermediate node* (Neo4j's term), *association* (UML, PROV-O), *activity* (PROV-O, OCSF) and *reified relation* (W3C). It was also called *hyperedge*, which sounds cool, and was set aside: a hyperedge is one edge with many ends, and the grid does not store that; the plain name says what is stored. Collisions checked (searched 2026-10-13, secondary sources for the first two):
 
 - **Cytoscape.js "compound nodes"** mean nesting. TAP's nested projection deliberately does not use them (`spec-viz-nested-projection.md`, `req-viz-nested-projection-bounded-layer-1`, "No Compound Parents"). A compound edge is a grid concept and has nothing to do with Cytoscape compound parents.
 - **Graphviz** `compound=true` lets an edge attach to a cluster (`lhead`, `ltail`). Unrelated.
 - **Same meaning:** a patent family titled "Representing compound relationships in a graph database" (US 9,378,303; EP 3144826) uses "compound" for an n-ary relationship held by a hub node. Read as search snippets only; the assignee, claims and status were not checked, and this is not a legal view.
 - No standard graph-theory meaning of "compound edge" was found.
 
-#### Prior art for the shape
+**Prior art for the shape.** The reified-relation idea is old and common; these were read as summaries, not as full specifications, except where marked.
 
-The reified-relation idea is old and common; these were read as summaries, not as full specifications.
-
+- STIX 2.1 `network-traffic` (the OASIS TC JSON schema, read for Issue# 1261 - tap): `src_ref`, `dst_ref`, `protocols`, and `encapsulates_refs` / `encapsulated_by_ref` for layering — a middle object with a source, a destination and a vertical link, which is this shape's source, destination and carrier.
+- OCSF Network Activity (class 4001): `src_endpoint` is "the initiator", which is why the source role is always the initiator.
 - W3C Note, [Defining N-ary Relations on the Semantic Web](https://www.w3.org/TR/swbp-n-aryRelations/) (2006): the relation among several individuals becomes an individual.
 - Neo4j GraphAcademy, [Intermediate Nodes](https://graphacademy.neo4j.com/courses/modeling-fundamentals/8-adding-intermediate-nodes/1-intermediate-nodes): a hyperedge "is impossible in Neo4j", so a node stands in the middle.
 - [TypeDB](https://typedb.com/docs/use-cases/hypergraph/index.md): relations with typed role players as n-ary hyperedges (vendor material).
-- STIX 2.1 `network-traffic`: `src_ref`, `dst_ref`, `protocols`, `encapsulates_refs` model a layered stack of traffic objects (property names from a [secondary listing](https://cpancover.com/latest/STIX-1.01/blib-lib-STIX-Observable-NetworkTraffic-pm.html); confirm against the OASIS spec).
 - W3C [PROV-O](https://www.w3.org/blog/2012/the-prov-ontology-an-update): an Activity that `used` inputs, `wasGeneratedBy` outputs and `wasAssociatedWith` an agent.
 - [OpenLineage](https://apxml.com/courses/data-governance-quality-observability-production/chapter-4-data-lineage-metadata-management/openlineage-standard): a Job (definition) and a Run (one execution) between input and output datasets.
-- IPFIX flow (a set of packets sharing properties at an observation point; early [draft wording](https://potaroo.net/ietf/all-ids/draft-ietf-ipfix-data-00.txt), RFC 7011 itself not read) and OCSF Network Activity.
+- IPFIX flow (a set of packets sharing properties at an observation point; early [draft wording](https://potaroo.net/ietf/all-ids/draft-ietf-ipfix-data-00.txt), RFC 7011 itself not read).
 - UML association classes and ORM objectification, where Halpin cautions the move needs judgement ([Objectification of Relationships](https://www.academia.edu/122927300/Objectification_of_Relationships)).
 
-#### Related
+**Related.** The edge types whose ambiguity prompted this are being split into specific ones: unified-systems-com/aws-core-tap#93 (`ROUTES_TRAFFIC`) and unified-systems-com/aws-core-tap#92 (`WRITES_LOGS`). Those cover structural facts; compound edges are for the flows that remain.
 
-The edge types whose ambiguity prompted this are being split into specific ones: unified-systems-com/aws-core-tap#93 (`ROUTES_TRAFFIC`) and unified-systems-com/aws-core-tap#92 (`WRITES_LOGS`). Those cover structural facts; compound edges are for the flows that remain.
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-edge-compound-1 | A middle-node type per kind | Implemented | A compound edge's middle node is a type of its own kind, owned by the plugin that owns the concept, and is marked by `COMPOUND_EDGE` on its model; `BaseModel.COMPOUND_EDGE` defaults to `None` and core defines no compound-edge base type. | `tap_grid/tests/test_compound_edge.py::TestDeclaration` |
+| req-grid-edge-compound-2 | The declaration is checked | Implemented | One parser checks every `COMPOUND_EDGE`, at class creation and at every read: known keys only; `source`, `destination` and `retires_with` present; slugs for the roles; `retires_with` a list of distinct ends; and, at class creation, no role edge among the model's `CONTAINMENT_EDGES`. A malformed declaration is `ImproperlyConfigured`. | `TestDeclaration` |
+| req-grid-edge-compound-3 | Role edges resolve and reach the middle node | Implemented | Every role edge resolves (`tap_grid.E004`, and `validate_plugin`'s static reader), and every role edge is writable onto the middle node under the permission union, or the stack refuses to boot with `tap_grid.E006`, which also reports a declaration that no longer parses. | `TestRoleEdgesResolve` |
+| req-grid-edge-compound-4 | Role names are the official exception | Implemented | The source, destination and carrier role edges are named `<KIND>_SOURCE`, `<KIND>_DESTINATION` and `<KIND>_CARRIER` for one kind and one owning plugin; the path role edge is named `TRAVERSES_COMPONENT`; the source is the initiator; any other name is refused by the parser. | `TestDeclaration`; `req-tap-plugin-edge-naming-5` |
+| req-grid-edge-compound-5 | The middle node retires with a declared end | Implemented | When an end that `retires_with` names retires, by a plain delete or a contained cascade, its middle nodes retire in the same transaction, inside the walk's cap, lock order and closure-under-locks, each recorded with reason `cascaded`, `consequence_of` the end, the root, the root's reason and `compound_end`; a middle node reached twice retires once; over the cap the delete is refused whole; a plain delete that retires no middle node records exactly what it did before. | `TestRetireWithAnEnd`; cascade corpus family `compound` |
+| req-grid-edge-compound-6 | The closure read shows the middle nodes | Implemented | `contained_closure` and `contained_closure_locked` return the middle nodes a delete from the target would retire, by default, from the delete walk's own discovery; `compound_dependents=False` returns containment alone. | `TestClosureAndReconcile` |
+| req-grid-edge-compound-7 | Reconcile's contradiction check leaves middle nodes out | Implemented | Candidate derivation and the reconcile verb's apply fence read the closure with `compound_dependents=False`: a middle node observed by the run, or written after the candidate record, never contradicts its end's retirement; the cascade still retires it. | `TestClosureAndReconcile` |
+| req-grid-edge-compound-8 | Path and carrier edges retire nothing | Implemented | Deleting a path component or a lower layer ends that edge and leaves the middle node live; deleting the middle node ends its edges and leaves its ends, components and lower layers live. | `TestRetireWithAnEnd` |
 
 
 ## Status Vocabulary

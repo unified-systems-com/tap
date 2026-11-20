@@ -16,6 +16,7 @@ from typing import Any
 
 from tap.jsonfiles import load_schema, validate_json
 from tap_grid.cascade_corpus import model_oracle
+from tap_grid.compound_edges import CompoundEdgeDeclarationError, parse_compound_edge
 
 CORPUS_DIR = Path(__file__).resolve().parent / "scenarios"
 SCHEMA_PATH = Path(__file__).resolve().parent / "cascade.schema.json"
@@ -71,6 +72,15 @@ def _graph(raw: dict[str, Any], where: str) -> model_oracle.Graph:
     for ref in raw.get("pre_retired", []):
         if ref not in node_type and ref not in edge_refs:
             raise CorpusError(f"{where}: pre_retired {ref!r} names no node or edge")
+    compound: dict[str, tuple[str, str, tuple[str, ...]]] = {}
+    for entity_type, decl in (raw.get("compound") or {}).items():
+        # The declaration the runner installs must be one the platform's own parser accepts:
+        # a scenario cannot exercise a middle node the model class could never declare.
+        try:
+            parse_compound_edge(entity_type, dict(decl))
+        except CompoundEdgeDeclarationError as exc:
+            raise CorpusError(f"{where}: compound[{entity_type!r}]: {exc}") from exc
+        compound[entity_type] = (decl["source"], decl["destination"], tuple(decl["retires_with"]))
     return model_oracle.Graph(
         node_type=node_type,
         edges=tuple((e["ref"], e["from"], e["to"], e["type"]) for e in raw["edges"]),
@@ -78,6 +88,7 @@ def _graph(raw: dict[str, Any], where: str) -> model_oracle.Graph:
         blocked_types=frozenset(raw.get("blocked_types") or ()),
         pre_retired=frozenset(r for r in raw.get("pre_retired") or () if r in node_type),
         pre_retired_edges=frozenset(r for r in raw.get("pre_retired") or () if r in edge_refs),
+        compound=compound,
     )
 
 

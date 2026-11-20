@@ -27,6 +27,7 @@ from django.utils import timezone
 from tap_grid.caller_context import (
     drain_deferred_hotlink_checks,
 )
+from tap_grid.compound_edges import EMPTY_INDEX, DependentsIndex
 from tap_grid.constraints import validate_edge as _validate_edge_constraint
 from tap_grid.exceptions import (
     EdgePropertyValidationError,
@@ -212,12 +213,18 @@ def _build_object_summary(instance: Any) -> dict[str, Any]:
     }
 
 
-_CASCADE_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason"})
+_CASCADE_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason", "compound_end"})
 
 
 @dataclass
 class _CascadeState:
-    """Bookkeeping shared by every level of one contained cascade (one transaction).
+    """Bookkeeping shared by every level of one delete walk (one transaction).
+
+    A walk is a contained cascade (``contained``: follow ``CONTAINMENT_EDGES``), or a plain
+    delete whose root is a declared end of a compound edge, or both. Either way it also follows
+    the compound-edge retire rule: a middle node whose declared ``retires_with`` end retires is
+    retired with it (``req-grid-edge-compound-5``), through ``index``. ``compound_end`` records,
+    for each node admitted that way, which end retired it — the walk's provenance carries it.
 
     `discovered` is every node the walk has SEEN — root, queued or retired — and it is
     what the cap bounds: a node is counted the moment it is found, before it is queued,
@@ -235,6 +242,15 @@ class _CascadeState:
     visited: set[uuid.UUID] = field(default_factory=set)
     discovered: set[uuid.UUID] = field(default_factory=set)
     retired: int = 0
+    contained: bool = True
+    index: DependentsIndex = EMPTY_INDEX
+    compound_end: dict[uuid.UUID, str] = field(default_factory=dict)
+
+    def fresh(self) -> _CascadeState:
+        """An empty state for the same walk — same root, reason, cap, mode and index."""
+        return _CascadeState(
+            root=self.root, root_reason=self.root_reason, cap=self.cap, contained=self.contained, index=self.index
+        )
 
     def headroom(self) -> int:
         """How many more nodes may be discovered before the walk is over the cap, plus one
@@ -288,6 +304,40 @@ def _contained_children(
     )
 
 
+def _compound_dependents(
+    entity_id: uuid.UUID, index: DependentsIndex, limit: int, exclude: Collection[uuid.UUID] = ()
+) -> list[tuple[uuid.UUID, str, str]]:
+    """Live middle nodes that retire because ``entity_id`` does: ``(id, entity_type, end)``, at most ``limit``.
+
+    The compound-edge retire rule (``req-grid-edge-compound-5``), read the way containment is:
+    before the node's edges are ended, bounded by the walk's headroom, already-discovered nodes
+    excluded in the query. A middle node retires with ``entity_id`` when ``entity_id`` is at the
+    FROM end of one of its source edges or the TO end of one of its destination edges and its
+    type's ``retires_with`` names that end. The far node's type is matched too, so an open-ended
+    role edge pointing at some other type never retires it. A path or carrier edge is never read.
+    """
+    if not index or limit <= 0:
+        return []
+    out: list[tuple[uuid.UUID, str, str]] = []
+    excluded = list(exclude)
+    for end, by_edge, near, far in (
+        ("source", index.by_source, "from_entity_id", "to_entity"),
+        ("destination", index.by_destination, "to_entity_id", "from_entity"),
+    ):
+        if not by_edge or len(out) >= limit:
+            continue
+        match = Q()
+        for edge_type, middle_types in sorted(by_edge.items()):
+            match |= Q(edge_type=edge_type, **{f"{far}__entity_type__in": sorted(middle_types)})
+        query = Edge.objects.filter(match, **{near: entity_id, f"{far}__deleted_at__isnull": True})
+        if excluded:
+            query = query.exclude(**{f"{far}_id__in": excluded})
+        rows = query.values_list(f"{far}_id", f"{far}__entity_type").distinct()[: limit - len(out)]
+        seen = {row[0] for row in out}
+        out.extend((row[0], row[1], end) for row in rows if row[0] not in seen)
+    return out
+
+
 def _refuse_internal_edge_type(edge_type: str, verb: str, internal_only_bypass: bool) -> None:
     """Refuse a generic write of an internal-only edge type (req-grid-edge-internal).
 
@@ -332,20 +382,45 @@ def _closure_cap() -> int:
 
 
 def _discover_closure(root_id: uuid.UUID, model_cls: type, state: _CascadeState) -> dict[uuid.UUID, list[uuid.UUID]]:
-    """Breadth-first discovery of the whole contained closure, bounded by the cap, before
-    anything is locked or written (req-grid-service-delete-cascade-6). Returns each node's
-    contained children in discovery order; `state.discovered` holds the closure."""
+    """Breadth-first discovery of the whole closure, bounded by the cap, before anything is
+    locked or written (req-grid-service-delete-cascade-6). Returns each node's children in
+    discovery order — its contained children (in a contained walk), then the middle nodes it
+    retires as a compound edge's end (always, req-grid-edge-compound-5); `state.discovered`
+    holds the closure and `state.compound_end` says which members came in by the retire rule.
+
+    One walk, one cap, one visited set: a middle node counts against `TAP_CASCADE_MAX_CLOSURE`
+    like any child, is found once however many of its ends are in the closure, and its own
+    containment (in a contained walk) and its own role as an end are followed in turn.
+
+    TAP-IMPLEMENTS: req-grid-edge-compound@b3210e951de5/5a8f028b09dc (derivation) — the delete
+        walk's discovery: containment and the compound retire rule in one bounded pass.
+    """
+    from tap_grid.registry import get_model_class
+
     children_of: dict[uuid.UUID, list[uuid.UUID]] = {}
     frontier: deque[tuple[uuid.UUID, type | None]] = deque([(root_id, model_cls)])
     while frontier:
         node_id, node_cls = frontier.popleft()
-        if node_cls is not None:
-            found = _contained_children(node_id, node_cls, limit=state.headroom(), exclude=state.discovered)
-        else:
-            found = _children_of(node_id, limit=state.headroom(), exclude=state.discovered)
-        kids = state.discover(found)
-        children_of.setdefault(node_id, []).extend(kids)
+        if node_cls is None:
+            node_cls = _model_of(node_id)
+        kids: list[uuid.UUID] = []
+        if state.contained and node_cls is not None:
+            kids = state.discover(
+                _contained_children(node_id, node_cls, limit=state.headroom(), exclude=state.discovered)
+            )
         frontier.extend((k, None) for k in kids)
+        dependents = _compound_dependents(node_id, state.index, limit=state.headroom(), exclude=state.discovered)
+        admitted = state.discover([dep_id for dep_id, _, _ in dependents])
+        fresh = set(admitted)
+        for dep_id, dep_type, end in dependents:
+            if dep_id not in fresh:
+                continue
+            state.compound_end[dep_id] = end
+            try:
+                frontier.append((dep_id, get_model_class(dep_type)))
+            except KeyError:
+                frontier.append((dep_id, None))
+        children_of.setdefault(node_id, []).extend(kids + admitted)
     return children_of
 
 
@@ -362,11 +437,12 @@ def _closure_under_locks(root_id: uuid.UUID, model_cls: type, state: _CascadeSta
     """
     _lock_rows(state.discovered)
     while True:
-        fresh = _CascadeState(root=state.root, root_reason=state.root_reason, cap=state.cap)
+        fresh = state.fresh()
         fresh.discovered.add(root_id)
         children_of = _discover_closure(root_id, model_cls, fresh)
         late = fresh.discovered - state.discovered
         state.discovered = fresh.discovered
+        state.compound_end = fresh.compound_end
         if not late:
             return children_of
         _lock_rows(late)
@@ -421,16 +497,15 @@ def _warn_shared_parents(root_id: uuid.UUID, closure: Collection[uuid.UUID]) -> 
             )
 
 
-def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
-    """Contained children of an arbitrary live node, by its spine type — the iterative walk's step."""
+def _model_of(entity_id: uuid.UUID) -> type | None:
+    """The model class of an arbitrary node, by its spine type — the iterative walk's step."""
     from tap_grid.registry import get_model_class
 
     try:
         entity_type = Entity.objects.only("entity_type").get(pk=entity_id).entity_type
-        model_cls = get_model_class(entity_type)
+        return get_model_class(entity_type)
     except Entity.DoesNotExist, KeyError:
-        return []
-    return _contained_children(entity_id, model_cls, limit, exclude)
+        return None
 
 
 def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
@@ -922,10 +997,35 @@ def _execute_write_pipeline(
             # tombstoned, and the whole walk runs inside write_batch's transaction, so
             # a refusal anywhere rolls the subtree back, target included.
             state = _cascade
-            walk = op.verb == "delete_node" and op.cascade == "contained"
-            if walk and state is None:
-                state = _CascadeState(root=instance.entity_id, root_reason=reason, cap=cap)
+            contained = op.verb == "delete_node" and op.cascade == "contained"
+            # A plain delete walks too when some registered type is a compound edge's middle
+            # node: an end that retires retires the middle nodes that declare it in
+            # `retires_with`, by plain delete or by cascade (req-grid-edge-compound-5). The
+            # index is empty — and the plain delete untouched — when no type declares one.
+            from tap_grid.compound_edges import dependents_index
+
+            index = dependents_index() if op.verb == "delete_node" and _cascade is None else EMPTY_INDEX
+            walk = _cascade is None and (contained or bool(index))
+            if walk:
+                state = _CascadeState(
+                    root=instance.entity_id, root_reason=reason, cap=cap, contained=contained, index=index
+                )
                 state.discovered.add(instance.entity_id)
+            children: list[uuid.UUID] = []
+            children_of: dict[uuid.UUID, list[uuid.UUID]] = {}
+            if walk and state is not None:
+                # Gather the whole closure, then lock every node of it in id order, then
+                # every edge it will end — before writing anything. Two writers that both
+                # take their locks in this one order cannot deadlock, and rows held FOR
+                # UPDATE cannot be re-tombstoned or gain edges under us (Issue# 590 - tap;
+                # req-grid-service-delete-cascade-6). The compound retire rule rides the same
+                # discovery, cap, lock order and provenance (req-grid-edge-compound-5).
+                _discover_closure(instance.entity_id, model_cls, state)
+                children_of = _closure_under_locks(instance.entity_id, model_cls, state)
+                if not contained and state.discovered == {instance.entity_id}:
+                    # A plain delete that retires no middle node keeps its pre-existing shape:
+                    # the node's event, its edges ended by the endpoint rule, no walk records.
+                    walk, state, children_of = False, None, {}
             if state is not None:
                 state.visited.add(instance.entity_id)
                 state.retired += 1
@@ -934,16 +1034,7 @@ def _execute_write_pipeline(
                         f"contained cascade from {state.root} would retire more than "
                         f"TAP_CASCADE_MAX_CLOSURE={state.cap} nodes; nothing written"
                     )
-            children: list[uuid.UUID] = []
-            children_of: dict[uuid.UUID, list[uuid.UUID]] = {}
             if walk and state is not None:
-                # Gather the whole closure, then lock every node of it in id order, then
-                # every edge it will end — before writing anything. Two writers that both
-                # take their locks in this one order cannot deadlock, and rows held FOR
-                # UPDATE cannot be re-tombstoned or gain edges under us (Issue# 590 - tap;
-                # req-grid-service-delete-cascade-6).
-                _discover_closure(instance.entity_id, model_cls, state)
-                children_of = _closure_under_locks(instance.entity_id, model_cls, state)
                 try:
                     _warn_shared_parents(instance.entity_id, state.discovered)
                 except Exception as exc:  # noqa: BLE001 — advisory only: never fail a cascade that holds its locks
@@ -1025,17 +1116,22 @@ def _execute_write_pipeline(
                     if child_id in state.visited:
                         continue
                     grandchildren = children_of.get(child_id, [])
+                    child_meta: dict[str, Any] = {
+                        **inherited,
+                        "consequence_of": str(parent_id),
+                        "cascade_root": str(state.root),
+                        "root_reason": state.root_reason,
+                    }
+                    if child_id in state.compound_end:
+                        # Retired as a compound edge's middle node: which declared end took it
+                        # (req-grid-edge-compound-5), so the record says why, not only that.
+                        child_meta["compound_end"] = state.compound_end[child_id]
                     child_result = _execute_write_pipeline(
                         WriteOperation(
                             verb="delete_node",
                             target=child_id,
                             reason=CASCADED_REASON,
-                            metadata={
-                                **inherited,
-                                "consequence_of": str(parent_id),
-                                "cascade_root": str(state.root),
-                                "root_reason": state.root_reason,
-                            },
+                            metadata=child_meta,
                             cascade="none",
                         ),
                         batch_id=batch_id,
