@@ -70,7 +70,7 @@ which postpones that problem instead of solving it.
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-tap-files-scope | [Scope](#scope) | Proposed | One on-grid byte store in core; what it knows and what it leaves to plugins |
+| req-tap-files-scope | [Scope](#scope) | Implemented | One on-grid byte store in core; what it knows and what it leaves to plugins |
 | req-tap-files-root | [The Root](#the-root) | Implemented | One setting, one mounted local volume, separate from plugin data |
 | req-tap-files-mount-gate | [Mount Gate And Initialisation](#mount-gate-and-initialisation) | Implemented | Boot refuses an unmounted root; an empty root is initialised; unknown content is never adopted |
 | req-tap-files-ocfl | [On-Disk Format](#on-disk-format) | Implemented | A conformant OCFL 1.1 storage root, one object per stored file |
@@ -104,7 +104,7 @@ which postpones that problem instead of solving it.
 ----
 RID: `req-tap-files-scope`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The file store keeps whole files for the grid. It is a core capability: any app or plugin may use it
 through the service gateway (`req-tap-files-gateway`), and no plugin is required for it to work.
@@ -135,9 +135,9 @@ sub-grid and has a different volume.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-files-scope-1 | Core Imports No Plugin | Proposed | The file store's code, its node types and its helper import nothing from any plugin package, and work in an instance with zero plugins installed. | Covered by the lean-boot gate once built. |
-| req-tap-files-scope-2 | One Store | Proposed | Exactly one module reads or writes under the file store root; a guard test finds no other reference to the root setting outside it. | The same guard the superseded evidence design proposed. |
-| req-tap-files-scope-3 | Format-Blind | Proposed | No store operation branches on a file's extension, declared type or content. | |
+| req-tap-files-scope-1 | Core Imports No Plugin | Implemented | The file store's code, its node types and its helper import nothing from any plugin package, and work in an instance with zero plugins installed. | No module of `tap_files` imports a `tap_plugin` or `plugins` package (`test_scope.py`); the lean-boot gate boots the zero-plugin `core` profile, and the hold-and-download test runs with no plugin code (`req-tap-files-node-1`). |
+| req-tap-files-scope-2 | One Store | Implemented | Exactly one module reads or writes the store's content under the file store root, the shared mount test's reserved probe file aside; a guard test finds no other reference to the root setting outside it. | `files-root-resolution` (the setting) and `files-backend-reach` (who may import the store). The probe file (`.tap-probe-*`, reserved by `tap/volume_mount.py`) is written and removed by the mount test every gate and probe runs (`req-tap-files-mount-gate`); it is never store content. The probe belongs to the shared mount test (`req-tap-files-mount-gate-5`), which predates this criterion; the criterion now says what was always so, and the guards allow no other writer. |
+| req-tap-files-scope-3 | Format-Blind | Implemented | No store operation branches on a file's extension, declared type or content. | No store or gateway operation takes a type (`test_scope.py`); the same bytes under three names are stored identically. |
 
 ### The Root
 ----
@@ -1414,12 +1414,17 @@ route reads through it, with boot, recovery and the check the only paths below t
 
 - **Issue# 1035 - tap.** Its done-test is met by `req-tap-files-gateway`, `req-tap-files-download`,
   `req-tap-files-read` and `req-tap-files-node`: the `tap_file` is the node that carries the reference.
+  Its SBOM clause is met where the store is enabled: the store stays optional (ruled 2026-11-19).
 - **computing-core-tap.** Its `file` stays what it was before this design, a file observed on a host,
   and gains no content facts, scope or held-file helper; the file and directory requirements drafted
   on its `spec/file-and-directory-nodes` branch move here and are withdrawn there. When TAP holds a copy
   of a file it observed, computing-core links its `file` to the `tap_file` by an edge it declares
   itself (ruled 2026-11-17), since core cannot name a plugin's type. Its `sbom_document` is a format
-  record joined by `FILE_CONTENTS`, and its parse-outcome fields stay in its own specification.
+  record joined by `FILE_CONTENTS` where the instance holds the document, and its parse-outcome fields
+  stay in its own specification. computing-core does not require the store (ruled 2026-11-19): it
+  declares no `[file_store]` requirement, an `sbom_document` stands alone where no store is enabled,
+  and such an instance keeps what was parsed from an SBOM and not the document itself, which stays out
+  of the database (ruled 2026-10-15).
 - **`specs/spec-cicd-sbom.md`.** `req-cicd-sbom-20-7` and `req-cicd-sbom-24-2` name this store as where
   SBOM revisions are kept; `req-cicd-sbom-20-8` (a restore keeps the files) remains open until the
   backup specification declares the volume.
