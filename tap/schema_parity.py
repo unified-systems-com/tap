@@ -1,6 +1,6 @@
 """Prove a model-built database equals a migrated one (req-boot-schema-from-models-5, tap#1258).
 
-TAP-IMPLEMENTS: req-boot-schema-from-models@d02dc3aa8ae0/d6be452169dd (enforcement) — the nightly
+TAP-IMPLEMENTS: req-boot-schema-from-models@d02dc3aa8ae0/6da8d5f6f148 (enforcement) — the nightly
     check that the real migrations still run from zero and still produce exactly the schema the
     models build.
 
@@ -33,7 +33,8 @@ import hashlib
 import json
 import os
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 — fixed argv only (this interpreter + manage.py, pg_dump), never a shell
 import sys
 import threading
 import time
@@ -85,23 +86,26 @@ def _admin_connection() -> Any:
 
 
 def _recreate(database: str, *, drop_only: bool = False) -> None:
+    from psycopg import sql
+
     with _admin_connection() as admin, admin.cursor() as cursor:
         cursor.execute(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s AND pid <> pg_backend_pid()",
             (database,),
         )
-        cursor.execute(f'DROP DATABASE IF EXISTS "{database}"')
+        cursor.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database)))
         if not drop_only:
-            cursor.execute(f'CREATE DATABASE "{database}"')
+            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
 
 
 def _start(build: Build) -> subprocess.Popen[str]:
     env = {**os.environ, "DATABASE_URL": _url_for(build.database)}
-    script = (
-        f"{sys.executable} manage.py createcachetable && {sys.executable} manage.py {build.command} --noinput"
+    # The cache table first, as the entrypoint does (the tap_health check needs it); it takes a second.
+    subprocess.run(  # nosec B603  # nosemgrep — fixed argv: this interpreter + manage.py, no shell
+        [sys.executable, "manage.py", "createcachetable"], cwd=REPO_ROOT, env=env, check=True
     )
-    return subprocess.Popen(
-        ["sh", "-c", script],
+    return subprocess.Popen(  # nosec B603  # nosemgrep — fixed argv: this interpreter + manage.py + a Build constant, no shell
+        [sys.executable, "manage.py", build.command, "--noinput"],
         cwd=REPO_ROOT,
         env=env,
         stdout=subprocess.PIPE,
@@ -185,8 +189,11 @@ def _table_of(statement: str) -> str | None:
 
 
 def _dump_schema(database: str) -> str:
-    result = subprocess.run(
-        ["pg_dump", "--schema-only", "--no-owner", "--no-privileges", "--dbname", _url_for(database)],
+    pg_dump = shutil.which("pg_dump")
+    if pg_dump is None:
+        raise RuntimeError("pg_dump is not on PATH; the schema comparison needs it")
+    result = subprocess.run(  # nosec B603  # nosemgrep — fixed argv: the resolved pg_dump + a scratch database URL
+        [pg_dump, "--schema-only", "--no-owner", "--no-privileges", "--dbname", _url_for(database)],
         capture_output=True,
         text=True,
         check=True,
@@ -200,6 +207,8 @@ def _table_rows(cursor: Any, table: str) -> tuple[int, str]:
     Left out: the surrogate ``id`` (a sequence is an accident of insertion order) and every
     timestamp column (``applied``, ``synced_at``: when this run wrote the row, not what it wrote).
     """
+    from psycopg import sql
+
     cursor.execute(
         "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_schema = 'public' AND table_name = %s ORDER BY column_name",
@@ -207,10 +216,10 @@ def _table_rows(cursor: Any, table: str) -> tuple[int, str]:
     )
     columns = [name for name, kind in cursor.fetchall() if name != "id" and not kind.startswith("timestamp")]
     if not columns:
-        cursor.execute(f'SELECT count(*) FROM "{table}"')
+        cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
         return int(cursor.fetchone()[0]), ""
-    selected = ", ".join(f'"{c}"' for c in columns)
-    cursor.execute(f'SELECT {selected} FROM "{table}"')
+    selected = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
+    cursor.execute(sql.SQL("SELECT {} FROM {}").format(selected, sql.Identifier(table)))
     rows = sorted(json.dumps(row, default=str, sort_keys=True) for row in cursor.fetchall())
     return len(rows), hashlib.sha256("\n".join(rows).encode()).hexdigest()
 

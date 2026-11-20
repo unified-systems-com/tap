@@ -71,7 +71,9 @@ logger = logging.getLogger(__name__)
 # orchestration entry (run_preboot / main) and the fatal-condition contract
 # (PrebootError), plus the boot-variable resolver trio (ResolvedVar / env_var_name /
 # resolve_var) — the shape req-boot-variable-resolution-4 reserved for post-Django
-# reuse, consumed by tap_boot's collector-preflight toggle (req-boot-obs-preflight).
+# reuse, consumed by tap_boot's collector-preflight toggle (req-boot-obs-preflight) —
+# plus resolve_schema_from_models, which the cold-boot gate imports to make the same
+# schema choice the entrypoint makes (req-boot-schema-from-models-2).
 # Every other helper — install, is-satisfied, uv-install-args, the
 # identity / reconciliation / dependency / coherence guards, snapshot — is `_`-sealed.
 # Leaked surface is zero; the ceiling ratchet holds it there.
@@ -80,6 +82,7 @@ __all__ = [
     "ResolvedVar",
     "env_var_name",
     "resolve_var",
+    "resolve_schema_from_models",
     "NAMESPACE_PACKAGE",
     "TAP_PLUGINS_ENTRY_POINT_GROUP",
     "dist_name_for_slug",
