@@ -1,10 +1,10 @@
 """`manage.py cold_boot_gate` — the Phase-1 development-validation gate.
 
-TAP-IMPLEMENTS: req-dev-validation-smoke-gate@eb6183b8360b/a53934c0cb7c (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-smoke-gate@8e68368296ad/a2f17070e10b (derivation) — the
     single gate artifact every invoker (dev, scripts/gate, promote, CI) runs identically.
-TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/a53934c0cb7c (enforcement) — the
+TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/a2f17070e10b (enforcement) — the
     gate cycle runs against the real DB-backed task backend, never a stub.
-TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/a53934c0cb7c (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/a2f17070e10b (derivation) — the
     known-broken manifest's semantics (expected-fail vs must-pass) are applied here.
 
 The ordered, halt-on-failure check that a freshly-built environment can boot from
@@ -26,7 +26,10 @@ known-broken manifest):
 
   1. schema:migrate            createcachetable (before migrate — the tap_health
                                E001 cache-table chicken-and-egg) then migrate from
-                               zero on the empty scratch DB.
+                               zero on the empty scratch DB — or, when the boot
+                               variable install.schema_from_models resolves true
+                               (CI and dev stacks), build it from the models
+                               (req-boot-schema-from-models-2).
   2. schema:makemigrations     `makemigrations --check` — no model drift with no
                                migration (the #1 Django gap both NetBox/Nautobot
                                close and TAP lacked).
@@ -172,7 +175,7 @@ class Command(BaseCommand):
         known_broken = self._load_known_broken(Path(options["known_broken"]))
 
         steps = [
-            GateStep("schema:migrate", "Fresh DB → createcachetable → migrate from zero", self._step_migrate),
+            GateStep("schema:migrate", "Fresh DB → createcachetable → schema from zero", self._step_migrate),
             GateStep("schema:makemigrations", "makemigrations --check (no model drift)", self._step_makemigrations),
             GateStep("profiles:resolve", "Every shipped boot profile resolves", self._step_profiles_resolve),
             GateStep(
@@ -288,6 +291,14 @@ class Command(BaseCommand):
         # migrate if tap_cache is missing (chicken-and-egg), so provision it first —
         # the same ordering the container entrypoint uses.
         call_command("createcachetable", verbosity=0)
+        # The same choice the entrypoint makes (req-boot-schema-from-models-2): CI and dev
+        # stacks build the empty scratch DB from the models; the real migrations from zero
+        # are the nightly parity job's to replay (tap.schema_parity).
+        from tap.preboot import resolve_schema_from_models
+
+        if resolve_schema_from_models(self._profile_id).value:
+            call_command("migrate_from_models", "--noinput", verbosity=0)
+            return "schema built from the models (install.schema_from_models)"
         call_command("migrate", "--noinput", verbosity=0)
         return "schema built from zero"
 

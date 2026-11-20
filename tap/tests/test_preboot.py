@@ -90,6 +90,34 @@ def test_bool_coercion(monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
     assert r.value is expected
 
 
+@pytest.mark.spec("req-boot-schema-from-models-2")
+def test_schema_from_models_defaults_off_and_follows_env_over_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real install keeps its migrations unless it opts in; CI/dev opt in through the env."""
+    env = "TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS"
+    install: dict[str, object] = {}
+    monkeypatch.setattr(preboot, "_read_profile", lambda _pid: {"install": install})
+    monkeypatch.setenv(env, "")  # compose's unmapped ${VAR:-} must read as unset, not as false
+    assert preboot.resolve_schema_from_models("any") == preboot.ResolvedVar(False, "default")
+    install["schema_from_models"] = True
+    assert preboot.resolve_schema_from_models("any") == preboot.ResolvedVar(True, "profile")
+    monkeypatch.setenv(env, "false")
+    assert preboot.resolve_schema_from_models("any") == preboot.ResolvedVar(False, "env")
+    monkeypatch.setenv(env, "true")
+    assert preboot.resolve_schema_from_models("any") == preboot.ResolvedVar(True, "env")
+
+
+@pytest.mark.spec("req-boot-schema-from-models-2")
+def test_the_schema_from_models_cli_prints_only_the_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The entrypoint reads stdout as the value, so nothing else may reach it — and nothing installs."""
+    monkeypatch.setattr(preboot, "_read_profile", lambda _pid: {"install": {"schema_from_models": True}})
+    monkeypatch.delenv("TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS", raising=False)
+    monkeypatch.setattr(preboot, "run_preboot", lambda _pid: pytest.fail("the value query ran pre-boot"))
+    assert preboot.main(["--profile", "any", "--schema-from-models"]) == 0
+    assert capsys.readouterr().out == "true\n"
+
+
 # --- Install arg building + idempotency (req-boot-install-section, -preboot-3) --
 
 
