@@ -55,13 +55,16 @@ only). Rules with a candidate are the backlog for guard rails.
 - **Name edges `<ACTION>_<OBJECT>`.** A plain mechanical verb and the destination noun; no modal prefix (`HAS_`,
   `IS_`, `CAN_`), no trailing preposition (`_FROM` after an object is the data-reversal marker). *canon
   `req-tap-plugin-edge-naming`.* Guard: `validate_plugin`.
-- **Do not mint flow edges to make a picture.** Draw from the official edges; record what is missing and discuss it
-  before any edge for a data flow exists. *ruling George 2026-10-14; canon in the playground v0 spec
-  (`req-rampart-20x-playground-page-landing-2`).* Candidate.
-- **Plain edges now; hyphenated names later for stacked and compound edges.** Default a relationship to a plain
-  edge and decide later whether it joins a compound-stack, with the question: *would we ever want this edge in a
-  compound-stack?* If not, it is a normal edge. *ruling George 2026-10-14; the shape is backlogged in
-  `tap_grid/specs/spec-grid-edge.md` (PR 1021).*
+- **Do not mint flow edges to make a picture.** Draw from the official edges. A flow, a session, a reachability
+  (anything with a sender, a thing that happens and a receiver) is a compound edge, not an ad hoc binary edge;
+  anything else that is missing is recorded and discussed first. *ruling George 2026-10-14; canon in the
+  playground v0 spec (`req-rampart-20x-playground-page-landing-2`) and `req-grid-edge-compound`.* Candidate.
+- **Compound edges are official; plain edges for everything else.** A relationship with something in the middle
+  is a middle-node type per kind, owned by the plugin that owns the concept and declared with `COMPOUND_EDGE`;
+  its role edges are `<KIND>_SOURCE` (the initiator), `<KIND>_DESTINATION`, optional `<KIND>_CARRIER`, and
+  `TRAVERSES_COMPONENT` for path pieces, the one exception to `<ACTION>_<OBJECT>`. Default every other
+  relationship to a plain edge. *rulings George 2026-10-14 and 2026-11-20 (aws-build Q118/Q119); canon
+  `req-grid-edge-compound` in `tap_grid/specs/spec-grid-edge.md`.*
 - **Model the thing apart from where it lives.** A secret or key is its own node, separate from the file, process
   or cloud resource that holds it, so the grid can show where it lives and moves. A certificate is a file that
   holds a key, not a type. *ruling George 2026-10-14; the `secret` and `asymmetric_key` types are proposed, not
