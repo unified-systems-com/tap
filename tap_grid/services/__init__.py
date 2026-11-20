@@ -1533,7 +1533,7 @@ def contained_closure(
     detects a contradiction (Issue# 656 - tap) — a candidate whose closure holds a node the
     same run observed live — over containment alone.
 
-    TAP-IMPLEMENTS: req-grid-edge-compound@b3210e951de5/c8ec9de1ed90 (surface) — the read that
+    TAP-IMPLEMENTS: req-grid-edge-compound@3d34b80a3526/c8ec9de1ed90 (surface) — the read that
         shows the middle nodes a delete retires, from the delete walk's own discovery.
     """
     return _closure_of(target, lock=False, compound_dependents=compound_dependents)

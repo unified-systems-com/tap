@@ -392,7 +392,7 @@ def _discover_closure(root_id: uuid.UUID, model_cls: type, state: _CascadeState)
     like any child, is found once however many of its ends are in the closure, and its own
     containment (in a contained walk) and its own role as an end are followed in turn.
 
-    TAP-IMPLEMENTS: req-grid-edge-compound@b3210e951de5/5a8f028b09dc (derivation) — the delete
+    TAP-IMPLEMENTS: req-grid-edge-compound@3d34b80a3526/5a8f028b09dc (derivation) — the delete
         walk's discovery: containment and the compound retire rule in one bounded pass.
     """
     from tap_grid.registry import get_model_class

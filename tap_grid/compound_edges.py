@@ -93,7 +93,7 @@ def parse_compound_edge(owner: str, value: Any) -> CompoundEdge | None:
     one kind and one owning plugin, and the path role named ``TRAVERSES_COMPONENT``;
     ``retires_with`` a list of distinct ends.
 
-    TAP-IMPLEMENTS: req-grid-edge-compound@b3210e951de5/c92d6997e59c (enforcement) — the one
+    TAP-IMPLEMENTS: req-grid-edge-compound@3d34b80a3526/c92d6997e59c (enforcement) — the one
         parser of the declaration, used at class creation and by every runtime reader.
     """
     if value is None:
