@@ -195,7 +195,8 @@ function _drawnPairs(middle, roles) {
         }
     });
     const pairs = [];
-    [...senders].sort().forEach((s) => [...receivers].sort().forEach((r) => pairs.push([s, r])));
+    const byId = (a, b) => a.localeCompare(b);
+    [...senders].sort(byId).forEach((s) => [...receivers].sort(byId).forEach((r) => pairs.push([s, r])));
     return pairs;
 }
 
