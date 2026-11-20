@@ -87,6 +87,10 @@ jobs:
       # it. Fail-closed: empty/unknown diffs are `full` (so a dispatch on a ref
       # equal to main runs everything — "prove the world green" stays honest).
       tier: ${{ steps.pick.outputs.tier }}
+      # "true" when the diff vs origin/main adds or changes a migration file: such a PR also
+      # runs the migrations-from-zero parity job (req-boot-schema-from-models-5), because
+      # every other CI lane now builds its schema from the models.
+      migrations_changed: ${{ steps.pick.outputs.migrations_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -105,6 +109,14 @@ jobs:
           tier="$(scripts/change-tier origin/main)"
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"
+          base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+          if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE '(^|/)migrations/[^/]+\.py$'; then
+            migrations_changed=true
+          else
+            migrations_changed=false
+          fi
+          echo "migrations_changed=$migrations_changed" >> "$GITHUB_OUTPUT"
+          echo "migrations changed: $migrations_changed"
           # One line runs on every non-docs tier: core_ci (core + the three fixture plugins;
           # tap#366/#374, tap#638), defined in core-ci.yml and shared with the release gate.
           # The union PR line was eliminated 2026-09-10 (tap#369), the `samsite` product line
@@ -359,6 +371,70 @@ jobs:
           TAP_DEV_ADMIN_PASSWORD: ci-throwaway
         run: scripts/gate-lean
 
+  # The real migrations, replayed from zero (req-boot-schema-from-models-5, tap#1258). Every
+  # other CI database, the dev stacks and the test databases are built from the MODELS
+  # (manage.py migrate_from_models), so nothing else runs the migrations any more: this job is
+  # what notices a migration that no longer applies from zero, or a history whose end state has
+  # drifted from the models. Nightly and on dispatch only — on a PR it would cost what tap#1258
+  # removed. It boots core_ci with the switch OFF (the entrypoint migrates `tap` from zero), then
+  # tap.schema_parity builds one scratch database each way and fails on any difference in
+  # schema, rows or recorded migrations. A red reaches `gate`, so the nightly owner issue
+  # carries it.
+  migrations:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.setup.outputs.migrations_changed == 'true'
+    needs: [setup, secret-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      TAP_BOOT_PROFILE: core_ci
+      TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+      # The one place CI keeps the real migrations (docker-compose.ci.yml defaults this true).
+      TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Provide empty secrets root
+        run: |
+          rm -f tap_secrets
+          mkdir -p tap_secrets
+      # Same reason and same refusal as core-ci.yml's lanes (req-tap-serving-unprivileged).
+      - name: Align the container uid with the runner (built image runs as nonroot)
+        run: |
+          uid="$(id -u)"
+          if [ "$uid" -eq 0 ]; then
+            echo "::error::Runner is uid 0; TAP_USER=0:0 would defeat the non-root image. Refusing."
+            exit 1
+          fi
+          echo "TAP_USER=$uid:0" >> "$GITHUB_ENV"
+      - name: Provide web image (pull published when inputs unchanged, else build)
+        uses: ./.github/actions/ci-web-image
+      - name: Boot core_ci with the real migrations from zero
+        run: |
+          docker compose --env-file .env up -d
+          ok=0
+          for i in $(seq 1 600); do
+            if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
+              echo "::error::boot aborted (TAP-ABORT sentinel in web log): a migration no longer applies from zero?"
+              docker compose --env-file .env logs web; exit 1
+            fi
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python manage.py health --set readiness' >/dev/null 2>&1; then
+              echo "web healthy after ~$((i * 3))s (migrated from zero)"; ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::web did not become healthy within the timeout"
+            docker compose --env-file .env logs web | tail -150; exit 1
+          fi
+          docker compose --env-file .env logs web | grep -E 'schema_from_models = |Running database migrations' || true
+      - name: Parity — a model-built database equals a migrated one
+        run: docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python -m tap.schema_parity'
+      - name: Dump web logs on failure
+        if: failure()
+        run: docker compose --env-file .env logs web | tail -200
+
   # REQUIRED gate: the api-fuzz reusable workflow (.github/workflows/api-fuzz.yml)
   # in DETERMINISTIC posture — pinned seed, small example budget, findings FAIL. The
   # verdict is a function of the code, not the day's random draw, so a promote is never
@@ -384,7 +460,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, dco, rids, pins, pr-title, line, cold-boot, lean-boot, api-fuzz]
+    needs: [setup, secret-scan, dco, rids, pins, pr-title, line, cold-boot, lean-boot, api-fuzz, migrations]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -409,8 +485,10 @@ jobs:
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
+          R_MIGRATIONS: ${{ needs.migrations.result }}
+          MIGRATIONS_CHANGED: ${{ needs.setup.outputs.migrations_changed }}
         run: |
-          echo "tier=$TIER event=$EVENT_NAME setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER event=$EVENT_NAME setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS pr-title=$R_PRTITLE line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ migrations=$R_MIGRATIONS"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -467,6 +545,18 @@ jobs:
             success) : ;;
             skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "api-fuzz skipped on a full-tier diff" ;;
             *) die "api-fuzz finished '$R_FUZZ'" ;;
+          esac
+          # The migrations-from-zero parity job runs nightly, on dispatch, and on any diff that
+          # changes a migration file (req-boot-schema-from-models-5); where it runs it is required.
+          case "$R_MIGRATIONS" in
+            success) : ;;
+            skipped)
+              case "$EVENT_NAME" in
+                schedule | workflow_dispatch) die "migrations skipped on '$EVENT_NAME', where it must run" ;;
+                *) if [ "$MIGRATIONS_CHANGED" = "true" ]; then die "migrations skipped on a diff that changes a migration"; fi ;;
+              esac
+              ;;
+            *) die "migrations finished '$R_MIGRATIONS'" ;;
           esac
           echo "gate GREEN (tier: $TIER)"
 

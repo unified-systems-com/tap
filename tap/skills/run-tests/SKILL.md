@@ -44,7 +44,7 @@ Times are what this repo's suites took on a loaded machine in the session that w
 | `tap_viz/static`, `tap_web` templates or validation, panel schemas | the guard trio, then the demo project plugin's suite: `scripts/test --fast-relevant --plugins <slug>` (or `scripts/pytest-serial _dev-plugins/<slug> -q -p no:xdist`) (2.5 min unloaded, 12–16 min at load ~15) — playground suites pin this behaviour and core PRs #1089/#1091 each needed playground test edits | the lane |
 | A UI change you need to see rendered | the ORM is write-guarded from a shell (`UnguardedOperation`), so you cannot create a throwaway page there. Reported to work (rampart-pg, #1100): a Playwright `page.route` rewrite of the served HTML, or importing a throwaway GRIFT batch and removing it with a `deletes` batch | — |
 | Runtime JavaScript (`tap_viz`) | the JS harness on the HOST with a Node that has cytoscape — the container has neither, so the JS behaviour tests SKIP there. A green container run is not JS tested | — |
-| A model or migration | the app's tests with `--create-db` (the test DB may be stale), and check `makemigrations --check` | the lane |
+| A model or migration | the app's tests with `--create-db` (the test DB may be stale), and check `makemigrations --check`. The test DB is built from the MODELS (tap#1258), so it never runs your migration: for a data migration or a hand-edited one, run once with `TAP_TEST_MIGRATIONS=1`, or `python -m tap.schema_parity` in the stack | the lane; the nightly `migrations` job replays every migration from zero |
 | Scripts / hooks | `bash -n`, then the script's own test file | the lane |
 
 **The demo plugin's clone is on someone else's branch.** The playground clone may be on another agent's
@@ -121,7 +121,7 @@ that merge there), push, and read the plugin's CI (if it has any).
    `scripts/pytest-serial` and never poll `ps` for a running pytest.
 2. **Cap parallelism.** Export `TAP_TEST_JOBS=3` for any `scripts/test` (the promote already does); a single file needs `-n0`
    (bare `-n auto` adds a per-worker DB build that costs more than the test). Under load each xdist
-   worker builds and migrates its own test DB, which can dominate a small lane — when the load
+   worker builds its own test DB (from the models since tap#1258), which can dominate a small lane — when the load
    average exceeds the CPU count, use fewer workers or `-n0` (the lane prints a warning), or set
    `TAP_TEST_REUSE_DB=1` to reuse each worker's DB — and drop it after a model or migration change.
 3. **Check load first** (`docker stats --no-stream`). For a HEAVY run (full lane, guard suite, ratchet):

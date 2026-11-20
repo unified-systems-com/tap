@@ -40,6 +40,20 @@ _test_db_template = os.environ.get("TAP_TEST_DB_TEMPLATE")
 if _test_db_template:
     _DATABASES["default"].setdefault("TEST", {})["TEMPLATE"] = _test_db_template
 
+# The test database is built from the MODELS, not by replaying every migration
+# (req-boot-schema-from-models-4, tap#1258): seconds instead of ~20 minutes once aws_core is
+# installed. Django's own TEST.MIGRATE=False creates the tables with every app's migrations
+# switched off for the creation only, and restores MIGRATION_MODULES afterwards, so the tests
+# still see the real migration graph; the harness's create_test_db hook then records every migration
+# as applied (tap.pytest_harness), so the database answers like a migrated one (the plugin
+# contract's "every migration applied" check, the migration tests that step back and forth).
+# A template clone (above) already carries both, and the clone's syncdb pass is a no-op.
+# TAP_TEST_MIGRATIONS=1 replays the real migrations instead; the nightly parity job is what
+# keeps the two schemas equal (tap.schema_parity).
+_test_migrations = os.environ.get("TAP_TEST_MIGRATIONS", "").strip().lower() in {"1", "true", "yes", "on"}
+if not _test_migrations:
+    _DATABASES["default"].setdefault("TEST", {})["MIGRATE"] = False
+
 # Package-mode plugins load under pytest via tap.settings itself: pytest runs Django
 # directly (never the pre-boot stage), so TAP_PLUGINS is unset and settings falls back
 # to entry-point discovery — loading exactly the package-mode plugins editable-installed

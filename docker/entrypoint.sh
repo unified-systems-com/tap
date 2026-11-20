@@ -332,12 +332,30 @@ fi
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
 uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
 
-echo "==> Running database migrations..."
+# Schema from the models (req-boot-schema-from-models, tap#1258). When the boot variable
+# install.schema_from_models resolves true (TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS — CI and dev
+# stacks set it; a real install keeps the default, false), an EMPTY database gets its tables
+# straight from the models and every migration recorded as applied: seconds, against ~20
+# minutes of replaying the migrations once aws_core is installed. A database that already
+# holds a schema is migrated normally by the same command, so a restart, an upgrade or a
+# later plain `migrate` still applies exactly the genuinely new migrations. Resolved from
+# the same profile pre-boot used (BOOT_PROFILE_ID above).
+if ! SCHEMA_FROM_MODELS="$(uv run python -m tap.preboot --profile "$BOOT_PROFILE_ID" --schema-from-models)"; then
+    emit_abort migrate "could not resolve install.schema_from_models for profile ${BOOT_PROFILE_ID}"
+    exit 1
+fi
+if [ "$SCHEMA_FROM_MODELS" = "true" ]; then
+    MIGRATE_COMMAND="migrate_from_models"
+    echo "==> Building the schema (from the models if the database is empty, else migrate)..."
+else
+    MIGRATE_COMMAND="migrate"
+    echo "==> Running database migrations..."
+fi
 # The canonical fatal spot for a core->plugin-dep import leak (req-dev-validation-lean-boot):
 # migrate runs django.setup(), which imports every INSTALLED_APPS module; a core module
 # reaching a plugin-only dependency raises ModuleNotFoundError here. The sentinel turns that
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
-uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+uv run python manage.py "$MIGRATE_COMMAND" --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Persistent database connections (req-tap-serving-conn-max-age).

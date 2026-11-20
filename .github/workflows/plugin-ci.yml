@@ -799,11 +799,13 @@ jobs:
 
       # Parallel suite (aws-build Q70c, 2026-11-17). The serial run spent 10.5 minutes building
       # its test DB by migration before the first test, so xdist alone would make it worse: every
-      # worker would migrate its own. Instead ONE template is migrated here, in the background
-      # while the boot's own migrate runs, and each worker clones it (TAP_TEST_DB_TEMPLATE, the
+      # worker would migrate its own. Instead ONE template is built here, in the background
+      # while the boot builds its own schema, and each worker clones it (TAP_TEST_DB_TEMPLATE, the
       # same mechanism core_ci uses; both present from v0.1.0). Workers default to `auto`, which
       # is 4 on the free 4-vCPU runner — core_ci measured 4 workers fastest there (4 = 233s,
-      # 6 = 243s, 8 = 256s). A harness without xdist or the template script, or a caller passing
+      # 6 = 243s, 8 = 256s). Since tap#1258 the template and the boot's schema are both built from
+      # the models (seconds, not the 10.5 minutes above); a harness older than that migrates them.
+      # A harness without xdist or the template script, or a caller passing
       # `test_workers: "0"` for a suite that is not xdist-safe, runs serially exactly as before.
       - name: Start the test-DB template build (background)
         id: template

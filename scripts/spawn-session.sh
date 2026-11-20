@@ -972,6 +972,11 @@ PY
 # restore point is pure overhead. The env override wins over the profile's
 # snapshot_before_migrate field; a skipped snapshot logs loud at container start.
 # Prod/customer standups OMIT this line so the snapshot defaults on.
+# TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS=true builds the session's new, empty database
+# from the models and records every migration as applied (req-boot-schema-from-models,
+# tap#1258): seconds instead of replaying every migration. A database that already holds
+# a schema is migrated normally. Prod/customer standups OMIT it, so the default (false)
+# keeps the real migrations there.
 cat > .env.local <<EOF
 COMPOSE_PROJECT_NAME=tap_$SESSION_NAME
 WEB_PORT=$WEB_PORT
@@ -980,6 +985,7 @@ TAP_GRID_ID=$TAP_GRID_ID
 TAP_SESSION_LABEL=$SESSION_NAME
 TAP_BOOT_PROFILE=${BOOT_PROFILE:-core_dev}
 TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false
+TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS=true
 # Dev sessions track main's tip; a plain (non-session) docker compose up gets the
 # release pinned in .env. Both refs are written in full BECAUSE overriding TAP_VERSION
 # here would silently do nothing — .env interpolates its image refs before this file

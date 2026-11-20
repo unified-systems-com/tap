@@ -71,7 +71,9 @@ logger = logging.getLogger(__name__)
 # orchestration entry (run_preboot / main) and the fatal-condition contract
 # (PrebootError), plus the boot-variable resolver trio (ResolvedVar / env_var_name /
 # resolve_var) — the shape req-boot-variable-resolution-4 reserved for post-Django
-# reuse, consumed by tap_boot's collector-preflight toggle (req-boot-obs-preflight).
+# reuse, consumed by tap_boot's collector-preflight toggle (req-boot-obs-preflight) —
+# plus resolve_schema_from_models, which the cold-boot gate imports to make the same
+# schema choice the entrypoint makes (req-boot-schema-from-models-2).
 # Every other helper — install, is-satisfied, uv-install-args, the
 # identity / reconciliation / dependency / coherence guards, snapshot — is `_`-sealed.
 # Leaked surface is zero; the ceiling ratchet holds it there.
@@ -80,6 +82,7 @@ __all__ = [
     "ResolvedVar",
     "env_var_name",
     "resolve_var",
+    "resolve_schema_from_models",
     "NAMESPACE_PACKAGE",
     "TAP_PLUGINS_ENTRY_POINT_GROUP",
     "dist_name_for_slug",
@@ -1302,6 +1305,28 @@ def _maybe_snapshot(profile: dict[str, Any]) -> Path | None:
 # =============================================================================
 
 
+def resolve_schema_from_models(profile_id: str) -> ResolvedVar:
+    """Resolve ``install.schema_from_models``: build an empty database from the models (tap#1258).
+
+    Default FALSE on absence, the opposite of the snapshot switch and for the same reason seen
+    from the other side: a real install keeps the real migrations unless its profile or
+    environment says otherwise, while CI and dev stacks opt in through the env override
+    (``TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS``, set by docker-compose.ci.yml and by
+    scripts/spawn-session.sh into .env.local). Read by the entrypoint before it builds the
+    schema and by the cold-boot gate (`req-boot-schema-from-models-2`).
+    """
+    install_section = _read_profile(profile_id).get("install") or {}
+    resolved = resolve_var(
+        "install",
+        "schema_from_models",
+        profile_section=install_section,
+        default=False,
+        is_bool=True,
+    )
+    logger.info("[a7f9] schema_from_models = %s (source: %s)", resolved.value, resolved.source)
+    return resolved
+
+
 def run_preboot(profile_id: str) -> list[str]:
     """Execute the pre-boot stage for a profile; return the resolved TAP_PLUGINS list.
 
@@ -1334,7 +1359,21 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = argparse.ArgumentParser(prog="tap.preboot", description="TAP settings-free pre-boot stage.")
     parser.add_argument("--profile", required=True, help="boot profile id (boot/<id>.boot.json)")
+    parser.add_argument(
+        "--schema-from-models",
+        action="store_true",
+        help="print only the resolved install.schema_from_models (true/false) and exit; installs nothing",
+    )
     args = parser.parse_args(argv)
+
+    if args.schema_from_models:
+        try:
+            resolved = resolve_schema_from_models(args.profile)
+        except PrebootError as exc:
+            abort(logger, "preboot", str(exc))
+            return 1
+        print("true" if resolved.value else "false")
+        return 0
 
     try:
         app_configs = run_preboot(args.profile)

@@ -40,6 +40,10 @@
           "description": "Pre-migrate full-DB snapshot switch (req-boot-snapshot). Absent ⇒ true (safe-by-default: a prod profile that forgets the field still snapshots). This is a boot-variable: the effective value resolves flag > env (TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE) > this profile field > default-true (req-boot-variable-resolution). Dev worktrees set the env override to false since dev DBs reset freely; a skipped snapshot logs loud (WARNING).",
           "type": "boolean"
         },
+        "schema_from_models": {
+          "description": "Build an EMPTY database's schema from the models and record every migration as applied, instead of replaying the migrations (req-boot-schema-from-models). A database that already holds a schema is migrated normally either way. Absent ⇒ false: a real install keeps the real migrations unless it opts in. This is a boot-variable: the effective value resolves env (TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS) > this profile field > default-false (req-boot-variable-resolution). CI (docker-compose.ci.yml) and dev worktrees (scripts/spawn-session.sh) set the env override to true.",
+          "type": "boolean"
+        },
         "plugins": {
           "description": "Ordered list of package-mode plugins to uv-install in pre-boot before `migrate`. Each install is idempotent: an already-satisfied plugin re-runs as a fast no-op, so a reboot does not re-pull (req-boot-preboot-3).",
           "type": "array",
