@@ -32,6 +32,9 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-core-type-catalog | [First-Party Types In The Catalog](#first-party-types-in-the-catalog) | Backlog | Core-app types are absent from `EntityType` (only plugins write rows), so they render without icons. Pick this up when someone cares about the missing icons |
 | req-grid-entity-tombstone-managers | [Tombstone State And Manager Surface](#tombstone-state-and-manager-surface) | Approved for Development | `Entity.deleted_at` is the single canonical home of tombstone state; manager defaults differ by surface; both surfaces expose uniform `.live()` / `.tombstoned()` chainable filters |
 | req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | Proposed | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
+| req-grid-entity-event-time | [Event Time On The Spine](#event-time-on-the-spine) | Proposed | `event_start`, `event_end`, `event_kind` and `event_precision` on `Entity`, copied from the fields a model declares as its event time |
+| req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | Proposed | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
+| req-grid-entity-model-version | [Model Version Stamp](#model-version-stamp) | Proposed | An authored integer per model class, stamped on `Entity` by the last write, with a guard that fails when a definition changes without a bump |
 | req-grid-entity-natural-key | [Assigned Ids, Declared Search](#assigned-ids-declared-search) | Proposed | `Entity.id` is always an assigned UUIDv7; every type declares how it is found (`NATURAL_KEY` or `KEYLESS`) and the search is generated; `Entity.natural_key` publishes each keyed row's declared identity as one readable value, derived on every save and read by no lookup |
 
 
@@ -1000,6 +1003,164 @@ A row-level "last changed by" on the common header is the near-universal placeme
 | req-grid-entity-batch-pointers-8 | Not Importable | Proposed | A GRIFT envelope that supplies any of the three fields is rejected. | |
 | req-grid-entity-batch-pointers-9 | Spine Sync Counted | Proposed | A re-import that changes only spine `name` or `dimensions` moves `last_changed_batch_id`. | |
 | req-grid-entity-batch-pointers-10 | Gryphon Reads Them | Proposed | A Gryphon query can filter on `last_changed_batch_id` and compare `last_observed_at` with a time. | |
+
+### Event Time On The Spine
+----
+RID: `req-grid-entity-event-time`
+
+Status: `Proposed`
+
+Every node and edge can carry one event time on the spine: when the thing happened or held in the world, as its source states it. A model declares which of its own fields say so, and the grid copies them into one start and end pair on `Entity`. "What was happening between 02:00 and 02:10" is then one indexed query across every type and every source.
+
+The grid keeps three kinds of time apart, and this requirement is the first of them:
+
+| Time | Meaning | Where |
+| --- | --- | --- |
+| Event time | When the thing happened or held in the world, according to the source | This requirement |
+| Collection time | When a collector gathered it at the boundary to the grid | `req-grid-entity-collection-time` |
+| Grid time | When the grid wrote it | `Entity.created_at` (first written), `Entity.updated_at` (last changed, `req-grid-history-reobservation`), `Entity.last_observed_at` (last seen, `req-grid-entity-batch-pointers`) |
+
+#### Status Details
+Proposed; nothing is built. Issue# 194 - tap and Issue# 1284 - tap hold the rulings. The design record is `docs/misc/doc-grid-time-and-observation-standardization-plan.md`; this requirement departs from it in two places, both recorded on Issue# 1284 - tap: the pair states a duration and not an uncertainty range (rule 5), and a value that cannot be stored truthfully is left off the spine with a warning, where the design record proposed a hard stop (rule 12).
+
+What exists today (read on core main, 2026-11-21): `Entity` carries `created_at` and `updated_at` only. A source's own times are typed fields with a different name on every model, so a search across types by world time is a union over typed tables by someone who knows each field name. `req-grid-history-time` (`spec-grid-history.md`, Proposed) names the same world time `observed_at` on history rows; the two are reconciled, under the name this requirement uses, when either is built.
+
+Compared on 2026-11-21 with the published schemas of 23 other systems (the summary is on Issue# 1284 - tap). The split into three times matches Elastic Common Schema, OCSF, Google SecOps and Azure Monitor. Rule 9 is stricter than those four, which substitute the receive time when a source time is missing or implausible and leave no marker; OpenTelemetry's log model takes the position this requirement takes.
+
+#### Implementation
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `event_start` | timestamp with time zone, nullable | When the thing happened, or began to hold. |
+| `event_end` | timestamp with time zone, nullable | When it stopped holding. Equal to `event_start` for a moment. Empty while it still holds. |
+| `event_kind` | short text, nullable | What `event_start` means, from a closed list core owns: `occurred`, `created`, `first_seen`, `published`. |
+| `event_precision` | short text, nullable | How exact the source value was: `exact`, `day`, `month` or `year`. |
+
+1. A model declares its event time as a class attribute beside `NATURAL_KEY`: one of its own fields for a moment, or two for a span, and the kind. A model with no such time says so explicitly. A model that does neither fails plugin validation, the rule `NATURAL_KEY` and `KEYLESS` follow.
+2. The declaration names fields the model already has. No model adds a column, renames a field or changes a field's type to satisfy this requirement, and no plugin table changes.
+3. On every save of a typed row the grid derives the four spine values from the declared fields and writes them in the statement that already writes `name` and `natural_key`. Nothing a caller supplies reaches them, and a GRIFT envelope that supplies any of the four is rejected, the rule `natural_key` follows.
+4. The stored values are timezone-aware and in UTC, whatever form the source field takes.
+5. The pair states a duration: how long the thing lasted or held. It does not state how uncertain a time is; that is `event_precision`.
+6. `event_start` is inclusive and `event_end` is exclusive. A moment is stored with both equal, and the overlap test the grid publishes matches a moment that falls inside the window.
+7. A thing that still holds has an empty `event_end`. Only a value the source states closes it. The grid never closes it from the fact that a collector stopped seeing the object; "probably gone" is read from `last_observed_at`.
+8. A long-lived object (an instance, a repository) declares the time its source says it came to exist, kind `created`, with an open end.
+9. An event time is never defaulted. Where the source gives no value the four fields are empty, and empty means not asserted (`req-grid-node-observation`). No write path substitutes a collection time or the write time.
+10. A source value with a date and no time of day is stored as the start of that day in UTC with `event_precision` `day`; `month` and `year` follow the same form. Every other value has precision `exact`.
+11. A source value with a time of day and no time zone is not copied. The grid does not assume a zone.
+12. A value the grid cannot store truthfully (rule 11, an end before its start, a value that does not parse) leaves the four spine fields empty and adds a warning to the operation's result naming the field. The typed field keeps what the source sent. A future-dated value is stored: a scheduled thing has a real future time.
+13. Where a model has several candidate times, its author declares the one that says when the thing happened in the world, as the source states it. A collection time is never declared. The time the source last edited its own record is not declared when a time for the thing itself exists. A finding is declared at its creation, the choice OCSF and the AWS finding format make.
+14. A source's other times (first seen, last seen, published) stay typed fields. They have no copy on the spine.
+15. The four fields join the canonical spine surface (`req-grid-entity-spine-surface`) and are readable and filterable through Gryphon.
+16. Which of the four are indexed, and with what kind of index, is decided by measuring write cost and window-search cost on data of realistic size, where most long-lived objects have an empty `event_end`. `event_start` is indexed in any outcome.
+17. A change to a model's declaration reaches existing rows through a core command that re-derives the spine values from the typed rows. It writes no history and no version, because no typed value changed.
+18. Event time gives no ordering guarantee across sources: two sources' clocks are not synchronised. A consumer that reads the grid incrementally keys on grid time or on batch, never on event time, because a row whose event time is in the past can arrive at any later moment.
+
+#### Development
+One time per object on the spine is a narrower choice than the forensic timeline tools make (one entry per timestamp) and than the finding schemas make (several named times side by side). It is the choice that keeps the spine one row per object. The typed fields still hold every time the source gave, and further spine columns can be added later without changing any plugin table.
+
+A source field that reports "last seen" and moves on every pass is a change on every pass and writes history on every pass (`req-grid-history-reobservation`). The grid's own `last_observed_at` carries that fact without a history row; a collector should not also store it as a typed field.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-event-time-1 | Declared Moment Is Copied | Proposed | Creating a node whose model declares one event-time field sets `event_start` and `event_end` to that value in UTC, `event_kind` to the declared kind and `event_precision` to `exact`. | |
+| req-grid-entity-event-time-2 | Declared Span Is Copied | Proposed | A model declaring two fields sets `event_start` and `event_end` from them; an empty end field leaves `event_end` empty. | |
+| req-grid-entity-event-time-3 | Undeclared Model Fails Validation | Proposed | Plugin validation fails for a model that neither declares an event time nor states that it has none. | |
+| req-grid-entity-event-time-4 | Never Defaulted | Proposed | A node whose declared field is empty has all four spine fields empty after create and after update. | |
+| req-grid-entity-event-time-5 | Date-Only Value Marked | Proposed | A declared field holding a date with no time is stored as the start of that day in UTC with `event_precision` `day`. | |
+| req-grid-entity-event-time-6 | Zone-Less Value Not Copied | Proposed | A declared field holding a time with no zone leaves the spine fields empty and the result carries a warning naming the field. | |
+| req-grid-entity-event-time-7 | End Before Start Not Copied | Proposed | A span whose end precedes its start leaves the spine fields empty, keeps the typed values and warns. | |
+| req-grid-entity-event-time-8 | Moment Matches A Window | Proposed | The published overlap test returns a node whose moment falls inside the window, and a node whose span overlaps it, and no node whose span ended at the window's start. | |
+| req-grid-entity-event-time-9 | Not Importable | Proposed | A GRIFT envelope that supplies any of the four fields is rejected. | |
+| req-grid-entity-event-time-10 | Follows The Typed Field | Proposed | Changing the declared field through a patch moves the spine values in the same operation, with one version. | |
+| req-grid-entity-event-time-11 | Re-Derive Writes No History | Proposed | The re-derive command fills the spine values of existing rows and adds no history row and no version. | |
+| req-grid-entity-event-time-12 | Gryphon Reads Them | Proposed | A Gryphon query can filter nodes of two different types by one `event_start` window. | |
+| req-grid-entity-event-time-13 | No Plugin Table Changes | Proposed | Adding the four fields produces a migration in `tap_grid` only. | |
+
+### Collection Time On The Spine
+----
+RID: `req-grid-entity-collection-time`
+
+Status: `Proposed`
+
+Collection time is when a collector gathered an object at the boundary to the grid. The spine carries it for the latest observation of each object, as a start and an end, and each batch event carries it for its own pass.
+
+#### Status Details
+Proposed; nothing is built. Issue# 194 - tap and Issue# 1284 - tap hold the rulings. This requirement places the latest pair on `Entity`; the design record placed it on the batch event only.
+
+What exists today (read on core main, 2026-11-21): a batch records when it started and closed. Nothing records when a collector read one object, and a collector that makes many calls over minutes before it commits one batch has no way to say so.
+
+#### Implementation
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `Entity.collected_start` | timestamp with time zone, nullable | When the collector began reading this object, in the latest observation. |
+| `Entity.collected_end` | timestamp with time zone, nullable | When it finished. Equal to the start when the object was read in one call. |
+| `BatchEvent.collected_start`, `BatchEvent.collected_end` | timestamp with time zone, nullable | The same pair, for the pass that event records. |
+
+1. The pair is a window on the collector's own clock. It carries no precision marker: the width of the window is the precision.
+2. A collector states the pair for each object it sends, in a part of the write batch and of the GRIFT document that is keyed by object and kept apart from the object's own fields. The exact form is specified with the GRIFT forms, the last wave of Issue# 1284 - tap.
+3. A pair the collector does not state is empty, on the event and on the spine. It is never filled with the write time (`req-grid-node-observation`: empty means not asserted). A reader that wants a best estimate uses the observing batch's own start and close.
+4. The spine pair is written in the row update that sets `last_observed_batch_id` and `last_observed_at`, for every object an operation names, changed or not. It writes no history and no version.
+5. The spine pair always describes the latest observation. A later pass that states no pair empties it; a stale pair from an earlier pass is never left beside a newer `last_observed_at`.
+6. Stored values are timezone-aware and in UTC. A pair with no zone, or whose end precedes its start, is not recorded and the operation's result carries a warning.
+7. For a thing already true when it was collected, event time is expected not to be later than collection time, and collection time not later than grid time. The grid does not enforce the order. A violation is a signal about a clock and is reported, never corrected.
+8. The spine pair is not indexed at first, so that the write in rule 4 stays cheap. An index is added when a search needs one and its write cost has been measured.
+9. Both pairs are readable through Gryphon. The spine pair joins the canonical spine surface.
+
+#### Development
+The per-pass record is the batch event; the spine holds a copy of the newest one so that a search does not join to events. Keeping the copy on the row is the same choice `last_observed_at` makes, for the same reason: a time must survive the pruning of the record it came from.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-collection-time-1 | Stated Pair Is Recorded | Proposed | A write that states a collection window for an object sets the pair on that object's batch event and on its spine row. | |
+| req-grid-entity-collection-time-2 | Unstated Pair Stays Empty | Proposed | A write that states none leaves both pairs empty; neither equals the write time. | |
+| req-grid-entity-collection-time-3 | Unchanged Observation Moves It | Proposed | An unchanged re-import that states a new window moves the spine pair and adds no history row and no version. | |
+| req-grid-entity-collection-time-4 | Later Unstated Pass Empties It | Proposed | After a pass that stated a window, a pass that states none leaves the spine pair empty and `last_observed_at` moved. | |
+| req-grid-entity-collection-time-5 | Bad Pair Not Recorded | Proposed | A window whose end precedes its start, or with no zone, is not recorded and the result warns. | |
+| req-grid-entity-collection-time-6 | Order Not Enforced | Proposed | A write whose event time is later than its collection time succeeds and the result reports it. | |
+
+### Model Version Stamp
+----
+RID: `req-grid-entity-model-version`
+
+Status: `Proposed`
+
+Every row says which version of its model's definition last wrote it. The version is a number the model's author sets, and a guard fails when a definition changes and the number does not.
+
+#### Status Details
+Proposed; nothing is built. Issue# 475 - tap holds the prior-art review of 16 systems, and Issue# 1284 - tap records the choices made from it: each one that upgrades stored data uses an authored integer with a derived check beside it, none keeps the version a row was created with, and refusing data stamped newer than the running code is the common gate.
+
+What exists today (read on core main, 2026-11-21): nothing on a row says which definition of its model wrote it. A model whose fields change leaves old rows indistinguishable from new ones.
+
+#### Implementation
+1. A model class carries an authored integer version as a class attribute. A model that states none is at version 1.
+2. `Entity` carries `model_version` (integer, nullable): the version of the class that last wrote the row. It is set in the statement that increments `version`. A re-observed-unchanged operation does not move it, because it wrote nothing.
+3. There is no created-with version. The stamp says what last wrote the row.
+4. A guard computes a fingerprint of each model's definition (its fields, their types and constraints, its natural key and its service schema) and compares it with the fingerprint committed beside the authored version. A definition whose fingerprint changed while its version did not fails the guard in the repository that owns the model.
+5. The stamp is informational, with one exception: a write to a row whose `model_version` is greater than the running class's version is refused. Code does not rewrite data written by a newer definition of the model than it knows.
+6. Reads are not refused on the stamp.
+7. `model_version` is derived on the receiving grid. A GRIFT envelope that supplies it is rejected.
+8. It joins the canonical spine surface and is filterable through Gryphon, so "rows of this type not yet rewritten at version 3" is one query.
+9. Adding the column changes `tap_grid` only. A plugin adopts versioning by setting the attribute and committing the fingerprint; it needs no migration.
+
+#### Development
+A derived hash alone cannot serve as the version: it changes for edits that do not affect stored data, and it gives no order. An authored integer alone is forgotten. The pair is what every comparable system that upgrades data arrived at.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-model-version-1 | Create Stamps The Version | Proposed | A row created by a model at version 2 has `model_version` 2. | |
+| req-grid-entity-model-version-2 | Changed Write Restamps | Proposed | A row at `model_version` 1 changed by the class at version 2 has `model_version` 2 after the write. | |
+| req-grid-entity-model-version-3 | Unchanged Observation Does Not | Proposed | The same row re-observed unchanged by the class at version 2 stays at `model_version` 1. | |
+| req-grid-entity-model-version-4 | Newer Row Refused | Proposed | A write by a class at version 1 to a row stamped 2 is refused and changes nothing. | |
+| req-grid-entity-model-version-5 | Guard Catches An Unbumped Change | Proposed | Adding a field to a model without changing its version fails the guard, naming the model. | |
+| req-grid-entity-model-version-6 | Not Importable | Proposed | A GRIFT envelope that supplies `model_version` is rejected. | |
+| req-grid-entity-model-version-7 | No Plugin Table Changes | Proposed | Adding the column produces a migration in `tap_grid` only. | |
 
 ### Tombstone State And Manager Surface
 ----
