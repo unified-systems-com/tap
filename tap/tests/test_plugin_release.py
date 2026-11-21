@@ -133,7 +133,7 @@ def test_release_script_writes_the_bare_number_not_the_argument() -> None:
     the normalized tag), never VERSION (as typed). The behavior itself is `normalize_version` above."""
     script = (Path(__file__).resolve().parents[2] / "scripts" / "release-plugin.sh").read_text(encoding="utf-8")
     assert 'BARE="${TAG#v}"' in script
-    assert 'python3 - "$MANIFEST" "$BARE"' in script
+    assert '"$REPO/scripts/py" - "$MANIFEST" "$BARE"' in script
     assert 'plugin_version = $BARE' in script
     assert '"$MANIFEST" "$VERSION"' not in script
 
