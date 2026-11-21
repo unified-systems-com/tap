@@ -274,9 +274,13 @@ Confirm that dimension nodes should remain optional in the initial implementatio
 
 ## The 2026-09-20 Redesign
 
-The five requirements that follow were ruled on 2026-09-20 and are **design only**. No code
-exists for any of them; nothing below is Implemented, and a reader should not infer otherwise
-from the detail.
+The requirements that follow were ruled on 2026-09-20 as design. **Their statuses have since
+diverged, and the Requirements table at the top is the authority for each.** As of 2026-11-21
+`req-grid-dimension-reference`, `req-grid-dimension-names`, `req-grid-dimension-knobs` and
+`req-grid-dimension-core-vocabulary` are Implemented (migration `0012_dimensions_keyed_by_node`,
+released in 0.4.0); node identity, no-edges and lifecycle are Approved for Development and not
+built. Prose below that still says "proposed" or "not yet ruled" about the stored map predates
+that build and is marked where it stands.
 
 The reasoning — nine prior-art sweeps, the defects each one exposed, and the argument behind
 every ruling — is preserved in
@@ -484,8 +488,9 @@ and says so rather than contradicting them quietly:
 | GIN index / containment queries | **Unaffected.** JSONB containment is recursive, so `@> '{"<uuid>": {"v": "configuration"}}'` still matches. Asserted from containment semantics, not measured against this schema — the trial must confirm it. |
 
 `DEFAULT_DIMENSIONS` is typed `ClassVar[dict[str, str]]` on every model that declares one; that
-type changes with this requirement, which is part of why this is the largest piece of work in
-the redesign and why it is `Proposed` rather than approved.
+type changes with this requirement, which is part of why this was the largest piece of work in
+the redesign. (Written while the requirement was `Proposed`; it is Implemented, see
+`req-grid-dimension-reference-0`.)
 
 #### Collectors hardcode dimension guids
 
@@ -499,7 +504,10 @@ The trade is legibility, mitigated by a comment naming the dimension beside the 
 comment is documentation of a fact the guid already fixes; the guid remains the authority and
 the comment cannot silently become one.
 
-#### OPEN QUESTION — the trial cannot half-migrate one column
+#### ANSWERED — the trial cannot half-migrate one column
+
+**Answered 2026-11-12 by `req-grid-dimension-reference-0`: the whole map was migrated at once
+(the first candidate below).** The text is kept for the reasoning.
 
 `dcom` going first, alone, is the right size of trial for a *vocabulary*. But the entity
 `dimensions` map is **one column shared by every key**, so "dcom moves, nothing else does"
@@ -532,8 +540,8 @@ Three candidate resolutions, none ruled:
 3. **Bootstrap `tap.meta` first** as a genesis node created below the normal creation path,
    the way other roots-of-trust are handled.
 
-This must be settled before `req-grid-dimension-reference` moves past `Proposed`. It is the
-reason this requirement is the only one in the redesign that is not `Approved for Development`.
+This had to be settled before `req-grid-dimension-reference` moved past `Proposed`, and was
+(`req-grid-dimension-reference-0`).
 
 #### Acceptance Criteria
 

@@ -22,6 +22,7 @@ Grid history records how TAP's stored graph state changed over time. It exists t
 | req-grid-history-time | [History Time Semantics](#history-time-semantics) | Proposed | `recorded_at` is system-owned; `observed_at` is source/world time where available |
 | req-grid-history-version | [Revision Metadata](#revision-metadata) | Implemented | Canonical entities carry a simple revision counter for lifecycle/debug metadata |
 | req-grid-history-scope | [History Scope Configuration](#history-scope-configuration) | Proposed | History enablement and retention depth remain configurable per model/edge type |
+| req-grid-history-reobservation | [Re-Observation Is Not A Change](#re-observation-is-not-a-change) | Proposed | A write that changes nothing and asserts nothing new creates no history row and no new version |
 | req-grid-history-optout | [Per-Model History Opt-Out](#per-model-history-opt-out) | Implemented | A node type declares `TRACK_HISTORY = False` to get no history table; default on; every consumer degrades explicitly; recorded on `EntityType.track_history`, checked for agreement, listed by the validator |
 
 ## Explanation
@@ -279,3 +280,44 @@ The alternative, removing `history` from the base and registering per concrete c
 
 #### Future
 Retention policy and per-app or grid-wide defaults remain under `req-grid-history-scope`. If re-observation stops creating history versions (Issue# 322 - tap), the cost case for opting out a re-collected type weakens on storage but not on migrate time, which scales with the number of tables, not rows.
+
+### Re-Observation Is Not A Change
+----
+RID: `req-grid-history-reobservation`
+
+Status: `Proposed`
+
+An object has three states with respect to any write pass: **changed**, **re-observed unchanged**, and **not observed**. History records the first. The second leaves no history row and no new version; it is recorded on the spine (`req-grid-entity-batch-pointers`) and in the batch's own record of what it observed.
+
+#### Status Details
+Proposed; nothing is built. Issue# 322 - tap holds the measurement and the ruling.
+
+What happens today (run on core main, 2026-11-21, against a neutral fixture type): every write produces one typed history row and one `Entity.version` increment, whether or not anything changed. An identical GRIFT re-import writes a row whose only differences from the previous row are `batch_id` and `flip_map`. A patch that sends the stored value writes a row with no differences at all. On an instance collecting a real source on a ten-minute schedule this was measured at one history row per configuration object per pass (Issue# 322 - tap).
+
+#### Implementation
+1. The write pipeline classifies each update-shaped operation (patch, replace, keep-absent replace, and the GRIFT import of an existing object) as **changed** or **re-observed unchanged**, from the comparison `req-grid-flip-change` defines.
+2. An operation is **changed** when any service-writeable value differs after the write, when any field is asserted for the first time (`req-grid-flip-change` rule 4), or when the object's spine `name` or `dimensions` differ. Everything else is **re-observed unchanged**.
+3. A re-observed-unchanged operation does not save the typed row. It therefore writes no history row, does not increment `Entity.version`, does not move `Entity.updated_at`, and moves no FLIP entry.
+4. A changed operation behaves as today: one history row, one version increment (`req-grid-history-version`, `req-grid-service-batch-occ` single-bump). This holds for a spine-only change as well: the typed row is saved and gains one history row even though no typed value differs, so every version keeps exactly one history row to carry its provenance.
+5. The classification is made once per operation. FLIP, history, the version counter, the spine pointers and the batch's record of the operation all read that one result; none re-derives it.
+6. A write that carries `entity_expected_version` is still checked against the stored version before classification, so a stale writer is refused whether or not its payload would have changed anything.
+7. The operation still succeeds and still reports the object in its result. Callers cannot tell from success alone which state applied; the result says which.
+8. `req-grid-history-version` rule 2 ("increments on every canonical persisted mutation") stays true: a re-observation persists no mutation.
+
+#### Development
+"What changed since last week" reads history. While re-observation is recorded as change, the answer is "everything, on every pass". The fix is in the write path and not in compaction, because a version run that is later compacted has already moved every FLIP entry and every `updated_at`.
+
+A source field that really does differ on every pass (a scan timestamp written into the payload) is a change and is recorded as one. Suppressing it is the source's decision, not the grid's.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-history-reobservation-1 | Identical Re-Import Leaves No Row | Proposed | Importing the same object twice in two batches leaves one history row, `Entity.version` at 1 and `Entity.updated_at` unmoved. | |
+| req-grid-history-reobservation-2 | One Change, One Row | Proposed | A later import that changes one field adds exactly one history row and one version, and the row differs from its predecessor in that field and in provenance only. | |
+| req-grid-history-reobservation-3 | Same-Value Patch Leaves No Row | Proposed | `patch_node` and `replace_node` sending only stored values add no history row and no version. | |
+| req-grid-history-reobservation-4 | Spine-Only Change Is A Change | Proposed | A re-import that changes only the envelope `dimensions` is classified changed: the version increments once, exactly one typed history row is added, and the spine pointers move. | |
+| req-grid-history-reobservation-5 | First Assertion Is A Change | Proposed | The first explicit `null` on a field with no FLIP entry adds one history row and one version; repeating it adds none. | |
+| req-grid-history-reobservation-6 | Stale Writer Still Refused | Proposed | An unchanged payload carrying a stale `entity_expected_version` is refused with `entity_version_conflict`. | |
+| req-grid-history-reobservation-7 | Result Names The State | Proposed | The operation's result distinguishes changed from re-observed unchanged. | |
+| req-grid-history-reobservation-8 | Edges Included | Proposed | The same rules hold for edge replace and for an edge re-imported unchanged. | |
