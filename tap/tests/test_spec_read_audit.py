@@ -114,3 +114,9 @@ def test_core_files_narrows_the_walk_and_refuses_a_missing_file(tmp_path: Path) 
     assert "test_gone.py" in str(lane_run.core_files(tmp_path, lst))
     lst.write_text("# only a comment\n")
     assert "names no files" in str(lane_run.core_files(tmp_path, lst))
+    (tmp_path.parent / "outside.py").write_text("")
+    lst.write_text("../outside.py\n")
+    assert "outside" in str(lane_run.core_files(tmp_path, lst)), "an entry that climbs out of the root is refused"
+    lst.write_text(f"{tmp_path.parent / 'outside.py'}\n")
+    assert "outside" in str(lane_run.core_files(tmp_path, lst)), "so is an absolute path elsewhere"
+    assert "not a file inside" in str(lane_run.core_files(tmp_path, tmp_path.parent / "outside.py"))

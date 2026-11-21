@@ -292,15 +292,26 @@ def core_files(root: Path, listing: Path) -> list[str] | str:
 
     A named file that does not exist is refused rather than dropped: a narrowed lane that
     quietly ran fewer files than its list is the false green this module exists to remove.
+    The listing and every file it names must resolve inside ``root``: the list selects which of
+    the repository's own tests run, and a path that climbs out of it (``../``, an absolute path,
+    a symlink) is refused rather than followed.
     """
-    lines = listing.read_text(encoding="utf-8").splitlines()
+    base = root.resolve()
+    source = (base / listing).resolve()
+    if not source.is_relative_to(base) or not source.is_file():
+        return f"--core-files {listing}: not a file inside {base}\n"
+    lines = source.read_text(encoding="utf-8").splitlines()
     named = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
-    missing = [f for f in named if not (root / f).is_file()]
+    resolved = {f: (base / f).resolve() for f in named}
+    outside = [f for f, path in resolved.items() if not path.is_relative_to(base)]
+    if outside:
+        return f"--core-files {listing}: names files outside {base}: {', '.join(outside)}\n"
+    missing = [f for f, path in resolved.items() if not path.is_file()]
     if missing or not named:
         return f"--core-files {listing}: " + (
             f"names files that do not exist: {', '.join(missing)}\n" if missing else "names no files\n"
         )
-    return [str(root / f) for f in named]
+    return [str(resolved[f]) for f in named]
 
 
 def main(argv: list[str] | None = None) -> int:
