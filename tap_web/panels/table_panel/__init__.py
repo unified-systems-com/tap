@@ -29,6 +29,7 @@ import jsonschema  # type: ignore[import-untyped]
 from django import forms
 from django.core.exceptions import ValidationError
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
 from tap_web.panels.row_url import ROW_URL_TEMPLATE_PATTERN, fill_row_url, is_same_origin_template
 
@@ -368,7 +369,7 @@ def _validate_table_config(config: dict[str, Any]) -> None:
         ValidationError: if the config fails schema validation.
     """
     try:
-        jsonschema.validate(instance=config, schema=TABLE_CONFIG_SCHEMA)
+        jsonschema_validate(config, TABLE_CONFIG_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"config": [exc.message]}) from exc
 

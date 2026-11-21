@@ -6,6 +6,7 @@ from typing import Any
 
 import jsonschema
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.panels.html import sanitize
 
 HTML_PANEL_CONFIG_SCHEMA: dict[str, Any] = {
@@ -74,7 +75,7 @@ HTML_PANEL_CONFIG_SCHEMA: dict[str, Any] = {
 def validate_config(config: Any) -> str | None:
     """The reason ``config`` is invalid, or None when it is valid."""
     try:
-        jsonschema.validate(config, HTML_PANEL_CONFIG_SCHEMA)
+        jsonschema_validate(config, HTML_PANEL_CONFIG_SCHEMA)
         sanitize.Policy.from_config(config)
     except jsonschema.ValidationError as exc:
         return str(exc.message)

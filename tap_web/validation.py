@@ -10,6 +10,7 @@ import re
 
 import jsonschema
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.exceptions import (
     PageLayoutValidationError,
     PageSlugValidationError,
@@ -204,6 +205,6 @@ def validate_page_layout(layout: dict) -> None:
         PageLayoutValidationError: If the layout fails schema validation.
     """
     try:
-        jsonschema.validate(instance=layout, schema=_LAYOUT_SCHEMA)
+        jsonschema_validate(layout, _LAYOUT_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise PageLayoutValidationError(f"Invalid page layout: {exc.message}") from exc

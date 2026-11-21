@@ -29,6 +29,7 @@ from urllib.parse import quote
 import jsonschema
 from django.core.exceptions import ValidationError
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.panels.search_rows import fetch_panel_rows
 
 if TYPE_CHECKING:
@@ -333,7 +334,7 @@ STAT_CARD_CONFIG_SCHEMA: dict[str, Any] = {
 def _validate_config(config: dict[str, Any]) -> None:
     """Raise ``ValidationError`` when ``config`` fails ``STAT_CARD_CONFIG_SCHEMA``."""
     try:
-        jsonschema.validate(instance=config, schema=STAT_CARD_CONFIG_SCHEMA)
+        jsonschema_validate(config, STAT_CARD_CONFIG_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"config": [exc.message]}) from exc
 

@@ -23,6 +23,7 @@ from typing import Any
 
 import jsonschema
 
+from tap.jsonfiles import jsonschema_validate
 from tap_cares.exceptions import SecretValidationError
 from tap_cares.secrets.models import Secret
 from tap_cares.secrets.redaction import redact
@@ -56,7 +57,7 @@ def require_secret_kind(
         return
 
     try:
-        jsonschema.validate(instance=dict(secret.data), schema=data_schema)
+        jsonschema_validate(dict(secret.data), data_schema)
     except jsonschema.ValidationError as exc:
         # Preserve the schema path and the validator that failed; the
         # offending instance value is dropped on purpose. Errors travel

@@ -13,6 +13,7 @@ from typing import Any
 import jsonschema
 from django.core.exceptions import ValidationError
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.panels.row_url import ROW_URL_TEMPLATE_SCHEMA, is_same_origin_template, placeholders
 
 # Fixed value -> colour vocabulary. The names are design tokens; the colours live in panel-chart.css as
@@ -345,7 +346,7 @@ def check_option(option: dict[str, Any]) -> list[str]:
 def validate_config(config: dict[str, Any]) -> None:
     """Raise ``ValidationError`` when ``config`` fails the schema or the option safety rules."""
     try:
-        jsonschema.validate(instance=config, schema=CHART_CONFIG_SCHEMA)
+        jsonschema_validate(config, CHART_CONFIG_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"config": [exc.message]}) from exc
 

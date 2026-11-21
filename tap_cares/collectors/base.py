@@ -45,9 +45,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar
 
-import jsonschema
-
-from tap.jsonfiles import load_schema
+from tap.jsonfiles import jsonschema_validate, load_schema
 from tap_cares.collectors.config import CollectorConfig
 from tap_cares.collectors.readiness import (
     LIVE_CHECK_TIMEOUT_SECONDS,
@@ -81,7 +79,7 @@ def _validate_entry(entry: dict[str, Any]) -> None:
     should let it propagate — bad entries are programming errors, not runtime
     conditions to swallow.
     """
-    jsonschema.validate(instance=entry, schema=_ENTRY_SCHEMA)
+    jsonschema_validate(entry, _ENTRY_SCHEMA)
 
 
 class CollectorBase(ABC):
