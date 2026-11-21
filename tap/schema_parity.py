@@ -1,7 +1,7 @@
 """Prove a model-built database equals a migrated one (req-boot-schema-from-models-5, tap#1258), and a
 shallow-reload migrated one equals a stock-migrated one (req-boot-shallow-reload-5, tap#1275).
 
-TAP-IMPLEMENTS: req-boot-schema-from-models@0481fbc263d3/c1a88c89190d (enforcement) — the nightly
+TAP-IMPLEMENTS: req-boot-schema-from-models@2191f7a9019c/c1a88c89190d (enforcement) — the nightly
     check that the real migrations still run from zero and still produce exactly the schema the
     models build.
 
