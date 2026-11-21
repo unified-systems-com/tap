@@ -17,20 +17,15 @@
 #   4. Otherwise FAIL LOUD, exit 127. A hook that silently skips because its interpreter is missing
 #      still reads as a green commit, and the hook in question is the secret scan.
 #
-# The floor is read from tap/host_syntax_floor.py and the uv version from pyproject.toml's
-# requires-python, so neither number is restated here. Bash 3.2-compatible (macOS /bin/bash).
+# The two numbers below are stated HERE, not read from tap/host_syntax_floor.py and pyproject.toml.
+# This file is in the local-execution consent hash, and those two are not. Reading them would let
+# an unreviewed edit to either change which interpreter every hook runs on without moving the hash
+# (AI review of PR #1291). tap/tests/test_host_syntax_floor.py holds both to their sources, so they
+# cannot drift. Bash 3.2-compatible (macOS /bin/bash).
 set -euo pipefail
 
-_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_root="$(cd "$_here/.." && pwd)"
-
-_floor="$(sed -n 's/^HOST_SYNTAX_FLOOR = (\([0-9][0-9]*\), *\([0-9][0-9]*\)).*/\1 \2/p' "$_root/tap/host_syntax_floor.py")"
-if [[ -z "$_floor" ]]; then
-    echo "scripts/py: cannot read HOST_SYNTAX_FLOOR from tap/host_syntax_floor.py" >&2
-    exit 127
-fi
-_fmaj="${_floor% *}"
-_fmin="${_floor#* }"
+_fmaj=3 _fmin=12   # == HOST_SYNTAX_FLOOR in tap/host_syntax_floor.py
+_uv_python=3.14    # == the lower bound of requires-python in pyproject.toml
 
 _meets_floor() {
     "$1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= ($_fmaj, $_fmin) else 1)" >/dev/null 2>&1
@@ -43,8 +38,7 @@ for _cand in python3 python3.14; do
 done
 
 if command -v uv >/dev/null 2>&1; then
-    _want="$(sed -n 's/^requires-python *= *"[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$_root/pyproject.toml")"
-    exec uv run --no-project --quiet --python "${_want:-3.14}" -- python "$@"
+    exec uv run --no-project --quiet --python "$_uv_python" -- python "$@"
 fi
 
 _found="none"

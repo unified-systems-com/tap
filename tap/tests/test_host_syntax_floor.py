@@ -342,7 +342,7 @@ def _fake_bin(tmp_path: Path, *, python3_ok: bool, uv: bool) -> Path:
     """A PATH holding only what `scripts/py` needs, plus a `python3` and optionally a `uv`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for tool in ("sed", "dirname", "cat", "env"):
+    for tool in ("cat", "env"):
         found = shutil.which(tool)
         assert found, tool
         (bin_dir / tool).symlink_to(found)
@@ -357,7 +357,7 @@ def _fake_bin(tmp_path: Path, *, python3_ok: bool, uv: bool) -> Path:
 def _run_resolver(bin_dir: Path) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash")
     assert bash
-    return subprocess.run(
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — running the committed resolver IS the test; argv list, no shell  # nosec B603  # noqa: S603
         [bash, str(_RESOLVER), "-c", "print(1)"],
         env={"PATH": str(bin_dir)},
         capture_output=True,
@@ -397,3 +397,26 @@ def test_the_resolver_prefers_a_host_python_that_meets_the_floor(tmp_path: Path)
 
     assert result.returncode == 0, result.stderr
     assert "uv run" not in result.stdout
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-6")
+def test_the_resolver_states_the_floor_and_version_its_sources_do() -> None:
+    """`scripts/py` is hashed for consent and its two sources are not, so it restates both numbers.
+
+    Reading them from `tap/host_syntax_floor.py` and `pyproject.toml` would let an edit to either one
+    change the interpreter every hook runs on without invalidating consent. Restating them is only
+    safe while this test holds them equal.
+    """
+    import tomllib
+
+    text = _RESOLVER.read_text(encoding="utf-8")
+    floor = re.search(r"^_fmaj=(\d+) _fmin=(\d+)", text, re.M)
+    uv_python = re.search(r"^_uv_python=(\d+\.\d+)", text, re.M)
+    assert floor and uv_python, "scripts/py must state _fmaj/_fmin and _uv_python on their own lines"
+    assert (int(floor.group(1)), int(floor.group(2))) == HOST_SYNTAX_FLOOR
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        wanted = re.search(r"\d+\.\d+", tomllib.load(fh)["project"]["requires-python"])
+    assert wanted and uv_python.group(1) == wanted.group(0)
+    code = "\n".join(line.split("#", 1)[0] for line in text.split("set -euo pipefail", 1)[1].splitlines())
+    assert "host_syntax_floor" not in code and "pyproject" not in code, "scripts/py must not read unhashed files"

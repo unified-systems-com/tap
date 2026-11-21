@@ -235,7 +235,7 @@ def bare_interpreter_calls(root: Path) -> list[tuple[str, int, str]]:
             continue
         for path in sorted(base.rglob("*")):
             rel = path.relative_to(root).as_posix()
-            if not path.is_file() or rel == "scripts/py" or _is_python_source(path):
+            if not path.is_file() or rel == "scripts/py" or "__pycache__" in path.parts or _is_python_source(path):
                 continue
             try:
                 lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
