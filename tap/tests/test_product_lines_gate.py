@@ -94,11 +94,35 @@ def _core_ci_calls(workflow: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
 def test_the_core_ci_line_requires_the_gryphon_corpus_to_execute() -> None:
-    """The corpus runs on every PR: the core_ci line passes it to --require, by name."""
-    job = _load("core-ci.yml")["jobs"]["line"]
-    lane = next(s for s in job["steps"] if str(s.get("name", "")).startswith("Test lane"))
-    assert 'require="gryphon_playground"' in lane["run"] and "--require" in lane["run"]
-    assert "--record boot/core_ci.boot.json" in lane["run"]
+    """The corpus runs on every PR: whichever lane runs the plugin suites passes it to --require, by name."""
+    jobs = _load("core-ci.yml")["jobs"]
+    lane = next(s for s in jobs["line"]["steps"] if str(s.get("name", "")).startswith("Test lane"))
+    assert lane["env"]["SCOPE"] == (
+        "${{ inputs.plugin_suites_on_cold_boot && '--no-plugins' || '--require gryphon_playground' }}"
+    ), "the line drops the plugin suites only when cold-boot takes them, and requires the corpus otherwise"
+    assert "$SCOPE" in lane["run"] and "--record boot/core_ci.boot.json" in lane["run"]
+    moved = [s for s in jobs["cold-boot"]["steps"] if s.get("if") == "inputs.plugin_suites_on_cold_boot"]
+    suites = next(s for s in moved if "tap.lane_run" in str(s.get("run", "")))
+    assert "--no-core --require gryphon_playground" in suites["run"]
+    assert "--record boot/core_ci.boot.json" in suites["run"]
+    names = [s.get("name") for s in jobs["cold-boot"]["steps"]]
+    assert names.index(suites["name"]) > names.index("Cold-boot gate (scripts/gate — fresh scratch-DB boot cycle)"), (
+        "the suites run after the gate, never beside it on the same database"
+    )
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-8")
+def test_the_plugin_suites_leave_the_line_exactly_when_cold_boot_runs(workflow: dict[str, Any]) -> None:
+    """A tier that moved the suites off `line` but skipped `cold-boot` would run them nowhere.
+
+    So the line's flag IS cold-boot's `if`, and cold-boot always takes the suites when it runs.
+    A release (publish-release-tags.yml) sets neither, so its line runs everything.
+    """
+    jobs = workflow["jobs"]
+    assert jobs["line"]["with"]["plugin_suites_on_cold_boot"] == "${{ " + jobs["cold-boot"]["if"] + " }}"
+    assert jobs["cold-boot"]["with"]["plugin_suites_on_cold_boot"] is True
+    for job in _core_ci_calls(_load("publish-release-tags.yml")).values():
+        assert "plugin_suites_on_cold_boot" not in job["with"], "a release gates on the whole line"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
