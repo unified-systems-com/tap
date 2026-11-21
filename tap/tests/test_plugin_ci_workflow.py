@@ -328,7 +328,9 @@ def _resolve_release_row(
         "GITHUB_OUTPUT": str(out),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
     }
-    done = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=False)
+    done = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body under a stub gh IS the test; argv list, no shell, PATH leads with a temp stub dir
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
+    )
     return done.returncode, out.read_text()
 
 
