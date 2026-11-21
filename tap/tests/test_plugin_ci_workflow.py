@@ -282,10 +282,85 @@ def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -
     main = plugin_nightly["jobs"]["main"]
     assert str(main["uses"]).endswith("plugin-ci.yml")
     assert main["with"]["harness_ref"] == "main"
-    assert "inputs.latest_ref != ''" in str(plugin_nightly["jobs"]["latest"]["if"])
     owner = plugin_nightly["jobs"]["owner-issue"]
     assert owner["needs"] == ["main", "latest"]
     assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-16")
+def test_the_reusable_nightly_tests_the_newest_release_every_night(plugin_nightly: dict[str, Any]) -> None:
+    """The release row is no longer opt-in: with no `latest_ref` it follows core's newest release.
+
+    The tag comes from the API and becomes a ref plugin-ci checks out, so the job that resolves
+    it holds no scope, checks out nothing, and lets only `vX.Y.Z` through.
+    """
+    jobs = plugin_nightly["jobs"]
+    latest = jobs["latest"]
+    assert "if" not in latest, "the release row must run every night, not only when a caller names a tag"
+    assert latest["needs"] == "newest-release"
+    assert str(latest["uses"]).endswith("plugin-ci.yml")
+    assert latest["with"]["harness_ref"] == "${{ needs.newest-release.outputs.tag }}"
+
+    resolve = jobs["newest-release"]
+    assert resolve["permissions"] == {}
+    steps = _steps(resolve)
+    assert not any("uses" in step for step in steps), "the resolving job runs no action and checks out nothing"
+    run = "\n".join(step.get("run", "") for step in steps)
+    assert "releases/latest" in run
+    assert "${{" not in run, "inputs reach the script through env, never by interpolation"
+
+
+def _resolve_release_row(
+    tmp_path: Path, plugin_nightly: dict[str, Any], *, pinned: str, newest: str
+) -> tuple[int, str]:
+    """Run the resolver's own script with a stand-in `gh` that answers `newest`."""
+    script = "\n".join(step.get("run", "") for step in _steps(plugin_nightly["jobs"]["newest-release"]))
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text('#!/bin/sh\nprintf "%s\\n" "$NEWEST"\n')
+    (fake / "gh").chmod(0o755)
+    out = tmp_path / "output"
+    out.write_text("")
+    env = {
+        "PATH": f"{fake}:{os.environ['PATH']}",
+        "PINNED": pinned,
+        "NEWEST": newest,
+        "GITHUB_OUTPUT": str(out),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+    done = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body under a stub gh IS the test; argv list, no shell, PATH leads with a temp stub dir
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
+    )
+    return done.returncode, out.read_text()
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-16")
+@pytest.mark.parametrize(("pinned", "newest"), [("", "v0.4.2"), ("v0.4.2", "ignored")])
+def test_the_release_row_resolves_a_release_tag(
+    tmp_path: Path, plugin_nightly: dict[str, Any], pinned: str, newest: str
+) -> None:
+    assert _resolve_release_row(tmp_path, plugin_nightly, pinned=pinned, newest=newest) == (0, "tag=v0.4.2\n")
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-16")
+@pytest.mark.parametrize(
+    ("pinned", "newest"),
+    [
+        ("main", "v0.4.2"),
+        ("v0.4.2\nextra=1", "v0.4.2"),
+        ("0123456789abcdef0123456789abcdef01234567", "v0.4.2"),
+        ("", "main"),
+        ("", "v0.4.2\nextra=1"),
+        ("", "v0.4"),
+    ],
+)
+def test_the_release_row_refuses_anything_that_is_not_a_release_tag(
+    tmp_path: Path, plugin_nightly: dict[str, Any], pinned: str, newest: str
+) -> None:
+    """A caller's pin and the API's answer pass the same gate, and nothing is written on a refusal."""
+    code, written = _resolve_release_row(tmp_path, plugin_nightly, pinned=pinned, newest=newest)
+    assert code != 0
+    assert written == ""
 
 
 REPO_SCOPE_JOB = "repo-scope"

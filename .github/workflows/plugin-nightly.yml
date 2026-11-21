@@ -25,7 +25,7 @@
 #         issues: write            # the owner issue below, and nothing else
 #       with:
 #         plugin_slug: my_plugin
-#         latest_ref: v0.2.0       # optional informational row; omit to run only the main row
+#         latest_ref: v0.2.0       # optional: pin the release row; omit and it follows core's newest release
 #       secrets:
 #
 # WHAT CANNOT MOVE HERE, and why the caller is not empty: `on: schedule` has to live in the
@@ -58,9 +58,10 @@ on:
       latest_ref:
         description: >-
           OPTIONAL. A core release tag for the informational second row ("does the newest
-          RELEASE still work"). Empty (the default) runs only the `main` row, which is the row
-          this lane exists for. It is a tag a human bumps; nothing bumps it automatically, so a
-          repository that does not want to carry that upkeep simply omits it.
+          RELEASE still work"). Empty (the default) means core's newest release, resolved each
+          night by the `newest-release` job, so every plugin is tested against the release
+          line it has not cut over to yet without anyone bumping a tag
+          (req-tap-plugin-extdev-repo-ci-16). Set it only to hold the row on one release.
         required: false
         type: string
         default: ""
@@ -119,11 +120,50 @@ jobs:
     secrets:
       plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
 
+  # Which release the informational row runs against, when the caller named none: core's newest
+  # (GitHub's "latest" release of the repository plugin-ci uses as its harness by default).
+  #
+  # The tag is read from the API, so it is checked before anything uses it: only `vX.Y.Z`
+  # leaves this job. It reaches plugin-ci as `harness_ref`, which checks core out at that ref;
+  # a value of any other shape stops here. The job checks out nothing and holds no write scope.
+  newest-release:
+    name: resolve core's newest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve the release tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ inputs.latest_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PINNED" ]; then
+            tag="$PINNED"
+          else
+            tag="$(gh api repos/unified-systems-com/tap/releases/latest --jq .tag_name)"
+          fi
+          # One gate for both sources, after either has spoken: a caller's pin is held to the
+          # same shape as the API's answer. A whole-string match, so a value carrying a second
+          # line cannot ride a valid first line into the output file.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the release row's ref is not vX.Y.Z; refusing to use it as a ref"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release row: core at $tag" >> "$GITHUB_STEP_SUMMARY"
+
   # Informational. A red here means the newest RELEASE broke, which is a different and less
-  # urgent fact than main breaking, so it never files an issue on its own.
+  # urgent fact than main breaking, so it never files an issue on its own. It runs every night
+  # (req-tap-plugin-extdev-repo-ci-16): the floor row on a pull request proves the oldest core
+  # a plugin supports, this one the newest released, so a plugin still on last minor's floor
+  # is already being tested on this minor's.
   latest:
     name: vs latest core release (informational)
-    if: inputs.latest_ref != ''
+    needs: newest-release
     uses: ./.github/workflows/plugin-ci.yml
     permissions:
       contents: read
@@ -131,7 +171,7 @@ jobs:
     with:
       plugin_slug: ${{ inputs.plugin_slug }}
       plugin_subdir: ${{ inputs.plugin_subdir }}
-      harness_ref: ${{ inputs.latest_ref }}
+      harness_ref: ${{ needs.newest-release.outputs.tag }}
       boot_and_test_timeout_minutes: ${{ inputs.boot_and_test_timeout_minutes }}
     secrets:
       plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
