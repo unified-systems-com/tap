@@ -5,6 +5,7 @@
 
 ### Features
 
+* **boot:** a shallow reload for migrate re-renders only the model an operation touched; `TAP_MIGRATE_SHALLOW_RELOAD=0` restores Django's reload ([c3d5df9](https://github.com/unified-systems-com/tap/commit/c3d5df9ceb500c99c869e690089ba6fc19fd493c), [#1275](https://github.com/unified-systems-com/tap/issues/1275)) — added by hand: the release PR merged before release-please refreshed it
 * **ci:** the plugin nightly tests core's newest release every night ([07add93](https://github.com/unified-systems-com/tap/commit/07add93f1bb2f57c263dde050a7a711d0671ff71))
 * **ci:** the plugin nightly tests core's newest release every night [via coley] ([84cf476](https://github.com/unified-systems-com/tap/commit/84cf47678cbd6114868746cd69decfcaa0ae4337))
 * **grid:** compound edges are official: a COMPOUND_EDGE declaration, retire-with-an-end, and one drawn arrow [via aws-build] ([6a8a1ad](https://github.com/unified-systems-com/tap/commit/6a8a1ad59ddff8d1c4bb142e7311651d6479166b))
