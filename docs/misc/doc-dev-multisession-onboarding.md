@@ -65,7 +65,7 @@ therefore does not document. macOS needs only Docker Desktop; a Linux desktop ne
   `scripts/py` (tap#1277). It uses the system `python3` when that is 3.12 or newer, as on Debian
   13 and Ubuntu 24.04. Otherwise it uses [uv](https://docs.astral.sh/uv/)'s managed interpreter,
   which never touches the system Python. With neither, it stops and prints the install line. To
-  install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+  install uv: your package manager's `uv`, or https://docs.astral.sh/uv/getting-started/installation/.
 - **Free ports.** Sessions bind host ports in per-session bands (web 8000+, Postgres
   5432+ — the registry in spec-dev-multisession.md). A distro Postgres already listening
   on 5432 collides with the primary stack's default; stop it or let the spawn script's

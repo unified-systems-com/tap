@@ -382,8 +382,10 @@ runs the first of these that exists:
    touches the system Python.
 
 With none of them it exits 127 and prints what to install. That is the macOS case: the system
-`python3` there is 3.9. The floor and the version uv fetches are read from
-`tap/host_syntax_floor.py` and `pyproject.toml`, so neither number is restated. A shell source
+`python3` there is 3.9. The resolver **states** the floor and the version uv fetches rather than
+reading them from `tap/host_syntax_floor.py` and `pyproject.toml`. It is in the consent hash and
+those files are not, so reading them would let an unreviewed edit change the interpreter every hook
+runs on without moving the hash. A test holds both numbers equal to their sources. A shell source
 under `scripts/` or `.githooks/` that names a bare `python3` fails the guard. The resolver itself is
 the one exception, and comments and Python sources aren't shell. The derivation reads calls through
 the resolver exactly as it read `python3` calls.

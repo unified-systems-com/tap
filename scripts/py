@@ -19,9 +19,9 @@
 #
 # The two numbers below are stated HERE, not read from tap/host_syntax_floor.py and pyproject.toml.
 # This file is in the local-execution consent hash, and those two are not. Reading them would let
-# an unreviewed edit to either change which interpreter every hook runs on without moving the hash
-# (AI review of PR #1291). tap/tests/test_host_syntax_floor.py holds both to their sources, so they
-# cannot drift. Bash 3.2-compatible (macOS /bin/bash).
+# an unreviewed edit to either change which interpreter every hook runs on without moving the hash.
+# tap/tests/test_host_syntax_floor.py holds both to their sources, so they cannot drift.
+# Bash 3.2-compatible (macOS /bin/bash).
 set -euo pipefail
 
 _fmaj=3 _fmin=12   # == HOST_SYNTAX_FLOOR in tap/host_syntax_floor.py
@@ -49,8 +49,8 @@ cat >&2 <<EOF
 scripts/py: no Python ${_fmaj}.${_fmin}+ on this machine (python3 here is: ${_found}), and no uv to fetch one.
   TAP's host tools (git hooks, scripts/*) need Python ${_fmaj}.${_fmin} or newer.
   Install uv, which fetches its own interpreter and never touches the system Python:
-    macOS:        brew install uv
-    Linux/macOS:  curl -LsSf https://astral.sh/uv/install.sh | sh
+    macOS:  brew install uv
+    Linux:  your package manager's uv, or see https://docs.astral.sh/uv/getting-started/installation/
   Or install python3.14 from your package manager. Then run the command again.
 EOF
 exit 127
