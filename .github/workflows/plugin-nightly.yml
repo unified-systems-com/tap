@@ -145,10 +145,13 @@ jobs:
             tag="$PINNED"
           else
             tag="$(gh api repos/unified-systems-com/tap/releases/latest --jq .tag_name)"
-            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-              echo "::error::core's newest release tag is not vX.Y.Z; refusing to use it as a ref"
-              exit 1
-            fi
+          fi
+          # One gate for both sources, after either has spoken: a caller's pin is held to the
+          # same shape as the API's answer. A whole-string match, so a value carrying a second
+          # line cannot ride a valid first line into the output file.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the release row's ref is not vX.Y.Z; refusing to use it as a ref"
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release row: core at $tag" >> "$GITHUB_STEP_SUMMARY"
