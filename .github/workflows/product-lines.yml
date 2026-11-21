@@ -377,9 +377,10 @@ jobs:
   # what notices a migration that no longer applies from zero, or a history whose end state has
   # drifted from the models. Nightly and on dispatch only — on a PR it would cost what tap#1258
   # removed. It boots core_ci with the switch OFF (the entrypoint migrates `tap` from zero), then
-  # tap.schema_parity builds one scratch database each way and fails on any difference in
-  # schema, rows or recorded migrations. A red reaches `gate`, so the nightly owner issue
-  # carries it.
+  # tap.schema_parity builds three scratch databases (migrate with Django's reload, migrate with
+  # the shallow reload, req-boot-shallow-reload-5, and built from the models) and fails on any
+  # difference in schema, rows or recorded migrations. A red reaches `gate`, so the nightly owner
+  # issue carries it.
   migrations:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.setup.outputs.migrations_changed == 'true'
     needs: [setup, secret-scan]
@@ -429,7 +430,7 @@ jobs:
             docker compose --env-file .env logs web | tail -150; exit 1
           fi
           docker compose --env-file .env logs web | grep -E 'schema_from_models = |Running database migrations' || true
-      - name: Parity — a model-built database equals a migrated one
+      - name: Parity — model-built and shallow-reload migrated databases equal a stock-migrated one
         run: docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python -m tap.schema_parity'
       - name: Dump web logs on failure
         if: failure()

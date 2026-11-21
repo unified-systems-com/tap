@@ -1,6 +1,7 @@
-"""Prove a model-built database equals a migrated one (req-boot-schema-from-models-5, tap#1258).
+"""Prove a model-built database equals a migrated one (req-boot-schema-from-models-5, tap#1258), and a
+shallow-reload migrated one equals a stock-migrated one (req-boot-shallow-reload-5, tap#1275).
 
-TAP-IMPLEMENTS: req-boot-schema-from-models@0481fbc263d3/44a94aa89a4c (enforcement) — the nightly
+TAP-IMPLEMENTS: req-boot-schema-from-models@0481fbc263d3/c1a88c89190d (enforcement) — the nightly
     check that the real migrations still run from zero and still produce exactly the schema the
     models build.
 
@@ -8,7 +9,10 @@ CI, dev stacks and test databases build their schema from the models (``manage.p
 migrate_from_models``) and no longer replay the migrations. Two things could then rot unseen:
 a migration that no longer applies from zero, and a migration history whose end state has drifted
 from the models (a hand-edited migration, a ``RunPython`` that seeds rows, SQL a model cannot
-describe). This replays both roads into two scratch databases and compares them:
+describe). And ``manage.py migrate`` re-renders less than Django would (``tap_boot.shallow_reload``),
+which must not change what it builds. This replays three roads into three scratch databases (a
+migrate with Django's own reload, a migrate with the shallow reload, a build from the models) and
+compares the first with each of the others:
 
 * the schema, as ``pg_dump --schema-only`` text, one statement per entry, order-insensitive, with
   column order and generated object names taken out (``canonical``) and the understood
@@ -17,7 +21,12 @@ describe). This replays both roads into two scratch databases and compares them:
   site, …), per table, with surrogate ``id`` and timestamp columns left out;
 * the ``django_migrations`` rows, by (app, name).
 
-Runs INSIDE the web container, settings-free on purpose (the two builds are separate
+Between the two migrated roads nothing is set aside: every statement must match as dumped, generated
+names and column order included, since both create every object in the same order. The dump is
+compared as a multiset because ``pg_dump`` orders by object, not by execution; the order the schema
+editor ran in is held by ``tap_boot/tests/test_shallow_reload.py``'s replay.
+
+Runs INSIDE the web container, settings-free on purpose (the builds are separate
 ``manage.py`` processes pointed at their own scratch database), with the stack's
 ``DATABASE_URL`` naming the server and credentials. Exit 0 on parity, 1 on any difference with
 the difference printed, 2 when a build itself fails. Usage::
@@ -46,7 +55,9 @@ from urllib.parse import urlparse, urlunparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIGRATED = "migrated"
+SHALLOW = "shallow"
 MODELS = "models"
+SHALLOW_RELOAD_ENV = "TAP_MIGRATE_SHALLOW_RELOAD"  # tap_boot.shallow_reload.ENV; this module stays settings-free
 
 
 @dataclass
@@ -54,6 +65,7 @@ class Build:
     road: str
     database: str
     command: str
+    env: dict[str, str] = field(default_factory=dict)
     seconds: float = 0.0
     returncode: int | None = None
     output: str = ""
@@ -101,7 +113,7 @@ def _recreate(database: str, *, drop_only: bool = False) -> None:
 
 
 def _start(build: Build) -> subprocess.Popen[str]:
-    env = {**os.environ, "DATABASE_URL": _url_for(build.database)}
+    env = {**os.environ, **build.env, "DATABASE_URL": _url_for(build.database)}
     # The cache table first, as the entrypoint does (the tap_health check needs it); it takes a second.
     subprocess.run(  # nosec B603  # nosemgrep — fixed argv: this interpreter + manage.py, no shell
         [sys.executable, "manage.py", "createcachetable"], cwd=REPO_ROOT, env=env, check=True
@@ -117,7 +129,7 @@ def _start(build: Build) -> subprocess.Popen[str]:
 
 
 def run_builds(builds: list[Build]) -> None:
-    """Run both builds at once: the migrate is the long one, and the model build overlaps it."""
+    """Run the builds at once: the stock migrate is the long one, and the others overlap it."""
     started = time.monotonic()
 
     def wait(build: Build, process: subprocess.Popen[str]) -> None:
@@ -252,18 +264,22 @@ def snapshot(database: str) -> Snapshot:
     return shot
 
 
-def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]:
-    """(problems, notes) between the two roads; no problems means parity.
+def compare(
+    migrated: Snapshot, models: Snapshot, *, names: tuple[str, str] = (MIGRATED, MODELS), strict: bool = False
+) -> tuple[list[str], list[str]]:
+    """(problems, notes) between two roads; no problems means parity.
 
     Notes name what differs only in column order or generated names, and the accepted
-    KNOWN_DIFFERENCES: reported so a reader sees them, never failed.
+    KNOWN_DIFFERENCES: reported so a reader sees them, never failed. ``strict`` sets none of that
+    aside: every statement must match as dumped (the two migrated roads).
     """
     problems: list[str] = []
     notes: list[str] = []
-    left = Counter(canonical(s) for s in migrated.statements)
-    right = Counter(canonical(s) for s in models.statements)
+    form = (lambda statement: statement) if strict else canonical
+    left = Counter(form(s) for s in migrated.statements)
+    right = Counter(form(s) for s in models.statements)
     only_migrated, only_models = left - right, right - left
-    for table, reason in sorted(KNOWN_DIFFERENCES.items()):
+    for table, reason in sorted({} if strict else KNOWN_DIFFERENCES.items()):
         mine = [s for s in only_migrated if _table_of(s) == table]
         theirs = [s for s in only_models if _table_of(s) == table]
         if (mine or theirs) and Counter(map(_id_width_neutral, mine)) == Counter(map(_id_width_neutral, theirs)):
@@ -274,9 +290,10 @@ def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]
                 del only_models[statement]
     if only_migrated or only_models:
         diff = difflib.unified_diff(
-            sorted(only_migrated.elements()), sorted(only_models.elements()), MIGRATED, MODELS, lineterm="", n=0
+            sorted(only_migrated.elements()), sorted(only_models.elements()), *names, lineterm="", n=0
         )
-        problems.append("schema differs (pg_dump --schema-only; column order and generated names aside):")
+        aside = "" if strict else "; column order and generated names aside"
+        problems.append(f"schema differs (pg_dump --schema-only{aside}):")
         problems.extend("  " + line for line in diff if not line.startswith("@@"))
     cosmetic = [
         s
@@ -292,9 +309,9 @@ def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]
     for table in sorted(set(migrated.tables) | set(models.tables)):
         a, b = migrated.tables.get(table), models.tables.get(table)
         if a != b:
-            problems.append(f"rows differ in {table}: migrated {a and a[0]} row(s), models {b and b[0]}")
+            problems.append(f"rows differ in {table}: {names[0]} {a and a[0]} row(s), {names[1]} {b and b[0]}")
     for app, name in sorted(migrated.migrations ^ models.migrations):
-        side = MIGRATED if (app, name) in migrated.migrations else MODELS
+        side = names[0] if (app, name) in migrated.migrations else names[1]
         problems.append(f"django_migrations: {app}.{name} recorded only by the {side} road")
     return problems, notes
 
@@ -302,11 +319,12 @@ def compare(migrated: Snapshot, models: Snapshot) -> tuple[list[str], list[str]]
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tap.schema_parity", description=__doc__.split("\n\n")[0])
     parser.add_argument("--prefix", default="tap_parity", help="scratch database name prefix")
-    parser.add_argument("--keep", action="store_true", help="leave the two scratch databases for inspection")
+    parser.add_argument("--keep", action="store_true", help="leave the scratch databases for inspection")
     args = parser.parse_args(argv)
 
     builds = [
-        Build(MIGRATED, f"{args.prefix}_migrated", "migrate"),
+        Build(MIGRATED, f"{args.prefix}_migrated", "migrate", {SHALLOW_RELOAD_ENV: "0"}),
+        Build(SHALLOW, f"{args.prefix}_shallow", "migrate", {SHALLOW_RELOAD_ENV: "1"}),
         Build(MODELS, f"{args.prefix}_models", "migrate_from_models"),
     ]
     for build in builds:
@@ -321,7 +339,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"::error::the {build.road} build failed (manage.py {build.command}):\n{build.output[-6000:]}")
         if failed:
             return 2
-        problems, notes = compare(snapshot(builds[0].database), snapshot(builds[1].database))
+        migrated, shallow, models = (snapshot(build.database) for build in builds)
+        problems, notes = compare(migrated, models)
+        shallow_problems, _ = compare(migrated, shallow, names=(MIGRATED, SHALLOW), strict=True)
     finally:
         if not args.keep:
             for build in builds:
@@ -331,8 +351,13 @@ def main(argv: list[str] | None = None) -> int:
     if problems:
         print("::error::a model-built database differs from a migrated one:")
         print("\n".join(problems))
+    if shallow_problems:
+        print("::error::a database migrated with the shallow reload differs from one migrated with Django's:")
+        print("\n".join(shallow_problems))
+    if problems or shallow_problems:
         return 1
     print("parity: the model-built database equals the migrated one (schema, rows, recorded migrations)")
+    print("parity: the shallow-reload migrated database equals the stock-migrated one, statement for statement")
     return 0
 
 
