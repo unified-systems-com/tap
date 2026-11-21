@@ -44,7 +44,8 @@ import pytest
 
 LIST_PATH = Path(__file__).resolve().parent / "spec_reader_tests.txt"
 ENV = "TAP_SPEC_READ_AUDIT"
-_EVENTS = frozenset({"open", "os.listdir", "os.scandir"})
+_EVENTS = frozenset({"open", "os.listdir", "os.scandir"})  # "open" covers io.open and os.open
+_DIR = "<directory>"
 
 _HEADER = """\
 # The core test files that read the specs (tap/spec_read_audit.py). GENERATED, do not hand-edit:
@@ -64,19 +65,29 @@ def is_spec_path(path: str, root: str) -> bool:
 class _Recorder:
     def __init__(self, root: str) -> None:
         self.root = root
-        self.current: str | None = None  # a test file, a module, or "fixture:<name>"
+        # A test file, a module being collected, "fixture:<name>", DIR while pytest walks a
+        # directory, or None outside every window (configure, conftest import, session hooks).
+        self.current: str | None = None
         self.files: set[str] = set()
+        self.unattributed: set[str] = set()  # spec paths read where no test could be charged
         self.fixtures: set[str] = set()
         self.uses: dict[str, set[str]] = {}  # test file -> every fixture its tests request
 
     def hook(self, event: str, args: tuple[Any, ...]) -> None:
-        if event not in _EVENTS or self.current is None or not args or args[0] is None:
+        if event not in _EVENTS or not args or args[0] is None:
             return
         try:
             path = os.path.abspath(os.fsdecode(args[0]))
         except (TypeError, ValueError):
             return  # a file descriptor, not a path
         if not is_spec_path(path, self.root):
+            return
+        if self.current is None or self.current == _DIR:
+            # pytest listing a directory is it walking the tree; anything else here (a conftest or
+            # plugin hook reading a spec) feeds tests the audit cannot name, so it is recorded and
+            # `--check` refuses the run rather than narrow the specs tier past it.
+            if not (self.current == _DIR and event != "open"):
+                self.unattributed.add(path[len(self.root.rstrip("/")) + 1 :])
             return
         if self.current.startswith("fixture:"):
             self.fixtures.add(self.current.removeprefix("fixture:"))
@@ -87,16 +98,26 @@ class _Recorder:
 _REC: _Recorder | None = None
 
 
+def _install() -> None:
+    """Install at IMPORT, not at pytest_configure: `-p tap.spec_read_audit` is imported before any
+    conftest.py, so a conftest that reads a spec at import is seen, not missed."""
+    global _REC
+    if not os.environ.get(ENV) or _REC is not None:
+        return
+    _REC = _Recorder(os.getcwd())
+    sys.addaudithook(lambda event, args: _REC.hook(event, args) if _REC is not None else None)
+
+
+_install()
+
+
 def _file_of(nodeid: str) -> str:
     return nodeid.split("::", 1)[0]
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    global _REC
-    if not os.environ.get(ENV):
-        return
-    _REC = _Recorder(str(config.rootpath))
-    sys.addaudithook(lambda event, args: _REC.hook(event, args) if _REC is not None else None)
+    if _REC is not None:
+        _REC.root = str(config.rootpath)
 
 
 def pytest_collectstart(collector: pytest.Collector) -> None:
@@ -104,7 +125,7 @@ def pytest_collectstart(collector: pytest.Collector) -> None:
         # Only a module's own collection is charged; a directory collector listing `specs/` is
         # pytest walking the tree, not a test reading a spec.
         module = _file_of(collector.nodeid)
-        _REC.current = module if module.endswith(".py") else None
+        _REC.current = module if module.endswith(".py") else _DIR
 
 
 def pytest_collectreport(report: pytest.CollectReport) -> None:
@@ -149,15 +170,17 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     out = Path(os.environ[ENV])
     out.mkdir(parents=True, exist_ok=True)
     worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    (out / f"spec-readers-{worker}.json").write_text(json.dumps(sorted(files)), encoding="utf-8")
+    record = {"readers": sorted(files), "unattributed": sorted(_REC.unattributed)}
+    (out / f"spec-readers-{worker}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
-def observed(record_dir: Path) -> set[str]:
-    """The union of every worker's recorded reader files."""
+def observed(record_dir: Path) -> tuple[set[str], set[str]]:
+    """The union of every worker's recorded reader files, and of its unattributable spec reads."""
     found = sorted(record_dir.glob("spec-readers-*.json"))
     if not found:
         raise SystemExit(f"no spec-readers-*.json under {record_dir}: the audit did not run")
-    return {f for path in found for f in json.loads(path.read_text(encoding="utf-8"))}
+    records = [json.loads(path.read_text(encoding="utf-8")) for path in found]
+    return {f for r in records for f in r["readers"]}, {f for r in records for f in r["unattributed"]}
 
 
 def listed(path: Path = LIST_PATH) -> list[str]:
@@ -173,9 +196,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", type=Path, default=LIST_PATH, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.write is not None:
-        args.list.write_text(_HEADER + "".join(f"{f}\n" for f in sorted(observed(args.write))), encoding="utf-8")
+        args.list.write_text(_HEADER + "".join(f"{f}\n" for f in sorted(observed(args.write)[0])), encoding="utf-8")
         return 0
-    seen, have = observed(args.check), set(listed(args.list))
+    (seen, unattributed), have = observed(args.check), set(listed(args.list))
+    if unattributed:
+        sys.stderr.write(
+            "These spec files were read outside every test, collection and fixture (a conftest.py, a "
+            "pytest plugin or a session hook), so no test file can be charged and the specs tier's "
+            "narrowing cannot be trusted:\n" + "".join(f"  {f}\n" for f in sorted(unattributed))
+            + "Move the read into a fixture the dependent tests request.\n"
+        )
+        return 1
     missing, stale = sorted(seen - have), sorted(have - seen)
     if stale:
         # Not a failure: a test skipped on this runner may still read the specs elsewhere.

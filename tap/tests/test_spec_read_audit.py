@@ -30,7 +30,7 @@ def test_a_spec_path_is_a_specs_directory_inside_the_repository() -> None:
     assert not is_spec_path("/application/specs/x.md", "/app")
 
 
-def _run_recorder(tmp_path: Path) -> list[str]:
+def _run_recorder(tmp_path: Path, conftest_reads_at_import: bool = False) -> dict[str, list[str]]:
     root = tmp_path / "repo"
     (root / "specs").mkdir(parents=True)
     (root / "specs" / "spec-a.md").write_text("| req-a |\n")
@@ -38,6 +38,8 @@ def _run_recorder(tmp_path: Path) -> list[str]:
     (root / "conftest.py").write_text(
         "import pytest\n"
         "from pathlib import Path\n"
+        + ("ROWS = (Path(__file__).parent / 'specs' / 'spec-a.md').read_text()\n" if conftest_reads_at_import else "")
+        +
         "@pytest.fixture(scope='session')\n"
         "def spec_rows():\n"
         "    return (Path(__file__).parent / 'specs' / 'spec-a.md').read_text()\n"
@@ -63,16 +65,30 @@ def _run_recorder(tmp_path: Path) -> list[str]:
         cwd=root, env=env, capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    readers: list[str] = json.loads((out / "spec-readers-main.json").read_text())
-    return readers
+    record: dict[str, list[str]] = json.loads((out / "spec-readers-main.json").read_text())
+    return record
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-7")
 def test_reads_are_charged_to_the_module_the_test_and_every_fixture_requester(tmp_path: Path) -> None:
-    readers = _run_recorder(tmp_path)
-    assert readers == sorted(
+    record = _run_recorder(tmp_path)
+    assert record["unattributed"] == [], "pytest walking specs/ is not a read"
+    assert record["readers"] == sorted(
         ["test_collects.py", "test_reads.py", "test_fixture_first.py", "test_fixture_second.py"]
     ), "the second requester of a session fixture never triggers its setup, and must still be charged"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-7")
+def test_a_conftest_reading_a_spec_at_import_is_caught_and_refuses_the_check(tmp_path: Path) -> None:
+    """A read no test can be charged with is the hole a narrowed lane would fall through."""
+    record = _run_recorder(tmp_path, conftest_reads_at_import=True)
+    assert record["unattributed"] == ["specs/spec-a.md"]
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    (rec / "spec-readers-main.json").write_text(json.dumps(record))
+    lst = tmp_path / "list.txt"
+    lst.write_text("".join(f"{f}\n" for f in record["readers"]))
+    assert main(["--check", str(rec), "--list", str(lst)]) == 1
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-7")
@@ -81,8 +97,8 @@ def test_the_check_fails_on_an_unlisted_reader_and_only_notes_a_stale_one(
 ) -> None:
     rec = tmp_path / "rec"
     rec.mkdir()
-    (rec / "spec-readers-gw0.json").write_text(json.dumps(["tap/tests/test_a.py"]))
-    (rec / "spec-readers-gw1.json").write_text(json.dumps(["tap/tests/test_b.py"]))
+    (rec / "spec-readers-gw0.json").write_text(json.dumps({"readers": ["tap/tests/test_a.py"], "unattributed": []}))
+    (rec / "spec-readers-gw1.json").write_text(json.dumps({"readers": ["tap/tests/test_b.py"], "unattributed": []}))
     lst = tmp_path / "list.txt"
     lst.write_text("# header\ntap/tests/test_a.py\ntap/tests/test_gone.py\n")
     assert main(["--check", str(rec), "--list", str(lst)]) == 1
