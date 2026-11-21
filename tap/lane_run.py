@@ -287,6 +287,22 @@ def build_plan(
     return core, owners
 
 
+def core_files(root: Path, listing: Path) -> list[str] | str:
+    """The files ``listing`` names, under ``root``; or the refusal to print when one is missing.
+
+    A named file that does not exist is refused rather than dropped: a narrowed lane that
+    quietly ran fewer files than its list is the false green this module exists to remove.
+    """
+    lines = listing.read_text(encoding="utf-8").splitlines()
+    named = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    missing = [f for f in named if not (root / f).is_file()]
+    if missing or not named:
+        return f"--core-files {listing}: " + (
+            f"names files that do not exist: {', '.join(missing)}\n" if missing else "names no files\n"
+        )
+    return [str(root / f) for f in named]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tap.lane_run", description=__doc__.split("\n\n")[0])
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="the core walk root (default: cwd)")
@@ -317,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(os.environ["GITHUB_STEP_SUMMARY"]) if os.environ.get("GITHUB_STEP_SUMMARY") else None,
     )
     parser.add_argument("--no-core", action="store_true", help="skip the core walk (plugin suites only)")
+    parser.add_argument(
+        "--core-files",
+        type=Path,
+        help="run only the core test files this list names, one per line (the specs tier: tap/spec_reader_tests.txt)",
+    )
     parser.add_argument("pytest_args", nargs="*", help="extra pytest args after `--` (e.g. -n auto)")
     args = parser.parse_args(argv)
     extra = [a for a in args.pytest_args if a != "--"]
@@ -336,6 +357,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     only = set() if args.no_plugins else (set(args.only) if args.only else None)
     core, owners = build_plan(args.root, suites, set(args.exclude), only)
+    if args.core_files is not None:
+        named = core_files(args.root, args.core_files)
+        if isinstance(named, str):
+            sys.stderr.write(named)
+            return 2
+        core.paths = named
+        sys.stderr.write(f"core walk narrowed to the {len(named)} files {args.core_files} names.\n")
     if only is not None:
         left_out = sorted(st.slug for st in suites if st.slug not in only)
         sys.stderr.write(

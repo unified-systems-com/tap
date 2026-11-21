@@ -1,0 +1,26 @@
+# The core test files that read the specs (tap/spec_read_audit.py). GENERATED, do not hand-edit:
+#   python -m tap.spec_read_audit --write <dir of a recorded full core walk>
+# On the specs tier the core_ci line runs exactly these (req-dev-validation-product-line-lanes-7).
+tap/tests/test_compose_ports.py
+tap/tests/test_crypto_bom.py
+tap/tests/test_dockerignore_guard.py
+tap/tests/test_guards.py
+tap/tests/test_guards_sarif.py
+tap/tests/test_requirement_dispositions.py
+tap/tests/test_requirement_evidence.py
+tap/tests/test_sbom_oob.py
+tap_boot/tests/test_guards_command.py
+tap_files/tests/test_gateway.py
+tap_files/tests/test_grid_file.py
+tap_files/tests/test_scope.py
+tap_files/tests/test_store.py
+tap_grid/tests/test_batch_corpus.py
+tap_grid/tests/test_cascade_corpus.py
+tap_grid/tests/test_dimension_knobs.py
+tap_grid/tests/test_dimension_migration.py
+tap_grid/tests/test_find_existing.py
+tap_grid/tests/test_natural_key.py
+tap_grid/tests/test_require_caller_context.py
+tap_health/tests/test_probe_detail_leak.py
+tap_plugins/tests/test_plugin_data_directory.py
+tap_web/tests/test_html_sanitize.py
