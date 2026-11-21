@@ -395,8 +395,14 @@ stores is staged:
    transaction.
 2. **Stage the files.** Plugin data and the file store are unpacked into staging directories beside
    their final roots, verified against the manifest's hashes, and only then renamed into place. A
-   rename within one filesystem is atomic, so a store holds either nothing from the seed or all of
-   it.
+   rename within one filesystem is atomic, so each root holds either nothing from the seed or all of
+   it. The roots can sit on different volumes, so renaming them all is not one atomic step. Each root
+   therefore commits separately:
+   - The staging directory carries a marker, `.tap-seed`, naming the seed digest and the root.
+   - The progress record names each root as `done` after its rename.
+   - A restart in `files` treats any root not marked `done` that holds a `.tap-seed` marker as a
+     partial result of this load. It empties that root and stages it again. A root whose contents
+     carry no marker is not the seed's, so the initializer refuses rather than delete it.
 3. **Activate** ([`req-tap-bake-activate`](#activating-a-new-installation)).
 4. **Finish**: the post-activation steps and the rest of boot, which is idempotent against seeded
    data ([`req-boot-idempotent`](spec-tap-boot-v0.md#idempotent-re-apply)).
@@ -437,6 +443,7 @@ new installation from a reviewed, pinned artifact.
 | req-tap-bake-initializer-1 | One At A Time | Proposed | Two initializers started together against one installation complete as one: one does the work, the other waits and then finds it done, including while the first drops and recreates the installation's database. | The lock is in the maintenance database |
 | req-tap-bake-initializer-8 | In-Flight Recorded First | Proposed | Killing the initializer after `pg_restore` has created some tables but before it finished, then restarting it, drops and reloads the database instead of refusing it, because the progress record names `load` as started. | The crash the classification would otherwise refuse |
 | req-tap-bake-initializer-2 | Interrupted Anywhere | Proposed | Killing the initializer during each phase in turn (load, file staging, activation, Finish), then restarting it, yields an installation equal to an uninterrupted one. | One case per phase; the parity check of -4 |
+| req-tap-bake-initializer-9 | Roots Commit Separately | Proposed | Killing the initializer after the first of several file roots is renamed into place, then restarting it, leaves every root holding exactly the seed's contents once; a root holding files without a `.tap-seed` marker is refused, not emptied. | |
 | req-tap-bake-initializer-3 | Files Atomic | Proposed | After an interruption during file staging, each file root holds either nothing from the seed or all of it, verified against the manifest. | |
 | req-tap-bake-initializer-4 | Same Installation Either Road | Proposed | A seeded and a full initialization of the same record produce the same Gryphon counts by entity type, the same schema (`tap.schema_parity`), the same recorded migrations, and the same file-store inventory and plugin-data hashes. | |
 | req-tap-bake-initializer-5 | Fallback Is Loud And Complete | Proposed | For each seed refusal named above, the pristine installation initializes the full way and serves, and its run record and log name what declined and why. | One case per refusal |
@@ -466,7 +473,24 @@ the state somebody's. It applies to both:
 | Collector schedules | As captured | Paused | As the record declares for a seed; paused for a clone |
 
 The installation's state records activation, with the grid id it minted. The initializer never
-activates an installation twice. A clone is declared, by the operator or the hosting tool that made
+activates an installation twice.
+
+**Activation is recoverable because it mints first and writes second.** Activation touches several
+stores that commit independently: the grid id and lineage in the database, the role passwords in the
+cluster, and the secrets in the secret store. So it never mints a value at the moment it writes one:
+
+1. It mints every value at once (grid id, `SECRET_KEY`, role passwords, an activation id) and writes
+   them to the installation's state store as `pending`, before anything else changes. From then on
+   the state store is the source of truth for those values.
+2. It applies each one idempotently from the stored value. Role passwords are set with `ALTER ROLE`
+   to the stored password, and setting the same password again changes nothing. The grid id and the
+   lineage batch are written insert-if-absent, keyed on the activation id. Secrets are copied to the
+   secret store as the stored value.
+3. It marks the values `active` and the phase `done`.
+
+A restart that finds `activate: started` re-reads the pending values and re-applies them. It never
+mints again, so an interruption between any two writes cannot leave a second password, a second grid
+id or a duplicate lineage batch. A clone is declared, by the operator or the hosting tool that made
 it, through the installation's initialization input. Its stores are not pristine, so declaring it is
 how the initializer knows to activate it rather than treat it as initialized.
 
@@ -483,6 +507,7 @@ dedicated RDS instance, may keep the plain names.
 | req-tap-bake-activate-1 | New Identity | Proposed | After activation the grid id differs from the seed's or the clone source's, and a lineage batch names the source. | |
 | req-tap-bake-activate-2 | Clones Activate | Proposed | A declared copy-on-write clone of an activated installation is activated by the initializer even though its stores are not pristine, and afterwards shares no grid id, secret or role password with its source. | |
 | req-tap-bake-activate-3 | Once Only | Proposed | Re-running the initializer on an activated installation changes neither its grid id nor its secrets. | |
+| req-tap-bake-activate-5 | Interrupted Activation Reuses Its Values | Proposed | Killing the initializer after each activation write in turn (role password, grid id, lineage, secret store), then restarting it, yields one grid id, one lineage batch, and role passwords and secrets that match the state store, with no value minted twice. | One case per write |
 | req-tap-bake-activate-4 | Siblings Unaffected | Proposed | Activating an installation in a cluster that hosts another leaves the other's roles, passwords and objects untouched. | |
 
 ### Identity Belongs To The Installation
@@ -543,6 +568,12 @@ detached attestation on the finished image ([`req-tap-bake-attest`](#attested-ar
 names its inputs: the image digest, the install manifest's digest, and the digest of the record's
 waiver policy.
 
+**The scan reads the finished image, not a stage of its build.** The build pushes the image, then
+starts a container from the **pushed digest** and runs the gate inside it, then attests the result
+against that same digest. Nothing is built or pushed after the scan. Any layer added later produces
+a different digest, which the attestation does not name, so the verdict cannot be carried onto bytes
+it never read.
+
 At start, a deployed product image ([`req-tap-bake-immutable-env`](#the-deployed-environment-is-the-images))
 accepts the attested verdict instead of rescanning only when all of these hold:
 
@@ -574,6 +605,7 @@ unchanged: an unwaived non-validated provider still stops the instance.
 | req-tap-bake-crypto-bom-1 | Verdict Attested | Proposed | Every product image build publishes a crypto-BOM verdict attestation naming the image digest, manifest digest and waiver-policy digest. | |
 | req-tap-bake-crypto-bom-2 | Verified Inputs Only | Proposed | A deployed product image whose digest and waiver policy match the attested verdict, with a read-only root and no mount of any type on, under or above a scanned path, skips the rescan. Changing either digest, any such mount (a bind over `/usr/bin`, or a named volume over source included), or a writable root runs the full gate. | The mount check reads `/proc/self/mountinfo`, not the deploy config |
 | req-tap-bake-crypto-bom-3 | Self-Check Kept | Proposed | The `tap.fips` self-check runs on every start of every image, attested verdict or not. | |
+| req-tap-bake-crypto-bom-5 | Scanned By Digest | Proposed | The build's gate runs in a container started from the image's pushed digest, and the attestation names that digest. An image with any layer added after the scan does not verify against the verdict, and its start runs the full gate. | |
 | req-tap-bake-crypto-bom-4 | Refusal Unchanged | Proposed | A product image containing an unwaived non-validated provider fails its build's gate, and if forced past the build, still refuses to serve at start. | |
 
 ### Django Starts Once
@@ -736,6 +768,12 @@ substitute for reviewing it. This revision makes these changes:
     refused.
   - Verifying an attestation against the repository alone admits any workflow that can mint one, so
     verification now pins the signer workflow and a protected ref.
+- Round 5 (`fa5b6245`) found three recovery gaps, and this revision closes them. The scan could
+  read an intermediate stage, so it now reads a container started from the pushed digest.
+  Activation could mint twice across a crash, so it now mints everything first, into the state
+  store, and applies from there. A crash partway through renaming several file roots had no defined
+  cleanup, so each root now commits separately, with a marker that identifies the seed's own partial
+  writes.
 - Round 4 (`b0cb33e1`) found that the read-only root still allowed a mount of any type over a
   scanned path. The skip now also requires that no mount sits on, under or above a scanned path. The
   FIPS spec's pointer no longer restates the conditions, so the two cannot drift apart.
