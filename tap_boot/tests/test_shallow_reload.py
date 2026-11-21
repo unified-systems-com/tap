@@ -216,6 +216,31 @@ def test_the_off_switch_and_the_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ProjectState.reload_model is shallow_reload.STOCK_RELOAD_MODEL
 
 
+@pytest.mark.spec("req-boot-shallow-reload-3")
+def test_the_forward_plan_marks_its_state_and_renders_borrowed_classes_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[bool, bool]] = []
+
+    def stock(executor: Any, state: ProjectState, *args: Any, **kwargs: Any) -> ProjectState:
+        seen.append((state.__dict__.get(shallow_reload._MARK, False), "apps" in state.__dict__))
+        return state
+
+    monkeypatch.setattr(shallow_reload, "STOCK_MIGRATE_ALL_FORWARDS", stock)
+    pre_migrate = ProjectState()
+    for model_state in _states():
+        pre_migrate.add_model(model_state)
+    pre_migrate.apps  # noqa: B018 — the pre_migrate render the migrate command makes
+    borrowed = pre_migrate.clone()  # its classes belong to pre_migrate's registry, as on an upgrade
+    advanced = shallow_reload._migrate_all_forwards(None, borrowed)  # type: ignore[arg-type]
+    own_apps = advanced.apps  # the executor's fresh render: every class its own
+    shallow_reload._migrate_all_forwards(None, advanced)  # type: ignore[arg-type]
+
+    assert seen == [(True, False), (True, True)]  # marked both times; only the borrowed render dropped
+    assert advanced.__dict__["apps"] is own_apps
+    assert shallow_reload._MARK not in advanced.__dict__  # unmarked once the plan returns
+
+
 def _core_plan(loader: MigrationLoader) -> list[Migration]:
     """The forward plan of every app that is not a plugin, as a migrate from zero orders it."""
     plugin_labels = {

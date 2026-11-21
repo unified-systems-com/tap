@@ -11,12 +11,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.core.management.base import BaseCommand
 from django.core.management.commands.migrate import Command as DjangoMigrateCommand
 
 from tap_boot import shallow_reload
 
 
-class Command(DjangoMigrateCommand):  # NOSONAR (S8443: Django's migrate Command is a BaseCommand subclass)
+# BaseCommand is already DjangoMigrateCommand's base; naming it again changes nothing in the MRO and lets a
+# static analyser that does not follow the alias (Sonar S8443) see that this is a management command.
+class Command(DjangoMigrateCommand, BaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         with shallow_reload.installed():
             if not shallow_reload.enabled() and options["verbosity"] >= 2:
