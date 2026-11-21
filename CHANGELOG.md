@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.4.4](https://github.com/unified-systems-com/tap/compare/v0.4.3...v0.4.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **dev:** host tools reach Python through scripts/py; the floor follows imports ([347388c](https://github.com/unified-systems-com/tap/commit/347388c8b7f5d3052a8d5312938e8fc0efb91993))
+* **dev:** host tools reach Python through scripts/py; the floor follows imports [via hook-python] ([911d6aa](https://github.com/unified-systems-com/tap/commit/911d6aaa714a82c9a90fd7a9085ac14bbb6f90f8))
+* **dev:** scripts/py states its floor and version; tests hold them to source ([57bc629](https://github.com/unified-systems-com/tap/commit/57bc629a8132efd35de96f8c3dd3235510f55387))
+* **test-harness:** seed the baseline once per test database, not per test ([25ec650](https://github.com/unified-systems-com/tap/commit/25ec650809323c4727b8c0e0a3f6b04f58d314c9))
+
+
+### Documentation
+
+* **changelog:** 0.4.3 lists the shallow reload for migrate ([785d256](https://github.com/unified-systems-com/tap/commit/785d25625c13fd2445a05c77158635cacb04cc6c))
+* **changelog:** 0.4.3 lists the shallow reload for migrate [via make-it-fast] ([868aa2a](https://github.com/unified-systems-com/tap/commit/868aa2afc9c8e609ae3f457806be20d8b878b896))
+* **dev:** no pipe-to-shell install hint; the spec says the resolver states its numbers ([cefdede](https://github.com/unified-systems-com/tap/commit/cefdede8c42a011d1c2a6c934828fc095fecc805))
+* **spec:** a spine-only change writes one history row ([c11fb9a](https://github.com/unified-systems-com/tap/commit/c11fb9a95b90d6c2691c2c1ac8e1f7b702da9742))
+* **spec:** baked instances — bake once in CI, personalize at first start ([25bdaa7](https://github.com/unified-systems-com/tap/commit/25bdaa70fe19e071f846e881393c43b22c3a4d94))
+* **spec:** baked instances — bake once in CI, personalize at first start [via make-it-fast] ([71c6c0b](https://github.com/unified-systems-com/tap/commit/71c6c0bef1ce2f71ad00d2176c1293966b322f3e))
+* **spec:** baked instances — lock outside the target, progress before each phase ([b0cb33e](https://github.com/unified-systems-com/tap/commit/b0cb33e1a7ca1811e7df99e3d6e9696180010d78))
+* **spec:** baked instances — no mount over a scanned path ([fa5b624](https://github.com/unified-systems-com/tap/commit/fa5b6245316d71773a3d7fb01b0666b2eda0b618))
+* **spec:** baked instances — one initializer, identity per installation ([7026c51](https://github.com/unified-systems-com/tap/commit/7026c51e9849a830f4fed93f8cfa15896b5e96b1))
+* **spec:** baked instances — read-only root, classified stores, pinned signer ([af97415](https://github.com/unified-systems-com/tap/commit/af9741557d69dfe7dc7897aa0da382dc7bc129c3))
+* **spec:** baked instances — scan by digest, mint before writing, roots commit separately ([2dcf968](https://github.com/unified-systems-com/tap/commit/2dcf96885f5d94b1b0908a65b737ea8dcc3f0e28))
+* **spec:** baked instances — scan by digest, mint before writing, roots commit separately [via make-it-fast] ([c915ebc](https://github.com/unified-systems-com/tap/commit/c915ebcc4f00d8c852091806081ad0d429b6531d))
+* **spec:** re-observation is not a change; batch pointers on the spine ([9948786](https://github.com/unified-systems-com/tap/commit/99487861920caa7591860c9923f06e828352f287))
+
 ## [0.4.3](https://github.com/unified-systems-com/tap/compare/v0.4.2...v0.4.3) (2026-11-21)
 
 

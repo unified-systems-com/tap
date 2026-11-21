@@ -328,6 +328,9 @@ jobs:
     uses: ./.github/workflows/core-ci.yml
     with:
       lane: line
+      # The fixture plugins' suites run on cold-boot exactly when cold-boot runs: this is
+      # cold-boot's own `if`, character for character (test_product_lines_gate holds them equal).
+      plugin_suites_on_cold_boot: ${{ needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot' }}
 
   # CI boot gates (req-dev-validation-smoke-gate / req-dev-validation-lean-boot).
   # The SAME scripts/gate + scripts/gate-lean artifacts the local promote runs —
@@ -353,6 +356,7 @@ jobs:
     uses: ./.github/workflows/core-ci.yml
     with:
       lane: cold-boot
+      plugin_suites_on_cold_boot: true
 
   lean-boot:
     # Tier-gated: markdown cannot affect boot (see cold-boot).
