@@ -104,3 +104,42 @@ def test_a_known_table_still_fails_on_any_drift_but_the_id_width() -> None:
     problems, notes = schema_parity.compare(migrated, models)
     assert problems and "schema differs" in problems[0]
     assert not any("accepted difference" in note for note in notes)
+
+
+@pytest.mark.spec("req-boot-shallow-reload-5")
+def test_the_two_migrated_roads_must_match_statement_for_statement() -> None:
+    known = "public.auth_group_permissions"
+    stock = Snapshot(
+        [f"CREATE TABLE {known} ( id bigint NOT NULL )", "ALTER TABLE t ADD CONSTRAINT t_a_1234_uniq UNIQUE (a)"]
+    )
+    shallow = Snapshot(
+        [f"CREATE TABLE {known} ( id integer NOT NULL )", "ALTER TABLE t ADD CONSTRAINT t_a_key UNIQUE (a)"]
+    )
+    assert schema_parity.compare(stock, shallow)[0] == []  # what the models road may differ in ...
+    problems, notes = schema_parity.compare(
+        stock, shallow, names=(schema_parity.MIGRATED, schema_parity.SHALLOW), strict=True
+    )
+    assert problems[0] == "schema differs (pg_dump --schema-only):"  # ... the shallow road may not
+    assert f"  -CREATE TABLE {known} ( id bigint NOT NULL )" in problems and notes == []
+
+
+@pytest.mark.spec("req-boot-shallow-reload-5")
+def test_main_builds_a_shallow_road_beside_the_stock_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[schema_parity.Build] = []
+    monkeypatch.setattr(schema_parity, "_recreate", lambda database, drop_only=False: None)
+    monkeypatch.setattr(schema_parity, "snapshot", lambda database: Snapshot(["CREATE TABLE t (a int)"]))
+
+    def run_builds(builds: list[schema_parity.Build]) -> None:
+        for build in builds:
+            build.returncode = 0
+            built.append(build)
+
+    monkeypatch.setattr(schema_parity, "run_builds", run_builds)
+
+    assert schema_parity.main([]) == 0
+    roads = {build.road: (build.command, build.env) for build in built}
+    assert roads == {
+        schema_parity.MIGRATED: ("migrate", {schema_parity.SHALLOW_RELOAD_ENV: "0"}),
+        schema_parity.SHALLOW: ("migrate", {schema_parity.SHALLOW_RELOAD_ENV: "1"}),
+        schema_parity.MODELS: ("migrate_from_models", {}),
+    }

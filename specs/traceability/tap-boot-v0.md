@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
+| mapped | 9 |
 | excluded | 1 |
 | unbuilt | 8 |
 | unaccounted | 8 |
@@ -28,5 +28,6 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-boot-required-secrets` | Implemented | Implemented | `<module>` | — |
 | `req-boot-schema-from-models` | Implemented | Verified | `<module>`, `<module>` | `req-boot-schema-from-models-1`, `req-boot-schema-from-models-2`, `req-boot-schema-from-models-3`, `req-boot-schema-from-models-4`, `req-boot-schema-from-models-5`, `req-boot-schema-from-models-6` |
 | `req-boot-search-role` | Implemented | Implemented | `<module>` | — |
+| `req-boot-shallow-reload` | Implemented | Verified | `_reload_model` | `req-boot-shallow-reload-1`, `req-boot-shallow-reload-2`, `req-boot-shallow-reload-3`, `req-boot-shallow-reload-4`, `req-boot-shallow-reload-5`, `req-boot-shallow-reload-6` |
 | `req-boot-web-branding` | Implemented | Verified | `branding_from_section` | `req-boot-web-branding-1`, `req-boot-web-branding-3`, `req-boot-web-branding-4`, `req-boot-web-branding-5`, `req-boot-web-branding-6`, `req-boot-web-branding-7` |
 | `req-boot-web-section` | Implemented | Verified | `landing_from_section` | `req-boot-web-section-1`, `req-boot-web-section-2`, `req-boot-web-section-3`, `req-boot-web-section-4` |
