@@ -111,6 +111,7 @@ Status: `Implemented`
   - Returns the parsed object on success.
 - `JsonFileError(Exception)` carries structured attributes — `path: Path`, `location: str | None`, `reason: str` — so callers can re-wrap with their own message without string-parsing, and `str()` renders the uniform human message.
 - `load_schema(path: Path) -> dict` is a thin, `lru_cache`-backed reader for schema files, so callers stop hand-rolling their own cached `_schema()`.
+- `jsonschema_validate(instance, schema)` is `jsonschema.validate` with the schema checked once: it keeps one validator per distinct schema (picked by `validator_for`, metaschema-checked when built, keyed by the schema's canonical JSON text — never `id()`, since schemas are built at runtime and read from model rows — and bounded), then raises `best_match(iter_errors(instance))`, so the exception type and message are exactly `jsonschema.validate`'s. `jsonschema.validate` re-runs `check_schema` on every call, which on the GRIFT import path cost more than the validation itself (tap#1280). `validate_json` validates through it, and every in-memory validation in core calls it rather than `jsonschema.validate`.
 - The helper raises **only** `JsonFileError`; it never raises raw `jsonschema`/`json` exceptions to callers.
 
 #### Development
@@ -137,6 +138,7 @@ The structured attributes (`path`, `location`, `reason`) exist precisely so a ca
 | req-tap-json-loader-3 | Location Formatter | Implemented | The JSON-pointer location is computed inside the helper and nowhere else. | |
 | req-tap-json-loader-4 | Structured Attributes | Implemented | `JsonFileError` exposes `path`, `location`, `reason` for caller re-wrapping. | |
 | req-tap-json-loader-5 | Cached Schema Reader | Implemented | `load_schema(path)` reads a schema file with `lru_cache`. | |
+| req-tap-json-loader-6 | Cached Validator | Implemented | `jsonschema_validate(instance, schema)` checks each distinct schema against its metaschema once, not per call, and raises exactly what `jsonschema.validate` raises (`ValidationError` via `best_match`; `SchemaError` for an invalid schema, every call). In-memory validation in core goes through it. | tap#1280. Guard: `tap/tests/test_jsonfiles_validator_cache.py`. |
 
 ### Role-Driven Discovery
 ----
@@ -223,7 +225,7 @@ The following are migrated to the helper, each catching `JsonFileError` and re-r
 **Exceptions (deliberate, named):**
 - `tap_auth/providers/secrets.py` keeps its `iter_errors` multi-error reporting (`req-tap-json-loader` Development). Its file reads + schema load route through the helper; only the all-errors validation stays on `Draft202012Validator`.
 - The settings-time auth reader (`read_auth_section`) stays *tolerant* — it must not crash `tap/settings.py` import on a bad file — so it catches `JsonFileError` and returns `{}` with a warning, rather than propagating.
-- **In-memory invariant checks against non-file schemas keep `jsonschema.validate`.** `tap_cares/collectors/base.py::_validate_entry` (per-result-entry check against a pinned sub-schema) and `tap_grid/grift/importer.py`'s three CRUD-schema validations validate *already-in-memory* values against *dynamic model schemas*, wired into existing `GriftIssue`/programming-error reporting. They route their **schema-file reads** through `load_schema`, but the in-memory validation is not a file load and keeps its current exception type to preserve those reporting contracts. (`validate_json` is available for the cases where converting is clean; these are the cases where it is not.)
+- **In-memory invariant checks against non-file schemas keep their `jsonschema` exceptions.** `tap_cares/collectors/base.py::_validate_entry` (per-result-entry check against a pinned sub-schema) and `tap_grid/grift/importer.py`'s three CRUD-schema validations validate *already-in-memory* values against *dynamic model schemas*, wired into existing `GriftIssue`/programming-error reporting. They route their **schema-file reads** through `load_schema`, but the in-memory validation is not a file load and keeps its current exception type to preserve those reporting contracts — they call `jsonschema_validate`, which raises the same `jsonschema` exceptions with the schema checked once (`req-tap-json-loader-6`). (`validate_json` is available for the cases where converting is clean; these are the cases where it is not.)
 
 Direct `json.loads` remains acceptable for: tests constructing fixtures, migrations, payload strings already in memory (not files), and non-config data interchange.
 

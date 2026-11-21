@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f166ce9b109d (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/285d72668621 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -27,7 +27,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from tap.jsonfiles import load_schema
+from tap.jsonfiles import jsonschema_validate, load_schema
 from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
@@ -1027,7 +1027,7 @@ def _validate_node_payload(
         from tap_grid.null_semantics import prepare_null_payload
 
         try:
-            jsonschema.validate(instance=prepare_null_payload(payload, replace_schema), schema=replace_schema)
+            jsonschema_validate(prepare_null_payload(payload, replace_schema), replace_schema)
         except jsonschema.ValidationError as exc:
             issues.append(
                 _issue(
@@ -1741,7 +1741,7 @@ def _validate_document_schema(document: dict[str, Any], issues: list[GriftIssue]
     """Validate document against the GRIFT JSON Schema. Returns True if valid."""
     schema = _load_grift_schema()
     try:
-        jsonschema.validate(instance=document, schema=schema)
+        jsonschema_validate(document, schema)
         return True
     except jsonschema.ValidationError as exc:
         message = exc.message
@@ -1785,13 +1785,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/b274eab851e8 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/72d545755649 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/b274eab851e8 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/72d545755649 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -2015,7 +2015,7 @@ def _run_preflight(
             replace_schema = Batch.SERVICE_CRUD_SCHEMA.get("replace", {})
             if replace_schema:
                 try:
-                    jsonschema.validate(instance=batch_container["batch_node"], schema=replace_schema)
+                    jsonschema_validate(batch_container["batch_node"], replace_schema)
                 except jsonschema.ValidationError as exc:
                     issues.append(
                         _issue(
