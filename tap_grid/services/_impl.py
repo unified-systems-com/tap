@@ -330,11 +330,14 @@ def _compound_dependents(
         for edge_type, middle_types in sorted(by_edge.items()):
             match |= Q(edge_type=edge_type, **{f"{far}__entity_type__in": sorted(middle_types)})
         query = Edge.objects.filter(match, **{near: entity_id, f"{far}__deleted_at__isnull": True})
-        if excluded:
-            query = query.exclude(**{f"{far}_id__in": excluded})
+        # Exclude what the source pass already found IN the query, so a middle node that has the
+        # retiring entity at both ends cannot spend the slice and hide another dependent past
+        # the headroom (Codex on PR 1268).
+        found = excluded + [row[0] for row in out]
+        if found:
+            query = query.exclude(**{f"{far}_id__in": found})
         rows = query.values_list(f"{far}_id", f"{far}__entity_type").distinct()[: limit - len(out)]
-        seen = {row[0] for row in out}
-        out.extend((row[0], row[1], end) for row in rows if row[0] not in seen)
+        out.extend((row[0], row[1], end) for row in rows)
     return out
 
 

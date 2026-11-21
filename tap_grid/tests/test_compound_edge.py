@@ -355,6 +355,28 @@ class TestRetireWithAnEnd:
         assert _live(sender) and all(_live(m) for m in middles), "refused whole: nothing written"
 
     @pytest.mark.spec("req-grid-edge-compound-5")
+    def test_a_middle_at_both_ends_does_not_hide_another_dependent(self, declared: dict[str, Any]) -> None:
+        # Codex on PR 1268: the destination pass sliced to the headroom BEFORE dropping ids the
+        # source pass had already found, so a middle node holding the retiring entity at both
+        # ends could spend the slice and leave a second dependent undiscovered under the cap.
+        from tap_grid.compound_edges import DependentsIndex
+        from tap_grid.services._impl import _compound_dependents
+
+        both = DependentsIndex(by_source={SOURCE: frozenset({MIDDLE})}, by_destination={SOURCE: frozenset({MIDDLE})})
+        root = _node(SENDER, "both-ends-root")
+        lone = _node(MIDDLE, "destination-only")
+        create_edge(lone, root, SOURCE)
+        # Several middles at both ends, so the destination pass meets a duplicate first whatever
+        # row order the database picks (the query has no ORDER BY).
+        doubles = [_node(MIDDLE, f"both-ends-{i}") for i in range(6)]
+        for m in doubles:
+            create_edge(root, m, SOURCE)
+            create_edge(m, root, SOURCE)
+        found = _compound_dependents(root.pk, both, limit=len(doubles) + 1)
+        assert {row[0] for row in found} == {m.pk for m in doubles} | {lone.pk}
+        assert len(found) == len(doubles) + 1, "each dependent once"
+
+    @pytest.mark.spec("req-grid-edge-compound-5")
     def test_a_plain_delete_that_retires_no_middle_keeps_its_shape(self, declared: dict[str, Any]) -> None:
         lone = _node(SENDER, "lone")
         other = _node(RECEIVER, "other")
