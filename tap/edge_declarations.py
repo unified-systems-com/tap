@@ -1,9 +1,10 @@
 """Do a model's edge declarations name edge types that exist?
 
 A model declares the edges it may emit or accept (``OUTBOUND_EDGES`` / ``INBOUND_EDGES``),
-the subset that means containment for the cascade (``CONTAINMENT_EDGES``), and the edges
+the subset that means containment for the cascade (``CONTAINMENT_EDGES``), the edges
 that mirror references embedded in its own fields (``HOTLINKS``, each entry's
-``edge_type``; Issue# 910 - tap). Each names edge types by slug. Nothing used to check that those slugs resolve to a DEFINED edge type
+``edge_type``; Issue# 910 - tap), and, on a compound edge's middle node, its role edges
+(``COMPOUND_EDGE``, req-grid-edge-compound-3). Each names edge types by slug. Nothing used to check that those slugs resolve to a DEFINED edge type
 (a ``.edge.json`` in some plugin's manifest, or a grid-standard core edge): rename the
 definition and every declaration still reads as valid — a citation that does not resolve
 reads as verification — while the cascade follows an edge nothing will ever carry
@@ -24,7 +25,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DECLARATION_ATTRIBUTES: tuple[str, ...] = ("OUTBOUND_EDGES", "INBOUND_EDGES", "CONTAINMENT_EDGES", "HOTLINKS")
+DECLARATION_ATTRIBUTES: tuple[str, ...] = (
+    "OUTBOUND_EDGES",
+    "INBOUND_EDGES",
+    "CONTAINMENT_EDGES",
+    "HOTLINKS",
+    "COMPOUND_EDGE",
+)
+#: The keys of a ``COMPOUND_EDGE`` dict that name edge types (``tap_grid.compound_edges.ROLES``,
+#: repeated because this module is stdlib-only and imports nothing from Django apps).
+COMPOUND_EDGE_ROLES: tuple[str, ...] = ("source", "destination", "carrier", "path")
 _SKIP_DIRS = frozenset({"tests", "migrations", "__pycache__"})
 
 
@@ -53,7 +63,7 @@ def edge_types_in(attribute: str, value: Any) -> list[str]:
     ``OUTBOUND_EDGES`` / ``INBOUND_EDGES`` are lists of ``{"nodes": [...], "edges":
     [{"type": slug}, ...]}`` entries; ``CONTAINMENT_EDGES`` is a tuple of slugs; ``HOTLINKS``
     is a list of hotlink definitions, each naming one slug as ``edge_type``
-    (req-grid-hotlink-model-5).
+    (req-grid-hotlink-model-5); ``COMPOUND_EDGE`` is a dict whose role keys each name one slug.
     """
     seen: list[str] = []
 
@@ -64,6 +74,10 @@ def edge_types_in(attribute: str, value: Any) -> list[str]:
     if attribute == "CONTAINMENT_EDGES":
         for slug in value or ():
             add(slug)
+    elif attribute == "COMPOUND_EDGE":
+        if isinstance(value, dict):
+            for role in COMPOUND_EDGE_ROLES:
+                add(value.get(role))
     elif attribute == "HOTLINKS":
         for entry in value or []:
             if isinstance(entry, dict):

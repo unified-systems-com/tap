@@ -1475,8 +1475,15 @@ def _patch_node_internal_for_test(
 # ---------------------------------------------------------------------------
 
 
-def _closure_of(target: str | uuid.UUID, *, lock: bool) -> frozenset[uuid.UUID] | None:
-    """The body both closure gateways share; the cap is the configured one and nothing else."""
+def _closure_of(target: str | uuid.UUID, *, lock: bool, compound_dependents: bool) -> frozenset[uuid.UUID] | None:
+    """The body both closure gateways share; the cap is the configured one and nothing else.
+
+    With ``compound_dependents`` the closure is the delete walk's whole answer: the contained
+    subtree plus every middle node the compound-edge retire rule takes with it
+    (``req-grid-edge-compound-6``). Without it, containment alone — what reconcile's
+    contradiction check reads (``req-grid-edge-compound-7``).
+    """
+    from tap_grid.compound_edges import EMPTY_INDEX, dependents_index
     from tap_grid.exceptions import ServiceCascadeTooLargeError
     from tap_grid.registry import get_model_class
 
@@ -1490,7 +1497,12 @@ def _closure_of(target: str | uuid.UUID, *, lock: bool) -> frozenset[uuid.UUID] 
         model_cls = get_model_class(row["entity_type"])
     except KeyError:
         return frozenset()
-    state = _CascadeState(root=root, root_reason="read", cap=_closure_cap())
+    state = _CascadeState(
+        root=root,
+        root_reason="read",
+        cap=_closure_cap(),
+        index=dependents_index() if compound_dependents else EMPTY_INDEX,
+    )
     state.discovered.add(root)
     try:
         _discover_closure(root, model_cls, state)
@@ -1503,7 +1515,7 @@ def _closure_of(target: str | uuid.UUID, *, lock: bool) -> frozenset[uuid.UUID] 
 
 @requires_capability(READ_CAPABILITY, operation="contained_closure")
 def contained_closure(
-    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+    target: str | uuid.UUID, *, compound_dependents: bool = True, caller_context: CallerContext | None = None
 ) -> frozenset[uuid.UUID] | None:
     """Every live node a contained cascade from ``target`` would retire, the root excluded — or
     ``None`` when the closure exceeds ``TAP_CASCADE_MAX_CLOSURE``, which is exactly when the
@@ -1512,16 +1524,24 @@ def contained_closure(
     An unlocked read — a snapshot. It is the delete walk's own discovery through the declared
     ``CONTAINMENT_EDGES`` (``req-grid-service-delete-cascade-6``), so what a cascade would touch
     is derived once, not re-implemented for readers. A retired or unknown target, or a type
-    that contains nothing, yields the empty set. Used by candidate derivation to detect a
-    contradiction (Issue# 656 - tap): a candidate whose closure holds a node the same run
-    observed live.
+    that contains nothing, yields the empty set.
+
+    By default the answer includes every compound edge's middle node the cascade would retire
+    with an end in the closure (``req-grid-edge-compound-6``): it is the read that shows what a
+    delete takes with it. ``compound_dependents=False`` leaves them out, and only reconcile's
+    contradiction check asks for that (``req-grid-edge-compound-7``): candidate derivation
+    detects a contradiction (Issue# 656 - tap) — a candidate whose closure holds a node the
+    same run observed live — over containment alone.
+
+    TAP-IMPLEMENTS: req-grid-edge-compound@3d34b80a3526/c8ec9de1ed90 (surface) — the read that
+        shows the middle nodes a delete retires, from the delete walk's own discovery.
     """
-    return _closure_of(target, lock=False)
+    return _closure_of(target, lock=False, compound_dependents=compound_dependents)
 
 
 @requires_capability(RECONCILE_CAPABILITY, operation="contained_closure_locked")
 def contained_closure_locked(
-    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+    target: str | uuid.UUID, *, compound_dependents: bool = True, caller_context: CallerContext | None = None
 ) -> frozenset[uuid.UUID] | None:
     """``contained_closure`` as the cascade reads it before writing: the snapshot's rows are
     taken FOR UPDATE and the closure re-discovered under them until nothing new appears
@@ -1531,9 +1551,10 @@ def contained_closure_locked(
     Taking row locks is not a read, so this is gated by ``grid.reconcile``, the capability of
     the one caller that acts on the answer: the reconcile verb's apply fence (Issue# 656 - tap).
     It must run inside the transaction that will act on the answer; the locks are held to its
-    end. Same cap, same empty-set cases as the unlocked read.
+    end. Same cap, same empty-set cases and the same ``compound_dependents`` switch as the
+    unlocked read.
     """
-    return _closure_of(target, lock=True)
+    return _closure_of(target, lock=True, compound_dependents=compound_dependents)
 
 
 @requires_capability(READ_CAPABILITY, operation="resolve_entity")

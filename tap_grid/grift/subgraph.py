@@ -368,18 +368,29 @@ def batch_resolve_display(entity_type_slugs: set[str]) -> dict[str, dict[str, An
     Returns the complete ``DEFAULT_DISPLAY.get("tap_viz", {})`` dict per slug,
     making shape, nesting, and any future display concerns transparent.
 
+    A compound edge's middle-node type also gets ``compound_edge``: its role → edge-type map,
+    computed from the type's ``COMPOUND_EDGE`` declaration, never authored in DEFAULT_DISPLAY
+    (``req-viz-system-display-hints-11``), so the viz runtime that draws it as one arrow reads
+    the roles from the one declaration rather than from a layout restating them.
+
     Returns:
         {slug: tap_viz_display_dict}
     """
+    from tap_grid.compound_edges import compound_edge_of
     from tap_grid.registry import get_model_class
 
     result: dict[str, dict[str, Any]] = {}
     for slug in entity_type_slugs:
         try:
             model_cls = get_model_class(slug)
-            result[slug] = model_cls.DEFAULT_DISPLAY.get("tap_viz", {})
         except KeyError:
             result[slug] = {}
+            continue
+        hints = model_cls.DEFAULT_DISPLAY.get("tap_viz", {})
+        declared = compound_edge_of(model_cls)
+        if declared is not None:
+            hints = {**hints, "compound_edge": declared.role_edges()}
+        result[slug] = hints
     return result
 
 

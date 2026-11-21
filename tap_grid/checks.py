@@ -158,8 +158,8 @@ def declared_edge_types() -> list[Any]:
 def check_edge_declarations_resolve(app_configs: Any, **kwargs: Any) -> list[Error]:
     """Every edge type a model declares must be a defined edge type (Issue# 583 - tap).
 
-    OUTBOUND_EDGES, INBOUND_EDGES, CONTAINMENT_EDGES and each HOTLINKS entry's ``edge_type``
-    name edge types by slug. Renaming an edge definition leaves every declaration reading as
+    OUTBOUND_EDGES, INBOUND_EDGES, CONTAINMENT_EDGES, each HOTLINKS entry's ``edge_type`` and
+    each role of a COMPOUND_EDGE (req-grid-edge-compound-3) name edge types by slug. Renaming an edge definition leaves every declaration reading as
     valid while the cascade follows an edge nothing will ever carry — a declaration that
     exists but is false. A hotlink is held to the same rule (req-grid-hotlink-model-5,
     Issue# 910 - tap): its edges are real grid edges, so the type they carry must be a
@@ -181,6 +181,71 @@ def check_edge_declarations_resolve(app_configs: Any, **kwargs: Any) -> list[Err
             id="tap_grid.E004",
         )
         for d in problems
+    ]
+
+
+def compound_edge_problems() -> list[str]:
+    """Every middle-node declaration whose role edge could never be written onto the middle node.
+
+    Resolution is E004's (``COMPOUND_EDGE`` is a declaration attribute like the others). This adds
+    the one thing E004 cannot see: under the permission union (``req-grid-edge-constraints``) a
+    role edge reaches the middle node only if the edge definition admits the middle type at its
+    end — the target end of the source edge, the source end of every other role — or the middle
+    node's own ``INBOUND_EDGES`` / ``OUTBOUND_EDGES`` does. A role nothing admits is a
+    declaration that exists and is false: the delete walk would follow an edge no write can make.
+    A declaration that no longer parses is reported here too, since a monkeypatch or a later
+    attribute assignment bypasses the class-creation guard.
+    """
+    from tap_grid.compound_edges import CompoundEdgeDeclarationError, compound_edge_of
+    from tap_grid.constraints import WILDCARD, get_constraints, get_edge_type_constraints
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    problems: list[str] = []
+    for entity_type in sorted(list_entity_types()):
+        model = get_model_class(entity_type)
+        try:
+            declared = compound_edge_of(model)
+        except CompoundEdgeDeclarationError as exc:
+            problems.append(f"{entity_type}: {exc}")
+            continue
+        if declared is None:
+            continue
+        node = get_constraints(entity_type)
+        for role, edge_type in declared.role_edges().items():
+            into_middle = declared.middle_is_target(role)
+            edge = get_edge_type_constraints(edge_type)
+            side = None if edge is None else (edge.targets if into_middle else edge.sources)
+            by_edge = side is WILDCARD or (isinstance(side, set) and entity_type in side)
+            own = None if node is None else (node.inbound if into_middle else node.outbound)
+            blocked = own is not None and not own  # INBOUND_EDGES = [] / OUTBOUND_EDGES = []: nothing overrides it
+            by_node = own is None or edge_type in own
+            if blocked or not (by_edge or by_node):
+                problems.append(
+                    f"{entity_type}.COMPOUND_EDGE[{role!r}] is {edge_type!r}, which can never "
+                    f"{'reach' if into_middle else 'leave'} a {entity_type} node: neither the edge definition's "
+                    f"{'targets' if into_middle else 'sources'} nor the model's "
+                    f"{'INBOUND_EDGES' if into_middle else 'OUTBOUND_EDGES'} admit it"
+                )
+    return problems
+
+
+@register(Tags.models)
+def check_compound_edge_roles_admit_the_middle(app_configs: Any, **kwargs: Any) -> list[Error]:
+    """Every compound edge's role edges can be written onto its middle node (req-grid-edge-compound-3).
+
+    Fail-closed, like E004: a role edge that no write can ever attach to the middle node makes
+    the retire rule, the closure read and the viz runtime all follow something that cannot exist.
+    """
+    return [
+        Error(
+            problem,
+            hint=(
+                "List the middle type at the right end of the role edge's definition (or leave that end open), or "
+                "permit the edge in the middle model's INBOUND_EDGES / OUTBOUND_EDGES."
+            ),
+            id="tap_grid.E006",
+        )
+        for problem in compound_edge_problems()
     ]
 
 

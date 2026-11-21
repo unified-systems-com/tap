@@ -37,6 +37,18 @@
               "description": "Per node type, the edge types that mean containment for the cascade (CONTAINMENT_EDGES, set on the model class for this scenario). A type absent here contains nothing: its outgoing edges are references.",
               "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1}}
             },
+            "compound": {
+              "type": "object",
+              "description": "Per node type, the COMPOUND_EDGE declaration set on the model class for this scenario (req-grid-edge-compound): that type is a compound edge's middle node, retired with the ends `retires_with` names. A type absent here is not a middle node.",
+              "additionalProperties": {
+                "type": "object", "additionalProperties": false, "required": ["source", "destination", "retires_with"],
+                "properties": {
+                  "source": {"type": "string", "minLength": 1, "description": "The source role edge type, <KIND>_SOURCE__<plugin>: sender -> middle node."},
+                  "destination": {"type": "string", "minLength": 1, "description": "The destination role edge type, <KIND>_DESTINATION__<plugin>: middle node -> receiver."},
+                  "retires_with": {"type": "array", "uniqueItems": true, "items": {"enum": ["source", "destination"]}, "description": "The ends whose retirement retires the middle node."}
+                }
+              }
+            },
             "blocked_types": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Node types the public delete path may not touch for this scenario (INTERNAL_ONLY set on the model class). A cascade that reaches a node of such a type is refused whole; a plain delete of one is refused."},
             "nodes": {
               "type": "array", "minItems": 1,

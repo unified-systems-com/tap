@@ -119,7 +119,9 @@ Status: `Implemented`
 
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
-Edges between an icon node and a node that is shown are drawn as for any node. An edge that has a hidden endpoint, because that endpoint is inside an icon node, is not drawn. It is not re-pointed onto the icon node. A drawn line is always an edge that exists in the grid between the two nodes it joins; an icon node never stands in for the lines of its contents.
+Edges between an icon node and a node that is shown are drawn as for any node. An edge that has a hidden endpoint, because that endpoint is inside an icon node, is not drawn. It is not re-pointed onto the icon node. A drawn line is always an edge that exists in the grid between the two nodes it joins, with exactly one exception; an icon node never stands in for the lines of its contents.
+
+**The one exception: a collapsed compound edge** (`req-viz-compound-edge`, amended on Issue# 1261 - tap). A compound edge is stored as a middle node and two or more real edges (`req-grid-edge-compound`), and a page should read it as the single arrow from sender to receiver that it means. So the compound-edge runtime draws one synthetic line between the sender and the receiver while the stored pieces are hidden. It is allowed because it stands for pieces that all exist in the grid, between exactly the two nodes it joins — its ends are the compound edge's real ends, never a node standing in for one — and because it is marked (`_is_compound_edge`, `_compound_id` naming the middle node) and expands on tap into those stored pieces, so nothing it says is unverifiable from the page. The icon-node rule still binds it: when either end is hidden or absent, no arrow is drawn and nothing is re-pointed.
 
 ### Composition
 ----

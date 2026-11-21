@@ -1,0 +1,305 @@
+{
+  "family": "compound",
+  "description": "Compound edges (req-grid-edge-compound, Issue# 1261 - tap): a middle node (here grid_fixtures__leaf) joined to its sender by a PROBE_SOURCE edge and to its receiver by a PROBE_DESTINATION edge retires when an end its declaration names in retires_with retires, by a plain delete or a cascade, inside the same walk, cap and records; a path (TRAVERSES_COMPONENT) edge never retires anything; reconcile's contradiction check leaves the middle node out.",
+  "scenarios": [
+    {
+      "name": "compound: a plain delete of the sender retires the middle node",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-5", "req-grid-service-delete-cascade-14"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"},
+          {"ref": "C", "type": "grid_fixtures__node"}
+        ],
+        "edges": [
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"},
+          {"ref": "e_M_C", "from": "M", "to": "C", "type": "TRAVERSES_COMPONENT__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "S", "reason": "operator"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["S", "M"],
+        "retired_edges": ["e_S_M", "e_M_D", "e_M_C"],
+        "events": {
+          "S": {"reason": "operator"},
+          "M": {"reason": "cascaded", "consequence_of": "S"},
+          "e_M_D": {"reason": "cascaded", "consequence_of": "M"}
+        },
+        "note": "The sender is a retiring end, so the plain delete walks just far enough to retire M; the walk records the edges it ends, as a cascade does. D and the path component C stay live."
+      }
+    },
+    {
+      "name": "compound: a plain delete of the receiver retires the middle node",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-5"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"}
+        ],
+        "edges": [
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "D"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["D", "M"],
+        "retired_edges": ["e_S_M", "e_M_D"],
+        "events": {"M": {"reason": "cascaded", "consequence_of": "D"}},
+        "note": "The receiver side is what containment could never express (containment follows outbound edges only); the retire rule reads the destination edge backwards from the receiver."
+      }
+    },
+    {
+      "name": "compound: an end not in retires_with leaves the middle node",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-5"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"}
+        ],
+        "edges": [
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "D"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["D"],
+        "retired_edges": ["e_M_D"],
+        "note": "This kind retires with its source only (a middle node that may outlive its receiver): deleting D ends the destination edge by the endpoint rule and nothing else. No walk, so no edge record."
+      }
+    },
+    {
+      "name": "compound: deleting a path component never retires the middle node",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-8"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"},
+          {"ref": "C", "type": "grid_fixtures__node"}
+        ],
+        "edges": [
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"},
+          {"ref": "e_M_C", "from": "M", "to": "C", "type": "TRAVERSES_COMPONENT__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "C"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["C"],
+        "retired_edges": ["e_M_C"],
+        "note": "A path edge is a reference: the component's retirement ends it and leaves the compound edge standing."
+      }
+    },
+    {
+      "name": "compound: deleting the middle node retires neither end nor a component",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-8"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"},
+          {"ref": "C", "type": "grid_fixtures__node"}
+        ],
+        "edges": [
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"},
+          {"ref": "e_M_C", "from": "M", "to": "C", "type": "TRAVERSES_COMPONENT__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "M"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["M"],
+        "retired_edges": ["e_S_M", "e_M_D", "e_M_C"],
+        "note": "Retiring the middle node ends its three edges and nothing else: the ends and the component exist on their own."
+      }
+    },
+    {
+      "name": "compound: a contained cascade that reaches the receiver retires the middle node",
+      "tags": ["compound", "contained"],
+      "covers": ["req-grid-edge-compound-5", "req-grid-service-delete-cascade-1"],
+      "graph": {
+        "containment": {"grid_fixtures__cycle_node": ["PG_NESTS__grid_fixtures"]},
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "H", "type": "grid_fixtures__cycle_node"},
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"},
+          {"ref": "C", "type": "grid_fixtures__node"}
+        ],
+        "edges": [
+          {"ref": "e_H_D", "from": "H", "to": "D", "type": "PG_NESTS__grid_fixtures"},
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"},
+          {"ref": "e_M_C", "from": "M", "to": "C", "type": "TRAVERSES_COMPONENT__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "H", "cascade": "contained", "reason": "operator"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["H", "D", "M"],
+        "retired_edges": ["e_H_D", "e_S_M", "e_M_D", "e_M_C"],
+        "events": {
+          "D": {"reason": "cascaded", "consequence_of": "H"},
+          "M": {"reason": "cascaded", "consequence_of": "D"}
+        },
+        "note": "H contains D; D is M's receiver, so M goes with D, one level further down the same walk. S and C stay live."
+      }
+    },
+    {
+      "name": "compound: both ends in one cascade retire the middle node once",
+      "tags": ["compound", "contained"],
+      "covers": ["req-grid-edge-compound-5", "req-grid-service-delete-cascade-13"],
+      "graph": {
+        "containment": {"grid_fixtures__cycle_node": ["PG_NESTS__grid_fixtures"]},
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "H", "type": "grid_fixtures__cycle_node"},
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M", "type": "grid_fixtures__leaf"},
+          {"ref": "D", "type": "grid_fixtures__hub"}
+        ],
+        "edges": [
+          {"ref": "e_H_S", "from": "H", "to": "S", "type": "PG_NESTS__grid_fixtures"},
+          {"ref": "e_H_D", "from": "H", "to": "D", "type": "PG_NESTS__grid_fixtures"},
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_D", "from": "M", "to": "D", "type": "PROBE_DESTINATION__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "H", "cascade": "contained"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["H", "S", "D", "M"],
+        "retired_edges": ["e_H_S", "e_H_D", "e_S_M", "e_M_D"],
+        "note": "M is reachable from both of its ends at the same depth; it is discovered once, retired once, and names whichever end found it first."
+      }
+    },
+    {
+      "name": "compound: a middle node that is itself an end retires in turn",
+      "tags": ["compound", "plain"],
+      "covers": ["req-grid-edge-compound-5"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M1", "type": "grid_fixtures__leaf"},
+          {"ref": "M2", "type": "grid_fixtures__leaf"}
+        ],
+        "edges": [
+          {"ref": "e_S_M1", "from": "S", "to": "M1", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M1_M2", "from": "M1", "to": "M2", "type": "PROBE_SOURCE__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "S"},
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": ["S", "M1", "M2"],
+        "retired_edges": ["e_S_M1", "e_M1_M2"],
+        "events": {
+          "M1": {"reason": "cascaded", "consequence_of": "S"},
+          "M2": {"reason": "cascaded", "consequence_of": "M1"}
+        },
+        "note": "M1 is M2's sender. The rule is followed transitively through middle nodes, as containment is through contained children."
+      }
+    },
+    {
+      "name": "compound: middle nodes count against the cap, and over it the delete is refused whole",
+      "tags": ["compound", "plain", "limits"],
+      "covers": ["req-grid-edge-compound-5", "req-grid-service-delete-cascade-11"],
+      "graph": {
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "S", "type": "grid_fixtures__node"},
+          {"ref": "M1", "type": "grid_fixtures__leaf"},
+          {"ref": "M2", "type": "grid_fixtures__leaf"}
+        ],
+        "edges": [
+          {"ref": "e_S_M1", "from": "S", "to": "M1", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_S_M2", "from": "S", "to": "M2", "type": "PROBE_SOURCE__grid_fixtures"}
+        ]
+      },
+      "operation": {"target": "S", "cap": 2},
+      "expected": {
+        "outcome": "refused",
+        "error_code": "cascade_closure_too_large",
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "Root plus two middle nodes is three, over a cap of two: the plain delete is refused and nothing is written, the root included."
+      }
+    },
+    {
+      "name": "compound: reconcile does not count an observed middle node as a contradiction",
+      "tags": ["compound", "reconcile", "applied"],
+      "covers": ["req-grid-edge-compound-7", "req-grid-reconcile-candidates-6"],
+      "graph": {
+        "containment": {"grid_fixtures__node": ["PG_NESTS__grid_fixtures"]},
+        "compound": {
+          "grid_fixtures__leaf": {"source": "PROBE_SOURCE__grid_fixtures", "destination": "PROBE_DESTINATION__grid_fixtures", "retires_with": ["source", "destination"]}
+        },
+        "nodes": [
+          {"ref": "P", "type": "grid_fixtures__node"},
+          {"ref": "C1", "type": "grid_fixtures__node"},
+          {"ref": "C2", "type": "grid_fixtures__node"},
+          {"ref": "S", "type": "grid_fixtures__hub"},
+          {"ref": "M", "type": "grid_fixtures__leaf"}
+        ],
+        "edges": [
+          {"ref": "e_P_C1", "from": "P", "to": "C1", "type": "PG_NESTS__grid_fixtures"},
+          {"ref": "e_P_C2", "from": "P", "to": "C2", "type": "PG_NESTS__grid_fixtures"},
+          {"ref": "e_S_M", "from": "S", "to": "M", "type": "PROBE_SOURCE__grid_fixtures"},
+          {"ref": "e_M_C2", "from": "M", "to": "C2", "type": "PROBE_DESTINATION__grid_fixtures"}
+        ]
+      },
+      "operation": {"verb": "reconcile", "target": "P", "observed": ["C1", "M"], "dropped": ["C2"]},
+      "expected": {
+        "outcome": "applied",
+        "retired_nodes": ["C2", "M"],
+        "retired_edges": ["e_P_C2", "e_S_M", "e_M_C2"],
+        "events": {
+          "C2": {"reason": "dropped_from_observation"},
+          "M": {"reason": "cascaded", "consequence_of": "C2"}
+        },
+        "note": "The run observed M (say, a scanner finding) but not C2 (the interface it points at), and the source says C2 is gone. M is not contained by C2, so it is no evidence against C2's retirement: the candidate is applied, and M retires with its receiver."
+      }
+    }
+  ]
+}
