@@ -21,6 +21,7 @@ Batch records should also be legible as first-class change events. They need eno
 | --- | --- | :---: | --- |
 | req-grid-service-batch-model | [Batch Model](#batch-model) | Implemented | Batch as a first-class Entity with lifecycle states and service functions |
 | req-grid-service-batch-event | [Batch Event Log](#batch-event-log) | Implemented | Append-only per-operation audit log linked to each Batch |
+| req-grid-service-batch-evidence | [Evidence Is Atomic With The Write](#evidence-is-atomic-with-the-write) | Proposed | A write and the batch's record of it commit together or not at all |
 | req-grid-service-batch-all | [All Writes Are Batch-Backed](#all-writes-are-batch-backed) | Implemented | Single and multi-object writes share batch semantics |
 | req-grid-service-batch-metadata | [Batch Metadata Fields](#batch-metadata-fields) | Implemented | Human-readable and machine-readable batch metadata |
 | req-grid-service-batch-infra | [Batch ID As Infrastructure](#batch-id-as-infrastructure) | Implemented | CallerContext introduced; batch_id threading via ContextVar implemented |
@@ -640,6 +641,38 @@ The service layer does NOT retry automatically. A future helper module may wrap 
 
 **Note — caller-managed rollback (2026-04-10):** Plugin validation (`validate_plugin --level runs`) needs to exercise the full write pipeline and then discard all side effects, including auto-created Batch entities. This is handled today by the validation system wrapping its checks in a caller-owned `transaction.atomic()` block that always rolls back. The batch system itself does not offer a built-in "disposable" or "rollback" mode because the decision to discard results is a caller-level concern, not a batch-level one. `_ensure_batch` was moved inside the service layer's `transaction.atomic()` so that it participates in rollback rather than leaking orphan Batch rows. If a second caller emerges with the same execute-then-discard need, consider extracting a shared `rollback_transaction()` context manager as a utility — but do not add rollback semantics to the batch model itself.
 
+
+### Evidence Is Atomic With The Write
+----
+RID: `req-grid-service-batch-evidence`
+
+Status: `Proposed`
+
+The batch's record of an operation is evidence other parts of the grid rely on. It commits with the write it describes, or neither commits.
+
+#### Status Details
+Proposed; nothing is built. Issue# 896 - tap (finding 3) holds the review.
+
+What happens today (read on core main, 2026-11-21): the write pipeline records the operation's batch event after the write and catches any exception from that step, logging it and continuing. The recording function returns nothing, without an error, when there is no batch in context or the batch row cannot be found. So a write can commit with no record of it, while reconciliation and candidate derivation read those records as proof of what a batch touched (`spec-grid-reconcile.md`).
+
+#### Implementation
+1. Recording an operation's event happens inside the operation's transaction.
+2. If the record cannot be written, the operation fails and its write rolls back. In a multi-operation batch the failure is attributed to that operation and the batch rolls back (`req-grid-service-batch-tx`).
+3. An operation that reaches the recording step with no batch, or with a batch that does not exist, fails; it does not skip the record.
+4. The same holds for an operation classified re-observed unchanged (`req-grid-history-reobservation`): however that observation is recorded, it is recorded atomically with the spine stamp it accompanies.
+5. This requirement covers the service write pipeline and the GRIFT importer. Retirement already has it (`req-grid-flip-retirement-4`, `req-grid-service-delete-reason`).
+
+#### Development
+Best-effort recording was reasonable while the event log was a convenience. It became evidence when reconciliation started reading it, and evidence that can silently be missing reads as absence.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-batch-evidence-1 | Failure Rolls Back The Write | Proposed | With event recording made to fail, a create, a patch and a replace each fail and leave the object as it was. | |
+| req-grid-service-batch-evidence-2 | No Batch, No Write | Proposed | An operation that reaches recording with no batch in context fails rather than committing unrecorded. | |
+| req-grid-service-batch-evidence-3 | Import Covered | Proposed | A GRIFT batch whose event recording fails for one object is rejected whole. | |
+| req-grid-service-batch-evidence-4 | Every Committed Write Has A Record | Proposed | After any committed batch, every object it changed has an event naming that batch. | |
 
 ## Status Vocabulary
 
