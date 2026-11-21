@@ -5,6 +5,12 @@
 #              through tap.lane_run, with the Gryphon corpus required to execute;
 #   cold-boot  boots core_ci and runs scripts/gate (fresh scratch-DB boot cycle).
 #
+# `plugin_suites_on_cold_boot` moves the fixture plugins' suites, the corpus with them, from
+# `line` to `cold-boot`. `line` is the PR's critical path (about 9.5 min) and `cold-boot` ends
+# about 7 minutes earlier, so the suites (about 2 min) run in its shadow. The caller sets it
+# exactly when it also runs `cold-boot`; a call that set it without running cold-boot would
+# run the suites nowhere, and the corpus `--require` is what would notice.
+#
 # Callers, and why this is one file: product-lines.yml runs both on every PR (tier-gated
 # there, where the tier is known), and publish-release-tags.yml runs both on the exact tag
 # commit before a version is promoted. A tap release gates on core only — never on a
@@ -31,6 +37,11 @@ on:
         description: "Which lane this call runs: 'line' or 'cold-boot'."
         required: true
         type: string
+      plugin_suites_on_cold_boot:
+        description: "Run the fixture plugins' suites on cold-boot instead of line (set on BOTH calls, or neither)."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -143,14 +154,17 @@ jobs:
         # --durations=40: this step prints nothing until it ends, so a slow run (22-37 min
         # against 4-10 min before 2026-10-30) could not say which tests were slow. A run that
         # finishes now lists its 40 slowest; one that is cancelled at the limit lists nothing.
+        env:
+          # The corpus is required wherever the plugin suites run; with them on cold-boot,
+          # this lane is the core walk alone.
+          SCOPE: ${{ inputs.plugin_suites_on_cold_boot && '--no-plugins' || '--require gryphon_playground' }}
         run: |
-          docker compose --env-file .env exec -T web sh -c '
+          docker compose --env-file .env exec -T -e SCOPE web sh -c '
             set -euo pipefail
             cd /app
             uv run python -m tap.plugin_testing --record boot/core_ci.boot.json --check --plan
-            require="gryphon_playground"
             TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
-              --root /app --record boot/core_ci.boot.json ${require:+--require "$require"} \
+              --root /app --record boot/core_ci.boot.json $SCOPE \
               --summary /app/lane-summary.md -- -n auto --dist worksteal --durations=40
           '
           docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -225,6 +239,23 @@ jobs:
           fi
       - name: Cold-boot gate (scripts/gate — fresh scratch-DB boot cycle)
         run: scripts/gate
+      # The fixture plugins' suites, when the caller moved them here from `line`. After the
+      # gate, never beside it: one command on the database at a time. Same template, same
+      # record and the same corpus `--require` the line used to apply.
+      - name: Build per-profile test-DB template
+        if: inputs.plugin_suites_on_cold_boot
+        run: docker compose --env-file .env exec -T web sh -c 'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template scripts/build-test-template'
+      - name: Plugin suites — core_ci
+        if: inputs.plugin_suites_on_cold_boot
+        run: |
+          docker compose --env-file .env exec -T web sh -c '
+            set -euo pipefail
+            cd /app
+            TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
+              --root /app --record boot/core_ci.boot.json --no-core --require gryphon_playground \
+              --summary /app/lane-summary.md -- -n auto --dist worksteal --durations=40
+          '
+          docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Dump web logs on failure
         if: failure()
         run: docker compose --env-file .env logs web | tail -200
