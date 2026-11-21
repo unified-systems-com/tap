@@ -257,11 +257,11 @@ def parse_file(path: Path) -> ParsedSource | None:
     """
     try:
         source = path.read_text(encoding="utf-8")
-    except OSError, UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         return None
     try:
         tree = ast.parse(source, filename=str(path))
-    except SyntaxError, ValueError:
+    except (SyntaxError, ValueError):
         return None
     return ParsedSource(path, tree, source)
 

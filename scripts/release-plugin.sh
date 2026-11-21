@@ -95,7 +95,7 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Not inside a git wo
 cd "$REPO"
 
 # Normalize + validate the version to its canonical vX.Y.Z tag before doing anything.
-TAG="$(python3 - "$VERSION" <<'PY'
+TAG="$("$REPO/scripts/py" - "$VERSION" <<'PY'
 import sys
 from tap.plugin_release import normalize_tag, PluginReleaseError
 try:
@@ -254,7 +254,7 @@ else
   cp "$MANIFEST" "$MANIFEST_BACKUP"
   # A literal replacement of the whole assignment: no version substring can
   # match part of another key's value.
-  python3 - "$MANIFEST" "$BARE" <<'PYBUMP'
+  "$REPO/scripts/py" - "$MANIFEST" "$BARE" <<'PYBUMP'
 import pathlib, re, sys
 path, version = pathlib.Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
@@ -467,6 +467,6 @@ info "tagged $TAG @ ${RELEASE_SHA:0:8}"
 bold "Done: $SLUG $TAG"
 info "The manifest and the tag agree. Nothing else was touched — this working tree is clean."
 info "To ADOPT this release into a stack (a separate decision, tap#421):"
-info "  python3 -m tap.plugin_release --slug $SLUG --version $TAG --boot-dir boot   # add --dry-run first"
+info "  scripts/py -m tap.plugin_release --slug $SLUG --version $TAG --boot-dir boot   # add --dry-run first"
 info "  (asks the forge which commit $TAG names, then writes rev + commit as one pair — tap#513."
 info "   Needs network, and refuses rather than writing a pin it could not verify.)"

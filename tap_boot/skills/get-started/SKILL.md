@@ -38,10 +38,12 @@ The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best
 
 Detect the platform (`uname`). Then:
 
-- **macOS**: Docker Desktop installed and running is the whole list.
+- **macOS**: Docker Desktop installed and running, plus **uv** (`brew install uv`). macOS's own
+  `python3` is 3.9, older than the 3.12 the host tools need, so `scripts/py` runs them on uv's
+  managed Python instead (tap#1277).
 - **Linux**: work through **"Host prerequisites (Linux)"** in
   `docs/misc/doc-dev-multisession-onboarding.md` — Docker Engine with the Compose
-  v2 plugin, docker-group membership, `lsof`, free ports. Warn about the
+  v2 plugin, docker-group membership, `lsof`, Python 3.12+ or uv, free ports. Warn about the
   root-owned bind-mount papercut *before* it bites (relief valve:
   `sudo chown -R "$USER" .`). That section is canonical; don't restate it from memory.
 - **Both**: ~10 GB free disk for the images; network access to GHCR for the

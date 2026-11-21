@@ -76,12 +76,12 @@ FILES="$(git diff --name-only "$BASE" HEAD)"
 # so any other content is the failure, and matching the whole string keeps this
 # POSIX-clean — no `${x##*$'\n'}` bashism, which is exactly the class of thing that
 # broke this script under dash before.
-BOM_OUT="$(printf '%s\n' "$FILES" | python3 "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD" 2>&1 || true)"
+BOM_OUT="$(printf '%s\n' "$FILES" | "$TAP_ROOT/scripts/py" "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD" 2>&1 || true)"
 case "$BOM_OUT" in
   boot) echo boot; exit 0 ;;
   no-boot) : ;;
   *)
-    echo "::error::change-tier: the BOM classifier gave no verdict (TAP_ROOT=$TAP_ROOT) — failing closed to \`boot\`. Its own output follows; a SyntaxError there means a host-runnable module used grammar this python3 cannot parse — run \`python3 tap/host_syntax_floor.py\` (tap#400)." >&2
+    echo "::error::change-tier: the BOM classifier gave no verdict (TAP_ROOT=$TAP_ROOT) — failing closed to \`boot\`. Its own output follows; a SyntaxError there means a host-runnable module used grammar this interpreter cannot parse — run \`scripts/py tap/host_syntax_floor.py\` (tap#400)." >&2
     printf '    %s\n' "$BOM_OUT" >&2
     echo boot; exit 0 ;;
 esac

@@ -1305,6 +1305,8 @@ esac
 @pytest.fixture(name="send_env")
 def send_env_fixture(fix_env: dict[str, Any]) -> dict[str, Any]:
     shutil.copy(REPO_ROOT / "scripts" / "bug-report", fix_env["repo"] / "scripts" / "bug-report")
+    # bug-report reaches host Python through the resolver beside it (tap#1277).
+    shutil.copy(REPO_ROOT / "scripts" / "py", fix_env["repo"] / "scripts" / "py")
     gh = fix_env["tmp"] / "bin" / "gh"
     gh.write_text(SEND_GH)
     (fix_env["repo"] / ".bug-reports").mkdir(exist_ok=True)

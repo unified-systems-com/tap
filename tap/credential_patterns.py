@@ -176,7 +176,7 @@ def scan_paths(repo_root: Path, rel_paths: Iterable[str]) -> list[CredentialMatc
     for rel in rel_paths:
         try:
             text = (repo_root / rel).read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         matches.extend(scan_text(text, path=str(rel)))
     return matches

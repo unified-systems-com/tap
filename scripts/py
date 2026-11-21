@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Run a host-side Python tool on an interpreter that can parse it (tap#1277).
+#
+#   scripts/py <python arguments...>     e.g.  scripts/py tap/host_syntax_floor.py
+#                                               scripts/py -m tap.boot_records --check
+#                                               scripts/py - "$arg" <<'PY' ... PY
+#
+# Host tools (the git hooks, scripts/*) run before any container exists, so they used to call
+# whatever `python3` the machine had. That is 3.13 on Debian 13 and 3.9 on macOS. Every module they
+# run is held to tap/host_syntax_floor.py's HOST_SYNTAX_FLOOR, so any interpreter at or above the
+# floor will do. The order:
+#
+#   1. `python3` on PATH, if it meets the floor. The common case; no download, no new tool.
+#   2. `python3.14` on PATH, if present (a Homebrew or distro side-by-side install).
+#   3. `uv run --no-project --python <requires-python>`. uv fetches and caches its own managed
+#      interpreter on first use, and never touches the system Python.
+#   4. Otherwise FAIL LOUD, exit 127. A hook that silently skips because its interpreter is missing
+#      still reads as a green commit, and the hook in question is the secret scan.
+#
+# The two numbers below are stated HERE, not read from tap/host_syntax_floor.py and pyproject.toml.
+# This file is in the local-execution consent hash, and those two are not. Reading them would let
+# an unreviewed edit to either change which interpreter every hook runs on without moving the hash.
+# tap/tests/test_host_syntax_floor.py holds both to their sources, so they cannot drift.
+# Bash 3.2-compatible (macOS /bin/bash).
+set -euo pipefail
+
+_fmaj=3 _fmin=12   # == HOST_SYNTAX_FLOOR in tap/host_syntax_floor.py
+_uv_python=3.14    # == the lower bound of requires-python in pyproject.toml
+
+_meets_floor() {
+    "$1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= ($_fmaj, $_fmin) else 1)" >/dev/null 2>&1
+}
+
+for _cand in python3 python3.14; do
+    if command -v "$_cand" >/dev/null 2>&1 && _meets_floor "$_cand"; then
+        exec "$_cand" "$@"
+    fi
+done
+
+if command -v uv >/dev/null 2>&1; then
+    exec uv run --no-project --quiet --python "$_uv_python" -- python "$@"
+fi
+
+_found="none"
+if command -v python3 >/dev/null 2>&1; then
+    _found="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo unknown)"
+fi
+cat >&2 <<EOF
+scripts/py: no Python ${_fmaj}.${_fmin}+ on this machine (python3 here is: ${_found}), and no uv to fetch one.
+  TAP's host tools (git hooks, scripts/*) need Python ${_fmaj}.${_fmin} or newer.
+  Install uv, which fetches its own interpreter and never touches the system Python:
+    macOS:  brew install uv
+    Linux:  your package manager's uv, or see https://docs.astral.sh/uv/getting-started/installation/
+  Or install python3.14 from your package manager. Then run the command again.
+EOF
+exit 127

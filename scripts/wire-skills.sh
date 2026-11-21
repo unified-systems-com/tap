@@ -65,7 +65,7 @@ while IFS=$'\t' read -r skill_name app_slug skill_dir; do
     link_name="$skill_name"
   fi
   # Symlink with a relative target so the farm survives renaming the worktree.
-  rel_target="$(python3 -c "import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$skill_dir" "$SKILLS_DIR")"
+  rel_target="$("$SCRIPT_DIR/py" -c "import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$skill_dir" "$SKILLS_DIR")"
   ln -snf "$rel_target" "$SKILLS_DIR/$link_name"
   n_total=$((n_total + 1))
 done < "$TMP_INVENTORY"

@@ -129,6 +129,9 @@
 /.githooks/                              @notgeorge @criticalsec
 /.claude/                                @notgeorge @criticalsec
 /scripts/hooks/                          @notgeorge @criticalsec
+# `scripts/py` chooses the interpreter every git hook and host script runs on (tap#1277), so it is
+# local execution exactly as much as the hooks are, and sits in the consent hash beside them.
+/scripts/py                              @notgeorge @criticalsec
 # `scripts/wire-skills.sh` symlinks every `<app>/skills/<name>/` into `.claude/skills/`
 # so the harness exposes it as a slash command. Owning `.claude/` owns the SYMLINK, not
 # the file it points at. The catch-all `*` above already owns these paths, so this rule

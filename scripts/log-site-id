@@ -27,7 +27,7 @@ cd "$(git rev-parse --show-toplevel)"
 # and also distinct from the others minted in this run.
 existing="$(git grep -hoE '\[[0-9a-f]{4}\]' -- '*.py' 2>/dev/null | tr -d '[]' | sort -u || true)"
 
-python3 - "$count" <<'PY' "$existing"
+scripts/py - "$count" <<'PY' "$existing"
 import secrets
 import sys
 
