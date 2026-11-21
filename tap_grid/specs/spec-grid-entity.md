@@ -984,6 +984,7 @@ What exists today (read on core main, 2026-11-21): the only row-level batch poin
 7. The pointers describe the current state. `last_changed_batch_id` is the last writer, not a ledger: a batch that changed an object which a later batch changed again is no longer named on the row. The full footprint of a batch is the history rows and the batch's own record.
 8. `last_observed_at` is kept on the row so that "when" survives a batch record being pruned.
 9. All three join the canonical spine surface (`req-grid-entity-spine-surface`) after `version`, and are readable and filterable through Gryphon. They are derived on the receiving grid and are not accepted from a GRIFT import envelope, the same rule `natural_key` follows.
+11. `last_observed_batch_id` and `last_observed_at` record that a batch named the object, and nothing more. They do not say that a source saw the thing at that time: an analyst's edit and a collector's pass both move them, and what kind of write it was is read from the batch they point at, not from a vocabulary of change types on the row. They do not confirm every field either: a pass that sends two fields and leaves the rest under keep-absent moves them just the same, so a consumer that needs to know which fields a pass asserted reads FLIP and the batch, not these stamps.
 10. The typed-row `batch_id` is not removed by this requirement. Its removal changes every plugin table and is specified with that release (Issue# 1288 - tap), after a check that the history rows still say which batch produced each version.
 
 #### Development
@@ -1058,7 +1059,7 @@ Compared on 2026-11-21 with the published schemas of 23 other systems (the summa
 #### Development
 One time per object on the spine is a narrower choice than the forensic timeline tools make (one entry per timestamp) and than the finding schemas make (several named times side by side). It is the choice that keeps the spine one row per object. The typed fields still hold every time the source gave, and further spine columns can be added later without changing any plugin table.
 
-A source field that reports "last seen" and moves on every pass is a change on every pass and writes history on every pass (`req-grid-history-reobservation`). The grid's own `last_observed_at` carries that fact without a history row; a collector should not also store it as a typed field.
+A value a source states is never dropped to save a write. A source's own "last seen" says when the source saw the thing; the grid's `last_observed_at` says when a batch last named the object on this grid. They answer different questions, and the first stays a typed field. When it moves on every pass it is a change on every pass and writes history on every pass (`req-grid-history-reobservation`); that is the source's data. What a collector should not store is a time it made up itself, such as its own clock at the moment it ran: that is collection time, and it has its own place (`req-grid-entity-collection-time`).
 
 #### Acceptance Criteria
 

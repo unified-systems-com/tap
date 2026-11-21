@@ -1349,6 +1349,7 @@ class BaseModel(models.Model):
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
         flip_changed_fields: Any = kwargs.pop("flip_changed_fields", _FLIP_TOUCHED_UNSET)
+        self.prepare_for_write()
         if not skip_validation:
             self.full_validate()
 
@@ -1442,6 +1443,18 @@ class BaseModel(models.Model):
                 self.entity.name = new_name
             if "natural_key" in spine_updates:
                 self.entity.natural_key = new_key
+
+    def prepare_for_write(self) -> None:
+        """Put the instance's values into the form they are stored in. A no-op by default.
+
+        A model that normalises or derives a stored value (a canonical spelling, a stamp set
+        when another field is first true) does it here, not in a ``save`` override. The write
+        pipeline calls this before it validates and before it decides whether the write changes
+        anything, so an unchanged re-observation is compared in stored form and a value this
+        hook sets is never lost to a skipped save (req-grid-history-reobservation rule 10).
+        ``save`` calls it too. It runs more than once per write, so it must give the same
+        result each time.
+        """
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Delete the node/edge — must route through the service layer.

@@ -336,7 +336,7 @@ class CollectionJob(BaseModel):
 class Schedule(BaseModel):
     """An on-grid recurring policy that says "run this collector when cron matches."
 
-    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/a1e120e387c5 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/ceb6b5dc91af (derivation) — the
         on-grid recurring-policy node.
 
     `Schedule` is user-creatable: writes flow through the tap_cares scheduler
@@ -450,8 +450,8 @@ class Schedule(BaseModel):
                 }
             )
 
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        """Stamp `enabled_at` on save when the schedule is enabled but unset.
+    def prepare_for_write(self) -> None:
+        """Stamp `enabled_at` before a write when the schedule is enabled but unset.
 
         Catches the case where a schedule is written by a path that does not
         manage `enabled_at` explicitly — GRIFT import, direct ORM, or a
@@ -468,9 +468,10 @@ class Schedule(BaseModel):
         We deliberately do NOT consult `self.history` to detect transitions
         because the simple-history audit log is not application logic.
         """
+        # In the write hook, not a save override: a write the pipeline finds unchanged skips the
+        # save, and the stamp must not be skipped with it.
         if self.enabled and self.enabled_at is None:
             self.enabled_at = datetime.now(UTC)
-        super().save(*args, **kwargs)
 
 
 class ScheduleFireStatus(models.TextChoices):

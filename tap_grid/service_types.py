@@ -48,10 +48,11 @@ class WriteOperation:
             its model default, the PUT behaviour. ``"keep"`` leaves the stored value
             alone, replaces a present field whole, and resets a null on a non-null
             field to its default. Only replace_node / replace_edge accept ``"keep"``.
-        spine_change: The caller writes a spine value of the target itself in this batch and
-            that value differs from the stored one, so the operation is a change even when no
-            typed value moves (req-grid-history-reobservation rule 2). Set by the GRIFT importer
-            for an envelope whose name or dimensions differ; never read from a request.
+        spine_intent: The spine values the caller will write for the target itself in this batch
+            (the GRIFT envelope's name and dimensions). The pipeline compares them with the
+            stored spine under the target's row lock, so an envelope that differs makes the
+            operation a change even when no typed value moves (req-grid-history-reobservation
+            rule 2). Set by the GRIFT importer; never read from a request.
     """
 
     verb: str
@@ -68,7 +69,7 @@ class WriteOperation:
     metadata: dict[str, Any] | None = None
     cascade: Literal["none", "contained"] = "none"
     absent: Literal["reset", "keep"] = "reset"
-    spine_change: bool = False
+    spine_intent: dict[str, Any] | None = None
 
 
 # Retirement reasons — a closed vocabulary (req-grid-service-delete-reason-3). A third

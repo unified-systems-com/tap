@@ -55,7 +55,7 @@ from tap_grid.service_types import (
     WriteOperation,
     WriteResult,
 )
-from tap_grid.write_classification import WriteClassification, classify, snapshot
+from tap_grid.write_classification import WriteClassification, classify, snapshot, spine_delta
 
 logger = logging.getLogger(__name__)
 
@@ -918,8 +918,12 @@ def _execute_write_pipeline(
             else:
                 _apply_replace(instance, payload, model_cls)
 
-        # Step 6: Model validation (full_validate + Django full_clean).
+        # Step 6: Model validation (full_validate + Django full_clean), on the values in the form
+        # they are stored in. The model's write hook and every check a save would run happen here,
+        # before the write is classified, so a write found unchanged has skipped none of them
+        # (req-grid-history-reobservation rule 10).
         if not is_delete:
+            instance.prepare_for_write()
             if is_create and op.entity_id is not None and instance.entity_id is None:
                 # The id this create will land under, so a whole-record check can tell the row
                 # from another one (Dimension.validate's duplicate-name rule; the spine row is
@@ -942,11 +946,20 @@ def _execute_write_pipeline(
         # read this one result (req-grid-history-reobservation rule 5).
         classification: WriteClassification | None = None
         if before is not None:
+            if isinstance(instance, Edge):
+                # Edge.save validates the properties against the edge type's schema; an unchanged
+                # edge skips the save, so the check runs here for every update-shaped write.
+                from tap_grid.constraints import validate_edge_properties
+
+                validate_edge_properties(instance.edge_type, instance.properties)
             classification = classify(
                 instance,
                 before,
                 frozenset(payload) | reset_to_default,
-                caller_spine_change=op.spine_change,
+                # Read here, not where the operation was built: the target's row has been locked
+                # since it was loaded, so no other writer can move the spine between this
+                # comparison and the caller's write of it.
+                caller_spine_change=bool(spine_delta(op.spine_intent)),
             )
 
         # Steps 10 & 11: Persistence and provenance recording.

@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5f075247c0e4 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/bba92d074081 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -42,6 +42,7 @@ from tap_grid.services import (
     resolve_identity,
     write_batch,
 )
+from tap_grid.write_classification import spine_delta
 from tap_grid.write_guard import below_pipeline_write
 
 logger = logging.getLogger(__name__)
@@ -2934,7 +2935,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/584d3b33524e (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/6892bc742a83 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -3213,8 +3214,9 @@ def _execute_grift_batch(
                             # An envelope whose name or dimensions differ from the stored spine makes
                             # this replace a change even when no typed value moves: it carries the
                             # one version and the one history row for what the post-pass writes
-                            # (req-grid-history-reobservation rule 4).
-                            spine_change=bool(_spine_delta(spine_intent)),
+                            # (req-grid-history-reobservation rule 4). The pipeline makes the
+                            # comparison itself, under the node's row lock.
+                            spine_intent=spine_intent,
                         )
                     )
                     replace_spine_intents.append(spine_intent)
@@ -4874,43 +4876,6 @@ def _apply_authority_claims(
     return summaries
 
 
-def _spine_delta(intent: dict[str, Any]) -> dict[str, Any]:
-    """The spine values a replaced node's envelope would change: ``name``, ``dimensions``, or neither.
-
-    Read twice per replaced node, from one definition: when its operation is built, so a write whose
-    only difference is on the spine is classified changed (req-grid-history-reobservation rule 2),
-    and in the post-pass that writes the values.
-    """
-    envelope_name = intent.get("envelope_name")
-    envelope_dims = intent.get("envelope_dims") or {}
-    # The envelope is authoritative for the caller's values on a replace, an empty one included:
-    # {} clears them (Issue# 608 - tap; aws-build Q46b). The type's defaults are re-merged under
-    # it, src default, as a create builds them, so a collector's run never wipes them (aws-build
-    # Q59 D6; req-grid-dimension-reference-7).
-    from tap_grid.dimension_map import stamp
-    from tap_grid.registry import get_model_class
-
-    try:
-        type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
-    except KeyError:
-        type_defaults = {}
-    stored_dims = stamp(type_defaults, envelope_dims)
-
-    # Read the persisted spine values to decide whether anything needs to
-    # change. A no-op update should not bump updated_at.
-    try:
-        persisted = Entity.objects.values("name", "dimensions").get(pk=uuid.UUID(intent["entity_id"]))
-    except Entity.DoesNotExist:
-        return {}
-
-    delta: dict[str, Any] = {}
-    if envelope_name is not None and envelope_name != persisted["name"]:
-        delta["name"] = envelope_name
-    if stored_dims != (persisted["dimensions"] or {}):
-        delta["dimensions"] = dict(stored_dims)
-    return delta
-
-
 def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> None:
     """Propagate envelope-side spine fields onto existing Entity rows.
 
@@ -4926,7 +4891,9 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
     Uses ``Entity.objects.filter(...).update(...)`` rather than ``save()``: the
     version increment and the history row for a spine difference belong to the
     node's replace in the same batch, which is classified changed when
-    ``_spine_delta`` finds one (req-grid-history-reobservation rule 4).
+    ``spine_delta`` finds one (req-grid-history-reobservation rule 4). It runs in
+    the transaction that replace locked the node's row in, so the spine it reads
+    is the one the replace was classified against.
     ``updated_at`` is bumped explicitly to reflect that something on the row
     did change.
     """
@@ -4936,7 +4903,7 @@ def _sync_spine_for_replaced_nodes(replace_intents: list[dict[str, Any]]) -> Non
     now = timezone.now()
     for intent in replace_intents:
         entity_uuid = uuid.UUID(intent["entity_id"])
-        update_fields = _spine_delta(intent)
+        update_fields = spine_delta(intent)
 
         if update_fields:
             update_fields["updated_at"] = now

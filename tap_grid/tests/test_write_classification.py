@@ -22,7 +22,8 @@ from tap_grid.models import BaseModel, BatchEvent, BatchEventType, Edge, Entity
 from tap_grid.service_types import WRITE_CHANGED, WRITE_UNCHANGED, WriteOperation
 from tap_grid.services import create_edge, create_node, patch_node, replace_edge, replace_node, write_batch
 from tap_grid.tests.test_grift import _batch_container, _batch_entity_id, _minimal_doc
-from tap_grid.write_classification import SYSTEM_MANAGED_FIELDS, values_equal
+from tap_grid.write_classification import SYSTEM_MANAGED_FIELDS, spine_delta, values_equal
+from tap_grid.write_guard import unguarded_write
 from tap_web.models import Panel
 
 FLIP = {n: pytest.mark.spec(f"req-grid-flip-change-{n}") for n in range(1, 7)}
@@ -356,6 +357,76 @@ class TestReobservationIsNotAChange:
         assert (after.version, after.updated_at) == (entity.version, entity.updated_at)
         assert Edge.history.filter(entity_id=edge_id).count() == rows
         assert _events(edge_id, second) == [BatchEventType.OBSERVE]
+
+
+@pytest.mark.django_db
+class TestTheWholeOperationIsClassifiedUnderTheLock:
+    """Preparation, validation and the spine comparison all happen in the pipeline, before the save decision."""
+
+    @REOBS[4]
+    def test_spine_intent_is_compared_when_the_write_runs_not_when_it_was_built(self) -> None:
+        """An envelope that matched the spine when the operation was built, and no longer does when
+        it runs, is a change: the comparison is the pipeline's, under the node's row lock."""
+        node, _ = _create({"name": "n"})
+        entity = Entity.objects.get(pk=node.entity_id)
+        intent = {
+            "entity_id": str(node.entity_id),
+            "entity_type": _TYPE,
+            "envelope_name": entity.name,
+            "envelope_dims": {},
+        }
+        assert spine_delta(intent) == {}
+        op = WriteOperation(
+            verb="replace_node", target=node.entity_id, payload={"name": "n"}, absent="keep", spine_intent=intent
+        )
+        # Another writer moves the spine after the operation was built.
+        with unguarded_write():
+            Entity.objects.filter(pk=node.entity_id).update(name="moved by another writer")
+        assert spine_delta(intent) == {"name": entity.name}
+        version, _, rows = _state(node.entity_id)
+
+        result = write_batch([op], caller_context=_ctx())
+
+        assert result.success, result.errors
+        assert result.results[0].state == WRITE_CHANGED
+        assert _state(node.entity_id)[0] == version + 1
+        assert _state(node.entity_id)[2] == rows + 1
+
+    @REOBS[3]
+    def test_the_write_hook_runs_before_classification(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A value the model's write hook derives is stored, although the payload repeats what is stored."""
+        node, _ = _create({"name": "n", "description": "d"})
+        monkeypatch.setattr(PgNode, "prepare_for_write", lambda self: setattr(self, "description", "derived"))
+        version, _, rows = _state(node.entity_id)
+
+        result = _keep(node.entity_id, {"name": "n"}, _ctx())
+
+        assert result.success, result.errors
+        assert result.state == WRITE_CHANGED
+        assert PgNode.objects.get(entity_id=node.entity_id).description == "derived"
+        assert _state(node.entity_id)[0] == version + 1
+        assert _state(node.entity_id)[2] == rows + 1
+
+    @REOBS[8]
+    def test_an_unchanged_edge_is_still_validated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An edge whose stored properties no longer satisfy its type's schema is refused, not observed."""
+        a, _ = _create({"name": "a"})
+        b, _ = _create({"name": "b"})
+        made = create_edge(a.entity, b.entity, LINK, {"weight": 1}, caller_context=_ctx())
+        from tap_grid import constraints
+        from tap_grid.exceptions import EdgePropertyValidationError
+
+        def refuse(edge_type: str, properties: Any) -> None:
+            raise EdgePropertyValidationError("properties no longer satisfy the schema")
+
+        monkeypatch.setattr(constraints, "validate_edge_properties", refuse)
+        ctx = _ctx()
+
+        result = replace_edge(made.entity_id, {"properties": {"weight": 1}}, caller_context=ctx)
+
+        assert not result.success
+        assert result.errors[0].code == "validation_error"
+        assert not BatchEvent.objects.filter(batch__entity_id=_bid(ctx), entity_id=made.entity_id).exists()
 
 
 @pytest.mark.django_db
