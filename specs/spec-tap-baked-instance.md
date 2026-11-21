@@ -369,15 +369,25 @@ RID: `req-tap-bake-initializer`
 Status: `Proposed`
 
 One initializer takes an installation from empty to ready. It is the only thing that loads, activates
-or migrates, and only one runs per installation at a time. It holds a Postgres advisory lock on the
-installation's database for its whole run, so a second initializer started meanwhile (a second
-replica, or a restarted container) waits rather than racing it. Per-pod init containers do not
-provide that on their own: each pod would run its own, so the lock lives in the database every pod
-shares.
+or migrates, and only one runs per installation at a time. A second initializer started meanwhile (a
+second replica, or a restarted container) waits rather than racing it. Per-pod init containers don't
+provide that on their own, because each pod would run its own.
 
-Its progress is **durable**. A row in the installation's database records which phase last completed:
-`loaded`, `files-placed`, `activated`, `finished`. A file kept with the files records the same for
-the file stores. Every write that crosses stores is staged:
+**The lock lives outside the database it protects.** The initializer holds a session advisory lock,
+keyed on the installation's database name, on a connection to the cluster's maintenance database
+(`postgres`, which every cluster and managed service provides). It holds that lock for its whole run.
+Dropping and recreating the installation's database, which recovering a failed load requires, cannot
+happen while a session is connected to it, and closing that session would release a lock held there.
+A lock held in the maintenance database survives the target being replaced.
+
+**Progress is durable, and recorded before each phase starts as well as after it ends.** The
+initializer writes its progress to the installation's state store, beside its secrets
+([`req-tap-bake-installation-identity`](#identity-belongs-to-the-installation)). The record lives
+there, not in the database, because the database is the thing a failed load discards. Each phase is
+written as `started` before its first write and `done` after its last, for `load`, `files`,
+`activate` and `finish`. A copy of the record goes into the database once activation completes, so
+serving processes can check readiness without reading the state store. Every write that crosses
+stores is staged:
 
 1. **Load the database** into the empty database. Because the target is pristine, the load may run in
    parallel jobs. A load that fails part-way is discarded by dropping and recreating the database, so
@@ -391,9 +401,9 @@ the file stores. Every write that crosses stores is staged:
 4. **Finish**: the post-activation steps and the rest of boot, which is idempotent against seeded
    data ([`req-boot-idempotent`](spec-tap-boot-v0.md#idempotent-re-apply)).
 
-A restarted initializer reads the progress row and resumes after the last completed phase, or, when
-the interrupted phase cannot be resumed, discards that phase's partial writes and repeats it. It
-never runs Finish against stores that disagree about what was loaded.
+A restarted initializer reads the progress record and resumes after the last phase marked `done`.
+A phase marked `started` but not `done` was interrupted: its partial writes are discarded and it
+runs again. It never runs Finish against stores that disagree about what was loaded.
 
 Before anything else the initializer classifies the stores, and each class has exactly one road:
 
@@ -401,9 +411,9 @@ Before anything else the initializer classifies the stores, and each class has e
 | --- | --- |
 | Nothing (pristine, as the backup spec defines the word) | Seed load, or the full initialization if the seed is declined |
 | A declared clone not yet activated | Activation, then Finish |
-| This initializer's progress row, part-way | Resume ([`req-tap-bake-initializer-2`](#one-initializer-per-installation)) |
+| Whatever the progress record names as `started` but not `done` | Discard that phase's partial writes and repeat it: for `load`, drop and recreate the database, then load again; for `files`, remove the staging directories, then stage again ([`req-tap-bake-initializer-2`](#one-initializer-per-installation)) |
 | An activated installation, or a TAP installation made by a boot before this initializer existed | Finish only, which is today's boot of an existing installation |
-| Anything else: objects but no TAP schema, a partial TAP schema with no progress row, stores that disagree | **Refuse, writing nothing**, and name what was found |
+| Anything else: objects but no TAP schema, or a partial TAP schema with no progress record naming a phase in flight | **Refuse, writing nothing**, and name what was found |
 
 The seed is consulted only in the first row. A Codespace being restarted is in the fourth row and goes
 straight to Finish.
@@ -424,7 +434,8 @@ new installation from a reviewed, pinned artifact.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-initializer-1 | One At A Time | Proposed | Two initializers started together against one installation complete as one: one does the work, the other waits and then finds it done. | |
+| req-tap-bake-initializer-1 | One At A Time | Proposed | Two initializers started together against one installation complete as one: one does the work, the other waits and then finds it done, including while the first drops and recreates the installation's database. | The lock is in the maintenance database |
+| req-tap-bake-initializer-8 | In-Flight Recorded First | Proposed | Killing the initializer after `pg_restore` has created some tables but before it finished, then restarting it, drops and reloads the database instead of refusing it, because the progress record names `load` as started. | The crash the classification would otherwise refuse |
 | req-tap-bake-initializer-2 | Interrupted Anywhere | Proposed | Killing the initializer during each phase in turn (load, file staging, activation, Finish), then restarting it, yields an installation equal to an uninterrupted one. | One case per phase; the parity check of -4 |
 | req-tap-bake-initializer-3 | Files Atomic | Proposed | After an interruption during file staging, each file root holds either nothing from the seed or all of it, verified against the manifest. | |
 | req-tap-bake-initializer-4 | Same Installation Either Road | Proposed | A seeded and a full initialization of the same record produce the same Gryphon counts by entity type, the same schema (`tap.schema_parity`), the same recorded migrations, and the same file-store inventory and plugin-data hashes. | |
@@ -720,3 +731,7 @@ substitute for reviewing it. This revision makes these changes:
     refused.
   - Verifying an attestation against the repository alone admits any workflow that can mint one, so
     verification now pins the signer workflow and a protected ref.
+- Round 3 (`af974155`) found that the lock and recovery contradicted each other. A lock held on the
+  installation's database can't survive dropping that database, and a crash mid-load left a partial
+  schema with no progress row, which the classification would have refused. The lock now lives in the
+  maintenance database, and progress is recorded in the state store before each phase starts.
