@@ -20,11 +20,12 @@ and these fixtures are load-bearing for every DB test in core and in every plugi
 
 What the harness provides (unchanged in behavior from the conftest era):
 
-* ``django_db_setup`` (session) — extends pytest-django's fixture to run the
-  idempotent auth bootstrap (``sync_auth``) once per session, so the ``tap_test``
-  program actor + capabilities + groups exist as committed baseline data, and to
-  import the dimension vocabulary (core's and every installed plugin's dimension
-  bundle, then the test seed), since names resolve from live Dimension rows.
+* the test-database seed (``_install_test_db_seed_hook``) — once per test database,
+  as pytest-django sets it up and outside any test's transaction, runs the idempotent
+  auth bootstrap (``sync_auth``), so the ``tap_test`` program actor + capabilities +
+  groups exist as committed baseline data, and imports the dimension vocabulary
+  (core's and every installed plugin's dimension bundle, then the test seed), since
+  names resolve from live Dimension rows.
 * ``default_caller_context`` (autouse) — binds a ``CallerContext`` per test:
   DB tests run as ``tap_test`` (a ``tap_admin`` member holding every capability,
   satisfying the on-by-default service-boundary enforcement, req-tap-auth-policy);
@@ -152,21 +153,54 @@ def _tap_test_key() -> str:
     return ACTOR_TEST
 
 
-@pytest.fixture(scope="session")
-def django_db_setup(django_db_setup: object, django_db_blocker: Any) -> None:  # noqa: PT004
-    """Seed the auth bootstrap once per session.
+def _install_test_db_seed_hook() -> None:
+    """Seed the baseline into each test database once, the moment pytest-django sets it up (tap#1280).
 
-    Runs after pytest-django creates+migrates the test DB. The committed
-    capabilities/groups/built-in actors become the baseline every test inherits.
-    (If plugin registration order ever lets pytest-django's own fixture win the
-    name, `_resolve_test_actor` below still self-heals — the seeding here is the
-    fast path, not the only path.)
+    The baseline is the auth bootstrap (``sync_auth``: the ``tap_test`` program actor, the
+    capabilities, the groups) and the dimension vocabulary (``_seed_test_dimensions``). It must be
+    committed data every test inherits, written once per test database and outside any test's
+    transaction; written inside one, it is rolled back with the test and paid for again by the next.
+
+    It used to be a session ``django_db_setup`` override here, and that override never ran:
+    ``-p tap.pytest_harness`` registers this plugin before pytest-django's entry point, and of two
+    plugin-level fixtures of one name the later-registered wins, so pytest-django's own
+    ``django_db_setup`` shadowed it. ``default_caller_context`` then found no Dimension rows and
+    re-seeded inside every DB test's rolled-back transaction (~1.6 s each). Rather than another
+    fixture whose firing depends on registration or request order (a Django ``TestCase``'s class
+    atomic, or any fixture that opens ``db`` first, would still capture a lazily requested one), the
+    seed rides ``django.test.utils.setup_databases``: the one call that makes the test databases,
+    whichever fixture won the name — serial, each xdist worker, ``--reuse-db``, a template clone. It
+    runs after the call returns, so every alias, the ``search_readonly`` mirror included, already
+    points at the test database. A run with no DB test never calls it, so nothing forces a database.
+
+    ``default_caller_context`` still self-heals both halves for a transactional test that flushed
+    them (``_resolve_test_actor``, ``_ensure_test_dimensions``); that is the slow path, not the norm.
+    Guarded by ``tap/tests/test_pytest_harness_seed.py`` (req-tap-test-fixtures-5).
     """
-    with django_db_blocker.unblock():
-        from tap_auth.sync import sync_auth
+    import django.test.utils as test_utils
 
-        sync_auth()
-        _seed_test_dimensions()
+    if getattr(test_utils.setup_databases, "tap_seeded", False):
+        return
+    original = test_utils.setup_databases
+
+    def setup_databases(*args: Any, **kwargs: Any) -> Any:
+        from django.db import DEFAULT_DB_ALIAS
+
+        old_names = original(*args, **kwargs)
+        if any(connection.alias == DEFAULT_DB_ALIAS for connection, _name, _created in old_names):
+            _seed_test_baseline()
+        return old_names
+
+    setup_databases.tap_seeded = True  # type: ignore[attr-defined]
+    test_utils.setup_databases = setup_databases
+
+
+def _seed_test_baseline() -> None:
+    """The committed baseline every DB test inherits: the auth bootstrap, then the dimension vocabulary."""
+    from tap_auth.sync import sync_auth
+
+    sync_auth()
+    _seed_test_dimensions()
 
 
 def _install_model_built_test_db_hook() -> None:
@@ -175,7 +209,9 @@ def _install_model_built_test_db_hook() -> None:
     tap.test_settings sets TEST.MIGRATE=False, so Django's ``create_test_db`` creates the tables
     with every migration switched off and records none. Wrapped here, at the one place every test
     database is made (serial, each xdist worker, a template clone), so it happens once, outside
-    any test's transaction, and whichever fixture won the name ``django_db_setup``:
+    any test's transaction, and whichever fixture won the name ``django_db_setup`` (the baseline
+    seed rides ``setup_databases`` instead, see ``_install_test_db_seed_hook``, so that every alias
+    is pointed at its test database before it writes):
 
     * every migration is then recorded as applied (``record_all_migrations``; a template clone
       already carries the rows and is left alone), so the database answers like a migrated one;
@@ -314,6 +350,7 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     _take_stack_lock(config)
     _install_model_built_test_db_hook()
+    _install_test_db_seed_hook()
 
 
 def _take_stack_lock(config: pytest.Config) -> None:
