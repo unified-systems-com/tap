@@ -385,7 +385,7 @@ def _edge_observed_since(edge_id: uuid.UUID, boundary: datetime, claiming_batch:
             str(b)
             for b in BatchEvent.objects.filter(
                 entity_id=edge_id,
-                event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.LINK],
+                event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.OBSERVE, BatchEventType.LINK],
                 timestamp__gt=boundary,
             )
             .exclude(batch__entity_id=uuid.UUID(claiming_batch))
@@ -654,7 +654,7 @@ def _closure_observed_since(entity_id: uuid.UUID, since: datetime, produced_batc
     hits = list(
         BatchEvent.objects.filter(
             entity_id__in=ids,
-            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE],
+            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.OBSERVE],
             timestamp__gt=since,
         )
         .exclude(batch__status=BatchStatus.FAILED)
@@ -765,7 +765,7 @@ def _observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set
     return (
         BatchEvent.objects.filter(
             entity_id=entity_id,
-            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.LINK],
+            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.OBSERVE, BatchEventType.LINK],
             timestamp__gt=since,
             batch__status=BatchStatus.CLOSED,
         )

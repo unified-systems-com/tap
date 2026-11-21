@@ -21,7 +21,7 @@ Batch records should also be legible as first-class change events. They need eno
 | --- | --- | :---: | --- |
 | req-grid-service-batch-model | [Batch Model](#batch-model) | Implemented | Batch as a first-class Entity with lifecycle states and service functions |
 | req-grid-service-batch-event | [Batch Event Log](#batch-event-log) | Implemented | Append-only per-operation audit log linked to each Batch |
-| req-grid-service-batch-evidence | [Evidence Is Atomic With The Write](#evidence-is-atomic-with-the-write) | Proposed | A write and the batch's record of it commit together or not at all |
+| req-grid-service-batch-evidence | [Evidence Is Atomic With The Write](#evidence-is-atomic-with-the-write) | Implemented | A write and the batch's record of it commit together or not at all |
 | req-grid-service-batch-all | [All Writes Are Batch-Backed](#all-writes-are-batch-backed) | Implemented | Single and multi-object writes share batch semantics |
 | req-grid-service-batch-metadata | [Batch Metadata Fields](#batch-metadata-fields) | Implemented | Human-readable and machine-readable batch metadata |
 | req-grid-service-batch-infra | [Batch ID As Infrastructure](#batch-id-as-infrastructure) | Implemented | CallerContext introduced; batch_id threading via ContextVar implemented |
@@ -115,7 +115,7 @@ Each Batch accumulates an append-only log of per-operation events. Events record
 | --- | --- | --- | --- | --- |
 | `id` | UUIDField (PK) | No | uuid7 | Unique event identifier. |
 | `batch` | FK → Batch | No | — | The Batch this event belongs to. `CASCADE` on batch deletion. |
-| `event_type` | CharField choices | No | — | One of `create`, `update`, `delete`, `link`, `unlink`. |
+| `event_type` | CharField choices | No | — | One of `create`, `update`, `observe`, `delete`, `link`, `unlink`, and the importer's and reconciliation's own types (`force_reimport`, `skip`, `authority_proposed`), each specified where it is written. |
 | `entity_id` | UUIDField | No | — | The affected Entity's UUID. |
 | `entity_type` | CharField | No | — | Type slug of the affected Entity (denormalised for fast filtering). |
 | `model_name` | CharField | No | `""` | ORM model class name, e.g. `"Character"`. Empty for raw entity ops. |
@@ -129,9 +129,12 @@ Each Batch accumulates an append-only log of per-operation events. Events record
 | --- | --- |
 | `create` | A new node or edge was created. |
 | `update` | An existing node or edge was mutated (patch or replace). |
+| `observe` | A patch, replace or import named an existing node or edge and changed nothing (`req-grid-history-reobservation`, Issue# 322 - tap). The object has no new version and no history row; the event is the batch's record that it saw the object. |
 | `delete` | A node or edge was deleted (tombstoned). |
 | `link` | An edge was created between two existing nodes. |
 | `unlink` | An edge was removed. |
+
+An `observe` event is written once per unchanged object per pass, so on a scheduled collector the event table grows by the number of objects the collector re-sends on every pass. No retention rule for these rows is specified yet. It is an open decision (Issue# 322 - tap) and nothing prunes them today.
 
 #### Acceptance Criteria
 
@@ -143,6 +146,7 @@ Each Batch accumulates an append-only log of per-operation events. Events record
 | req-grid-service-batch-event-4 | All Five Event Types Supported | Implemented | `create`, `update`, `delete`, `link`, `unlink` are all valid event types. | |
 | req-grid-service-batch-event-5 | Actor Captured Per Event | Implemented | Each event records the acting user; survives user deletion as `null`. | |
 | req-grid-service-batch-event-6 | Events Cascade On Batch Delete | Implemented | Deleting a Batch removes its events. | `on_delete=CASCADE` |
+| req-grid-service-batch-event-7 | Unchanged Re-Observation Is `observe` | Implemented | An update-shaped operation that re-observed its object unchanged records one `observe` event and no `update`; a changed one records `update`. Readers of a batch's observations count `observe`. | `tap_grid/tests/test_write_classification.py`: `test_identical_reimport_leaves_no_row`, `test_every_committed_write_has_a_record`; `tap_grid/candidates.py::_OBSERVATION_EVENTS` |
 
 #### Future
 Define whether event log retention should be configurable separately from Batch retention. Define whether events should carry a delta hash or reference to the history record for deeper traceability.
@@ -565,12 +569,12 @@ Approved for Development. Implementation extends `WriteOperation` with an option
 Both forms satisfy the contract because they share three properties:
 
 - the version comparison and the version increment are part of the same transaction-scoped guard
-- exactly one `Entity.version` increment is recorded per successful verb call
+- exactly one `Entity.version` increment is recorded per successful verb call that changes the object; a patch or replace that re-observes it unchanged records none (`req-grid-history-reobservation`), and its version check still runs first
 - on any failure downstream (typed-model validation, history failure, FLIP failure, hotlink check, deferred hook), the surrounding `transaction.atomic()` rolls back and the increment is undone
 
 The choice between forms is an implementation detail of each verb. Patch/replace verbs that need typed-model `save()` machinery (which currently bumps `version` itself) typically lock the row first and skip a duplicate increment; verbs whose work is fully expressible as a single SQL update (most edge deletes, some purges) typically use the conditional UPDATE form. The contract above is what callers can rely on; the SQL shape is not.
 
-**No double version-bump.** Whichever form a verb uses, the typed-model `save()` path must contribute exactly one effective `Entity.version` increment per successful verb call. If `BaseModel.save()` would otherwise increment `version` on its own, the OCC guard arranges to set or skip that increment so the net change is +1. Verbs are responsible for documenting their integration with `BaseModel.save()` and `HistoricalRecords` so reviewers can confirm the single-increment invariant.
+**No double version-bump.** Whichever form a verb uses, the typed-model `save()` path must contribute exactly one effective `Entity.version` increment per successful verb call that changes the object (a re-observed-unchanged call does not save, so it contributes none). If `BaseModel.save()` would otherwise increment `version` on its own, the OCC guard arranges to set or skip that increment so the net change is +1. Verbs are responsible for documenting their integration with `BaseModel.save()` and `HistoricalRecords` so reviewers can confirm the single-increment invariant.
 
 **Verb signatures.** Every write verb accepts `entity_expected_version: int | None = None`:
 
@@ -626,7 +630,7 @@ The service layer does NOT retry automatically. A future helper module may wrap 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-service-batch-occ-1 | Optional Field On WriteOperation | Approved for Development | `WriteOperation.entity_expected_version: int \| None = None` is added; omitted means no check. | |
-| req-grid-service-batch-occ-2 | Atomic Entity-Row Guard | Approved for Development | The version check is enforced via a single conditional guard on the `Entity` row (atomic `UPDATE … WHERE version = N` or `SELECT … FOR UPDATE` + compare) inside the verb's own transaction. Exactly one `Entity.version` increment is recorded per successful verb call; downstream typed-model save / history / FLIP / spine sync run inside the same guarded transaction and contribute no additional version bumps. | Race window is zero; integration with `BaseModel.save()` documented per verb. |
+| req-grid-service-batch-occ-2 | Atomic Entity-Row Guard | Approved for Development | The version check is enforced via a single conditional guard on the `Entity` row (atomic `UPDATE … WHERE version = N` or `SELECT … FOR UPDATE` + compare) inside the verb's own transaction. Exactly one `Entity.version` increment is recorded per successful verb call that changes the object, none for one that re-observes it unchanged (`req-grid-history-reobservation`); downstream typed-model save / history / FLIP / spine sync run inside the same guarded transaction and contribute no additional version bumps. | Race window is zero; integration with `BaseModel.save()` documented per verb. |
 | req-grid-service-batch-occ-3 | Conflict Vs Not-Found Distinguished | Approved for Development | A direct caller with no OCC and a missing entity sees `not_found`. A direct caller with OCC and a missing entity sees `entity_version_conflict` with `actual_entity_version = null`. A direct caller with OCC and a wrong-version entity sees `entity_version_conflict` with `actual_entity_version = <int>`. Detail payload `{entity_expected_version, actual_entity_version, entity_id}`. | GRIFT removal `on_missing` policy applies on top of this in `req-grid-import-grift-occ`. |
 | req-grid-service-batch-occ-4 | Create Verbs Reject Expected Version | Approved for Development | `create_node` and `create_edge` reject `entity_expected_version` if set (no prior version exists to expect). | Stable error code, distinct from `entity_version_conflict`. |
 | req-grid-service-batch-occ-5 | Conflict Triggers Batch Rollback | Approved for Development | A `entity_version_conflict` triggers the existing `_BailOut` path; the `transaction.atomic()` block rolls back. | All-or-nothing per `req-grid-service-batch-tx`. |
@@ -646,14 +650,16 @@ The service layer does NOT retry automatically. A future helper module may wrap 
 ----
 RID: `req-grid-service-batch-evidence`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The batch's record of an operation is evidence other parts of the grid rely on. It commits with the write it describes, or neither commits.
 
 #### Status Details
-Proposed; nothing is built. Issue# 896 - tap (finding 3) holds the review.
+Implemented in the service write pipeline, which the GRIFT importer writes through (Issue# 322 - tap; Issue# 896 - tap, finding 3, holds the review). `_record_provenance` in `tap_grid/services/_impl.py` raises when the event cannot be written or when there is no batch row to write it in; the pipeline holds the save and the record in one savepoint and reports the failure as `evidence_not_recorded`, and `write_batch` rolls the batch back on it as on any failed operation.
 
-What happens today (read on core main, 2026-11-21): the write pipeline records the operation's batch event after the write and catches any exception from that step, logging it and continuing. The recording function returns nothing, without an error, when there is no batch in context or the batch row cannot be found. So a write can commit with no record of it, while reconciliation and candidate derivation read those records as proof of what a batch touched (`spec-grid-reconcile.md`).
+Before this, the pipeline caught any exception from recording, logged it and continued, and the recording function returned nothing when the batch row could not be found, so a write could commit with no record of it while reconciliation and candidate derivation read those records as proof of what a batch touched (`spec-grid-reconcile.md`).
+
+`record_batch_event` itself still returns nothing when it has no batch, for callers outside the write pipeline; the pipeline is what treats that as a failure. The spine stamp rule 4 speaks of is `req-grid-entity-batch-pointers`, not built; today a re-observation's record is its `observe` event alone.
 
 #### Implementation
 1. Recording an operation's event happens inside the operation's transaction.
@@ -669,10 +675,10 @@ Best-effort recording was reasonable while the event log was a convenience. It b
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-service-batch-evidence-1 | Failure Rolls Back The Write | Proposed | With event recording made to fail, a create, a patch and a replace each fail and leave the object as it was. | |
-| req-grid-service-batch-evidence-2 | No Batch, No Write | Proposed | An operation that reaches recording with no batch in context fails rather than committing unrecorded. | |
-| req-grid-service-batch-evidence-3 | Import Covered | Proposed | A GRIFT batch whose event recording fails for one object is rejected whole. | |
-| req-grid-service-batch-evidence-4 | Every Committed Write Has A Record | Proposed | After any committed batch, every object it changed has an event naming that batch. | |
+| req-grid-service-batch-evidence-1 | Failure Rolls Back The Write | Implemented | With event recording made to fail, a create, a patch and a replace each fail and leave the object as it was. | `tap_grid/tests/test_write_classification.py`: `test_a_failed_record_rolls_back_the_write` |
+| req-grid-service-batch-evidence-2 | No Batch, No Write | Implemented | An operation that reaches recording with no batch in context fails rather than committing unrecorded. | `tap_grid/tests/test_write_classification.py`: `test_no_batch_no_write` |
+| req-grid-service-batch-evidence-3 | Import Covered | Implemented | A GRIFT batch whose event recording fails for one object is rejected whole. | `tap_grid/tests/test_write_classification.py`: `test_import_with_a_failed_record_is_rejected_whole` |
+| req-grid-service-batch-evidence-4 | Every Committed Write Has A Record | Implemented | After any committed batch, every object it changed has an event naming that batch. | `tap_grid/tests/test_write_classification.py`: `test_every_committed_write_has_a_record` |
 
 ## Status Vocabulary
 

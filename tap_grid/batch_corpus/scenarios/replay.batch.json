@@ -3,7 +3,7 @@
   "description": "The batch id is the import identity (Kafka Connect: the buffer is keyed, not the payload): same facts under a fresh batch are a replace today (Issue# 322 - tap open), a rolled-back batch leaves no identity behind so a corrected retry commits, a replayed batch beside a new one is inert, and ref labels never leak across documents.",
   "scenarios": [
     {
-      "name": "the same facts under a fresh batch id are a replace: version 2, one update (Issue# 322 - tap is open)",
+      "name": "the same facts under a fresh batch id are a re-observation: version 1, one observe (Issue# 322 - tap)",
       "tags": [],
       "covers": [
         "req-grid-import-grift-identity-1",
@@ -66,17 +66,18 @@
           }
         ],
         "live": {
-          "A": 2
+          "A": 1
         },
         "tombstoned": {},
         "absent": [],
         "events": {
           "A": {
             "create": 1,
-            "update": 1
+            "update": 0,
+            "observe": 1
           }
         },
-        "note": "Pinned as today's contract: re-observation is recorded as a change. Issue# 322 - tap asks for a re-observation state that does not version; when it is ruled, this scenario's expectation changes, not its shape."
+        "note": "Re-observation is not a change (req-grid-history-reobservation, Issue# 322 - tap): the second batch finds A, changes nothing, and records one observe event; A keeps version 1 and the first batch's content stamp."
       }
     },
     {

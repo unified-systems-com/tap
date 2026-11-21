@@ -1934,6 +1934,9 @@ class BatchEventType(models.TextChoices):
     DELETE = "delete", "Delete"
     LINK = "link", "Link (edge creation)"
     UNLINK = "unlink", "Unlink (edge deletion)"
+    # A write that named the object and changed nothing (req-grid-history-reobservation,
+    # Issue# 322 - tap). The object was seen by the batch; it has no new version and no history row.
+    OBSERVE = "observe", "Observe (re-observed unchanged)"
     FORCE_REIMPORT = "force_reimport", "Force Re-Import"
     # An edge the importer declined to write because an endpoint did not resolve
     # (req-grid-import-grift-edge-endpoints-7). Written inside the batch's own

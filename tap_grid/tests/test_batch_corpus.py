@@ -66,7 +66,7 @@ def test_every_family_present_with_at_least_five() -> None:
 def test_the_second_pass_issue_shapes_are_scenarios() -> None:
     """Every issue the second pass classifies has a scenario naming it: the fixed ones expect the
     fix (no tag), the open ones are verified-pending on exactly that issue, and #322 is pinned as
-    today's contract with the question named in its note."""
+    the ruled contract (a re-observation versions nothing), with the issue named in its note."""
     by_issue = {n: [s for s in SCENARIOS if f"Issue# {n} - tap" in s.name] for n in (606, 607, 608, 351, 609, 610, 322)}
     for n, found in by_issue.items():
         assert found, f"Issue# {n} - tap has no scenario"

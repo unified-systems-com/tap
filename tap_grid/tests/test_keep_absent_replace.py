@@ -120,8 +120,8 @@ class TestKeepAbsentReplace:
         ctx_b = _ctx()
         replace_node(node.entity_id, {"name": "n", "kind": None}, caller_context=ctx_b, absent="keep")
         node.refresh_from_db()
-        assert node.flip_map.get("name") == ctx_b.batch_id
-        assert node.flip_map.get("kind") == ctx_b.batch_id  # a null reset is an assertion, so it is stamped
+        assert node.flip_map.get("name") == ctx_a.batch_id  # sent, but the stored value repeated: the entry stays
+        assert node.flip_map.get("kind") == ctx_b.batch_id  # a null reset that changed the value is stamped
         assert node.flip_map.get("tags") == ctx_a.batch_id  # not sent, not re-stamped
 
     @pytest.mark.spec("req-grid-service-write-keepabsent-5")

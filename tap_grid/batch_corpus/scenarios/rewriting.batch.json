@@ -330,7 +330,7 @@
           }
         ],
         "live": {
-          "A": 2,
+          "A": 1,
           "q": 1,
           "e": 1
         },
@@ -339,7 +339,7 @@
         "resolves": {
           "p": "A"
         },
-        "note": "p resolved to A: the edge's from_entity_id is A's id (the runner reads it back), its to is q's fresh id."
+        "note": "p resolved to A: the edge's from_entity_id is A's id (the runner reads it back), its to is q's fresh id. A itself is re-observed unchanged, so it keeps version 1 (req-grid-history-reobservation)."
       }
     },
     {
@@ -586,14 +586,14 @@
           }
         ],
         "live": {
-          "p": 2,
-          "q": 2,
+          "p": 1,
+          "q": 1,
           "e1": 1,
           "e2": 1
         },
         "tombstoned": {},
         "absent": [],
-        "note": "Every returned binding equals the actual endpoint id across imports: the second document's refs find the first's rows, and e2 is a keyless new edge between exactly those ids (two edges of one type between one pair are two rows when their ids differ — Issue# 547 - tap's collapse is a collector's derived edge id, not the importer's)."
+        "note": "Every returned binding equals the actual endpoint id across imports: the second document's refs find the first's rows, and e2 is a keyless new edge between exactly those ids (two edges of one type between one pair are two rows when their ids differ — Issue# 547 - tap's collapse is a collector's derived edge id, not the importer's). The pair is re-observed unchanged, so p and q keep version 1 (req-grid-history-reobservation)."
       }
     }
   ]

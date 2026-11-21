@@ -65,8 +65,9 @@ WITHDRAWN = "scope_withdrawn"
 #: A fan-out larger than this is recorded as ``fan_out_exceeds_cap`` rather than
 #: materialised into the batch's metadata; a later pass with a store of its own can raise it.
 MAX_CANDIDATES_PER_SURFACE = 5000
-#: The BatchEvent types that mean "this run wrote this node" — deletes are not observations.
-_OBSERVATION_EVENTS: tuple[str, ...] = ("create", "update")
+#: The BatchEvent types that mean "this run saw this node" — deletes are not observations. A node
+#: the run re-observed unchanged is recorded as ``observe`` (req-grid-history-reobservation).
+_OBSERVATION_EVENTS: tuple[str, ...] = ("create", "update", "observe")
 
 
 class CandidatesError(ValueError):

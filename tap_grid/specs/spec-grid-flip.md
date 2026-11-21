@@ -24,7 +24,7 @@ FLIP (Field-Level Information Provenance) explains the auditable sources of the 
 | req-grid-flip-nested | [Nested Field-Path FLIP](#nested-field-path-flip) | Proposed | Nested JSON field-path provenance is reserved as a future capability |
 | req-grid-flip-separation | [FLIP and History Separation](#flip-and-history-separation) | Implemented | FLIP answers present-state provenance only; historical provenance lives in history |
 | req-grid-flip-retirement | [Retirement Is A FLIP-Tracked State Change](#retirement-is-a-flip-tracked-state-change) | Implemented | A tombstone records the batch that retired the object, on the object and on every edge it ends |
-| req-grid-flip-change | [FLIP Moves Only On Change](#flip-moves-only-on-change) | Proposed | An entry moves when a write changes the value or first asserts the field; a write that repeats the stored value leaves it alone |
+| req-grid-flip-change | [FLIP Moves Only On Change](#flip-moves-only-on-change) | Implemented | An entry moves when a write changes the value or first asserts the field; a write that repeats the stored value leaves it alone |
 
 ## Explanation
 
@@ -128,8 +128,8 @@ The FLIP coverage contract is:
 2. FLIP stamps all service-writeable fields.
 3. "Service-writeable fields" means fields writable by callers through the model's published service schemas.
 4. System-managed fields such as `entity`, `entity_id`, `batch_id`, `flip_map`, lifecycle timestamps, and other internal service-managed fields are excluded from FLIP stamping.
-5. For `patch`, FLIP updates the fields touched by the patch payload.
-6. For `replace`, FLIP updates the full service-writeable replace surface.
+5. For `patch`, FLIP updates the fields the payload touched whose value changed, and a touched field asserted for the first time (`req-grid-flip-change`). A touched field whose stored value the payload repeats keeps its entry.
+6. For `replace`, FLIP updates the fields of the replace surface whose value changed, and a field the payload names that is asserted for the first time (`req-grid-flip-change`). A field the payload does not name is stamped only when its reset to the default changed the stored value.
 7. For `create`, FLIP updates the service-writeable fields established at creation time.
 
 This requirement applies only to service-writeable model types. Internal-only model types are outside the default FLIP surface for generic writes because they are not writable through the standard service layer.
@@ -286,14 +286,16 @@ Without this, a current-state provenance read could name the batch behind every 
 ----
 RID: `req-grid-flip-change`
 
-Status: `Proposed`
+Status: `Implemented`
 
 A FLIP entry names the batch that last **changed** the value at a field path, or first asserted it. A write that repeats what is already stored does not move the entry.
 
 #### Status Details
-Proposed; nothing is built. Issue# 322 - tap and Issue# 323 - tap hold the ruling; the design is in `docs/misc/doc-grid-batch-provenance-and-grift-patch-semantics.md`.
+Implemented for the service write pipeline and the GRIFT importer (Issue# 322 - tap). `tap_grid/write_classification.py` takes the snapshot, makes the comparison and yields the stamped set; `_execute_write_pipeline` in `tap_grid/services/_impl.py` takes the snapshot before it applies a payload, classifies after validation has cleaned the values to their stored types, and hands the stamped set to `BaseModel.save()` as `flip_changed_fields`. A create is unchanged: it stamps the fields its payload sent. Issue# 323 - tap holds the ruling; the design record is `docs/misc/doc-grid-batch-provenance-and-grift-patch-semantics.md`.
 
-What happens today (read and run on core main, 2026-11-21): the touched set is taken from the shape of the payload, not from a comparison. A patch stamps every field it names. A full replace stamps the whole service-writeable surface (`req-grid-flip-default`, implementation rule 6). A keep-absent replace, which is what the GRIFT importer sends for an existing object, stamps every field the document sends (`req-grid-service-write-keepabsent-6`). So a collector that re-sends an unchanged object re-points every sent field at the new batch, and `req-grid-flip-map-2` ("the batch responsible for the currently stored canonical value") stops being true after the second pass.
+Before this, the touched set was taken from the shape of the payload: a patch stamped every field it named, a full replace the whole service-writeable surface, and a keep-absent replace every field the document sent, so a collector that re-sent an unchanged object re-pointed every sent field at the new batch.
+
+Two things the comparison does that the rules below do not spell out. An integer and a float that are the same JSON number compare equal (`1` and `1.0`). First assertion applies only where FLIP is on for the type (`req-grid-flip-default`); an internal-only type has no entries to be missing.
 
 #### Implementation
 1. The write pipeline takes the object's stored values before it applies a payload and compares them, field by field, with the values after it. This one comparison is the source for FLIP, for the history decision (`req-grid-history-reobservation`) and for the spine pointers (`req-grid-entity-batch-pointers`).
@@ -303,7 +305,7 @@ What happens today (read and run on core main, 2026-11-21): the touched set is t
 5. A field the payload does not name is never stamped, whatever the verb. A field a full replace resets to its default is stamped only if the reset changed the stored value.
 6. Comparison is by JSON value and is type-sensitive: `true` and `1` differ, `{}` and `{"k": null}` differ, object key order does not matter. Relations compare by id.
 7. System-managed fields stay outside FLIP as `req-grid-flip-default-3` says, and are excluded from the comparison. The excluded list is kept in one place and a test fails when a system-managed field is added without it.
-8. When this is built, `req-grid-flip-default` rules 5 and 6 and `req-grid-service-write-keepabsent-6` are reworded in the same change to "touched and changed, or first asserted".
+8. `req-grid-flip-default` rules 5 and 6 and `req-grid-service-write-keepabsent-6` state the same rule: touched and changed, or first asserted.
 
 #### Development
 The payload-shape rule was cheap and it made `flip_map` carry no more information than a single row-level batch stamp for collector-written data. Deriving the stamped set from a comparison is also what keeps the known-unknown distinction alive past the second write.
@@ -312,9 +314,9 @@ The payload-shape rule was cheap and it made `flip_map` carry no more informatio
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-flip-change-1 | Repeat Leaves The Entry | Proposed | Writing an object again with identical values, by patch, replace, keep-absent replace or GRIFT import, leaves every `flip_map` entry pointing at the batch it pointed at before. | |
-| req-grid-flip-change-2 | Change Moves One Entry | Proposed | A write that changes one field among several it sends moves that field's entry to the writing batch and no other. | |
-| req-grid-flip-change-3 | First Explicit Null Is Stamped | Proposed | A field created by omission has no entry; the first write that sends it as explicit `null` gives it one, although the stored value is still `null`. | |
-| req-grid-flip-change-4 | Repeat Explicit Null Is Not | Proposed | A second and third write sending the same explicit `null` leave that entry alone. | |
-| req-grid-flip-change-5 | Unnamed Field Never Stamped | Proposed | A replace that names one field leaves no entry on a field it did not name and whose value it did not change. | |
-| req-grid-flip-change-6 | Type-Sensitive Comparison | Proposed | Replacing a stored JSON `true` with `1`, or `[false]` with `[0]`, is a change and moves the entry. | |
+| req-grid-flip-change-1 | Repeat Leaves The Entry | Implemented | Writing an object again with identical values, by patch, replace, keep-absent replace or GRIFT import, leaves every `flip_map` entry pointing at the batch it pointed at before. | `tap_grid/tests/test_write_classification.py`: `test_repeat_leaves_every_entry`, `test_repeat_grift_import_leaves_every_entry` |
+| req-grid-flip-change-2 | Change Moves One Entry | Implemented | A write that changes one field among several it sends moves that field's entry to the writing batch and no other. | `tap_grid/tests/test_write_classification.py`: `test_change_moves_one_entry` |
+| req-grid-flip-change-3 | First Explicit Null Is Stamped | Implemented | A field created by omission has no entry; the first write that sends it as explicit `null` gives it one, although the stored value is still `null`. | `tap_grid/tests/test_write_classification.py`: `test_first_explicit_null_is_stamped` |
+| req-grid-flip-change-4 | Repeat Explicit Null Is Not | Implemented | A second and third write sending the same explicit `null` leave that entry alone. | `tap_grid/tests/test_write_classification.py`: `test_repeat_explicit_null_is_not` |
+| req-grid-flip-change-5 | Unnamed Field Never Stamped | Implemented | A replace that names one field leaves no entry on a field it did not name and whose value it did not change. | `tap_grid/tests/test_write_classification.py`: `test_unnamed_field_is_never_stamped` |
+| req-grid-flip-change-6 | Type-Sensitive Comparison | Implemented | Replacing a stored JSON `true` with `1`, or `[false]` with `[0]`, is a change and moves the entry. | `tap_grid/tests/test_write_classification.py`: `test_type_sensitive_replace_is_a_change`, `test_values_compare_by_json_value_type_sensitively` |

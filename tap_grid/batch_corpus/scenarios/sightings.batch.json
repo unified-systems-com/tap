@@ -545,7 +545,7 @@
           }
         ],
         "live": {
-          "ind": 2,
+          "ind": 1,
           "s1b": 1,
           "r1b": 1
         },
@@ -554,7 +554,7 @@
           "r1": 2
         },
         "absent": [],
-        "note": "The indicator is found (version 2); the sighting's tombstone is not, so the re-observation is a fresh row with a fresh relationship onto the live indicator."
+        "note": "The indicator is found and re-observed unchanged (version 1); the sighting's tombstone is not, so the re-observation is a fresh row with a fresh relationship onto the live indicator."
       }
     }
   ]

@@ -163,3 +163,11 @@ def is_deadlock(exc: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+class ServiceEvidenceError(Exception):
+    """The batch's record of an operation could not be written, so the operation is not applied.
+
+    Raised inside the operation's transaction (req-grid-service-batch-evidence): a write
+    commits with its record or not at all.
+    """
