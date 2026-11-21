@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.3](https://github.com/unified-systems-com/tap/compare/v0.4.2...v0.4.3) (2026-11-21)
+
+
+### Features
+
+* **ci:** the plugin nightly tests core's newest release every night ([07add93](https://github.com/unified-systems-com/tap/commit/07add93f1bb2f57c263dde050a7a711d0671ff71))
+* **ci:** the plugin nightly tests core's newest release every night [via coley] ([84cf476](https://github.com/unified-systems-com/tap/commit/84cf47678cbd6114868746cd69decfcaa0ae4337))
+* **grid:** compound edges are official: a COMPOUND_EDGE declaration, retire-with-an-end, and one drawn arrow [via aws-build] ([6a8a1ad](https://github.com/unified-systems-com/tap/commit/6a8a1ad59ddff8d1c4bb142e7311651d6479166b))
+* **grid:** make compound edges official with a COMPOUND_EDGE declaration ([927ac4c](https://github.com/unified-systems-com/tap/commit/927ac4cd58960dd6918307e4c0a9065861e74f49))
+* **viz:** draw a compound edge as one expandable arrow ([7dfcc9b](https://github.com/unified-systems-com/tap/commit/7dfcc9bed86f67018461cf1caa0663e79de69486))
+
+
+### Bug Fixes
+
+* **ci:** the release row holds a caller's pin to the same vX.Y.Z gate ([87f48c1](https://github.com/unified-systems-com/tap/commit/87f48c10d64df41f08c068a09cc9a0579ea9f75a)), refs [#1269](https://github.com/unified-systems-com/tap/issues/1269)
+* **deps:** update python dependencies (uv.lock) (major) ([a54e93e](https://github.com/unified-systems-com/tap/commit/a54e93e02865c78a545d352d67c55a84f82ab7e7))
+* **grid:** a middle node at both ends no longer hides another dependent from the delete walk ([4401e01](https://github.com/unified-systems-com/tap/commit/4401e01f38099aca4025b1c04905fb25efe5ddc2))
+* **grid:** the compound-edge spec names computing_core's delete rule without citing a plugin RID ([d716e7b](https://github.com/unified-systems-com/tap/commit/d716e7bb4d1c733492ad1764e02891b7fed42f20))
+* **viz:** compound-edge pairs sort by id with an explicit comparator ([6ce149c](https://github.com/unified-systems-com/tap/commit/6ce149cf7552debfc44cf6e0c3aa7703c643cfed))
+
+
+### Documentation
+
+* **skills:** tap-best-practices points at official compound edges ([ac01d5f](https://github.com/unified-systems-com/tap/commit/ac01d5fb9a7603c42f03eecbf4b987639d2ed03a))
+
 ## [0.4.2](https://github.com/unified-systems-com/tap/compare/v0.4.1...v0.4.2) (2026-11-20)
 
 
