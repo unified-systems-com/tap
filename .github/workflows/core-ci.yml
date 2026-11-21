@@ -151,7 +151,7 @@ jobs:
             require="gryphon_playground"
             TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
               --root /app --record boot/core_ci.boot.json ${require:+--require "$require"} \
-              --summary /app/lane-summary.md -- -n auto --durations=40
+              --summary /app/lane-summary.md -- -n auto --dist worksteal --durations=40
           '
           docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
 
