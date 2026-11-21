@@ -167,7 +167,10 @@ fi
 # mid-run — the "node down: Not properly terminated" + cross-worker collection
 # mismatch signature (observed 2026-08-09, five stacks / 7.75GiB VM). Resolved
 # host-side, so it works through `dc exec` without env propagation.
-pytest_args=(-n "${TAP_TEST_JOBS:-auto}")
+# --dist worksteal, not xdist's default `load`: `load` deals each worker a contiguous slice up front,
+# so one slice holding every slow test leaves the other workers idle (aws-core plugin CI: one worker
+# 2,161 s, three at 78-97 s). worksteal lets an idle worker take queued tests from a busy one.
+pytest_args=(-n "${TAP_TEST_JOBS:-auto}" --dist worksteal)
 # TAP_TEST_REUSE_DB=1 reuses each worker's test DB instead of rebuilding it (pytest-django --reuse-db):
 # under load the per-worker DB build can dominate a small lane. Opt-in — drop it (or pass --create-db)
 # after a migration or model change, or the lane runs against a stale schema.

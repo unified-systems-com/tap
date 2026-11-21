@@ -967,7 +967,7 @@ jobs:
           tail -3 .tap-ci/template.log
           docker compose --env-file .env exec -T -e PLUGIN_SLUG="$PLUGIN_SLUG" -e TEST_WORKERS="$TEST_WORKERS" \
             -e TAP_TEST_DB_TEMPLATE=tap_test_template web sh -c \
-            'cd /app && uv run pytest -p no:cacheprovider --pyargs "tap_plugin.$PLUGIN_SLUG" -n "$TEST_WORKERS"' | tee pytest.log
+            'cd /app && uv run pytest -p no:cacheprovider --pyargs "tap_plugin.$PLUGIN_SLUG" -n "$TEST_WORKERS" --dist worksteal' | tee pytest.log
 
       # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
       # scan. Runs only after the in-package tests passed (a campaign over a broken
