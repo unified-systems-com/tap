@@ -203,7 +203,7 @@ then happens once, at build time, and its result is recorded in the manifest.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-immutable-env-1 | No Venv Volume | Proposed | A deployment compose file or task definition for a product image mounts no volume at `/app/.venv` and no bind mount over application source. | Enforced by a test over the shipped deploy configs |
+| req-tap-bake-immutable-env-1 | No Venv Volume, Read-Only Root | Proposed | A deployment compose file or task definition for a product image mounts no volume at `/app/.venv` and no bind mount over application source, and runs the container with a read-only root filesystem; writable paths are named volumes or tmpfs. | Enforced by a test over the shipped deploy configs |
 | req-tap-bake-immutable-env-2 | Nothing Installed At Start | Proposed | A deployed product image starts to serving without running `uv sync` or any package install. | |
 | req-tap-bake-immutable-env-3 | No Network To Start | Proposed | A deployed product image starts to serving with outbound network denied, when its record's post-activation steps need none. | Proves the tag lookup moved to build |
 | req-tap-bake-immutable-env-4 | Development Unchanged | Proposed | A session stack started by `spawn-session.sh` without a product image keeps the venv volume, the stamp check and the sync exactly as before. | |
@@ -340,6 +340,12 @@ anything that must name the image's digest, such as the crypto verdict
 attestation whose subject is the finished image. The same holds for the seed key's image digest: the
 seed names the image, and the image does not name its seed.
 
+Verification constrains **who** signed, not only which repository. Several workflows in a repository
+can hold `id-token: write` (tap has four), and any of them could request an attestation. So an artifact
+is accepted only when its attestation was issued by the one build workflow named for it
+(`--signer-workflow`), from a protected ref: the default branch or a release tag. An attestation from
+any other workflow or ref is treated as none.
+
 Each artifact's trust anchor is a digest pinned in the deploy config: the compose file for a
 Codespace or a session stack, the task definition or manifest for a hosted installation. Pinning a
 digest is a reviewed change to that config. That pin is the human decision that lets a seed load
@@ -351,7 +357,7 @@ alone is never loaded.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-attest-1 | Both Attested | Proposed | Every build publishes provenance for the product image and the seed; `gh attestation verify` succeeds for both against the producing repository. | |
+| req-tap-bake-attest-1 | Both Attested By The Build | Proposed | Every build publishes provenance for the product image and the seed, and verification requires the named build workflow as signer and a protected source ref; an attestation for the same digest from another workflow or an unprotected ref fails verification. | |
 | req-tap-bake-attest-2 | Detached, Not Embedded | Proposed | No file inside a product image claims to state that image's own digest; every image-digest binding is an attestation on the finished image. | |
 | req-tap-bake-attest-3 | Digest Or Nothing | Proposed | An initializer given a seed reference with no digest declines it and initializes the full way. | |
 | req-tap-bake-attest-4 | Wrong Bytes Decline | Proposed | A seed whose fetched bytes do not match the pinned digest is declined before any member is read. | |
@@ -389,14 +395,23 @@ A restarted initializer reads the progress row and resumes after the last comple
 the interrupted phase cannot be resumed, discards that phase's partial writes and repeats it. It
 never runs Finish against stores that disagree about what was loaded.
 
-The initializer seeds only an installation whose stores are **pristine**, as the backup spec defines
-the word, or a clone not yet activated. An initialized installation, such as a Codespace being
-restarted, skips load and activation and goes straight to Finish, which is idempotent. The seed is not
-consulted.
+Before anything else the initializer classifies the stores, and each class has exactly one road:
 
-**Any refusal before the load falls back to the full initialization**: pre-boot, schema and every
-population step, as today. A refusal is a bad digest, a key mismatch, a non-pristine target or a
-refusal from the checked reader. The fallback writes a `TAP-WARN` line naming what declined and why,
+| The stores hold | Road |
+| --- | --- |
+| Nothing (pristine, as the backup spec defines the word) | Seed load, or the full initialization if the seed is declined |
+| A declared clone not yet activated | Activation, then Finish |
+| This initializer's progress row, part-way | Resume ([`req-tap-bake-initializer-2`](#one-initializer-per-installation)) |
+| An activated installation, or a TAP installation made by a boot before this initializer existed | Finish only, which is today's boot of an existing installation |
+| Anything else: objects but no TAP schema, a partial TAP schema with no progress row, stores that disagree | **Refuse, writing nothing**, and name what was found |
+
+The seed is consulted only in the first row. A Codespace being restarted is in the fourth row and goes
+straight to Finish.
+
+**Any refusal of the seed itself falls back to the full initialization of the pristine stores**:
+pre-boot, schema and every population step, as today. A refusal is a bad digest, a key mismatch or a
+refusal from the checked reader. A non-pristine target is never a reason to fall back: it is classified
+above, and an unknown one is refused rather than initialized. The fallback writes a `TAP-WARN` line naming what declined and why,
 and the run record carries the same reason. A fallback is never silent, and it never stops an
 installation from coming up.
 
@@ -413,7 +428,8 @@ new installation from a reviewed, pinned artifact.
 | req-tap-bake-initializer-2 | Interrupted Anywhere | Proposed | Killing the initializer during each phase in turn (load, file staging, activation, Finish), then restarting it, yields an installation equal to an uninterrupted one. | One case per phase; the parity check of -4 |
 | req-tap-bake-initializer-3 | Files Atomic | Proposed | After an interruption during file staging, each file root holds either nothing from the seed or all of it, verified against the manifest. | |
 | req-tap-bake-initializer-4 | Same Installation Either Road | Proposed | A seeded and a full initialization of the same record produce the same Gryphon counts by entity type, the same schema (`tap.schema_parity`), the same recorded migrations, and the same file-store inventory and plugin-data hashes. | |
-| req-tap-bake-initializer-5 | Fallback Is Loud And Complete | Proposed | For each refusal named above, the installation initializes the full way and serves, and its run record and log name what declined and why. | One case per refusal |
+| req-tap-bake-initializer-5 | Fallback Is Loud And Complete | Proposed | For each seed refusal named above, the pristine installation initializes the full way and serves, and its run record and log name what declined and why. | One case per refusal |
+| req-tap-bake-initializer-7 | Unknown Stores Refused | Proposed | Given a database holding an unrelated table, or a partial TAP schema with no progress row, the initializer exits non-zero naming what it found, and no migration, load or population write occurs. | |
 | req-tap-bake-initializer-6 | Restart Skips To Finish | Proposed | Starting an already-initialized installation runs neither load nor activation, and leaves its identity unchanged. | |
 
 ### Activating A New Installation
@@ -521,6 +537,10 @@ accepts the attested verdict instead of rescanning only when all of these hold:
 
 - the running image's digest is the attested one;
 - the environment is the image's own, with no venv volume and no bind-mounted source;
+- the container's root filesystem is **read-only** (`read_only: true` in compose,
+  `readOnlyRootFilesystem` in Kubernetes, `readonlyRootFilesystem` in ECS). An image digest
+  authenticates the layers, not a container's writable upper layer, so without this the venv and
+  source could change after the container was created;
 - the record's waiver policy hashes to the attested digest.
 
 Anything else runs the full gate as today: a development stack, a bind-mounted tree, a changed
@@ -536,7 +556,7 @@ unchanged: an unwaived non-validated provider still stops the instance.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-bake-crypto-bom-1 | Verdict Attested | Proposed | Every product image build publishes a crypto-BOM verdict attestation naming the image digest, manifest digest and waiver-policy digest. | |
-| req-tap-bake-crypto-bom-2 | Verified Inputs Only | Proposed | A deployed product image whose digest, environment and waiver policy all match the attested verdict skips the rescan; changing any one, or mounting source over the image, runs the full gate. | |
+| req-tap-bake-crypto-bom-2 | Verified Inputs Only | Proposed | A deployed product image whose digest, environment and waiver policy all match the attested verdict, running with a read-only root filesystem, skips the rescan; changing any one, mounting source over the image, or a writable root filesystem runs the full gate. | |
 | req-tap-bake-crypto-bom-3 | Self-Check Kept | Proposed | The `tap.fips` self-check runs on every start of every image, attested verdict or not. | |
 | req-tap-bake-crypto-bom-4 | Refusal Unchanged | Proposed | A product image containing an unwaived non-validated provider fails its build's gate, and if forced past the build, still refuses to serve at start. | |
 
@@ -667,8 +687,10 @@ spike replaces:
 
 #### Development
 
-The first draft (PR# 1283 - tap, `25bdaa70`) was reviewed by Codex on 2026-11-21. Its seven findings
-were each checked against the code and accepted. This revision makes these changes:
+The first draft (PR# 1283 - tap, `25bdaa70`) drew seven findings in a Codex review on 2026-11-21. Each
+finding, how it was checked, and its answer are recorded on the pull request
+(issuecomment-7063973771). This history explains why the design is shaped as it is; it is not a
+substitute for reviewing it. This revision makes these changes:
 
 - It keyed minting on the host's identity (cloud-init's rule). That rotates secrets whenever a
   replica or replacement host appears, so minting now belongs to activation, and identity to the
@@ -690,3 +712,11 @@ were each checked against the code and accepted. This revision makes these chang
 - It relied on PEP 610 VCS metadata that a wheel install does not carry, so the install manifest
   replaces it.
 - It ignored Django start-up, which is now its own requirement.
+- Round 2 of the review (`7026c51e`) found three more gaps, and this revision closes them:
+  - An image digest does not cover a container's writable layer, so skipping the crypto rescan now
+    also requires a read-only root filesystem.
+  - A non-pristine target had been listed as a reason to fall back to full initialization, which
+    would have initialized an unknown database. Stores are now classified first, and unknown ones are
+    refused.
+  - Verifying an attestation against the repository alone admits any workflow that can mint one, so
+    verification now pins the signer workflow and a protected ref.
