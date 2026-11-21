@@ -32,10 +32,14 @@ def outside_connection() -> Iterator[Any]:
 
 
 def _committed(connection: Any, model: Any, **where: Any) -> bool:
-    table = connection.ops.quote_name(model._meta.db_table)
-    clauses = " AND ".join(f"{connection.ops.quote_name(model._meta.get_field(k).column)} = %s" for k in where)
+    from psycopg import sql
+
+    clauses = sql.SQL(" AND ").join(
+        sql.SQL("{} = %s").format(sql.Identifier(model._meta.get_field(k).column)) for k in where
+    )
+    query = sql.SQL("SELECT 1 FROM {} WHERE {} LIMIT 1").format(sql.Identifier(model._meta.db_table), clauses)
     with connection.cursor() as cursor:
-        cursor.execute(f"SELECT 1 FROM {table} WHERE {clauses} LIMIT 1", list(where.values()))  # noqa: S608 — names from model meta
+        cursor.execute(query, list(where.values()))  # nosemgrep  # nosec B608 — names quoted by psycopg.sql.Identifier
         return cursor.fetchone() is not None
 
 
