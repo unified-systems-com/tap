@@ -180,6 +180,12 @@ excuses it. No-op when FIPS is off (a non-FIPS deployment may use non-FIPS crypt
 validation" half of declare-vs-decide: `tap.fips` proves the OpenSSL-backed Python layer is enforced,
 but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees it.
 
+In a baked product image the gate runs at bake time and the image carries its verdict, bound to the
+image digest and the venv stamp. Boot checks that binding instead of rescanning while the environment
+is the one the image shipped, and runs the full gate as soon as anything was installed at boot
+([`req-tap-bake-crypto-bom`](spec-tap-baked-instance.md#the-crypto-verdict-travels-with-the-image)).
+The refusal rule is unchanged; only when the bytes are read moves.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |

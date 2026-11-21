@@ -86,7 +86,9 @@ commands and code use these names and do not blur them:
 
 - **Export**: GRIFT, merged *into* a grid. Portable across versions and grids. Partial by design.
 - **Full backup**: this spec. Replaces an instance *with* the archived one, or seeds a clone of it.
-  Requires matching versions. Complete by design.
+  Requires matching versions. Complete by design. A **seed**
+  ([`spec-tap-baked-instance.md`](spec-tap-baked-instance.md)) is a full-backup archive baked in CI
+  for many new instances to start from; it is a third boot mode of this tier, not a fourth tier.
 - **Frozen containers**: images plus volume snapshots. Not specified yet; the
   copy-on-write volume snapshot that [`req-boot-snapshot`](spec-tap-boot-v0.md#pre-migrate-snapshot)
   names as its scale upgrade path belongs to this tier.
@@ -647,7 +649,8 @@ RID: `req-tap-backup-restore`
 Status: `Proposed`
 
 Restore is a **boot from the archive**, started by a human, never triggered automatically
-([`req-boot-snapshot-4`](spec-tap-boot-v0.md#pre-migrate-snapshot)). The operator runs boot with a
+([`req-boot-snapshot-4`](spec-tap-boot-v0.md#pre-migrate-snapshot)). A seed boot is not a restore and
+does not change this ([`req-tap-bake-seed-boot`](spec-tap-baked-instance.md#seed-boot)). The operator runs boot with a
 `restore_from` source naming the archive and the mode `--as-restore`. Pre-boot then:
 
 1. Runs `verify --expected-digest` with the archive digest the operator supplies
@@ -721,8 +724,13 @@ Schedules start paused because a clone usually holds the same collector credenti
 polling the same APIs would double the load on those APIs and write the same world into two grids.
 The operator resumes schedules deliberately.
 
-Neither mode is the default. Boot from an archive with neither `--as-restore` nor `--as-clone`
-refuses and asks for one, so an operator cannot create a second live instance with the original's
+A third mode, `--as-seed`, starts a new instance from a seed baked in CI
+([`req-tap-bake-seed-boot`](spec-tap-baked-instance.md#seed-boot)). It takes the clone's identity
+rules, holds no users, and may start without a person present only because the deploy config pins
+the seed's digest.
+
+No mode is the default. Boot from an archive with none of `--as-restore`, `--as-clone` or
+`--as-seed` refuses and asks for one, so an operator cannot create a second live instance with the original's
 identity by accident.
 
 #### Acceptance Criteria
