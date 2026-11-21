@@ -48,7 +48,7 @@ out_ok() { [[ "$1" == .bug-reports/* && "$1" != *..* && "$1" != */ ]]; }
 # holds. The digest the typed yes names is the report's bytes, or with screenshots the report and
 # each image in order, labelled; tap.bug_report.send_manifest computes the same and a test pins it.
 host_block() {
-  python3 - "$1" <<'PY'
+  scripts/py - "$1" <<'PY'
 import json, re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 blocks = re.findall(r"(?ms)^```json[ \t]*$\n(.*?)^```[ \t]*$", text)
@@ -61,7 +61,7 @@ for shot in data.get("screenshots") or []:
 PY
 }
 host_digest() {
-  python3 - "$1" <<'PY'
+  scripts/py - "$1" <<'PY'
 import hashlib, json, os, re, sys
 path = sys.argv[1]
 raw = open(path, "rb").read()

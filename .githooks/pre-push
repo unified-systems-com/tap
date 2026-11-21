@@ -105,11 +105,13 @@ note_unchecked() { UNCHECKED="$UNCHECKED
 # Host checks — no container, no Django, no .venv. A missing one is a finding (3).
 # ---------------------------------------------------------------------------
 
-if ! command -v python3 >/dev/null 2>&1; then
-    note_unchecked "python3 not found — the host syntax floor did not run"
+if [ ! -x "$ROOT/scripts/py" ]; then
+    note_unchecked "scripts/py missing or not executable — the host syntax floor did not run"
+elif ! "$ROOT/scripts/py" -c "" >/dev/null 2>&1; then
+    note_unchecked "no usable host Python (run scripts/py to see what to install, tap#1277) — the host syntax floor did not run"
 elif [ -f "$ROOT/tap/host_syntax_floor.py" ]; then
-    python3 "$ROOT/tap/host_syntax_floor.py" >/dev/null 2>&1 ||
-        note_fail "host syntax floor — a host-runnable module will not parse on the oldest supported interpreter: python3 tap/host_syntax_floor.py"
+    "$ROOT/scripts/py" "$ROOT/tap/host_syntax_floor.py" >/dev/null 2>&1 ||
+        note_fail "host syntax floor — a host-runnable module will not parse on the oldest supported interpreter: scripts/py tap/host_syntax_floor.py"
 else
     note_unchecked "tap/host_syntax_floor.py missing — the host syntax floor did not run"
 fi
@@ -127,10 +129,14 @@ do
         note_unchecked "$_prog missing or not executable — that check did not run"
         continue
     fi
+    # A checker written in Python runs through scripts/py, not its own `#!/usr/bin/env python3`
+    # shebang, which would pick up whatever the host has: 3.9 on macOS (tap#1277).
+    _run=""
+    if head -n 1 "$ROOT/$_prog" | grep -q '^#!.*python'; then _run="$ROOT/scripts/py"; fi
     if [ -n "$_arg" ]; then
-        "$ROOT/$_prog" "$_arg" >/dev/null 2>&1 || note_fail "$_msg"
+        $_run "$ROOT/$_prog" "$_arg" >/dev/null 2>&1 || note_fail "$_msg"
     else
-        "$ROOT/$_prog" >/dev/null 2>&1 || note_fail "$_msg"
+        $_run "$ROOT/$_prog" >/dev/null 2>&1 || note_fail "$_msg"
     fi
 done
 

@@ -61,6 +61,11 @@ therefore does not document. macOS needs only Docker Desktop; a Linux desktop ne
   able to run `docker` — the `docker` group, or root, which on Kali you may be anyway.
 - **`lsof`** — the spawn script's port-band probe depends on it and refuses to run
   without it. Default on Kali and macOS; minimal installs: `apt install lsof`.
+- **Python 3.12 or newer, or uv.** The git hooks and `scripts/*` run on the host through
+  `scripts/py` (tap#1277). It uses the system `python3` when that is 3.12 or newer, as on Debian
+  13 and Ubuntu 24.04. Otherwise it uses [uv](https://docs.astral.sh/uv/)'s managed interpreter,
+  which never touches the system Python. With neither, it stops and prints the install line. To
+  install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - **Free ports.** Sessions bind host ports in per-session bands (web 8000+, Postgres
   5432+ — the registry in spec-dev-multisession.md). A distro Postgres already listening
   on 5432 collides with the primary stack's default; stop it or let the spawn script's

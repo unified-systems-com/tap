@@ -58,6 +58,7 @@ tap_localexec_hash(){
     find .githooks scripts/hooks \( -type f -o -type l \) 2>/dev/null
     [ -e .claude/settings.json ] && echo .claude/settings.json
     [ -e scripts/hooks-install ] && echo scripts/hooks-install
+    [ -e scripts/py ] && echo scripts/py   # picks the interpreter every hook runs on (tap#1277)
   } | LC_ALL=C sort | while IFS= read -r f; do
     if [ -L "$f" ]; then _m=120000
     elif [ -x "$f" ]; then _m=100755

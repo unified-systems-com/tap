@@ -12,7 +12,7 @@
 # WHAT THIS DOES NOT DO, stated plainly (req-sec-honest-risk): a local self-check is
 # defeatable by editing the checker, because the edited copy is what runs next. That
 # regress does not terminate locally and no hash chain fixes it. It terminates
-# OUT OF BAND — every path in the hashed set (.githooks/, .claude/, scripts/hooks/)
+# OUT OF BAND — every path in the hashed set (.githooks/, .claude/, scripts/hooks/, scripts/py)
 # is code-owned in .github/CODEOWNERS, and the coverage guard that asserts so runs in
 # CI, off this machine. In-repo loud, out-of-band block; the same argument
 # docs/doc-dev-validation-meta-integrity.md makes for the guard system itself.
@@ -40,6 +40,7 @@ tap_localexec_hash() {
         find .githooks scripts/hooks \( -type f -o -type l \) 2>/dev/null
         [ -e .claude/settings.json ] && echo .claude/settings.json
         [ -e scripts/hooks-install ] && echo scripts/hooks-install
+        [ -e scripts/py ] && echo scripts/py   # picks the interpreter every hook runs on (tap#1277)
     } | LC_ALL=C sort | while IFS= read -r f; do
         if [ -L "$f" ]; then _m=120000
         elif [ -x "$f" ]; then _m=100755

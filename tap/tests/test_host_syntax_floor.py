@@ -15,6 +15,8 @@ none — it reports green over exactly the surface it claims to cover.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -196,7 +198,9 @@ def test_the_formatter_target_matches_the_derived_host_set() -> None:
         table = tomllib.load(fh)["tool"]["ruff"].get("per-file-target-version", {})
 
     floor_tag = "py{}{}".format(*HOST_SYNTAX_FLOOR)
-    derived = set(host_modules(REPO_ROOT))
+    # ruff formats `.py` files only; an extensionless script held to the floor by its shebang
+    # (`scripts/check-issue-link`) is never rewritten by it, so it needs no entry.
+    derived = {rel for rel in host_modules(REPO_ROOT) if rel.endswith(".py")}
     pinned = set(table)
 
     assert derived - pinned == set(), (
@@ -230,3 +234,166 @@ def test_the_floor_is_below_the_container_interpreter() -> None:
         "the host floor must be strictly older than the container interpreter, or the "
         "check degenerates into 'does this parse where it already parses'"
     )
+
+
+# --------------------------------------------------------------------------------------------
+# tap#1277: the floor follows imports, finds Python by its shebang, sees calls through the
+# resolver, and no shell host source names a bare `python3` any more.
+# --------------------------------------------------------------------------------------------
+
+_RESOLVER = REPO_ROOT / "scripts" / "py"
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-4")
+def test_a_module_a_host_module_imports_is_held_to_the_floor(tmp_path: Path) -> None:
+    """The hole tap#1277 found: a hook was checked and the module it imports was not.
+
+    `.githooks/precommit_secret_scan.py` was on the list and `tap/credential_patterns.py`, which it
+    imports, was not; the secret scan died with `SyntaxError` on Debian's 3.13 while the checker
+    passed. Absolute, relative and package-level imports must all reach the checked set.
+    """
+    (tmp_path / ".githooks").mkdir()
+    (tmp_path / "tap" / "inner").mkdir(parents=True)
+    (tmp_path / "tap" / "__init__.py").write_text("")
+    (tmp_path / "tap" / "inner" / "__init__.py").write_text("from .deep import y\n")
+    (tmp_path / "tap" / "inner" / "deep.py").write_text(_PEP758)
+    (tmp_path / "tap" / "direct.py").write_text("from tap.inner import y\n")
+    (tmp_path / ".githooks" / "scan.py").write_text("import sys\nfrom tap.direct import thing\n")
+    (tmp_path / ".githooks" / "pre-commit").write_text('#!/bin/sh\nscripts/py "$ROOT/.githooks/scan.py"\n')
+
+    modules = set(host_modules(tmp_path))
+    assert {"tap/direct.py", "tap/__init__.py", "tap/inner/__init__.py", "tap/inner/deep.py"} <= modules
+    assert [rel for rel, _ in floor_violations(tmp_path)] == ["tap/inner/deep.py"]
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-4")
+def test_the_real_secret_scan_imports_are_covered() -> None:
+    """The specific modules that were uncovered, against the real tree."""
+    modules = set(host_modules(REPO_ROOT))
+    assert "tap/credential_patterns.py" in modules, "the pre-commit secret scan imports it"
+    assert "tap/source_scan.py" in modules
+    assert floor_violations(REPO_ROOT) == []
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-4")
+def test_a_python_shebang_script_is_a_host_module(tmp_path: Path) -> None:
+    """`scripts/check-issue-link` has no `.py` suffix; the pre-push hook and CI run it directly."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "checker").write_text("#!/usr/bin/env python3\n" + _PEP758)
+    (tmp_path / "scripts" / "shell-tool").write_text("#!/usr/bin/env bash\necho hi\n")
+
+    assert "scripts/checker" in derive_host_modules(tmp_path)
+    assert "scripts/shell-tool" not in derive_host_modules(tmp_path)
+    assert [rel for rel, _ in floor_violations(tmp_path)] == ["scripts/checker"]
+    assert "scripts/check-issue-link" in host_modules(REPO_ROOT)
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-2")
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        '"$ROOT/scripts/py" "$ROOT/tap/offender.py"',
+        "scripts/py tap/offender.py",
+        '"$SCRIPT_DIR/py" -m tap.offender',
+        "scripts/py - <<'PY'\nimport tap.offender\nPY",
+    ],
+)
+def test_a_call_through_the_resolver_is_derived(tmp_path: Path, invocation: str) -> None:
+    """Every host call site now goes through `scripts/py`; a derivation blind to it covers nothing."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "tap").mkdir()
+    (tmp_path / "scripts" / "runner.sh").write_text(f"#!/bin/sh\n{invocation}\n")
+    (tmp_path / "tap" / "offender.py").write_text(_PEP758)
+
+    assert "tap/offender.py" in derive_host_modules(tmp_path), f"derivation missed: {invocation}"
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-5")
+def test_no_shell_host_source_calls_bare_python3() -> None:
+    """Host tools reach Python only through `scripts/py`, never the machine's own `python3`."""
+    from tap.host_syntax_floor import bare_interpreter_calls
+
+    offenders = bare_interpreter_calls(REPO_ROOT)
+    assert offenders == [], "call scripts/py instead of python3:\n" + "\n".join(
+        f"  {path}:{line}: {text}" for path, line, text in offenders
+    )
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-5")
+def test_the_bare_call_scan_is_not_vacuous(tmp_path: Path) -> None:
+    """A planted bare call is found; comments, Python sources and the resolver itself are not."""
+    from tap.host_syntax_floor import bare_interpreter_calls
+
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / ".githooks").mkdir()
+    (tmp_path / "scripts" / "bad").write_text("#!/bin/sh\nx=$(python3 -c 'print(1)')\n")
+    (tmp_path / "scripts" / "commented").write_text("#!/bin/sh\n# we used to call python3 here\n")
+    (tmp_path / "scripts" / "tool.py").write_text("print('python3 is mentioned here')\n")
+    (tmp_path / "scripts" / "py").write_text('#!/usr/bin/env bash\nexec python3 "$@"\n')
+    (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\npython3 scan.py\n")
+
+    assert [(p, n) for p, n, _ in bare_interpreter_calls(tmp_path)] == [
+        ("scripts/bad", 2),
+        (".githooks/pre-commit", 2),
+    ]
+
+
+def _fake_bin(tmp_path: Path, *, python3_ok: bool, uv: bool) -> Path:
+    """A PATH holding only what `scripts/py` needs, plus a `python3` and optionally a `uv`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("sed", "dirname", "cat", "env"):
+        found = shutil.which(tool)
+        assert found, tool
+        (bin_dir / tool).symlink_to(found)
+    (bin_dir / "python3").write_text(f"#!/bin/sh\nexit {0 if python3_ok else 1}\n")
+    (bin_dir / "python3").chmod(0o755)
+    if uv:
+        (bin_dir / "uv").write_text('#!/bin/sh\necho "uv $*"\n')
+        (bin_dir / "uv").chmod(0o755)
+    return bin_dir
+
+
+def _run_resolver(bin_dir: Path) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    assert bash
+    return subprocess.run(
+        [bash, str(_RESOLVER), "-c", "print(1)"],
+        env={"PATH": str(bin_dir)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-6")
+def test_the_resolver_fails_loud_with_no_interpreter(tmp_path: Path) -> None:
+    """Too old a `python3` and no uv: exit 127 and say what to install, never pass silently."""
+    result = _run_resolver(_fake_bin(tmp_path, python3_ok=False, uv=False))
+
+    assert result.returncode == 127
+    assert "brew install uv" in result.stderr
+    assert "{}.{}+".format(*HOST_SYNTAX_FLOOR) in result.stderr
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-6")
+def test_the_resolver_falls_back_to_uv_at_the_project_interpreter(tmp_path: Path) -> None:
+    """Too old a `python3` but uv present: run through uv at `requires-python`, no project."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        wanted = re.search(r"\d+\.\d+", tomllib.load(fh)["project"]["requires-python"])
+    assert wanted
+    result = _run_resolver(_fake_bin(tmp_path, python3_ok=False, uv=True))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"uv run --no-project --quiet --python {wanted.group(0)} -- python -c print(1)"
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-6")
+def test_the_resolver_prefers_a_host_python_that_meets_the_floor(tmp_path: Path) -> None:
+    """A `python3` at or above the floor is used as it is: no download, no uv."""
+    result = _run_resolver(_fake_bin(tmp_path, python3_ok=True, uv=True))
+
+    assert result.returncode == 0, result.stderr
+    assert "uv run" not in result.stdout

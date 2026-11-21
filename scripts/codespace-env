@@ -193,7 +193,7 @@ fi
 # restart with no explanation. 0600, and gitignored.
 key_file=".codespace-secret-key"
 if [[ ! -s "$key_file" ]]; then
-  ( umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(64))' > "$key_file" )
+  ( umask 077; scripts/py -c 'import secrets; print(secrets.token_urlsafe(64))' > "$key_file" )
 fi
 secret_key="$(cat "$key_file")"
 

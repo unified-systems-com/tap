@@ -84,7 +84,7 @@ def test_a_missing_checker_is_reported_not_skipped() -> None:
     assert "note_unchecked" in body
     assert "did NOT run, so this gate covers less than it looks" in body
     for absent in (
-        "python3 not found",
+        "no usable host Python",
         "missing or not executable",
         "host_syntax_floor.py missing",
         "scripts/dc missing",

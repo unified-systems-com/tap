@@ -172,7 +172,7 @@ fi
 
 if [[ -z "$_compose_json" ]]; then
   _resolved_user="__UNRESOLVED__"
-elif ! _resolved_user="$(printf '%s' "$_compose_json" | python3 -c 'import json,sys
+elif ! _resolved_user="$(printf '%s' "$_compose_json" | "$_DC_DIR/py" -c 'import json,sys
 try:
     print(json.load(sys.stdin).get("services", {}).get("web", {}).get("user", "") or "")
 except Exception:

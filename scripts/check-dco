@@ -87,10 +87,10 @@ RANGE="$(git merge-base "$BASE_REF" HEAD)..HEAD"
 # script only asks. With no identity passed (a local run, a merge_group event) it does not
 # even ask: nothing is exempt, and no interpreter is needed on that road.
 if [ -n "$PR_AUTHOR_ID$PR_AUTHOR_TYPE$PR_AUTHOR_LOGIN" ]; then
-  command -v python3 >/dev/null 2>&1 \
-    || fail "an authenticated PR identity was passed but python3 is not on PATH — cannot decide the bot exemption (fail-closed)."
+  "$SCRIPT_DIR/py" -c "" \
+    || fail "an authenticated PR identity was passed but no usable Python was found (see scripts/py's message) — cannot decide the bot exemption (fail-closed)."
   set +e
-  exemption="$(python3 "$SCRIPT_DIR/pr_bot_identity.py" \
+  exemption="$("$SCRIPT_DIR/py" "$SCRIPT_DIR/pr_bot_identity.py" \
     --pr-author-id "$PR_AUTHOR_ID" --pr-author-type "$PR_AUTHOR_TYPE" --pr-author "$PR_AUTHOR_LOGIN" 2>&1)"
   exemption_rc=$?
   set -e

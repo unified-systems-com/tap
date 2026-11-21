@@ -60,9 +60,13 @@ HOST_SOURCE_DIRS = ("scripts", ".githooks", ".github/workflows", "docker")
 # `-c` and `-m` fall through harmlessly: neither is followed by a `.py` path, and `-m` has
 # its own pattern below.
 _OPTS = r"""(?:\s+-[A-Za-z]\w*(?:\s+\w+)?)*"""
-_INVOKE_PATH = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+(?:"?\$\{{?\w+\}}?"?/)?"?([\w./-]+\.py)""")
-# `python3 -m tap.something`
-_INVOKE_MODULE = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+-m\s+"?([\w.]+)"?""")
+# The interpreter token: bare `python3` (what host tools used to call) or the host resolver
+# `scripts/py` by any path ending `/py`, quoted or not (tap#1277). Every host call site goes through
+# the resolver now, so a derivation that only knew `python3` would derive nothing at all.
+_INTERP = r"""(?:python3(?:\.\d+)?|/py"?)"""
+_INVOKE_PATH = re.compile(rf"""{_INTERP}{_OPTS}\s+(?:"?\$\{{?\w+\}}?"?/)?"?([\w./-]+\.py)""")
+# `python3 -m tap.something`, `scripts/py -m tap.something`
+_INVOKE_MODULE = re.compile(rf"""{_INTERP}{_OPTS}\s+-m\s+"?([\w.]+)"?""")
 
 # `python3 - <<'PY' … import tap.something … PY` — an inline script, which has no `.py` path
 # for either pattern above to find, and whose IMPORTS are the host-run modules.
@@ -73,7 +77,7 @@ _INVOKE_MODULE = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+-m\s+"?([\w.]+)"?"""
 # `spec_trace` was in neither the derived set nor the declared list. Exactly the failure the
 # derivation was built to end (the stale hand-written list), one level deeper: a call site the
 # scan could not see is a module nothing held to the floor.
-_INLINE_HEREDOC = re.compile(r"""python3(?:\.\d+)?(?:\s+-[A-Za-z]\w*)*\s+-\s""")
+_INLINE_HEREDOC = re.compile(rf"""{_INTERP}(?:\s+-[A-Za-z]\w*)*\s+-\s""")
 _INLINE_IMPORT = re.compile(r"""^\s*(?:from|import)\s+(tap(?:_\w+)?(?:\.[\w.]+)?)""", re.M)
 
 # Modules reached by something this scan cannot see (an external installer, a
@@ -91,8 +95,67 @@ DECLARED_HOST_MODULES = (
 )
 
 
+# A host-side file that IS Python, found by its shebang rather than a `.py` suffix:
+# `scripts/check-issue-link` is run directly by the pre-push hook and by CI, so it is host-run
+# exactly as much as a `python3 x.py` target is (tap#1277).
+_PY_SHEBANG = re.compile(r"""\A#!\s*\S*(?:/env\s+(?:-S\s+)?)?python3(?:\.\d+)?\b""")
+
+# A bare `python3` in command position inside a shell host source: the call the resolver replaces.
+_BARE_PYTHON3 = re.compile(r"""(?<![\w./-])python3(?![\w.-])""")
+
+
 def _module_to_path(dotted: str) -> str:
     return dotted.replace(".", "/") + ".py"
+
+
+def _is_python_source(path: Path) -> bool:
+    if path.suffix == ".py":
+        return True
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            return bool(_PY_SHEBANG.match(fh.readline()))
+    except OSError:
+        return False
+
+
+def _imported_tap_modules(rel: str, source: str) -> set[str]:
+    """Repo-relative paths of every first-party module *source* imports, absolute or relative.
+
+    Importing `tap.a.b` runs `tap/__init__.py` and `tap/a/__init__.py` first, so each enclosing
+    package is returned too. Only first-party `tap*` packages are followed; the stdlib and
+    third-party imports are not ours to hold to the floor.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()  # unparseable at all: floor_violations reports the file itself
+    package = rel[:-3].replace("/", ".").rsplit(".", 1)[0] if rel.endswith(".py") else ""
+    if rel.endswith("/__init__.py"):
+        package = rel[: -len("/__init__.py")].replace("/", ".")
+    dotted: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            dotted.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = package.split(".")
+                if node.level > 1:
+                    base = base[: -(node.level - 1)]
+                stem = ".".join(base + ([node.module] if node.module else []))
+            else:
+                stem = node.module or ""
+            if stem:
+                dotted.add(stem)
+                dotted.update(f"{stem}.{alias.name}" for alias in node.names)
+    out: set[str] = set()
+    for name in dotted:
+        if not re.match(r"tap(?:_\w+)?(?:\.|$)", name):
+            continue
+        parts = name.split(".")
+        for i in range(1, len(parts) + 1):
+            stem = "/".join(parts[:i])
+            out.update(c for c in (f"{stem}.py", f"{stem}/__init__.py"))
+    return out
 
 
 def derive_host_modules(root: Path) -> set[str]:
@@ -119,16 +182,71 @@ def derive_host_modules(root: Path) -> set[str]:
                 # a module nothing checks at all.
                 candidates += [_module_to_path(m.group(1)) for m in _INLINE_IMPORT.finditer(text)]
             for cand in candidates:
-                rel = cand.lstrip("./")
+                # A PREFIX, not a character set: `lstrip("./")` turned `.githooks/x.py` into
+                # `githooks/x.py`, which is no file, so a hook's own module silently dropped out.
+                rel = cand[2:] if cand.startswith("./") else cand.lstrip("/")
                 if (root / rel).is_file():
                     found.add(rel)
+            if path.suffix != ".py" and _is_python_source(path):
+                found.add(path.relative_to(root).as_posix())
     return found
+
+
+def import_closure(root: Path, start: set[str]) -> set[str]:
+    """*start* plus every first-party module it imports, transitively.
+
+    This is the hole tap#1277 found. `.githooks/precommit_secret_scan.py` was held to the floor and
+    `tap/credential_patterns.py`, which it imports, was not, so the scan died on a 3.13 host with
+    `SyntaxError` while the checker passed. A module is host-run when anything host-run imports it.
+    """
+    seen = set(start)
+    todo = sorted(start)
+    while todo:
+        rel = todo.pop()
+        try:
+            source = (root / rel).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for dep in _imported_tap_modules(rel, source):
+            if dep not in seen and (root / dep).is_file():
+                seen.add(dep)
+                todo.append(dep)
+    return seen
 
 
 def host_modules(root: Path) -> list[str]:
     """Everything held to the floor: derived call sites plus the declared remainder."""
     declared = {rel for rel in DECLARED_HOST_MODULES if (root / rel).is_file()}
-    return sorted(derive_host_modules(root) | declared)
+    return sorted(import_closure(root, derive_host_modules(root) | declared))
+
+
+def bare_interpreter_calls(root: Path) -> list[tuple[str, int, str]]:
+    """`(path, line, text)` for every bare `python3` in a shell host source under scripts/ or .githooks/.
+
+    Host tools reach Python through `scripts/py`, which picks an interpreter that meets the floor
+    and fails loud when there is none (tap#1277). A bare `python3` takes whatever the host has, and
+    on macOS that is 3.9. Comments are ignored, Python sources are not shell, and the resolver
+    itself is the one place allowed to name the interpreter.
+    """
+    out = []
+    for rel_dir in ("scripts", ".githooks"):
+        base = root / rel_dir
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            rel = path.relative_to(root).as_posix()
+            if not path.is_file() or rel == "scripts/py" or _is_python_source(path):
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except OSError:
+                continue
+            for n, line in enumerate(lines, 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if _BARE_PYTHON3.search(line):
+                    out.append((rel, n, line.strip()))
+    return out
 
 
 def parses_at_floor(source: str, floor: tuple[int, int] = HOST_SYNTAX_FLOOR) -> str:

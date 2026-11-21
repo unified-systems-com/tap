@@ -15,13 +15,17 @@
 . "$(dirname "$0")/_consent_check.sh"
 tap_consent_gate || true
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "pre-commit: python3 not found — cannot run the staged secret scan." >&2
-    echo "  Install python3, or bypass deliberately with 'git commit --no-verify'." >&2
+# Python comes through scripts/py (tap#1277): an interpreter at or above the host syntax floor,
+# else uv's managed 3.14, else it exits 127 printing what to install. The hook stops on that exit
+# instead of passing, as it always has when Python was missing.
+HOOK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || HOOK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ ! -x "$HOOK_ROOT/scripts/py" ]; then
+    echo "pre-commit: scripts/py is missing — cannot run the staged secret scan." >&2
+    echo "  Bypass deliberately with 'git commit --no-verify' if you know why." >&2
     exit 1
 fi
 
-python3 "$(dirname "$0")/precommit_secret_scan.py" || exit $?
+"$HOOK_ROOT/scripts/py" "$(dirname "$0")/precommit_secret_scan.py" || exit $?
 
 # Host-syntax floor (req-dev-localexec-host-syntax-floor, tap#400).
 #
@@ -48,9 +52,9 @@ python3 "$(dirname "$0")/precommit_secret_scan.py" || exit $?
 # CI asserts — a hook that checks less than the gate teaches people to distrust it.
 FLOOR_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || FLOOR_ROOT=""
 if [ -n "$FLOOR_ROOT" ] && [ -f "$FLOOR_ROOT/tap/host_syntax_floor.py" ]; then
-    if ! python3 "$FLOOR_ROOT/tap/host_syntax_floor.py"; then
+    if ! "$HOOK_ROOT/scripts/py" "$FLOOR_ROOT/tap/host_syntax_floor.py"; then
         echo "pre-commit: a host-runnable module will not parse on the oldest supported interpreter." >&2
-        echo "  These run under bare python3 before any container exists — CI fails the same way." >&2
+        echo "  These run on the host's own Python before any container exists — CI fails the same way." >&2
         echo "  Bypass deliberately with 'git commit --no-verify' if you know why." >&2
         exit 1
     fi

@@ -29,7 +29,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 MODE="${1:-check}"
 
-python3 - "$MODE" <<'PY'
+scripts/py - "$MODE" <<'PY'
 import sys
 from pathlib import Path
 

@@ -161,7 +161,7 @@ port_in_use() {
 # invocation, which is the opposite of the point. python3 is already a Step
 # 0.1 hard requirement, so this adds no dependency.
 preferred_band() {
-  python3 - "$1" <<'PY'
+  "$SCRIPT_DIR/py" - "$1" <<'PY'
 import hashlib, sys
 print(int(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8], 16) % 50 + 1)
 PY
@@ -499,7 +499,7 @@ if [[ -z "$PROMOTE_NAME" ]]; then
 bold "Step 0.1: Host readiness"
 
 command -v git >/dev/null 2>&1 || fail "git not found on PATH."
-command -v python3 >/dev/null 2>&1 || fail "python3 not found on PATH (spawn uses it to mint ids and passwords)."
+"$SCRIPT_DIR/py" -c "" || fail "no usable Python for host tools (spawn uses it to mint ids and passwords); scripts/py printed what to install."
 # Docker first; Podman's Docker-compatible socket only when Docker is not answering and the
 # caller has not chosen an engine (req-dev-multisession-container-engine). With no Docker CLI
 # at all, the helper puts a docker->podman forwarder on PATH, so Podman alone is enough.
@@ -528,7 +528,7 @@ if ! with_timeout 8 docker info >/dev/null 2>&1; then
     Start Docker Desktop (macOS) or the engine (Linux: systemctl start docker) and re-run.
     For Podman, start the machine (macOS: podman machine start) and re-run — it is picked up automatically."
 fi
-info "Toolchain OK: docker + compose v2 + lsof + python3 (engine: ${TAP_ENGINE:-docker})."
+info "Toolchain OK: docker + compose v2 + lsof + host Python via scripts/py (engine: ${TAP_ENGINE:-docker})."
 
 # Layout seatbelt: the primary clone lives at ~/tap-sessions/main — the layout
 # the registry, promote, and despawn lifecycles standardize on. Derived from git
@@ -848,7 +848,7 @@ if [[ -n "$FROM_POINTER" ]]; then
   info "Resolving --from pointer (stage-0 fetch): $FROM_POINTER"
   # ${cred_args[@]+…}: bash 3.2 (stock macOS) treats an EMPTY array expansion as unbound
   # under `set -u` and aborts — the +-guard expands to nothing instead of erroring.
-  if ! STAGED_RECORD="$(cd "$REPO" && python3 -m tap.boot_pointer "$FROM_POINTER" ${cred_args[@]+"${cred_args[@]}"} --out "$WORKTREE/boot")"; then
+  if ! STAGED_RECORD="$(cd "$REPO" && "$SCRIPT_DIR/py" -m tap.boot_pointer "$FROM_POINTER" ${cred_args[@]+"${cred_args[@]}"} --out "$WORKTREE/boot")"; then
     fail "--from: stage-0 fetch failed for pointer '$FROM_POINTER' (see boot-pointer error above)."
   fi
   BOOT_PROFILE="$(basename "$STAGED_RECORD" .boot.json)"
@@ -870,7 +870,7 @@ fi
 # to the repo-local flow. Nothing new is trusted (req-dev-workspace-spawn-6/-7).
 if [[ -n "$DEV_PLUGINS" ]]; then
   info "Deriving dev workspace: editable [$DEV_PLUGINS] over base profile '$BOOT_PROFILE'"
-  if ! STAGED_DEV="$(cd "$REPO" && python3 -m tap.dev_workspace \
+  if ! STAGED_DEV="$(cd "$REPO" && "$SCRIPT_DIR/py" -m tap.dev_workspace \
       --base-profile "$BOOT_PROFILE" --dev-plugins "$DEV_PLUGINS" --worktree "$WORKTREE")"; then
     fail "--dev-plugins: workspace derivation failed (see error above)."
   fi
@@ -922,7 +922,7 @@ fi
 # ----------------------------------------------------------------------------
 # Addressed by --profile/--boot-dir, not a path: the '<id>.boot.json' spelling stays
 # inside tap/boot_naming.py rather than becoming a second shell twin of it.
-if ! (cd "$REPO" && python3 -m tap.install_credentials \
+if ! (cd "$REPO" && "$SCRIPT_DIR/py" -m tap.install_credentials \
     --profile "$_boot_profile_effective" --boot-dir "$WORKTREE/boot"); then
   fail "boot profile '$_boot_profile_effective' declares install credentials this host cannot satisfy (see above). No containers were started."
 fi
@@ -945,7 +945,7 @@ bold "Step 3: Writing .env.local"
 # (the Docker container is fine — that's 3.14+ — but we need the GRID_ID set
 # before the container starts). Fall back to an inline RFC 9562 implementation
 # so the script works on any Python 3.x host.
-TAP_GRID_ID="$(python3 - <<'PY'
+TAP_GRID_ID="$("$SCRIPT_DIR/py" - <<'PY'
 import os, time, uuid
 try:
     print(uuid.uuid7())
@@ -1409,7 +1409,7 @@ if [[ -n "${TAP_DEV_ADMIN_PASSWORD:-}" ]]; then
 elif [[ "$(uname)" == "Darwin" ]] && ADMIN_PASSWORD="$(security find-generic-password -s tap-dev-default -a admin -w 2>/dev/null)" && [[ -n "$ADMIN_PASSWORD" ]]; then
   info "Admin password source: macOS Keychain (tap-dev-default)"
 else
-  ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
+  ADMIN_PASSWORD="$("$SCRIPT_DIR/py" -c 'import secrets; print(secrets.token_urlsafe(18))')"
   info "Admin password source: random (fresh per session)"
 fi
 
@@ -1483,7 +1483,7 @@ bold "Step 6.4: Dev passkey"
 # --json is side-effect-free and always exits 0; stdout carries only the state object.
 PASSKEY_STATE_JSON="$(scripts/dc exec -T web uv run python manage.py bootstrap_dev_passkey \
   --json --profile "$BOOT_PROFILE_EFFECTIVE" 2>/dev/null || echo '{}')"
-PASSKEY_STATE="$(printf '%s' "$PASSKEY_STATE_JSON" | python3 -c \
+PASSKEY_STATE="$(printf '%s' "$PASSKEY_STATE_JSON" | "$SCRIPT_DIR/py" -c \
   'import json,sys; print(json.load(sys.stdin).get("state","unknown"))' 2>/dev/null || echo unknown)"
 
 case "$PASSKEY_STATE" in

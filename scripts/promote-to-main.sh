@@ -401,7 +401,7 @@ Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast 
     # anyway; re-running is cheap. mktemp + trap: no predictable /tmp path.
     PROMOTE_BODY_TMP="$(mktemp "${TMPDIR:-/tmp}/promote-body.XXXXXX")" || fail "mktemp failed."
     trap 'rm -f "$PROMOTE_BODY_TMP"' EXIT
-    python3 scripts/promote-pr-body origin/main > "$PROMOTE_BODY_TMP" \
+    scripts/py scripts/promote-pr-body origin/main > "$PROMOTE_BODY_TMP" \
       || fail "PR body derivation failed — fix scripts/promote-pr-body (an undeclared promote is the failure class this exists to kill)."
     gh pr edit "$PR_NUM" --body-file "$PROMOTE_BODY_TMP" >/dev/null \
       || fail "PR body publication failed — not proceeding against a stale declaration. Re-run to retry."

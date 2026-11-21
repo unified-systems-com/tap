@@ -173,7 +173,7 @@ Agreement is to a specific version of the code, not to the idea of it. When the 
 
 #### Implementation
 
-- `scripts/hooks-install` records a hash of `.githooks/` + `.claude/settings.json` + `scripts/hooks/` + `scripts/hooks-install` at install time. **Every** hook in `.githooks/` — including `post-checkout`, `post-merge` and `post-rewrite` — sources `.githooks/_consent_check.sh` and calls `tap_consent_gate` before doing anything.
+- `scripts/hooks-install` records a hash of `.githooks/` + `.claude/settings.json` + `scripts/hooks/` + `scripts/hooks-install` + `scripts/py` at install time. `scripts/py` is in the set because it chooses the interpreter every hook runs on (tap#1277). **Every** hook in `.githooks/` — including `post-checkout`, `post-merge` and `post-rewrite` — sources `.githooks/_consent_check.sh` and calls `tap_consent_gate` before doing anything.
 - **A clone with hooks armed but no consent record fails closed.** Returning success on a missing record would grandfather exactly the population this protects: every clone armed by the pre-2026-08-28 silent `git config core.hooksPath`, permanently unalarmed. Those clones get a migration notice instead, and the certify/protect asymmetry applies to them as it does to a mismatch.
 - **The consent record lives in local git config (`tap.hooksConsentHash`), never in the repository.** This asymmetry is the whole design. A malicious commit can change the hooks, but it cannot change what you agreed to, because there is nothing in-repo to forge — so a repo-side change can only ever produce a *mismatch*, never a forged match.
 - The hash is computed with `git hash-object` over working-tree content, so it reflects what will actually execute rather than what is staged, and needs no interpreter beyond git (a session worktree has no `.venv`). It digests the **file mode alongside the content**, because `git hash-object` covers the blob only — without the mode a commit could clear the executable bit on `pre-commit`, silently disabling the secret scan without moving the hash. Symlinks are covered for the same reason. The set includes `scripts/hooks-install` itself, since the installer is what records consent.
@@ -197,7 +197,7 @@ A local self-check is defeatable by editing the checker, because the edited copy
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-localexec-reconsent-1 | Change Revokes Consent | Implemented | A modification anywhere in the hashed set produces a mismatch on the next hook invocation. | Content, file mode and symlinks all move the hash; `scripts/hooks-install` is in the set. |
+| req-dev-localexec-reconsent-1 | Change Revokes Consent | Implemented | A modification anywhere in the hashed set produces a mismatch on the next hook invocation. | Content, file mode and symlinks all move the hash; `scripts/hooks-install` and `scripts/py` are in the set. |
 | req-dev-localexec-reconsent-7 | Armed Without A Record Fails Closed | Implemented | Hooks running with no recorded consent alarm rather than passing silently. | Otherwise every silently-armed clone is grandfathered — the exact population at risk. |
 | req-dev-localexec-reconsent-8 | Installer Does Not Execute The Surface | Implemented | `scripts/hooks-install` never sources `.githooks/`; it carries its own digest copy, parity guard-enforced. | Sourcing it would run un-approved code during an automatic spawn even on a decline. |
 | req-dev-localexec-reconsent-2 | Record Is Not In The Repo | Implemented | The approved hash is stored in local git config, so a commit cannot forge agreement. | The asymmetry that makes the check meaningful. |
@@ -364,6 +364,30 @@ must find a known call site by name, must return a non-empty set, and the floor 
 reject the exact construct that broke us. A guard that silently covers nothing reports
 green over precisely the surface it claims.
 
+**The closure, not the call site (tap#1277).** On 2026-11-21 the pre-commit secret scan died on
+Debian 13's own `python3` (3.13) with `SyntaxError: multiple exception types must be
+parenthesized`, while the floor check passed. `.githooks/precommit_secret_scan.py` was held to the
+floor; `tap/credential_patterns.py`, which it imports, was not. A module is host-run when anything
+host-run imports it, so the checked set is now the transitive closure of first-party imports from
+every derived and declared module: absolute and relative imports, plus each enclosing package's
+`__init__.py`. A file under the host directories whose shebang names `python3` is a host module too,
+whatever its suffix, because hooks and CI run `scripts/check-issue-link` and its siblings directly.
+
+**One resolver.** Host tools no longer call the machine's `python3`. They call `scripts/py`, which
+runs the first of these that exists:
+
+1. `python3`, if it meets `HOST_SYNTAX_FLOOR`.
+2. `python3.14`.
+3. `uv run --no-project --python <requires-python>`. uv fetches its own managed interpreter and never
+   touches the system Python.
+
+With none of them it exits 127 and prints what to install. That is the macOS case: the system
+`python3` there is 3.9. The floor and the version uv fetches are read from
+`tap/host_syntax_floor.py` and `pyproject.toml`, so neither number is restated. A shell source
+under `scripts/` or `.githooks/` that names a bare `python3` fails the guard. The resolver itself is
+the one exception, and comments and Python sources aren't shell. The derivation reads calls through
+the resolver exactly as it read `python3` calls.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description |
@@ -371,6 +395,9 @@ green over precisely the surface it claims.
 | req-dev-localexec-host-syntax-floor-1 | Parses At The Floor | Implemented | Every host-runnable module parses at `HOST_SYNTAX_FLOOR`; the check rejects grammar newer than it, accepts it at 3.14, and the floor is strictly older than `requires-python`. |
 | req-dev-localexec-host-syntax-floor-2 | The List Is Derived | Implemented | Targets come from real `python3` invocations in host-side sources; the scan must find a named known call site and a non-empty set, so a broken derivation fails loudly instead of covering nothing. |
 | req-dev-localexec-host-syntax-floor-3 | The Reason Survives | Implemented | A host tool whose python helper cannot run reports that helper's own stderr; failing closed never discards the cause. |
+| req-dev-localexec-host-syntax-floor-4 | The Closure Is Held | Implemented | Every first-party module a host module imports, transitively (absolute, relative and enclosing packages), and every Python-shebang file under the host directories, is held to the floor. The real tree's `tap/credential_patterns.py` is in the set. |
+| req-dev-localexec-host-syntax-floor-5 | One Resolver | Implemented | No shell source under `scripts/` or `.githooks/` other than `scripts/py` calls a bare `python3`; a planted call is found, and comments and Python sources are not counted. |
+| req-dev-localexec-host-syntax-floor-6 | The Resolver Fails Loud | Implemented | `scripts/py` uses a host `python3` that meets the floor; otherwise uv at `requires-python` with no project; otherwise it exits 127 naming what to install. |
 
 ### CI Runs Repo Python On The Repo's Interpreter
 

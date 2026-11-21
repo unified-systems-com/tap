@@ -240,7 +240,10 @@ Ninja over PostgreSQL; Docker Compose for everything. 120-character lines, doubl
 Google-style docstrings on public interfaces.
 
 **Run everything in the container, never the host.** The host `python3` is macOS 3.9.6 and reports
-`SyntaxError` on valid 3.14 code (see Developer Tooling for the multi-`except` trap). Use `scripts/dc`
+`SyntaxError` on valid 3.14 code (see Developer Tooling for the multi-`except` trap). The few tools
+that must run on the host (git hooks, `scripts/*`) reach Python through `scripts/py`, never bare
+`python3`; it picks an interpreter at or above the host syntax floor or uv's, and fails loud when
+there is none (tap#1277). Use `scripts/dc`
 rather than `docker compose` directly — it merges `.env` + `.env.local` so commands hit *this*
 session's stack instead of the primary one.
 
