@@ -547,7 +547,12 @@ At start, a deployed product image ([`req-tap-bake-immutable-env`](#the-deployed
 accepts the attested verdict instead of rescanning only when all of these hold:
 
 - the running image's digest is the attested one;
-- the environment is the image's own, with no venv volume and no bind-mounted source;
+- **nothing is mounted over any path the scan reads or the interpreter imports from**, by any mount
+  type (bind, named volume or tmpfs). That covers the venv, `/usr/bin`, `/usr/lib`, the application
+  source and every plugin's source. A deployment declares its writable paths (data directories,
+  the file store, logs, `/tmp`), and the initializer refuses the attested verdict if any mount's
+  destination is on, under or above a scanned path. A read-only root alone is not enough, because a
+  mount replaces what is under it;
 - the container's root filesystem is **read-only** (`read_only: true` in compose,
   `readOnlyRootFilesystem` in Kubernetes, `readonlyRootFilesystem` in ECS). An image digest
   authenticates the layers, not a container's writable upper layer, so without this the venv and
@@ -567,7 +572,7 @@ unchanged: an unwaived non-validated provider still stops the instance.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-bake-crypto-bom-1 | Verdict Attested | Proposed | Every product image build publishes a crypto-BOM verdict attestation naming the image digest, manifest digest and waiver-policy digest. | |
-| req-tap-bake-crypto-bom-2 | Verified Inputs Only | Proposed | A deployed product image whose digest, environment and waiver policy all match the attested verdict, running with a read-only root filesystem, skips the rescan; changing any one, mounting source over the image, or a writable root filesystem runs the full gate. | |
+| req-tap-bake-crypto-bom-2 | Verified Inputs Only | Proposed | A deployed product image whose digest and waiver policy match the attested verdict, with a read-only root and no mount of any type on, under or above a scanned path, skips the rescan. Changing either digest, any such mount (a bind over `/usr/bin`, or a named volume over source included), or a writable root runs the full gate. | The mount check reads `/proc/self/mountinfo`, not the deploy config |
 | req-tap-bake-crypto-bom-3 | Self-Check Kept | Proposed | The `tap.fips` self-check runs on every start of every image, attested verdict or not. | |
 | req-tap-bake-crypto-bom-4 | Refusal Unchanged | Proposed | A product image containing an unwaived non-validated provider fails its build's gate, and if forced past the build, still refuses to serve at start. | |
 
@@ -731,6 +736,9 @@ substitute for reviewing it. This revision makes these changes:
     refused.
   - Verifying an attestation against the repository alone admits any workflow that can mint one, so
     verification now pins the signer workflow and a protected ref.
+- Round 4 (`b0cb33e1`) found that the read-only root still allowed a mount of any type over a
+  scanned path. The skip now also requires that no mount sits on, under or above a scanned path. The
+  FIPS spec's pointer no longer restates the conditions, so the two cannot drift apart.
 - Round 3 (`af974155`) found that the lock and recovery contradicted each other. A lock held on the
   installation's database can't survive dropping that database, and a crash mid-load left a partial
   schema with no progress row, which the classification would have refused. The lock now lives in the

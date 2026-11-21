@@ -180,12 +180,13 @@ excuses it. No-op when FIPS is off (a non-FIPS deployment may use non-FIPS crypt
 validation" half of declare-vs-decide: `tap.fips` proves the OpenSSL-backed Python layer is enforced,
 but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees it.
 
-For a deployed product image the static scan runs at build time, and its verdict is a detached
-attestation on the finished image naming the image digest, the install manifest and the waiver policy.
-Start accepts that verdict instead of rescanning only when all three verify and the environment is the
-image's own (no venv volume, no bind-mounted source); anything else runs the full gate. The `tap.fips`
-self-check still runs on every start, and the refusal rule is unchanged
-([`req-tap-bake-crypto-bom`](spec-tap-baked-instance.md#the-crypto-verdict-travels-with-the-image)).
+**Proposed, not built:** for a deployed product image, the static scan may run at build time, with its
+verdict a detached attestation on the finished image. Start may accept that verdict instead of
+rescanning **only** under every condition
+[`req-tap-bake-crypto-bom`](spec-tap-baked-instance.md#the-crypto-verdict-travels-with-the-image) lists.
+That requirement is the one place the conditions are stated, so this paragraph does not restate them.
+Anything short of all of them runs the full gate as described above. The `tap.fips` self-check still
+runs on every start, and the refusal rule is unchanged.
 
 #### Acceptance Criteria
 
