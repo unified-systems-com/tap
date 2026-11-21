@@ -359,8 +359,12 @@ class TestRetireWithAnEnd:
         # Codex on PR 1268: the destination pass sliced to the headroom BEFORE dropping ids the
         # source pass had already found, so a middle node holding the retiring entity at both
         # ends could spend the slice and leave a second dependent undiscovered under the cap.
+        import importlib
+
         from tap_grid.compound_edges import DependentsIndex
-        from tap_grid.services._impl import _compound_dependents
+
+        # White-box, as test_services reaches _apply_patch: the walk's own lookup, not a gateway.
+        _compound_dependents = importlib.import_module("tap_grid.services._impl")._compound_dependents
 
         both = DependentsIndex(by_source={SOURCE: frozenset({MIDDLE})}, by_destination={SOURCE: frozenset({MIDDLE})})
         root = _node(SENDER, "both-ends-root")
