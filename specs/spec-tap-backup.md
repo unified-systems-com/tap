@@ -649,8 +649,8 @@ RID: `req-tap-backup-restore`
 Status: `Proposed`
 
 Restore is a **boot from the archive**, started by a human, never triggered automatically
-([`req-boot-snapshot-4`](spec-tap-boot-v0.md#pre-migrate-snapshot)). A seed boot is not a restore and
-does not change this ([`req-tap-bake-seed-boot`](spec-tap-baked-instance.md#seed-boot)). The operator runs boot with a
+([`req-boot-snapshot-4`](spec-tap-boot-v0.md#pre-migrate-snapshot)). Seeding a new installation is not a
+restore and does not change this ([`req-tap-bake-initializer`](spec-tap-baked-instance.md#one-initializer-per-installation)). The operator runs boot with a
 `restore_from` source naming the archive and the mode `--as-restore`. Pre-boot then:
 
 1. Runs `verify --expected-digest` with the archive digest the operator supplies
@@ -724,10 +724,11 @@ Schedules start paused because a clone usually holds the same collector credenti
 polling the same APIs would double the load on those APIs and write the same world into two grids.
 The operator resumes schedules deliberately.
 
-A third mode, `--as-seed`, starts a new instance from a seed baked in CI
-([`req-tap-bake-seed-boot`](spec-tap-baked-instance.md#seed-boot)). It takes the clone's identity
-rules, holds no users, and may start without a person present only because the deploy config pins
-the seed's digest.
+A third mode, `--as-seed`, starts a new installation from a seed built in CI
+([`req-tap-bake-initializer`](spec-tap-baked-instance.md#one-initializer-per-installation)). It takes
+the clone's identity rules through a separate activation step
+([`req-tap-bake-activate`](spec-tap-baked-instance.md#activating-a-new-installation)), holds no users,
+and may start without a person present only because the deploy config pins the seed's digest.
 
 No mode is the default. Boot from an archive with none of `--as-restore`, `--as-clone` or
 `--as-seed` refuses and asks for one, so an operator cannot create a second live instance with the original's
