@@ -21,8 +21,10 @@ compares the first with each of the others:
   site, …), per table, with surrogate ``id`` and timestamp columns left out;
 * the ``django_migrations`` rows, by (app, name).
 
-Between the two migrated roads nothing is set aside: their statements must match exactly, generated
-names and column order included, since both create every object in the same order.
+Between the two migrated roads nothing is set aside: every statement must match as dumped, generated
+names and column order included, since both create every object in the same order. The dump is
+compared as a multiset because ``pg_dump`` orders by object, not by execution; the order the schema
+editor ran in is held by ``tap_boot/tests/test_shallow_reload.py``'s replay.
 
 Runs INSIDE the web container, settings-free on purpose (the builds are separate
 ``manage.py`` processes pointed at their own scratch database), with the stack's

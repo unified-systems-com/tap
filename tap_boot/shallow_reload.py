@@ -218,7 +218,8 @@ def plan(state: ProjectState, key: ModelKey) -> Plan | None:
     referring: dict[ModelKey, type[models.Model]] = {}
     for rendered_key in render:
         model = _registered(apps, rendered_key)
-        assert model is not None  # every key in render is registered: the touched model and its subclasses
+        if model is None:  # cannot happen (render holds registered classes only); Django's reload if it does
+            return None
         referenced: set[str] = set()
         reverse: list[Any] = [
             rel

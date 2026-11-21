@@ -16,7 +16,7 @@ from django.core.management.commands.migrate import Command as DjangoMigrateComm
 from tap_boot import shallow_reload
 
 
-class Command(DjangoMigrateCommand):
+class Command(DjangoMigrateCommand):  # NOSONAR (S8443: Django's migrate Command is a BaseCommand subclass)
     def handle(self, *args: Any, **options: Any) -> None:
         with shallow_reload.installed():
             if not shallow_reload.enabled() and options["verbosity"] >= 2:

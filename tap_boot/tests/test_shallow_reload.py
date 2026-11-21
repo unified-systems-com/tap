@@ -284,7 +284,7 @@ def test_core_migrations_give_the_same_sql_and_models_on_both_roads(monkeypatch:
     assert took_shallow > 0  # the replay exercised the shallow road, not only its fallbacks
     assert [name for name, _ in shallow_sql] == [name for name, _ in stock_sql]
     for (name, stock), (_, shallow) in zip(stock_sql, shallow_sql, strict=True):
-        assert sorted(shallow) == sorted(stock), name
+        assert shallow == stock, name  # in order: the shallow road may not reorder what the editor runs
     assert shallow_models == stock_models
     assert dangling == []
 
