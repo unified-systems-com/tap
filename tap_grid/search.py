@@ -19,6 +19,7 @@ import jsonschema  # type: ignore[import-untyped]
 from django.core.exceptions import ValidationError
 
 from tap.db_aliases import SEARCH_READONLY
+from tap.jsonfiles import jsonschema_validate
 from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.enforcement import requires_capability
 from tap_grid.exceptions import SearchExecutionError
@@ -221,7 +222,7 @@ def _validate_inputs(search: Search, inputs: dict[str, Any]) -> dict[str, Any]:
         if defaults:
             inputs = {**defaults, **inputs}
     try:
-        jsonschema.validate(instance=inputs, schema=schema)
+        jsonschema_validate(inputs, schema)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"inputs": [exc.message]}) from exc
     return inputs

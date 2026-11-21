@@ -14,6 +14,6 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-tap-json-discovery` | Implemented | Implemented | `discover_json_files` | — |
-| `req-tap-json-loader` | Implemented | Implemented | `<module>` | — |
+| `req-tap-json-loader` | Implemented | Verified | `<module>` | `req-tap-json-loader-6` |
 | `req-tap-json-naming` | Implemented | Implemented | `<module>` | — |
 | `req-tap-json-scanner` | Implemented | Implemented | `scan_json_files` | — |

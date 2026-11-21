@@ -86,10 +86,11 @@ def validate_edge_hotlink_payload(edge_type: str, payload: Any) -> None:
     """
     import jsonschema
 
+    from tap.jsonfiles import jsonschema_validate
     from tap_grid.exceptions import EdgePropertyValidationError
 
     try:
-        jsonschema.validate(instance=payload, schema=EDGE_HOTLINK_PAYLOAD_SCHEMA)
+        jsonschema_validate(payload, EDGE_HOTLINK_PAYLOAD_SCHEMA)
     except jsonschema.ValidationError as exc:
         raise EdgePropertyValidationError(
             f"Edge type '{edge_type}' hotlink payload failed the system schema "

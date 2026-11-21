@@ -20,6 +20,7 @@ from django.db import models, transaction
 from django.db.models.functions import Left
 from django.utils import timezone
 
+from tap.jsonfiles import jsonschema_validate
 from tap_grid.history import TapHistoricalRecords, _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
@@ -1272,7 +1273,7 @@ class BaseModel(models.Model):
                     # (strings only) cannot check: validate the ISO text the payload carried.
                     if isinstance(field_value, datetime.date):
                         field_value = field_value.isoformat()
-                    jsonschema.validate(instance=field_value, schema=entry["schema"])
+                    jsonschema_validate(field_value, entry["schema"])
                 except jsonschema.ValidationError as exc:
                     errors.setdefault(field_name, []).append(exc.message)
 
@@ -2110,7 +2111,7 @@ class Keystone(BaseModel):
     def validate(self) -> None:
         """Self-describing-context contract (req-grid-keystone-validation).
 
-        TAP-IMPLEMENTS: req-grid-keystone-validation@5d6b0a36a8c2/a6d8edf0891f (derivation) — the
+        TAP-IMPLEMENTS: req-grid-keystone-validation@5d6b0a36a8c2/8867f890a728 (derivation) — the
             whole-record hook is the one place the three context rules are derived;
             every service-layer / GRIFT write reaches them through full_validate().
 
@@ -2143,7 +2144,7 @@ class Keystone(BaseModel):
             raise ValidationError({"context_schema_json": [f"is not a valid JSON Schema: {exc.message}"]}) from exc
 
         try:
-            jsonschema.validate(instance=context, schema=schema)
+            jsonschema_validate(context, schema)
         except jsonschema.ValidationError as exc:
             raise ValidationError(
                 {"context_json": [f"does not conform to context_schema_json: {exc.message}"]}

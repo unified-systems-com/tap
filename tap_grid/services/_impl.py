@@ -24,6 +24,7 @@ from django.db import models as django_models
 from django.db.models import F, Q
 from django.utils import timezone
 
+from tap.jsonfiles import jsonschema_validate
 from tap_grid.caller_context import (
     drain_deferred_hotlink_checks,
 )
@@ -869,7 +870,7 @@ def _execute_write_pipeline(
                 reset_to_default = frozenset(key for key in payload if key not in prepared_payload)
             payload = prepared_payload
             try:
-                jsonschema.validate(instance=payload, schema=schema)
+                jsonschema_validate(payload, schema)
             except jsonschema.ValidationError as exc:
                 raise ServiceValidationError(exc.message) from exc
 

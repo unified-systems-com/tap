@@ -33,6 +33,7 @@ from typing import Any
 
 import jsonschema
 
+from tap.jsonfiles import jsonschema_validate
 from tap_grid.exceptions import EdgePropertyValidationError, InvalidEdgeError
 from tap_grid.registry import Registry
 
@@ -355,7 +356,7 @@ def get_edge_default_dimensions(edge_type: str) -> dict[str, str]:
 def validate_edge_properties(edge_type: str, properties: Any) -> None:
     """Validate edge properties: system-owned lane first, then the type schema.
 
-    TAP-IMPLEMENTS: req-grid-edge-schema-required@6866b00bcc19/41f0115fa865 (enforcement) — the one
+    TAP-IMPLEMENTS: req-grid-edge-schema-required@6866b00bcc19/e9990d4ce135 (enforcement) — the one
         enforcement point for "properties are optional, carrying them is not": every edge
         write reaches it through ``Edge.save()``, so the service layer and any model-level
         write hit the same check rather than re-deriving the rule.
@@ -403,7 +404,7 @@ def validate_edge_properties(edge_type: str, properties: Any) -> None:
     # A system-only payload leaves net == {} here, which still validates against
     # the type schema: a schema requiring type-authored keys rejects it, correctly.
     try:
-        jsonschema.validate(instance=net, schema=schema)
+        jsonschema_validate(net, schema)
     except jsonschema.ValidationError as exc:
         raise EdgePropertyValidationError(
             f"Edge properties for '{edge_type}' failed schema validation: {exc.message}"

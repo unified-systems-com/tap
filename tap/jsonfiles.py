@@ -1,6 +1,6 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
-TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/cea860463b2e (derivation) — the one home of the
+TAP-IMPLEMENTS: req-tap-json-loader@0d890d39ef74/6232f8865d48 (derivation) — the one home of the
 read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
 `JsonFileError`, they never re-derive the mechanics.
 
@@ -19,7 +19,9 @@ Spec: specs/spec-tap-json-files.md.
 
 from __future__ import annotations
 
+import copy
 import json
+import threading
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -138,10 +140,64 @@ def validate_json(
     """
     schema_obj = load_schema(schema) if isinstance(schema, (str, Path)) else schema
     try:
-        jsonschema.validate(instance=instance, schema=schema_obj)
+        jsonschema_validate(instance, schema_obj)
     except jsonschema.ValidationError as exc:
         location = "/".join(str(part) for part in exc.absolute_path) or "<root>"
         raise JsonFileError(source if source is not None else "<in-memory>", exc.message, location=location) from exc
+
+
+#: How many distinct schemas keep a checked validator. Schemas come from code, model rows and plugin
+#: manifests, so a grid has dozens to low hundreds; the bound keeps a pathological caller (a schema
+#: built per call) from growing the cache without limit.
+_VALIDATOR_CACHE_MAX = 1024
+_validators: dict[str, Any] = {}
+_validators_lock = threading.Lock()
+
+
+def jsonschema_validate(instance: Any, schema: Any) -> None:
+    """``jsonschema.validate(instance, schema)``, checking each distinct schema once (tap#1280).
+
+    The one cached-validator path for in-memory validation (``req-tap-json-loader-6``); a hot call
+    site never calls ``jsonschema.validate`` itself.
+
+    ``jsonschema.validate`` runs ``check_schema`` (the schema against its metaschema) on every
+    call, which on the GRIFT import path cost more than the validation itself. This keeps one
+    validator per schema: ``validator_for`` picks the draft exactly as ``jsonschema.validate`` does,
+    the schema is checked once when its validator is built, and each call then raises
+    ``best_match(iter_errors(instance))`` — the same ``ValidationError`` (type, message, paths)
+    ``jsonschema.validate`` raises. An invalid schema raises the same ``SchemaError`` on every call,
+    because a failed check caches nothing.
+
+    Schemas are dicts, some built at runtime or read from database rows, so the cache key is the
+    schema's canonical JSON text, never ``id()``: equal schemas share a validator, and mutating a
+    dict after a call cannot leave a stale validator under its new content. The validator holds a
+    private deep copy, so a caller mutating the dict later cannot change it either. A schema that
+    is not JSON-serializable is validated uncached, by ``jsonschema.validate`` itself.
+    """
+    try:
+        key = json.dumps(schema, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except TypeError, ValueError:
+        jsonschema.validate(instance=instance, schema=schema)
+        return
+    validator = _validators.get(key)
+    if validator is None:
+        validator = _build_validator(key, schema)
+    error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
+    if error is not None:
+        raise error
+
+
+def _build_validator(key: str, schema: Any) -> Any:
+    """Check *schema* and cache its validator under *key* (raises ``SchemaError``, caching nothing)."""
+    private = copy.deepcopy(schema)
+    cls = jsonschema.validators.validator_for(private)
+    cls.check_schema(private)
+    validator = cls(private)
+    with _validators_lock:
+        if len(_validators) >= _VALIDATOR_CACHE_MAX:
+            _validators.pop(next(iter(_validators)))  # oldest first: insertion order
+        _validators[key] = validator
+    return validator
 
 
 # --------------------------------------------------------------------------- #

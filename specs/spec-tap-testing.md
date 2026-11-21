@@ -131,8 +131,8 @@ fixtures do **not** live in a conftest at all, and this is load-bearing.
 
 **The harness plugin (`tap/pytest_harness.py`):** The fixtures every suite in the
 system depends on — `default_caller_context` (autouse; binds the `tap_test` actor
-`CallerContext` with a fresh `batch_id` per DB test), the `django_db_setup`
-auth-bootstrap seeding, and the `_service_write_hatch` — are a real pytest plugin
+`CallerContext` with a fresh `batch_id` per DB test), the test-database baseline
+seed, and the `_service_write_hatch` — are a real pytest plugin
 loaded via `-p tap.pytest_harness` in the configfile's `addopts` (with the
 `pythonpath = ["."]` ini making the module importable at plugin-load time).
 
@@ -147,6 +147,16 @@ carrier because it rides the same `[tool.pytest.ini_options]` block that deliver
 Django settings do. (A `pytest11` entry point would be the textbook mechanism,
 but the root project is a virtual — non-installed — uv project with no
 distribution to register one from.)
+
+**The baseline seed is once per test database, and is not a fixture.** The auth
+bootstrap (`sync_auth`) and the dimension vocabulary are committed baseline data,
+written once per test database as pytest-django sets it up (the harness wraps
+`django.test.utils.setup_databases`), outside any test's transaction. It was a session
+`django_db_setup` override until tap#1280 found it had never run: `-p
+tap.pytest_harness` registers before pytest-django's entry point, the later-registered
+fixture of one name wins, and so every DB test re-seeded the baseline inside its own
+rolled-back transaction (~1.6 s each). `default_caller_context` keeps re-seeding only
+as the self-heal for a transactional test that flushed the baseline.
 
 **Root `conftest.py`:** Rootdir-scoped *collection* configuration only
 (`collect_ignore` for uninstalled-plugin test dirs). Load-bearing fixtures must
@@ -169,6 +179,7 @@ Fixtures should be placed at the narrowest scope that makes sense:
 | req-tap-test-fixtures-2 | Narrowest Scope Placement | In Development | Fixtures live at the narrowest conftest scope that covers their usage. | |
 | req-tap-test-fixtures-3 | No Fixture Leakage | In Development | App-level fixtures do not depend on other apps' conftest files. | |
 | req-tap-test-fixtures-4 | Invocation Independence | Implemented | The harness fixtures load under `pytest --pyargs tap_plugin.<slug>` (the per-plugin CI invocation), and the guard proving it can also detect their absence. | Guard: `tap/tests/test_pytest_harness_invocation.py` — positive arm (fixture visible under --pyargs) + negative arm (blanked `addopts` makes the same probe report absence). Born from the pytest 9.0.2→9.1.1 upgrade breaking every plugin suite's DB tests. |
+| req-tap-test-fixtures-5 | Baseline Seeded Once Per Test Database | Implemented | The harness commits the auth bootstrap and the dimension vocabulary once per test database, as it is set up and outside any test's transaction, independent of pytest plugin registration order; a run with no DB test creates no database for it. | Guard: `tap/tests/test_pytest_harness_seed.py` — a second connection must see the baseline rows, which it cannot if they were seeded inside the test's transaction. tap#1280. |
 
 #### Future
 Factory-based test data generation (e.g. factory_boy) may be introduced when the number of model types makes manual setup painful.

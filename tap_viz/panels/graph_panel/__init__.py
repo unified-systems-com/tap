@@ -31,6 +31,7 @@ from urllib.parse import quote
 
 import jsonschema
 
+from tap.jsonfiles import jsonschema_validate
 from tap_web.utils import graph_script_ids
 
 # Accept only a narrow set of height values from panel config so the value can
@@ -212,7 +213,7 @@ def _zoom_settle_attr(config: Any) -> str:
     if not isinstance(raw, dict) or raw.get("enabled") is not True:
         return ""
     try:
-        jsonschema.validate(instance=raw, schema=ZOOM_SETTLE_SCHEMA)
+        jsonschema_validate(raw, ZOOM_SETTLE_SCHEMA)
     except jsonschema.ValidationError as exc:
         logger.warning("[c41e] Graph panel zoom_settle config ignored: %s", exc.message)
         return ""
@@ -279,9 +280,7 @@ def _apply_nav_rules(
     if not rules:
         return
     try:
-        import jsonschema
-
-        jsonschema.validate(rules, _NAV_RULES_SCHEMA)
+        jsonschema_validate(rules, _NAV_RULES_SCHEMA)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "[c3a7] graph panel %s: invalid nav_rules, skipping node navigation: %s",
