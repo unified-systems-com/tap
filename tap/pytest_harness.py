@@ -40,6 +40,10 @@ What the harness provides (unchanged in behavior from the conftest era):
   so direct-ORM test setup is sanctioned below-service writing
   (req-tap-auth-write-batch-routing); ``@pytest.mark.enforce_write_guard``
   opts a test out to exercise the guard itself.
+* ``_forget_test_local_models`` (autouse) — removes any model a test defined in
+  its own body from Django's app registry and TAP's entity-model registry when the
+  test ends, so a later test in the same worker that walks every model never
+  queries a table that existed only for that one test.
 
 Import discipline: this module is imported at pytest STARTUP, before pytest-django
 configures Django settings — so nothing Django-backed may be imported at module
@@ -546,6 +550,41 @@ def _service_write_hatch(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     with unguarded_write():
         yield
+
+
+@pytest.fixture(autouse=True)
+def _forget_test_local_models() -> Iterator[None]:
+    """Unregister every model a test defines in its own body once the test ends.
+
+    A ``class _Typo(BaseModel)`` inside a test function registers itself with Django's app
+    registry and with ``tap_grid.registry._entity_model_registry`` for the life of the
+    worker process. A later test in the same worker that walks every model (purge, GRIFT
+    export, the batch viewer) then queries a table that never existed outside that one
+    test: ``relation "tap_grid__typo" does not exist``. Under xdist's default ``load``
+    scheduling the walkers happened to run on other workers. ``--dist worksteal`` sends
+    them to the same one, and the core lane went red with 35 failures (tap#1295).
+
+    Models registered before the test (module imports, module- or class-scoped fixtures)
+    are in the snapshot and untouched. Restoring only when something was added keeps the
+    common case to two dict copies.
+    """
+    from django.apps import apps
+
+    from tap_grid.registry import _entity_model_registry
+
+    before = {label: set(models) for label, models in apps.all_models.items()}
+    entities_before = _entity_model_registry.all()
+    yield
+    added = False
+    for label, models in apps.all_models.items():
+        for name in set(models) - before.get(label, set()):
+            models.pop(name, None)
+            added = True
+    if _entity_model_registry.all().keys() != entities_before.keys():
+        _entity_model_registry._reset_for_testing(entities_before)
+        added = True
+    if added:
+        apps.clear_cache()
 
 
 # =============================================================================
