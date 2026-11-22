@@ -306,6 +306,7 @@ Two things the comparison does that the rules below do not spell out. An integer
 6. Comparison is by JSON value and is type-sensitive: `true` and `1` differ, `{}` and `{"k": null}` differ, object key order does not matter. Relations compare by id.
 7. System-managed fields stay outside FLIP as `req-grid-flip-default-3` says, and are excluded from the comparison. The excluded list is kept in one place and a test fails when a system-managed field is added without it.
 8. `req-grid-flip-default` rules 5 and 6 and `req-grid-service-write-keepabsent-6` state the same rule: touched and changed, or first asserted.
+9. One writer is outside rule 2, and it is Proposed and not built: the adapter through which a migration applies a version step to stored rows (`req-grid-entity-model-version` rules 30 and 31 in `spec-grid-entity.md`). It changes values and stamps none of them. Each entry stays with the source that asserted the value, moved to a new field name where the step declares a rename. A write through the ordinary pipeline never takes this exception.
 
 #### Development
 The payload-shape rule was cheap and it made `flip_map` carry no more information than a single row-level batch stamp for collector-written data. Deriving the stamped set from a comparison is also what keeps the known-unknown distinction alive past the second write.
