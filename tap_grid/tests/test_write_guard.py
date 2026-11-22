@@ -309,6 +309,20 @@ def test_a_named_writer_updates_only_the_fields_it_is_named_for():
         lambda: nobody.update(event_start=None, event_end=None, event_precision=None, dimensions={}),
     )
 
+    # The field lock admits `dimensions`; the value rule holds it to the grid-derived entries.
+    spine = _batch_spine(f"dims-{uuid.uuid4()}")
+    one = Entity.objects.filter(pk=spine.pk)
+    stored = {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": {"v": "keystone", "src": "declared"}}  # tap.meta's node id
+    _under_import_grift("spine_sync", lambda: one.update(dimensions=stored))
+    with pytest.raises(UnguardedOperation, match="may set or remove grid-derived entries only"):
+        _under_grid_write("event_time_rederive", lambda: one.update(dimensions={}))
+    with pytest.raises(UnguardedOperation, match="may set or remove grid-derived entries only"):
+        _under_grid_write(
+            "event_time_rederive", lambda: one.update(dimensions={**stored, "x": {"v": "y", "src": "declared"}})
+        )
+    _under_grid_write("event_time_rederive", lambda: one.update(dimensions=stored))
+    assert Entity.objects.get(pk=spine.pk).dimensions == stored
+
     def attempt(fields: Mapping[str, object]) -> Callable[[], object]:
         return lambda: nobody.update(**fields)
 

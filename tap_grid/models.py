@@ -406,6 +406,14 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
 
     def update(self, **kwargs: Any) -> int:
         self._guard("update", self._queryset_row_types(), fields=kwargs.keys())
+        from tap_grid.write_guard import enforce_value_rules
+
+        # A named writer held to a key inside a JSON column, which a field lock cannot express.
+        enforce_value_rules(
+            self.model._meta.label,
+            lambda: list(self.model._base_manager.filter(pk__in=self.values("pk")).values_list("dimensions", flat=True)),
+            kwargs,
+        )
         return super().update(**kwargs)
 
     def delete(self) -> tuple[int, dict[str, int]]:
