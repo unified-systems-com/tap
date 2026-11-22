@@ -97,9 +97,10 @@ def test_the_core_ci_line_requires_the_gryphon_corpus_to_execute() -> None:
     """The corpus runs on every PR: whichever lane runs the plugin suites passes it to --require, by name."""
     jobs = _load("core-ci.yml")["jobs"]
     lane = next(s for s in jobs["line"]["steps"] if str(s.get("name", "")).startswith("Test lane"))
-    assert lane["env"]["SCOPE"] == (
-        "${{ inputs.plugin_suites_on_cold_boot && '--no-plugins' || '--require gryphon_playground' }}"
-    ), "the line drops the plugin suites only when cold-boot takes them, and requires the corpus otherwise"
+    assert " ".join(lane["env"]["SCOPE"].split()) == (
+        "${{ inputs.specs_only && '--no-plugins --core-files tap/spec_reader_tests.txt' "
+        "|| (inputs.plugin_suites_on_cold_boot && '--no-plugins' || '--require gryphon_playground') }}"
+    ), "the line drops the plugin suites only on the specs tier or when cold-boot takes them, and requires the corpus otherwise"
     assert "$SCOPE" in lane["run"] and "--record boot/core_ci.boot.json" in lane["run"]
     moved = [s for s in jobs["cold-boot"]["steps"] if s.get("if") == "inputs.plugin_suites_on_cold_boot"]
     suites = next(s for s in moved if "tap.lane_run" in str(s.get("run", "")))
@@ -328,3 +329,20 @@ def test_the_owner_issue_opens_only_on_failure_and_closes_only_on_success(workfl
     assert "gh issue close" in success and "gh issue create" not in success
     assert "gh issue create" in failure and "gh issue close" not in failure
     assert "gh issue" not in other
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-7")
+def test_the_specs_tier_runs_only_the_spec_readers_and_every_other_lane_checks_the_list(
+    workflow: dict[str, Any],
+) -> None:
+    """The narrowing applies to exactly the specs tier, and is audited everywhere else."""
+    assert workflow["jobs"]["line"]["with"]["specs_only"] == "${{ needs.setup.outputs.tier == 'specs' }}"
+    assert "specs_only" not in workflow["jobs"]["cold-boot"]["with"]
+    lane = next(
+        s for s in _load("core-ci.yml")["jobs"]["line"]["steps"] if str(s.get("name", "")).startswith("Test lane")
+    )
+    assert lane["env"]["AUDIT"] == "${{ !inputs.specs_only && '/tmp/spec-readers' || '' }}"
+    assert "-p tap.spec_read_audit" in lane["run"]
+    assert 'python -m tap.spec_read_audit --check "$TAP_SPEC_READ_AUDIT"' in lane["run"]
+    for job in _core_ci_calls(_load("publish-release-tags.yml")).values():
+        assert "specs_only" not in job["with"], "a release never narrows"
