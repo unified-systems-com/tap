@@ -11,6 +11,7 @@ This is the first slice (tap#1328). It has no seed, so the only roads are:
 
 - an empty database and no identity: activate, then Finish (the full initialization);
 - an active identity: Finish only (a restart, or a replacement container);
+- a TAP database with no identity: refused, because adopting one is not built yet;
 - a pending identity: re-apply the stored values, never mint again;
 - anything else: refuse, writing nothing.
 
@@ -74,7 +75,6 @@ ACTIVE = "active"
 ROAD_ACTIVATE = "activate"
 ROAD_RESUME = "resume"
 ROAD_FINISH = "finish"
-ROAD_LEGACY = "legacy"
 
 
 class InitializeError(RuntimeError):
@@ -115,6 +115,13 @@ class StateStore:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, self.identity_path)
+        # The rename is only durable once the directory is: the database re-key that follows must
+        # never outlive the record of the password it set.
+        dir_fd = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 def mint_identity() -> dict[str, Any]:
@@ -254,7 +261,11 @@ def classify(identity: dict[str, Any] | None, relations: int, has_tap_schema: bo
         if relations == 0:
             return ROAD_ACTIVATE
         if has_tap_schema:
-            return ROAD_LEGACY
+            raise InitializeError(
+                "the database holds a TAP schema but there is no identity and no stamp: it was made without "
+                "the initializer, or only partly. Adopting such a database is not built; refusing rather than "
+                "leave it on the deploy config's bootstrap password"
+            )
         raise InitializeError(
             f"the installation's database holds {relations} relation(s) but no TAP schema and there is no "
             "identity: refusing to initialize over it"
@@ -333,9 +344,9 @@ def run(
 ) -> str:
     """Classify the stores, activate if needed, and write the hand-off; return the road taken.
 
-    TAP-IMPLEMENTS: req-tap-bake-initializer@3137d9b6e56b/2685aed96a4d (derivation) — the one place an installation
+    TAP-IMPLEMENTS: req-tap-bake-initializer@0119b11722e9/0e2d215781bf (derivation) — the one place an installation
         is classified and its road chosen, under the installation lock.
-    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/2685aed96a4d (enforcement) — values are stored pending
+    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/0e2d215781bf (enforcement) — values are stored pending
         before any is applied, applied from the stored values, and never minted twice.
     """
     identity = store.read()
@@ -347,12 +358,6 @@ def run(
         with connect(target, [stored, target.bootstrap_password]) as conn:
             road = classify(identity, *database_contents(conn))
             logger.info("[i1a2] initializer: road %s", road)
-            if road == ROAD_LEGACY:
-                logger.warning(
-                    "[i1a3] initializer: this database was initialized before the initializer existed; "
-                    "leaving its identity to the deploy config"
-                )
-                return road
             if road == ROAD_ACTIVATE:
                 identity = minter()
                 store.write(identity)  # pending: from here the store is the source of truth
@@ -430,11 +435,23 @@ def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], i
         store.write(identity)
         if identity.get("first_login") == "issued":
             return
+        if identity.get("first_login") == "issuing":
+            # A start died while issuing the link. It may or may not have printed one; at most one is
+            # ever issued automatically, so the operator mints the next by hand.
+            logger.warning(
+                "[i1a8] initializer: a first admin link may already have been issued by an interrupted start; "
+                "if you have none, run: manage.py enroll_admin --email <you> --print-token"
+            )
+            return
+        # Recorded before the link is minted, so a crash in between can never issue a second one.
+        identity = {**identity, "first_login": "issuing"}
+        store.write(identity)
         argv = [sys.executable, "manage.py", "enroll_admin", "--email", email, "--base-url", base_url, "--print-token"]
         if runner(argv) == 0:
             store.write({**identity, "first_login": "issued"})
             logger.info("[i1a6] initializer: open the link above within an hour to enroll the first admin's passkey")
         else:
+            store.write({**identity, "first_login": "pending"})
             logger.warning(
                 "[i1a7] initializer: could not mint the first admin link; run manage.py enroll_admin by hand"
             )

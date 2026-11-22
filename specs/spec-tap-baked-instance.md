@@ -470,10 +470,15 @@ first, in a product image whose deploy config sets `TAP_INSTALLATION_DIR` to a m
   role passwords, the grid id, an activation id, a status and per-phase progress. The image prepares
   the mount point as `nonroot`, mode 0700, so a fresh named volume takes that owner and mode.
 - **Classification.** The roads built so far are activate (an empty database with no identity),
-  resume (a pending identity), Finish (an active identity) and legacy (a TAP schema made before the
-  initializer, left to its deploy config). Anything else is refused.
-- **Finish.** The entrypoint runs `manage.py boot`, then records `finish: done`. On the first
-  activation only, it prints a one-time `enroll_admin` link.
+  resume (a pending identity) and Finish (an active identity whose stamp matches the database).
+  Everything else is refused, including a TAP database with no identity: adopting a database made
+  without the initializer is not built yet. Activation stamps the database with its activation id,
+  as a database comment, so a volume and a database from different installations are told apart.
+- **The lock.** It covers activation, the entrypoint's schema steps (`tap.initialize locked --`)
+  and Finish, so a second start waits rather than migrating, booting or issuing alongside the first.
+- **Finish.** `tap.initialize finish` runs `manage.py boot`, then records `finish: done`; a failed
+  boot is fatal. On the first activation only, it records `issuing`, then prints a one-time
+  `enroll_admin` link, so a crash can never issue a second one.
 - **Not built yet.** The seed rows, clone activation and per-installation role names.
 - **Measured locally, 2026-11-22.** The playground's 15-plugin record, with no seed, on a compose file
   carrying only a bootstrap password. From `compose up` to HTTP 302, with one admin link printed: 107.6

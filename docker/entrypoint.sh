@@ -137,8 +137,11 @@ fi
 # be a real mount, or the identity would vanish with the container.
 TAP_INITIALIZED=""
 if [[ -n "${TAP_PRODUCT_IMAGE}" && -n "${TAP_INSTALLATION_DIR:-}" ]]; then
-    if ! awk -v p="${TAP_INSTALLATION_DIR}" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo; then
-        emit_abort initialize "TAP_INSTALLATION_DIR (${TAP_INSTALLATION_DIR}) is not a mounted volume; the installation's identity must outlive the container"
+    # A mount, and not a memory-backed one: the owner's new password lives only here, so a tmpfs
+    # would lose it with the container and strand the database (mountinfo's fstype follows " - ").
+    if ! awk -v p="${TAP_INSTALLATION_DIR}" '$5 == p { for (i = 6; i <= NF; i++) if ($i == "-") { t = $(i + 1); break }
+            if (t != "tmpfs" && t != "ramfs" && t != "devtmpfs") found = 1 } END { exit !found }' /proc/self/mountinfo; then
+        emit_abort initialize "TAP_INSTALLATION_DIR (${TAP_INSTALLATION_DIR}) is not a mounted, durable volume; the installation's identity must outlive the container"
         exit 1
     fi
     echo "==> Initializer: this installation's identity..."

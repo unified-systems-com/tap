@@ -91,7 +91,6 @@ def _handoff(path: Path) -> dict[str, str]:
     ("identity", "relations", "tap_schema", "stamp", "road"),
     [
         (None, 0, False, "", initialize.ROAD_ACTIVATE),
-        (None, 50, True, "", initialize.ROAD_LEGACY),
         (None, 0, False, "a comment someone else wrote", initialize.ROAD_ACTIVATE),
         ({"status": "pending", "activation_id": "A", "progress": {}}, 0, False, "", initialize.ROAD_RESUME),
         ({"status": "active", "activation_id": "A", "progress": {}}, 0, False, "tap-installation:A", initialize.ROAD_FINISH),
@@ -112,6 +111,7 @@ def test_each_store_state_has_one_road(identity: Any, relations: int, tap_schema
         (None, 1, False, "", "no TAP schema"),
         (None, 40, False, "", "no TAP schema"),  # a Django database that is not TAP's
         (None, 50, True, "tap-installation:B", "volume is missing"),
+        (None, 1, True, "", "made without the initializer"),  # a lone tap_entity is not adopted
         ({"status": "active", "activation_id": "A", "progress": {"finish": "done"}}, 0, False, "tap-installation:A",
          "stores disagree"),
         ({"status": "active", "activation_id": "A", "progress": {}}, 50, True, "tap-installation:B",
@@ -207,14 +207,52 @@ def test_an_interrupted_activation_reuses_its_values(
     assert cluster["rekeys"] == [("tap", pending["owner_password"])]
 
 
-@pytest.mark.spec("req-tap-bake-initializer-6")
-def test_a_legacy_installation_is_left_to_its_deploy_config(
+@pytest.mark.spec("req-tap-bake-initializer-7")
+def test_a_tap_database_without_an_identity_is_refused_not_adopted(
     store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path
 ) -> None:
     cluster.update(relations=50, tap_schema=True)
     handoff = tmp_path / "installation.env"
-    assert initialize.run(store, initialize.Target(URL), handoff=handoff) == initialize.ROAD_LEGACY
+    with pytest.raises(initialize.InitializeError, match="made without the initializer"):
+        initialize.run(store, initialize.Target(URL), handoff=handoff)
     assert store.read() is None and not handoff.exists() and cluster["rekeys"] == []
+
+
+@pytest.mark.spec("req-tap-bake-initializer-2")
+def test_a_start_killed_while_issuing_the_link_never_issues_a_second(
+    store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path
+) -> None:
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    issued: list[str] = []
+
+    def dies_after_minting(argv: list[str]) -> int:
+        if argv[2] == "enroll_admin":
+            issued.append("link")
+            raise KeyboardInterrupt("killed after the link was printed")
+        return 0
+
+    with pytest.raises(KeyboardInterrupt):
+        initialize.finish(store, initialize.Target(URL), runner=dies_after_minting)
+    identity = store.read()
+    assert identity is not None and identity["first_login"] == "issuing"
+    initialize.finish(store, initialize.Target(URL), runner=dies_after_minting)
+    assert issued == ["link"], "the restart boots but mints no second link"
+
+
+@pytest.mark.spec("req-tap-bake-installation-identity")
+def test_the_installation_volume_must_be_a_durable_mount() -> None:
+    text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
+    start = text.index('awk -v p="${TAP_INSTALLATION_DIR}" \'') + len('awk -v p="${TAP_INSTALLATION_DIR}" \'')
+    program = text[start : text.index("' /proc/self/mountinfo", start)]
+    mountinfo = (
+        "36 25 0:41 / /var/lib/tap/installation rw,relatime - ext4 /dev/sda1 rw\n"
+        "37 25 0:42 / /var/lib/tap/ram rw,relatime - tmpfs tmpfs rw\n"
+    )
+    for path, ok in (("/var/lib/tap/installation", True), ("/var/lib/tap/ram", False), ("/absent", False)):
+        rc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — the entrypoint's own awk on fixed input  # nosec B603 B607  # noqa: S603, S607
+            ["awk", "-v", f"p={path}", program], input=mountinfo, text=True, capture_output=True
+        ).returncode
+        assert (rc == 0) is ok, path
 
 
 def test_the_target_url_is_rebuilt_with_a_quoted_password() -> None:
@@ -237,7 +275,7 @@ def test_the_entrypoint_runs_the_initializer_before_any_setting_and_finish_fails
     text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
     init = text.index("python -m tap.initialize run")
     assert init < text.index("scripts/codespace-env") and init < text.index("python -m tap.preboot")
-    assert "mounted volume; the installation's identity must outlive the container" in text
+    assert "mounted, durable volume; the installation's identity must outlive the container" in text
     block = text[text.index("==> Installation: Finish") :]
     block = block[: block.index("\nfi\n")]
     assert "if ! /app/.venv/bin/python -m tap.initialize finish; then" in block and "exit 1" in block
@@ -251,7 +289,8 @@ def test_the_module_imports_without_django() -> None:
     probe = (
         "import sys, tap.initialize; print(sorted(m for m in sys.modules if m == 'django' or m.startswith('django.')))"
     )
-    out = subprocess.run(
+    # The probe runs this interpreter on a fixed literal; a fresh process is the point of the test.
+    out = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — fixed argv, no shell  # nosec B603  # noqa: S603
         [sys.executable, "-c", probe], capture_output=True, text=True, env=env, cwd=Path(__file__).resolve().parents[2]
     )
     assert out.returncode == 0, out.stderr
