@@ -21,6 +21,7 @@ from typing import Any, Literal
 import jsonschema
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models as django_models
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
@@ -37,6 +38,7 @@ from tap_grid.exceptions import (
     ServiceCascadeTooLargeError,
     ServiceConflictError,
     ServiceConstraintError,
+    ServiceEvidenceError,
     ServiceInvalidReasonError,
     ServiceNotFoundError,
     ServiceUnsupportedOperationError,
@@ -47,10 +49,13 @@ from tap_grid.models import Edge, Entity
 from tap_grid.null_semantics import prepare_null_payload, schema_permits_null
 from tap_grid.service_types import (
     NOOP_ALREADY_TOMBSTONED,
+    WRITE_CHANGED,
+    WRITE_UNCHANGED,
     ServiceError,
     WriteOperation,
     WriteResult,
 )
+from tap_grid.write_classification import WriteClassification, classify, snapshot, spine_delta
 
 logger = logging.getLogger(__name__)
 
@@ -94,21 +99,16 @@ _schema_permits_null = schema_permits_null
 _prepare_null_payload = prepare_null_payload
 
 
-def _flip_touched_for_verb(
-    verb: str, payload: dict[str, Any], *, absent: str = "reset", reset_to_default: frozenset[str] = frozenset()
-) -> list[str] | None:
-    """The FLIP-touched field set for a write (req-grid-service-write-observation-5).
+def _flip_stamped(payload: dict[str, Any], classification: WriteClassification | None) -> list[str]:
+    """The fields whose FLIP entry a write moves (req-grid-flip-change).
 
-    create/patch stamp exactly the payload-present fields; replace asserts the
-    complete object, so it stamps the full service-writeable surface (None). A
-    keep-absent replace asserts only what it sent, so it stamps the payload-present
-    fields and the fields reset from a null (req-grid-service-write-keepabsent-6).
+    A create establishes the fields its payload sent. An update-shaped write stamps what its
+    classification found: the fields whose value changed, and the named fields asserted for the
+    first time. A field the payload repeats, and a field it does not name, keep their entries.
     """
-    if verb in ("replace_node", "replace_edge"):
-        if absent == "keep":
-            return [*payload.keys(), *sorted(reset_to_default)]
-        return None
-    return list(payload.keys())
+    if classification is None:
+        return list(payload.keys())
+    return classification.stamped
 
 
 def _apply_patch(instance: Any, payload: dict[str, Any]) -> None:
@@ -586,8 +586,18 @@ def _record_provenance(
     batch_id: str,
     user: Any,
     metadata: dict[str, Any] | None = None,
+    *,
+    observed_unchanged: bool = False,
 ) -> None:
-    """Record a BatchEvent for the completed operation (best-effort)."""
+    """Record a BatchEvent for the operation, or raise: a write is not applied without its record.
+
+    An update-shaped operation that re-observed its object unchanged is recorded as ``observe``
+    (req-grid-history-reobservation). The record is evidence reconciliation reads, so a batch
+    that cannot be found is a failure, never a skipped record (req-grid-service-batch-evidence).
+
+    TAP-IMPLEMENTS: req-grid-service-batch-evidence@9edd6850342f/fae4893e76a3 (enforcement) — the one
+        recorder the write pipeline calls: a missing batch or a failed insert fails the operation.
+    """
     from tap_grid.batch import record_batch_event
 
     event_map = {
@@ -600,15 +610,22 @@ def _record_provenance(
         "replace_edge": "update",
         "delete_edge": "unlink",
     }
-    event_type = event_map.get(verb, "update")
-    record_batch_event(
-        entity=entity,
-        event_type=event_type,
-        model_name=type(entity).__name__ if verb not in ("delete_node", "delete_edge") else "",
-        actor=user,
-        batch_id=batch_id,
-        metadata=metadata,
-    )
+    event_type = "observe" if observed_unchanged else event_map.get(verb, "update")
+    try:
+        recorded = record_batch_event(
+            entity=entity,
+            event_type=event_type,
+            model_name=type(entity).__name__ if verb not in ("delete_node", "delete_edge") else "",
+            actor=user,
+            batch_id=batch_id,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        raise ServiceEvidenceError(
+            f"the batch's record of {verb} on {entity.pk} could not be written; nothing applied"
+        ) from exc
+    if recorded is None:
+        raise ServiceEvidenceError(f"no batch {batch_id} to record {verb} on {entity.pk} in; nothing applied")
 
 
 def _ensure_batch(batch_id: str, user: Any, *, name: str, description: str) -> None:
@@ -848,7 +865,9 @@ def _execute_write_pipeline(
             from tap_grid.dimension_map import DimensionWriteError, supplied
 
             try:
-                instance._initial_dimensions = supplied(op.dimensions, where=f"{op.type_slug or op.edge_type} dimensions")
+                instance._initial_dimensions = supplied(
+                    op.dimensions, where=f"{op.type_slug or op.edge_type} dimensions"
+                )
             except (DimensionWriteError, LookupError) as error:
                 raise ServiceValidationError(str(error)) from error
 
@@ -880,6 +899,10 @@ def _execute_write_pipeline(
             except InvalidEdgeError as exc:
                 raise ServiceConstraintError(str(exc)) from exc
 
+        # The stored state an update-shaped write is compared against, taken before the payload
+        # is applied (req-grid-flip-change rule 1).
+        before = None if is_create or is_delete else snapshot(instance, frozenset(payload) | reset_to_default)
+
         # Apply field changes to the instance.
         if op.verb in ("create_node",):
             for field_name, value in payload.items():
@@ -895,8 +918,12 @@ def _execute_write_pipeline(
             else:
                 _apply_replace(instance, payload, model_cls)
 
-        # Step 6: Model validation (full_validate + Django full_clean).
+        # Step 6: Model validation (full_validate + Django full_clean), on the values in the form
+        # they are stored in. The model's write hook and every check a save would run happen here,
+        # before the write is classified, so a write found unchanged has skipped none of them
+        # (req-grid-history-reobservation rule 10).
         if not is_delete:
+            instance.prepare_for_write()
             if is_create and op.entity_id is not None and instance.entity_id is None:
                 # The id this create will land under, so a whole-record check can tell the row
                 # from another one (Dimension.validate's duplicate-name rule; the spine row is
@@ -913,6 +940,27 @@ def _execute_write_pipeline(
             except DjangoValidationError as exc:
                 errors = _django_errors_to_service_errors(exc)
                 return WriteResult(success=False, batch_id=batch_id, operation=op.verb, errors=errors)
+
+        # Changed, or re-observed unchanged: classified once, after validation has cleaned the
+        # values to their stored types. FLIP, the save, the version and the batch's record all
+        # read this one result (req-grid-history-reobservation rule 5).
+        classification: WriteClassification | None = None
+        if before is not None:
+            if isinstance(instance, Edge):
+                # Edge.save validates the properties against the edge type's schema; an unchanged
+                # edge skips the save, so the check runs here for every update-shaped write.
+                from tap_grid.constraints import validate_edge_properties
+
+                validate_edge_properties(instance.edge_type, instance.properties)
+            classification = classify(
+                instance,
+                before,
+                frozenset(payload) | reset_to_default,
+                # Read here, not where the operation was built: the target's row has been locked
+                # since it was loaded, so no other writer can move the spine between this
+                # comparison and the caller's write of it.
+                caller_spine_change=bool(spine_delta(op.spine_intent)),
+            )
 
         # Steps 10 & 11: Persistence and provenance recording.
         # For deletes: record provenance BEFORE tombstoning so the entity row
@@ -1160,35 +1208,39 @@ def _execute_write_pipeline(
                         )
                     queue.extend((grandchild, child_id) for grandchild in grandchildren)
         else:
-            instance.save(
-                skip_validation=True,
-                _spine_just_created=spine_just_created,
-                flip_changed_fields=_flip_touched_for_verb(
-                    op.verb, payload, absent=op.absent, reset_to_default=reset_to_default
-                ),
-            )
+            unchanged = classification is not None and not classification.changed
+            # The write and the batch's record of it commit together or not at all
+            # (req-grid-service-batch-evidence): one savepoint holds both.
+            with transaction.atomic():
+                if not unchanged:
+                    instance.save(
+                        skip_validation=True,
+                        _spine_just_created=spine_just_created,
+                        flip_changed_fields=_flip_stamped(payload, classification),
+                    )
+                # A re-observed-unchanged operation does not save the typed row, so it writes
+                # no history row, no version and no FLIP entry, and leaves updated_at alone
+                # (req-grid-history-reobservation rule 3). The batch still records that it saw
+                # the object, as an `observe` event, which batch-scoped sweeps and
+                # reconciliation read beside create and update.
+                _record_provenance(op.verb, instance.entity, batch_id, user, observed_unchanged=unchanged)
             entity_id_out = instance.entity_id
-            # Record provenance for non-delete writes too so the BatchEvent log
-            # is a complete history of batch-scoped activity. Without this,
-            # batch-scoped sweeps (req-grid-import-grift-batch-scoped-sweep)
-            # can't identify which entities a batch originally created.
-            if hasattr(instance, "entity") and instance.entity is not None:
-                try:
-                    _record_provenance(op.verb, instance.entity, batch_id, user)
-                except Exception:
-                    logger.exception("[3c88] Provenance recording failed for batch %s", batch_id)
 
         # Step 12: Response shaping.
         summary = None
         if result_mode in ("standard", "verbose") and not is_delete:
             summary = _build_object_summary(instance)
 
+        outcome: Literal["changed", "unchanged"] | None = None
+        if not is_delete:
+            outcome = WRITE_UNCHANGED if classification is not None and not classification.changed else WRITE_CHANGED
         return WriteResult(
             success=True,
             batch_id=batch_id,
             operation=op.verb,
             entity_id=entity_id_out,
             object_summary=summary,
+            state=outcome,
         )
 
     except ServiceVersionConflictError as exc:
@@ -1216,6 +1268,7 @@ def _execute_write_pipeline(
         ServiceUnsupportedOperationError,
         ServiceCascadeTooLargeError,
         ServiceInvalidReasonError,
+        ServiceEvidenceError,
         EdgePropertyValidationError,
     ) as exc:
         code_map = {
@@ -1230,6 +1283,7 @@ def _execute_write_pipeline(
             ServiceUnsupportedOperationError: "unsupported_operation",
             ServiceCascadeTooLargeError: "cascade_closure_too_large",
             ServiceInvalidReasonError: "invalid_reason",
+            ServiceEvidenceError: "evidence_not_recorded",
         }
         return WriteResult(
             success=False,

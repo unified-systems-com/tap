@@ -13,8 +13,10 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
 - an id that exists — live or tombstoned — routes to replace, else to create; a replace keeps the
   typed fields the document omits and replaces the ones it carries whole (keep-absent,
   ``req-grid-import-grift-ordering-8``, ``-9``; tap#1128); a replace of a
-  tombstone fails its batch (the tombstone is terminal), a replace bumps the version once and
-  syncs the envelope's spine name without a second bump (``req-grid-import-grift-batch``);
+  tombstone fails its batch (the tombstone is terminal), a replace that changes a typed field, a
+  spine value or asserts a field for the first time bumps the version once and syncs the
+  envelope's spine name without a second bump (``req-grid-import-grift-batch``), and a replace
+  that changes nothing records ``observe`` and versions nothing (``req-grid-history-reobservation``);
 - a ref node resolves inside its batch's transaction through the type's declared search: zero
   live matches assigns, one returns, more than one fails the batch; an undeclared type fails
   the batch; two refs of one batch that describe one source object fail the batch — whether
@@ -127,6 +129,9 @@ class Row:
     #: the typed fields as last written (a create's payload, then each replace's fields laid over it), for
     #: `expected.fields` spot checks
     props: dict[str, Any] | None = None
+    #: the spine dimensions as stored, the type's defaults under whatever the last import declared: what
+    #: an import's envelope is compared with to tell a change from a re-observation (None: the defaults)
+    stored_dims: dict[str, str] | None = None
     #: an edge's `properties.hotlink.value`, for the page hotlink rule
     hotlink: str | None = None
     #: an edge's edge_type (the row's `type` is the entity type, `edge`)
@@ -584,14 +589,25 @@ def _execute(
                 # {} on a create: the model's defaults, unasserted. A declared map is stored over
                 # the type's defaults (req-grid-dimension-reference-3).
                 dims={**_type_defaults(n["type"]), **declared_dims} if declared_dims else None,
+                stored_dims={**_type_defaults(n["type"]), **(declared_dims or {})},
                 last_batch=bref,
                 props=dict(n["props"]),
             )
             _record(w.rows[name], "create", bref)
             continue
-        _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]", bref)
+        # The envelope always carries a dimensions map ({} when the scenario declares none), stored
+        # over the type's defaults; a spine value that differs is a change with no typed field moving.
+        sent_dims = {**_type_defaults(n["type"]), **(declared_dims or {})}
+        held_dims = row.stored_dims if row.stored_dims is not None else _type_defaults(n["type"])
+        sent_name = _spine_name(n)
+        changed = (
+            _asserts_something(row.props, n["props"])
+            or sent_dims != held_dims
+            or (sent_name is not None and sent_name != row.spine_name)
+        )
+        _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]", bref, changed=changed)
+        row.stored_dims = sent_dims
         row.key = constituting(n["type"], n["props"])
-        row.last_batch = bref
         # keep-absent: a field the document omits keeps its stored value; a carried one replaces whole.
         row.props = {**(row.props or {}), **n["props"]}
         if declared_dims is not None:
@@ -608,11 +624,31 @@ def _execute(
         row = w.rows.get(name)
         ends = (w.canon(e.get("from") or e["from_ref"]), w.canon(e.get("to") or e["to_ref"]))
         if row is None:
-            w.rows[name] = Row(name, "edge", EDGE, ends=ends, hotlink=_hotlink(e), edge_type=e["type"], last_batch=bref)
+            w.rows[name] = Row(
+                name,
+                "edge",
+                EDGE,
+                ends=ends,
+                hotlink=_hotlink(e),
+                edge_type=e["type"],
+                last_batch=bref,
+                props={"properties": dict(e.get("properties") or {})},
+            )
             _record(w.rows[name], "link", bref)
             continue
-        _replace(row, e.get("expected_version"), f"{bp}.edges[{j}]", bref)
-        row.ends, row.hotlink, row.last_batch = ends, _hotlink(e), bref
+        # An edge's one written field is `properties`. A grid edge built with none has never had
+        # it named, so the first import that sends it asserts it. An edge re-sent between other
+        # endpoints is a change too (the contract Issue# 351 - tap's pending scenario pins).
+        sent = {"properties": dict(e.get("properties") or {})}
+        moved = row.ends is not None and ends != row.ends
+        _replace(
+            row,
+            e.get("expected_version"),
+            f"{bp}.edges[{j}]",
+            bref,
+            changed=moved or _asserts_something(row.props, sent),
+        )
+        row.ends, row.hotlink, row.props = ends, _hotlink(e), sent
 
     plan_deletes, plan_purges = _lock_targets(w, b, targets, warnings)
     for t in plan_deletes:
@@ -670,12 +706,38 @@ def _record(row: Row, event_type: str, batch: str | None, n: int = 1) -> None:
         row.by_batch[(event_type, batch)] += n
 
 
-def _replace(row: Row, expected_version: int | None, path: str, batch: str) -> None:
+def _same(left: Any, right: Any) -> bool:
+    """Equality by JSON value, type-sensitive: ``True`` is not ``1`` (req-grid-flip-change rule 6)."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_same(v, right[k]) for k, v in left.items())
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_same(a, b) for a, b in zip(left, right, strict=True))
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return False
+    return bool(left == right)
+
+
+def _asserts_something(stored: dict[str, Any] | None, sent: dict[str, Any]) -> bool:
+    """A sent field changes the object when its value differs, or when no write named it before
+    (its first assertion): the stored fields are exactly the ones a write has named."""
+    return any(key not in (stored or {}) or not _same((stored or {})[key], value) for key, value in sent.items())
+
+
+def _replace(row: Row, expected_version: int | None, path: str, batch: str, *, changed: bool) -> None:
+    """A replace of a live row: a change versions it once and records ``update``; a re-observation
+    that changes nothing records ``observe`` and leaves the version and the content stamp alone
+    (req-grid-history-reobservation). The stale-version refusal comes first either way."""
     if not row.live:
         raise _BatchFailed([("execution_failed", path)])
     if expected_version is not None and expected_version != row.version:
         raise _BatchFailed([("entity_version_conflict", path)])
+    if not changed:
+        _record(row, "observe", batch)
+        return
     row.version += 1
+    row.last_batch = batch
     _record(row, "update", batch)
 
 

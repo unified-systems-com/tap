@@ -397,7 +397,7 @@ Patch is not the tool for this: it deep-merges JSON objects (`req-grid-service-w
 | req-grid-service-write-keepabsent-3 | Present Replaces Whole | Proposed | With `absent="keep"`, a present field replaces its stored value whole; a JSON object or array is not merged. | A removed tag is gone. |
 | req-grid-service-write-keepabsent-4 | Null On A Non-Null Field Resets | Proposed | With `absent="keep"`, an explicit `null` on a field whose schema does not permit null sets the model default and is FLIP-stamped; on a null-permitting field it clears, as in `req-grid-service-write-observation-1`. | |
 | req-grid-service-write-keepabsent-5 | Only Replace Verbs Accept It | Proposed | `absent="keep"` on a verb other than `replace_node` / `replace_edge` is refused with `absent_not_allowed`. | |
-| req-grid-service-write-keepabsent-6 | FLIP Scoped To Sent Fields | Proposed | With `absent="keep"`, FLIP stamps the payload-present fields (including null resets) and nothing else, not the full replace surface. | Refines `req-grid-service-write-observation-5`. |
+| req-grid-service-write-keepabsent-6 | FLIP Scoped To Sent Fields | Proposed | With `absent="keep"`, FLIP stamps the payload-present fields (including null resets) that changed or are asserted for the first time, and nothing else: never a field the payload omitted, never a sent field whose stored value it repeats. | Refines `req-grid-service-write-observation-5`; the changed-or-first-asserted rule is `req-grid-flip-change`. |
 
 ### Observation-Aware Writes
 ----
@@ -428,8 +428,8 @@ The JSON `absent`-vs-`null` distinction is preserved by Python dict semantics (m
 | Verb | FLIP-touched set |
 | --- | --- |
 | `create_node` / `create_edge` | the fields present in the payload (explicitly provided, including explicit nulls) |
-| `patch_node` / `patch_edge` | the fields present in the payload |
-| `replace_node` / `replace_edge` | the full replace surface (replace asserts the complete object); with `absent="keep"`, only the payload-present fields (`req-grid-service-write-keepabsent-6`) |
+| `patch_node` / `patch_edge` | the fields present in the payload whose value changed, or that have no entry yet (`req-grid-flip-change`) |
+| `replace_node` / `replace_edge` | the fields of the replace surface whose value changed, and the payload-present fields with no entry yet; with `absent="keep"`, the same rule over the payload-present fields only (`req-grid-service-write-keepabsent-6`) |
 
 A field omitted from a create or patch is left out of FLIP — no entry — so it reads as an *unknown unknown* (nobody asserted it) per the convention. The signal is carried to `BaseModel.save()` as an explicit `flip_changed_fields` argument; when absent (non-pipeline saves), the existing `update_fields`-derived behavior is unchanged.
 
@@ -443,7 +443,7 @@ A field omitted from a create or patch is left out of FLIP — no entry — so i
 | req-grid-service-write-observation-2 | Null On Non-Null Field Dropped | Implemented | A `null` on a field that does not permit null is dropped (treated as absent), not a hard error. | Backward-compatible; future tightening may reject. |
 | req-grid-service-write-observation-3 | Absent Field Untouched | Implemented | A field omitted from a patch/create payload is neither applied nor FLIP-stamped. | `absent ≠ null`. |
 | req-grid-service-write-observation-4 | JSON Null Clears | Implemented | An explicit `null` for a JSONField clears it; deep-merge is attempted only on a present object value. | |
-| req-grid-service-write-observation-5 | FLIP Scoped To Touched Fields | Implemented | FLIP stamps only payload-present fields for create/patch and the full replace surface for replace; omitted fields get no entry. | Realizes `req-grid-flip-default-4`; via `flip_changed_fields`. |
+| req-grid-service-write-observation-5 | FLIP Scoped To Touched Fields | Implemented | FLIP stamps only payload-present fields for a create. A patch or replace stamps a touched field whose value changed or that is asserted for the first time (`req-grid-flip-change`); a field a patch omits gets no entry. | Realizes `req-grid-flip-default-4`; via `flip_changed_fields`. |
 | req-grid-service-write-observation-6 | Create Stamps Only Provided Fields | Implemented | A create stamps FLIP only for provided fields; defaulted/omitted fields receive no FLIP entry. | Defaulted `""` is not provenance-bearing. |
 
 #### Future

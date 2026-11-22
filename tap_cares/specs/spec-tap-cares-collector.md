@@ -45,6 +45,7 @@ Status messages and richer event records remain backlog (`req-tap-cares-collecto
 | req-tap-cares-collector-job-reaper | [CollectionJob Stale-Run Reaper](#collectionjob-stale-run-reaper) | Implemented | Reconciles a RUNNING row whose owning task died, so a dead worker cannot block a schedule forever |
 | req-tap-cares-collector-job-edge | [Collector HAS_COLLECTION_JOB Edge](#collector-has_job-edge) | Implemented | Graph relationship from Collector root node to its CollectionJob nodes |
 | req-tap-cares-collector-job-lifecycle | [CollectionJob Lifecycle Status](#collectionjob-lifecycle-status) | Implemented | Job status reflects Django Tasks lifecycle states |
+| req-tap-cares-collector-version | [Collector Version On The Run](#collector-version-on-the-run) | Proposed | Each run records the build that ran and the collector's authored `COLLECTOR_VERSION`, a source hash and optional source versions; each produced batch carries a copy in `metadata.collector` |
 | req-tap-cares-collector-failure-mode | [Collector Failure Mode](#collector-failure-mode) | Proposed | Framework convention for how a collector signals failure; KSI and other collectors follow this protocol rather than re-specifying it |
 | req-tap-cares-collector-job-logs | [Collection Job Status Messages And Logs](#collection-job-status-messages-and-logs) | Backlog | Deferred richer in-process status/log/event stream |
 | req-tap-cares-collector-strict-isolation | [Strict Collector Isolation](#strict-collector-isolation) | Backlog | Future stronger isolation for untrusted or high-risk collector execution |
@@ -1349,6 +1350,63 @@ TAP-specific states such as `CANCEL_REQUESTED`, `CANCELLED`, `BLOCKED`, or `PART
 | req-tap-cares-collector-job-lifecycle-5 | TAP-Specific States Deferred | Implemented | TAP-specific job states are not part of v0 and require future requirements once tap-cares supports runner backends beyond the hardcoded Django task runner. | |
 | req-tap-cares-collector-job-lifecycle-6 | TextChoices Enum | Implemented | `CollectionJob.status` is backed by a `models.TextChoices` enum with uppercase stored values and title-case display labels (`READY`/`"Ready"`, `RUNNING`/`"Running"`, `FAILED`/`"Failed"`, `SUCCESSFUL`/`"Successful"`). | |
 | req-tap-cares-collector-job-lifecycle-7 | Enum Owned By tap-cares | Implemented | The Status enum is declared on `CollectionJob`, not imported from `django.tasks`. v0 mirrors Django's four values; future TAP-specific states extend the local enum rather than rely on Django's set evolving. | |
+
+## Collector Version On The Run
+----
+RID: `req-tap-cares-collector-version`
+
+Status: `Proposed`
+
+Every run records which collector code performed it. A collector can change without its plugin changing in any way a reader can see, and its output can change meaning without its shape changing, so a run states two things: the build that ran, which core stamps, and a version the collector's author sets. A row reaches both through the batch that last changed or last saw it, and from that batch to the run. Nothing is added to the entity row or to any plugin table.
+
+### Status Details
+Proposed; nothing is built. Issue# 1307 - tap holds the rulings and the comparison with about 25 other systems, made on 2026-11-21 in one research pass over primary documentation and relayed in summary. The authored number is added to every collector in the collector sweep (Issue# 1289 - tap).
+
+What exists today (read on core main, 2026-11-21): a `collection_job` node has a status, its times and a summary. The `collector` node has its registered class path. A plugin's manifest states a plugin version that is never written onto a run or a batch. `req-tap-cares-collector-job-model` says the job takes no snapshot of the runner and that one would be a separate requirement; this is that requirement.
+
+What the comparison supports: wherever work happens in discrete executions the run is the usual place for a code version, and no batch tool found puts one on rows. An automatic build identity beside an authored version has precedent in Dagster, Prefect and dbt. What it warns of: no system found has a guard that forces an authored number to be raised, and Dagster documents both failures, a number forgotten and a derived one that changes on a cosmetic edit. Rule 4 is the answer to the first.
+
+### Implementation
+
+| Field on `CollectionJob` | Type | Meaning |
+| --- | --- | --- |
+| `collector_version` | integer, nullable | The version the collector's author declares (rule 1). |
+| `plugin_slug` | short text | The plugin that provides the collector. |
+| `plugin_release` | short text | That plugin's release version, from its manifest. |
+| `plugin_commit` | short text | The commit the boot record pins for that plugin. Empty when it pins none. |
+| `source_hash` | short text | A hash of the collector's source (rule 4). |
+| `source_versions` | JSON object, nullable | What the collector says about the versions of the sources it read (rule 5). |
+
+1. Every `CollectorBase` subclass declares an authored integer version as a class attribute, `COLLECTOR_VERSION`, of 1 or more. There is no default. A collector class that declares none fails plugin validation. The author raises it when the collector's output changes meaning: a field is filled from a different place, a unit or a convention changes, an object is keyed differently, something collected before no longer is. A change that leaves the output as it was does not raise it.
+2. The build is stamped by core and declared by nobody: the plugin's slug, its release version, and the commit when the boot record pins one.
+3. Both are written onto the run's node by the task body, in the write that moves the run to `RUNNING`, read from the class the worker has loaded. That is the code that is about to run, which a value copied at enqueue time or from the `collector` node might not be. `req-tap-cares-collector-job-sole-writer` is unchanged: the task body is still the only writer.
+4. The run also records a hash of the collector's source: the files of its collector package, in a fixed order. It gates nothing and fails nothing. It is the only check on a forgotten rule 1, because two runs with the same authored number and different hashes are visible as such, and it tells apart development builds that share a release number. A guard in the repository that owns the collector may compare the two and warn; whether it does is decided when this is built.
+5. A collector may state the version of each source it read, as the source reports it: an API version header, a product version, a schema date. It is optional. It is an object from a name the collector chooses for the source to a text value, written with the run's other results, and it is empty when the collector states none. Core never fills it. It separates "the source changed" from "the collector changed" when two runs disagree.
+6. Each batch a run produces carries a copy of what a reader needs to know which collector wrote it: the collector's registry key, its authored version, the plugin's slug and the plugin's release. The copy is written in the batch's existing `metadata` field, under the key `collector`, by the collector's GRIFT import surface when it opens the batch. No column is added to the batch. A batch exported without its run still describes itself, because the batch payload in a GRIFT document carries `metadata`.
+7. The key is a statement about a batch, and where it came from decides how it is read. Written here: only the collector import surface writes it, for a batch it opens for a local run, and a service-layer caller that opens a batch and supplies `collector` is refused. Carried: a batch that arrives inside a GRIFT document keeps the key as the document wrote it. That is the source grid's statement. The importer keeps it as written, does not check it, and creates no run, no `PRODUCED_BATCH` edge and no other local record from it.
+8. A row reaches the version through the pointers on its spine (`req-grid-entity-batch-pointers` in `tap_grid/specs/spec-grid-entity.md`): from `last_changed_batch_id` or `last_observed_batch_id` to the batch, and from the batch along its inbound `PRODUCED_BATCH` edge to the run. That edge, from a run on this grid, is what says a collector ran here; the key alone never does. A batch with no such edge was not produced by a run on this grid. If it carries the key, a collector on another grid is claimed and this grid holds no run for it. If it does not (an analyst's edit, a document written by hand, grid maintenance), nobody states a collector, and that absence is the answer.
+9. A run recorded before this requirement is built has these fields empty. They are not filled in afterwards.
+10. The configuration a run used is not part of this requirement. It belongs with the collector configuration nodes (Issue# 907 - tap).
+
+### Development
+One number for a collector is coarser than some comparable systems keep: Dagster versions each asset and Airbyte scopes a breaking change to a stream. It matches SARIF and the SBOM formats, and it fits a grid where the unit of re-collection is a run. A finer grain can be added later as a second declaration without changing what a run records.
+
+The batch copy uses the existing `metadata` field and not a new column because the field already travels in a GRIFT batch payload and needs no migration of the batch table; a reserved key gives it a fixed place inside a field that is otherwise free-form.
+
+### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-collector-version-1 | Declared Or Refused | Proposed | A `CollectorBase` subclass with no `COLLECTOR_VERSION` fails plugin validation, naming the class. | |
+| req-tap-cares-collector-version-2 | Run Records Both | Proposed | After a run, its `collection_job` node holds the collector's authored version, the plugin's slug and release, and the pinned commit when the boot record has one. | |
+| req-tap-cares-collector-version-3 | Stamped From Loaded Code | Proposed | A run whose collector class changed version between enqueue and start records the version of the class the worker loaded. | |
+| req-tap-cares-collector-version-4 | Source Hash Gates Nothing | Proposed | Two runs of one collector at one authored version with different source record different hashes, and both succeed. | |
+| req-tap-cares-collector-version-5 | Source Versions Are Optional | Proposed | A run whose collector states a source version records it under the name given; a run whose collector states none has the field empty. | |
+| req-tap-cares-collector-version-6 | Batch Describes Itself | Proposed | Every batch a run produces has `metadata.collector` naming the collector's key, authored version, plugin slug and release, and a GRIFT export of that batch alone carries it. | |
+| req-tap-cares-collector-version-7 | Local Writes Of The Key Are Refused | Proposed | A service-layer caller that opens a batch outside the collector import surface with `collector` in its metadata is refused. | |
+| req-tap-cares-collector-version-8 | Reached From A Row | Proposed | From any row a collector last changed, a Gryphon query reaches the authored version of the run that changed it. | |
+| req-tap-cares-collector-version-9 | Earlier Runs Left Empty | Proposed | Adding the fields leaves every existing run with them empty. | |
+| req-tap-cares-collector-version-10 | Carried Claim Makes No Local Run | Proposed | Importing by hand a document exported from another grid's collector batch keeps `metadata.collector` as written and creates no `collection_job` node and no `PRODUCED_BATCH` edge; a query from one of its rows reaches the claim on the batch and no run. | |
 
 ## Collector Failure Mode
 ----

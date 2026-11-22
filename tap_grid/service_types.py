@@ -48,6 +48,11 @@ class WriteOperation:
             its model default, the PUT behaviour. ``"keep"`` leaves the stored value
             alone, replaces a present field whole, and resets a null on a non-null
             field to its default. Only replace_node / replace_edge accept ``"keep"``.
+        spine_intent: The spine values the caller will write for the target itself in this batch
+            (the GRIFT envelope's name and dimensions). The pipeline compares them with the
+            stored spine under the target's row lock, so an envelope that differs makes the
+            operation a change even when no typed value moves (req-grid-history-reobservation
+            rule 2). Set by the GRIFT importer; never read from a request.
     """
 
     verb: str
@@ -64,6 +69,7 @@ class WriteOperation:
     metadata: dict[str, Any] | None = None
     cascade: Literal["none", "contained"] = "none"
     absent: Literal["reset", "keep"] = "reset"
+    spine_intent: dict[str, Any] | None = None
 
 
 # Retirement reasons — a closed vocabulary (req-grid-service-delete-reason-3). A third
@@ -126,6 +132,8 @@ class ServiceError:
         "batch_label_required",
         # absent="keep" on a verb that is not a replace (req-grid-service-write-keepabsent-5).
         "absent_not_allowed",
+        # The batch's record of the operation could not be written (req-grid-service-batch-evidence).
+        "evidence_not_recorded",
     ]
     message: str
     field: str | None = None
@@ -178,6 +186,11 @@ class EdgeIdentityResolution:
     key: str | None = None
 
 
+#: ``WriteResult.state`` values: the operation changed the object, or re-observed it unchanged.
+WRITE_CHANGED: Literal["changed"] = "changed"
+WRITE_UNCHANGED: Literal["unchanged"] = "unchanged"
+
+
 @dataclass
 class WriteResult:
     """Result envelope for a single write operation.
@@ -189,6 +202,9 @@ class WriteResult:
         object_summary: Populated for standard/verbose modes; None for minimal.
         warnings: Non-fatal advisory messages.
         errors: Populated only when success=False.
+        state: For a successful create, patch or replace, whether the operation changed the
+            object (``WRITE_CHANGED``) or re-observed it unchanged (``WRITE_UNCHANGED``,
+            req-grid-history-reobservation rule 7). None for a delete and for a failure.
     """
 
     success: bool
@@ -198,6 +214,7 @@ class WriteResult:
     object_summary: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[ServiceError] = field(default_factory=list)
+    state: Literal["changed", "unchanged"] | None = None
 
 
 @dataclass

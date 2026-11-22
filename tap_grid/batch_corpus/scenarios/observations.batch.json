@@ -267,7 +267,7 @@
           }
         ],
         "live": {
-          "o1": 2
+          "o1": 1
         },
         "tombstoned": {
           "T": 2
@@ -276,7 +276,7 @@
         "resolves": {
           "o2": "o1"
         },
-        "note": "The retired row is never found; o1 is minted and o2 finds o1, not T."
+        "note": "The retired row is never found; o1 is minted and o2 finds o1, not T. o2 repeats o1's facts, so o1 is re-observed unchanged and keeps version 1 (req-grid-history-reobservation)."
       }
     },
     {
