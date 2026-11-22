@@ -128,21 +128,28 @@ fi
 # GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN and GITHUB_USER, and nothing else. The dev
 # container's postStartCommand writes it, because Codespaces injects the current values
 # there on every start, and the compose file mounts it read-only at TAP_CODESPACE_IDENTITY.
-# When it is set, the file wins over the environment.
+# When it is set, the file wins over the environment, wholly.
 #
 # NOT Codespaces' own /workspaces/.codespaces/shared/.env, though it holds the same names
 # and is current: it also holds GITHUB_TOKEN and GITHUB_CODESPACE_TOKEN (read 2026-11-22),
 # and the stack keeps the visitor's token out of this container on purpose.
 #
-# The writer runs after this container has started, so the name is WAITED for, up to
+# The writer runs after this container has started, so the identity is WAITED for, up to
 # TAP_CODESPACE_NAME_WAIT seconds. During a prebuild no postStartCommand runs, the wait
 # runs out and derivation fails as before: a prebuild initializes nothing
 # (req-tap-bake-hosts-1).
 #
-# The file is READ, never sourced, and each value must match the shape GitHub gives it,
-# so a malformed line cannot become a command or break out of the values written below.
+# ALL THREE or nothing, from ONE read of the file. A half-written file must not combine
+# this Codespace's name with the prebuild's user or domain, and GITHUB_USER decides who
+# owns the instance. So each pass reads the file once, and the identity is taken only when
+# that one snapshot holds all three keys, each matching the shape GitHub gives it. When the
+# wait runs out first, the environment is NOT used as a fallback for any of them:
+# CODESPACE_NAME is cleared and derivation refuses.
+#
+# The file is READ, never sourced, so a malformed line cannot become a command or break
+# out of the values written below.
 identity="${TAP_CODESPACE_IDENTITY:-}"
-_identity() { sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}\$/\1/p" "$identity" 2>/dev/null | tail -1; }
+_key() { sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}\$/\1/p" <<<"$snapshot" | tail -1; }
 if [[ -n "$identity" ]]; then
   # Digits only, and capped: bash evaluates a variable's text as an arithmetic expression,
   # and an array subscript there runs a command substitution (x[$(...)]).
@@ -152,19 +159,27 @@ if [[ -n "$identity" ]]; then
     wait_s=180
   fi
   deadline=$(( $(date +%s) + wait_s ))
-  until [[ "$(_identity CODESPACE_NAME)" =~ ^[A-Za-z0-9-]+$ ]] || (( $(date +%s) >= deadline )); do
+  complete=false
+  while :; do
+    snapshot="$(cat -- "$identity" 2>/dev/null || true)"
+    cs_name="$(_key CODESPACE_NAME)"
+    cs_domain="$(_key GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN)"
+    cs_user="$(_key GITHUB_USER)"
+    if [[ "$cs_name" =~ ^[A-Za-z0-9-]+$ && "$cs_domain" =~ ^[A-Za-z0-9.-]+$ && "$cs_user" =~ ^[A-Za-z0-9-]+$ ]]; then
+      complete=true
+      break
+    fi
+    (( $(date +%s) >= deadline )) && break
     sleep 1
   done
-  cs_name="$(_identity CODESPACE_NAME)"
-  cs_domain="$(_identity GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN)"
-  cs_user="$(_identity GITHUB_USER)"
-  if [[ "$cs_name" =~ ^[A-Za-z0-9-]+$ ]]; then
-    echo "==> Codespace identity from ${identity}: ${cs_name}" >&2
+  if [[ "$complete" == true ]]; then
+    echo "==> Codespace identity from ${identity}: ${cs_name} (opened by ${cs_user})" >&2
     CODESPACE_NAME="$cs_name"
-    if [[ "$cs_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="$cs_domain"; fi
-    if [[ "$cs_user" =~ ^[A-Za-z0-9-]+$ ]]; then GITHUB_USER="$cs_user"; fi
+    GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="$cs_domain"
+    GITHUB_USER="$cs_user"
   else
-    echo "==> ${identity} named no Codespace within ${wait_s} s (a prebuild has none)" >&2
+    echo "==> ${identity} held no complete identity within ${wait_s} s (a prebuild has none)" >&2
+    CODESPACE_NAME=""
   fi
 fi
 

@@ -38,6 +38,10 @@ def _derive(tmp_path: Path, identity: str | None, wait: int | str = 3, **env: st
     )
 
 
+def _full(name: str, user: str = "visitor") -> str:
+    return f"CODESPACE_NAME={name}\nGITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev\nGITHUB_USER={user}\n"
+
+
 def _hosts(tmp_path: Path) -> str:
     for line in (tmp_path / "out.env").read_text().splitlines():
         if line.startswith("ALLOWED_HOSTS="):
@@ -48,7 +52,7 @@ def _hosts(tmp_path: Path) -> str:
 @pytest.mark.spec("req-tap-serving-codespace-9")
 def test_the_identity_file_names_a_codespace_the_environment_does_not(tmp_path: Path) -> None:
     ident = tmp_path / "identity.env"
-    ident.write_text('CODESPACE_NAME="spike-abc"\nGITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev\n')
+    ident.write_text('CODESPACE_NAME="spike-abc"\nGITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev\nGITHUB_USER=visitor\n')
     proc = _derive(tmp_path, str(ident))
     assert proc.returncode == 0, proc.stderr
     assert _hosts(tmp_path) == "spike-abc-8000.app.github.dev"
@@ -57,7 +61,7 @@ def test_the_identity_file_names_a_codespace_the_environment_does_not(tmp_path: 
 @pytest.mark.spec("req-tap-serving-codespace-9")
 def test_the_file_wins_over_a_stale_environment(tmp_path: Path) -> None:
     ident = tmp_path / "identity.env"
-    ident.write_text("CODESPACE_NAME=current-one\n")
+    ident.write_text(_full("current-one"))
     proc = _derive(tmp_path, str(ident), CODESPACE_NAME="stale-one")
     assert proc.returncode == 0, proc.stderr
     assert _hosts(tmp_path) == "current-one-8000.app.github.dev"
@@ -71,7 +75,7 @@ def test_a_name_written_after_start_is_waited_for(tmp_path: Path) -> None:
 
     def late() -> None:
         time.sleep(1.5)
-        ident.write_text("CODESPACE_NAME=late-one\n")
+        ident.write_text(_full("late-one"))
 
     writer = threading.Thread(target=late)
     writer.start()
@@ -82,13 +86,41 @@ def test_a_name_written_after_start_is_waited_for(tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("req-tap-serving-codespace-9")
+def test_a_half_written_file_is_waited_out_never_mixed_with_the_environment(tmp_path: Path) -> None:
+    """A name without its user must not borrow the prebuild's user: GITHUB_USER decides the owner."""
+    ident = tmp_path / "identity.env"
+    ident.write_text("CODESPACE_NAME=current\n")
+
+    def finish() -> None:
+        time.sleep(1.5)
+        ident.write_text(_full("current", user="current-user"))
+
+    writer = threading.Thread(target=finish)
+    writer.start()
+    proc = _derive(tmp_path, str(ident), wait=20, GITHUB_USER="stale-user")
+    writer.join()
+    assert proc.returncode == 0, proc.stderr
+    assert "current (opened by current-user)" in proc.stderr
+    assert "stale-user" not in proc.stderr
+
+
+@pytest.mark.spec("req-tap-serving-codespace-9")
+def test_an_incomplete_file_refuses_rather_than_fall_back(tmp_path: Path) -> None:
+    ident = tmp_path / "identity.env"
+    ident.write_text("CODESPACE_NAME=current\nGITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev\n")
+    proc = _derive(tmp_path, str(ident), wait=1, CODESPACE_NAME="from-env", GITHUB_USER="stale-user")
+    assert proc.returncode != 0
+    assert not (tmp_path / "out.env").exists()
+
+
+@pytest.mark.spec("req-tap-serving-codespace-9")
 def test_a_prebuild_with_no_name_still_refuses(tmp_path: Path) -> None:
     """Nothing writes the file during a prebuild, so derivation fails closed and initializes nothing."""
     ident = tmp_path / "identity.env"
     ident.write_text("")
     proc = _derive(tmp_path, str(ident), wait=1)
     assert proc.returncode != 0
-    assert "named no Codespace" in proc.stderr
+    assert "held no complete identity" in proc.stderr
     assert not (tmp_path / "out.env").exists()
 
 
@@ -106,7 +138,7 @@ def test_a_malformed_name_is_refused_not_run(tmp_path: Path) -> None:
 def test_a_hostile_wait_runs_nothing(tmp_path: Path) -> None:
     """The wait reaches bash arithmetic, where an array subscript would run a command."""
     ident = tmp_path / "identity.env"
-    ident.write_text("CODESPACE_NAME=named\n")
+    ident.write_text(_full("named"))
     marker = tmp_path / "pwned"
     proc = _derive(tmp_path, str(ident), wait=f"x[$(touch {marker})]")
     assert not marker.exists()
@@ -121,3 +153,13 @@ def test_the_generated_file_runs_nothing_from_its_own_comments(tmp_path: Path) -
     assert proc.returncode == 0, proc.stderr
     assert "command not found" not in proc.stderr and "syntax error" not in proc.stderr
     assert "'gh codespace ports forward'" in (tmp_path / "out.env").read_text()
+
+
+@pytest.mark.spec("req-tap-serving-codespace-5")
+def test_the_template_holds_no_command_syntax() -> None:
+    """The heredoc must stay unquoted to interpolate values, so nothing in it may be a command."""
+    text = (REPO / "scripts" / "codespace-env").read_text()
+    start = text.index('cat > "$output" <<ENVFILE')
+    template = text[start : text.index("\nENVFILE\n", start)]
+    assert "`" not in template
+    assert "$(" not in template
