@@ -23,11 +23,14 @@ python3 /usr/local/lib/tap/seed_manifest.py verify /opt/uv-cache-seed /opt/uv-ca
 cp -r /opt/uv-cache-seed/. "${UV_CACHE_DIR}/"
 
 echo "==> Building the core environment from uv.lock (uv sync --frozen --all-packages)..."
-uv sync --frozen --all-packages
+# Not --no-build: psycopg-c ships only as source and is built against the image's own libpq and
+# FIPS OpenSSL, which is why the image's deps-warm stage builds it; --no-build refuses it outright
+# (tried 2026-11-22). Every sdist is hash-checked against uv.lock, and its built wheel comes from
+# the seed verified above, so nothing unpinned builds here. The entrypoint has run this same sync.
+uv sync --frozen --all-packages  # NOSONAR — see above
 
 echo "==> Installing the record's plugins and writing the install manifest..."
-/app/.venv/bin/python -m tap.product_image build \
-    --record "/app/boot/${profile}.boot.json" --profile "${profile}" --base-image "${base_image}"
+/app/.venv/bin/python -m tap.product_image build --profile "${profile}" --base-image "${base_image}"
 
 # Pre-boot in product-image mode, exactly as a start runs it, so a record the image cannot
 # satisfy fails the build rather than the first launch. There is no database at build time.

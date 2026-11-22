@@ -110,11 +110,12 @@ tap_clear_if_other_image() {
 TAP_PRODUCT_IMAGE=""
 if [[ -f /app/tap-product/install-manifest.json ]]; then
     TAP_PRODUCT_IMAGE=1
-    # A volume over /app/.venv would hide the baked environment behind whatever the volume holds
-    # (Docker copies the image's venv into a fresh volume once, and then never again), so the
-    # manifest would describe one environment while another ran.
-    if grep -qE '^[^ ]+ [^ ]+ [^ ]+ [^ ]+ /app/\.venv ' /proc/self/mountinfo; then
-        emit_abort product-image "a volume is mounted at /app/.venv; a product image runs the environment it ships, so remove that mount"
+    # A mount over /app, over the venv or anywhere inside it, or over the manifest would hide what
+    # the image ships behind whatever the mount holds (Docker copies an image directory into a fresh
+    # volume once, and then never again), so the manifest would describe one environment while
+    # another ran.
+    if grep -qE '^[^ ]+ [^ ]+ [^ ]+ [^ ]+ /app(/\.venv(/[^ ]*)?|/tap-product(/[^ ]*)?)? ' /proc/self/mountinfo; then
+        emit_abort product-image "a volume or bind mount covers /app, /app/.venv or /app/tap-product; a product image runs the environment it ships, so remove that mount"
         exit 1
     fi
     if [[ -n "${TAP_SECRET_SOURCE_DISTS:-}" ]]; then

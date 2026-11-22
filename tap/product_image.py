@@ -32,7 +32,8 @@ import importlib.metadata
 import json
 import logging
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 — fixed tool argv only (git, uv), list form, never a shell
 import sys
 import tempfile
 import tomllib
@@ -57,6 +58,13 @@ DIGEST_REF_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0
 
 _VENV_DIR = Path("/app/.venv")
 _UV_LOCK = Path("/app/uv.lock")
+_BOOT_DIR = Path("/app/boot")
+
+# What a record may put into an argv or a path. The record is the product's, so it is treated
+# as untrusted input here: a slug names a directory, a URL and a tag reach `git fetch`.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
+_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._~/-]+$")
+_REV_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
 
 class ProductImageError(RuntimeError):
@@ -210,12 +218,28 @@ def plugin_problems(entry: dict[str, Any], manifest: dict[str, Any]) -> list[str
 # =============================================================================
 
 
-def _run(args: list[str], *, cwd: Path | None = None) -> str:
+def _tool(name: str) -> str:
+    """The absolute path of ``git`` or ``uv``, so no argv starts with a bare name a PATH could shadow."""
+    found = shutil.which(name)
+    if found is None:
+        raise ProductImageError(f"{name} is not installed in the base image")
+    return found
+
+
+def _run(args: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run ``git`` or ``uv`` with an argv built here from validated values (see ``_record_plugins``)."""
+    if args[0] not in ("git", "uv"):
+        raise ProductImageError(f"refusing to run {args[0]!r}")
+    argv = [_tool(args[0]), *args[1:]]
     logger.info("[b4k1] product image: %s", " ".join(args))
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
-    if result.returncode != 0:
+    result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, shell=False)  # nosec B603  # nosemgrep
+    if check and result.returncode != 0:
         raise ProductImageError(f"{' '.join(args)} failed (exit {result.returncode}): {result.stderr.strip()}")
-    return result.stdout
+    return result
+
+
+def _out(args: list[str], *, cwd: Path | None = None) -> str:
+    return _run(args, cwd=cwd).stdout
 
 
 def _record_plugins(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -224,12 +248,18 @@ def _record_plugins(record: dict[str, Any]) -> list[dict[str, Any]]:
     for entry in entries:
         source = entry.get("source") or {}
         slug = entry.get("slug")
+        if not isinstance(slug, str) or not _SLUG_RE.match(slug):
+            raise ProductImageError(f"plugin slug {slug!r} is not a lowercase identifier")
         if source.get("type") != "git":
             raise ProductImageError(
                 f"plugin '{slug}': a product image builds git sources only, not {source.get('type')!r}"
             )
         if not re.fullmatch(COMMIT_SHA_PATTERN, str(source.get("commit") or "")):
             raise ProductImageError(f"plugin '{slug}': a product image needs a pinned 40-hex commit, not a tag only")
+        if not _URL_RE.match(str(source.get("url") or "")):
+            raise ProductImageError(f"plugin '{slug}': source url is not a plain https URL")
+        if not _REV_RE.match(str(source.get("rev") or "")):
+            raise ProductImageError(f"plugin '{slug}': rev is not a plain tag name")
         if source.get("credential") or source.get("auth"):
             raise ProductImageError(f"plugin '{slug}': credentialed sources are not built into product images yet")
     return entries
@@ -245,18 +275,17 @@ def _checkout(url: str, rev: str, commit: str, dest: Path) -> None:
     """
     dest.mkdir(parents=True)
     _run(["git", "init", "--quiet"], cwd=dest)
-    _run(["git", "fetch", "--quiet", "--depth", "1", url, commit], cwd=dest)
+    _run(["git", "fetch", "--quiet", "--depth", "1", "--", url, commit], cwd=dest)
     if rev != commit:
-        tagged = subprocess.run(
-            ["git", "fetch", "--quiet", "--depth", "1", url, f"refs/tags/{rev}:refs/tags/{rev}"],
+        tagged = _run(
+            ["git", "fetch", "--quiet", "--depth", "1", "--", url, f"refs/tags/{rev}:refs/tags/{rev}"],
             cwd=dest,
-            capture_output=True,
-            text=True,
+            check=False,
         )
         if tagged.returncode != 0:
             logger.warning("[b4k4] product image: %s has no tag %s (%s)", url, rev, tagged.stderr.strip())
     _run(["git", "checkout", "--quiet", "FETCH_HEAD"], cwd=dest)
-    head = _run(["git", "rev-parse", "HEAD"], cwd=dest).strip()
+    head = _out(["git", "rev-parse", "HEAD"], cwd=dest).strip()
     if head != commit:
         raise ProductImageError(f"{url}: fetched {head}, pinned {commit}")
 
@@ -323,7 +352,7 @@ def _core_constraints(dists: Iterable[importlib.metadata.Distribution]) -> str:
     return "".join(f"{canonical_name(d.metadata['Name'])}=={d.version}\n" for d in dists)
 
 
-def build(record_path: Path, profile_id: str, base_image: str, *, out: Path | None = None) -> dict[str, Any]:
+def build(profile_id: str, base_image: str) -> dict[str, Any]:
     """Install the record's plugins into the image's venv and write the install manifest.
 
     Runs after ``uv sync --frozen --all-packages`` has built the core environment from the
@@ -332,10 +361,15 @@ def build(record_path: Path, profile_id: str, base_image: str, *, out: Path | No
     versions already installed) and hash-verified. The build fails if any installed
     distribution is not accounted for (`req-tap-bake-product-image-2`).
 
-    TAP-IMPLEMENTS: req-tap-bake-product-image@b678bc82fc6b/c0054e8d003e (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-bake-product-image@b678bc82fc6b/4b185d013798 (derivation) — the one
         place a product image's environment and its install manifest are produced.
     """
     require_digest_ref(base_image)
+    if not _SLUG_RE.match(profile_id):
+        raise ProductImageError(f"profile id {profile_id!r} is not a lowercase identifier")
+    # The record is read from the one place the Dockerfile puts it, and the manifest is written
+    # to the one place pre-boot reads it: neither path is an input.
+    record_path = _BOOT_DIR / f"{profile_id}.boot.json"
     record_bytes = record_path.read_bytes()
     record = json.loads(record_bytes)
     plugins = _record_plugins(record)
@@ -370,7 +404,7 @@ def build(record_path: Path, profile_id: str, base_image: str, *, out: Path | No
         (work / "core.txt").write_text(
             _core_constraints(d for n, d in core.items() if lock.get(n, {}).get("kind") != "workspace")
         )
-        compiled = _run(
+        compiled = _out(
             [
                 "uv", "pip", "compile", "--quiet", "--generate-hashes", "--no-header",
                 "--python", str(_VENV_DIR), "--constraint", str(work / "core.txt"), str(work / "plugins.in"),
@@ -425,7 +459,7 @@ def build(record_path: Path, profile_id: str, base_image: str, *, out: Path | No
         "record": {"profile_id": profile_id, "sha256": hashlib.sha256(record_bytes).hexdigest()},
         "distributions": distributions,
     }
-    target = out or MANIFEST_PATH
+    target = MANIFEST_PATH
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     logger.info(
         "[b4k2] product image: manifest written to %s (%d distributions, %d plugins)",
@@ -441,13 +475,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tap.product_image", description="Bake a boot record's environment.")
     sub = parser.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build", help="install the record's plugins and write the install manifest")
-    b.add_argument("--record", required=True, type=Path)
     b.add_argument("--profile", required=True)
     b.add_argument("--base-image", required=True, help="the tap-web image, by digest")
-    b.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
-        build(args.record, args.profile, args.base_image, out=args.out)
+        build(args.profile, args.base_image)
     except ProductImageError as exc:
         logger.error("[b4k3] product image build failed: %s", exc)
         return 1

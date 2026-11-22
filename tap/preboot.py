@@ -851,15 +851,15 @@ def _check_product_plugins(entries: list[dict[str, Any]], manifest: dict[str, An
     (`req-tap-bake-product-image-3`, `req-tap-bake-immutable-env-2`). The tag lookups ran once,
     at build time; their results are in the manifest, so start needs no network for them.
 
-    TAP-IMPLEMENTS: req-tap-bake-immutable-env@5e8a0708622f/84079453fe79 (enforcement) — a product
+    TAP-IMPLEMENTS: req-tap-bake-immutable-env@5e8a0708622f/4c95da4bda9a (enforcement) — a product
         image's start checks its baked environment and installs nothing.
     """
     problems = [p for entry in entries for p in product_image.plugin_problems(entry, manifest)]
     if problems:
         for problem in problems:
-            logger.error("[e4a7] pre-boot (product image): %s", problem)
+            logger.error("[e4a7] pre-boot (product image): %s", _one_log_line(problem))
         raise PrebootError(
-            f"product image: {len(problems)} plugin problem(s), first: {problems[0]}; a product image installs "
+            f"product image: {len(problems)} plugin problem(s), first: {_one_log_line(problems[0])}; a product image installs "
             "nothing at start, so rebuild the image rather than patching it"
         )
     logger.info("[e4a8] pre-boot (product image): %d plugin(s) satisfied by the install manifest", len(entries))

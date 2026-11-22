@@ -131,6 +131,26 @@ def test_the_build_refuses_sources_it_cannot_account_for() -> None:
 
 
 @pytest.mark.spec("req-tap-bake-product-image-2")
+@pytest.mark.parametrize(
+    ("slug", "url", "rev", "refused"),
+    [
+        ("../escape", URL, "v1", "lowercase identifier"),
+        ("widget", "--upload-pack=touch /tmp/x", "v1", "plain https URL"),
+        ("widget", "file:///etc", "v1", "plain https URL"),
+        ("widget", "https://x-access-token:ghp_secret@forge.example/org/widget-tap", "v1", "plain https URL"),
+        ("widget", "https://user@forge.example/org/widget-tap", "v1", "plain https URL"),
+        ("widget", URL, "--output=x", "plain tag name"),
+    ],
+)
+def test_the_record_cannot_steer_a_path_or_an_argv(slug: str, url: str, rev: str, refused: str) -> None:
+    record = {
+        "install": {"plugins": [{"slug": slug, "source": {"type": "git", "url": url, "rev": rev, "commit": COMMIT}}]}
+    }
+    with pytest.raises(product_image.ProductImageError, match=refused):
+        product_image._record_plugins(record)
+
+
+@pytest.mark.spec("req-tap-bake-product-image-2")
 def test_compiled_closure_digests_are_read_per_distribution() -> None:
     compiled = (
         "boto3==1.40.1 \\\n"
@@ -180,7 +200,13 @@ def test_the_entrypoint_syncs_and_seeds_only_outside_a_product_image() -> None:
     assert text.rfind('if [[ -z "${TAP_PRODUCT_IMAGE}" ]]; then', 0, sync) > text.rfind("\nfi\n", 0, sync)
     block = _product_block()
     assert "export UV_NO_SYNC=1 UV_OFFLINE=1" in block
-    assert "/app/\\.venv " in block, "a volume over the baked venv must be refused"
+    mount_re = re.search(r"grep -qE '([^']+)' /proc/self/mountinfo", block)
+    assert mount_re, "a mount over the baked environment must be refused"
+    pattern = re.compile(mount_re.group(1))
+    for covered in ("/app", "/app/.venv", "/app/.venv/lib", "/app/tap-product"):
+        assert pattern.search(f"36 25 0:41 / {covered} rw,relatime - overlay overlay rw"), covered
+    for elsewhere in ("/app/logs", "/run/tap-gunicorn", "/app/.venvx"):
+        assert not pattern.search(f"36 25 0:41 / {elsewhere} rw,relatime - tmpfs tmpfs rw"), elsewhere
 
 
 @pytest.mark.spec("req-tap-bake-immutable-env-4")

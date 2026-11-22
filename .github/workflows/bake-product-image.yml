@@ -77,8 +77,10 @@ jobs:
           IMAGE: ${{ inputs.image }}
           RECORD: ${{ inputs.record }}
         run: |
-          [[ "$TAP_WEB" =~ ^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] \
-            || { echo "::error::tap-web must name the base by digest (got: ${TAP_WEB})"; exit 1; }
+          # The base is tap's own published tap-web and nothing else: the Dockerfile this job
+          # builds is read out of it, so a base from anywhere else would be a recipe from anywhere.
+          [[ "$TAP_WEB" =~ ^ghcr\.io/unified-systems-com/tap-web(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::tap-web must be ghcr.io/unified-systems-com/tap-web, by digest (got: ${TAP_WEB})"; exit 1; }
           [[ "$PROFILE" =~ ^[a-z0-9][a-z0-9_]*$ ]] || { echo "::error::bad profile id: ${PROFILE}"; exit 1; }
           [[ "$IMAGE" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._/-]+$ ]] || { echo "::error::bad image: ${IMAGE}"; exit 1; }
           [[ -f "$RECORD" && "$RECORD" != /* && "$RECORD" != *..* ]] || { echo "::error::record not found: ${RECORD}"; exit 1; }
@@ -87,10 +89,15 @@ jobs:
         env:
           TAP_WEB: ${{ inputs.tap-web }}
           RECORD: ${{ inputs.record }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ctx="${RUNNER_TEMP}/ctx"
           mkdir -p "$ctx"
           cp "$RECORD" "$ctx/record.boot.json"
+          # Prove the base was built by tap's own publish workflow before running anything read
+          # out of it (req-tap-bake-attest): a digest says which bytes, the attestation says whose.
+          gh attestation verify "oci://${TAP_WEB}" --owner unified-systems-com \
+            --signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml >/dev/null
           docker pull --quiet "$TAP_WEB"
           id="$(docker create "$TAP_WEB")"
           docker cp "$id:/app/docker/product-image.Dockerfile" "$ctx/Dockerfile"
