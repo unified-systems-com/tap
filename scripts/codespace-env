@@ -116,6 +116,52 @@ if [[ "${CODESPACES:-}" != "true" ]]; then
   exit 0
 fi
 
+# --- which Codespace this is ----------------------------------------------------
+#
+# A PREBUILT Codespace does not get these from its environment. Compose fixed the
+# container's environment while the prebuild ran, when the Codespace had no name yet,
+# and a Codespace created from the prebuild RESTARTS that same container rather than
+# recreating it. So CODESPACE_NAME arrives empty and the instance would refuse to serve
+# (observed 2026-11-21 and 2026-11-22 on spike Codespaces; tap#1308).
+#
+# The fix is an IDENTITY FILE: KEY=value lines naming CODESPACE_NAME,
+# GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN and GITHUB_USER, and nothing else. The dev
+# container's postStartCommand writes it, because Codespaces injects the current values
+# there on every start, and the compose file mounts it read-only at TAP_CODESPACE_IDENTITY.
+# When it is set, the file wins over the environment.
+#
+# NOT Codespaces' own /workspaces/.codespaces/shared/.env, though it holds the same names
+# and is current: it also holds GITHUB_TOKEN and GITHUB_CODESPACE_TOKEN (read 2026-11-22),
+# and the stack keeps the visitor's token out of this container on purpose.
+#
+# The writer runs after this container has started, so the name is WAITED for, up to
+# TAP_CODESPACE_NAME_WAIT seconds. During a prebuild no postStartCommand runs, the wait
+# runs out and derivation fails as before: a prebuild initializes nothing
+# (req-tap-bake-hosts-1).
+#
+# The file is READ, never sourced, and each value must match the shape GitHub gives it,
+# so a malformed line cannot become a command or break out of the values written below.
+identity="${TAP_CODESPACE_IDENTITY:-}"
+_identity() { sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}\$/\1/p" "$identity" 2>/dev/null | tail -1; }
+if [[ -n "$identity" ]]; then
+  wait_s="${TAP_CODESPACE_NAME_WAIT:-180}"
+  deadline=$(( $(date +%s) + wait_s ))
+  until [[ "$(_identity CODESPACE_NAME)" =~ ^[A-Za-z0-9-]+$ ]] || (( $(date +%s) >= deadline )); do
+    sleep 1
+  done
+  cs_name="$(_identity CODESPACE_NAME)"
+  cs_domain="$(_identity GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN)"
+  cs_user="$(_identity GITHUB_USER)"
+  if [[ "$cs_name" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo "==> Codespace identity from ${identity}: ${cs_name}" >&2
+    CODESPACE_NAME="$cs_name"
+    if [[ "$cs_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="$cs_domain"; fi
+    if [[ "$cs_user" =~ ^[A-Za-z0-9-]+$ ]]; then GITHUB_USER="$cs_user"; fi
+  else
+    echo "==> ${identity} named no Codespace within ${wait_s} s (a prebuild has none)" >&2
+  fi
+fi
+
 : "${CODESPACE_NAME:?CODESPACE_NAME is unset inside a Codespace — cannot derive the forwarded hostname}"
 : "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:?unset inside a Codespace — cannot derive the forwarded hostname}"
 
@@ -220,8 +266,8 @@ ALLOWED_HOSTS=${forwarded_host},localhost,127.0.0.1,.localhost
 #
 # OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j.
 #
-# THE CAUSE: GitHub's `*.app.github.dev` WEB PROXY terminates the public request and presents
-# it to the container as `Origin: http://localhost:<port>` — the origin it proxies INTO. The
+# THE CAUSE: GitHub's '*.app.github.dev' WEB PROXY terminates the public request and presents
+# it to the container as 'Origin: http://localhost:<port>' — the origin it proxies INTO. The
 # browser was on the public HTTPS URL the whole time. So ANY app served through the Codespaces
 # web proxy that performs an origin check must trust the localhost origin; this is not
 # TAP-specific and is worth knowing before debugging it from scratch somewhere else.
@@ -232,14 +278,14 @@ ALLOWED_HOSTS=${forwarded_host},localhost,127.0.0.1,.localhost
 # A CORRECTION, LEFT IN because the wrong version of this comment shipped for two commits and
 # someone will otherwise re-run the same experiment and reach the same wrong answer. The first
 # explanation here said VS Code's port forwarding had put the browser on localhost, and cited
-# as proof that a POST carrying `https://MARKER-probe.example.invalid` through
-# `gh codespace ports forward` reached Django with the marker intact.
+# as proof that a POST carrying 'https://MARKER-probe.example.invalid' through
+# 'gh codespace ports forward' reached Django with the marker intact.
 #
 # That experiment was real, and it proves nothing about this. There are TWO DIFFERENT
 # FORWARDING PATHS into a Codespace:
 #
-#   * `gh codespace ports forward` — the CLI tunnel. PRESERVES the browser's Origin.
-#   * `https://<name>-<port>.app.github.dev` — the web proxy. REWRITES it to localhost.
+#   * 'gh codespace ports forward' — the CLI tunnel. PRESERVES the browser's Origin.
+#   * 'https://<name>-<port>.app.github.dev' — the web proxy. REWRITES it to localhost.
 #
 # The marker went through the tunnel; the user went through the proxy. Testing one path and
 # concluding about the other is the trap, and the two paths disagreeing is precisely what
@@ -269,7 +315,7 @@ TAP_AUTH_INSTANCE_OWNER=${owner_json}
 # is repository-scoped; codespace_demo's own description says so).
 #
 # Without this the Codespace admits exactly one person and then hands them
-# `Forbidden (capability_denied)` on a fully successful sign-in — an instance that lets you in
+# 'Forbidden (capability_denied)' on a fully successful sign-in — an instance that lets you in
 # the door and gives you no room to enter. OBSERVED 2026-09-22 on a live Codespace, after every
 # other value on this page had derived correctly.
 #
