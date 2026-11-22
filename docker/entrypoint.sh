@@ -126,6 +126,37 @@ if [[ -f /app/tap-product/install-manifest.json ]]; then
     echo "==> Product image: running the baked environment (no sync, no installs at start)."
 fi
 
+# ---------------------------------------------------------------------------
+# Initializer (req-tap-bake-initializer, tap#1328) — this installation's identity.
+# ---------------------------------------------------------------------------
+# A product image whose deploy config names an installation volume (TAP_INSTALLATION_DIR) gets its
+# identity from that volume, not from the deploy config: on the first start the initializer mints
+# the secret key, the database role passwords and the grid id, re-keys the owning role away from
+# the config's bootstrap password, and keeps them; every later start reads them back. It runs
+# before anything reads a setting, under a lock that makes a second container wait. The volume must
+# be a real mount, or the identity would vanish with the container.
+TAP_INITIALIZED=""
+if [[ -n "${TAP_PRODUCT_IMAGE}" && -n "${TAP_INSTALLATION_DIR:-}" ]]; then
+    if ! awk -v p="${TAP_INSTALLATION_DIR}" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo; then
+        emit_abort initialize "TAP_INSTALLATION_DIR (${TAP_INSTALLATION_DIR}) is not a mounted volume; the installation's identity must outlive the container"
+        exit 1
+    fi
+    echo "==> Initializer: this installation's identity..."
+    if ! _tap_road="$(/app/.venv/bin/python -m tap.initialize run)"; then
+        emit_abort initialize "the initializer refused or failed (see above); nothing was served"
+        exit 1
+    fi
+    if [[ -f /run/tap/installation.env ]]; then
+        set -a
+        # shellcheck disable=SC1091  # written by tap.initialize, values shell-quoted
+        . /run/tap/installation.env
+        set +a
+        rm -f /run/tap/installation.env
+        TAP_INITIALIZED=1
+    fi
+    echo "==> Initializer: ${_tap_road}."
+fi
+
 if [[ -z "${TAP_PRODUCT_IMAGE}" ]]; then
 _tap_image_stamp="${UV_CACHE_DIR}/.tap-image-id"
 _tap_image_id="$(tap_clear_if_other_image /opt/uv-cache-seed.manifest.json "${UV_CACHE_DIR}" /app/.venv)"
@@ -479,6 +510,29 @@ if [ "${CODESPACES:-}" = "true" ]; then
         echo "==> WARN: Codespace boot orchestration FAILED. The instance will still serve," >&2
         echo "          but expect capability_denied on login and a failing search until this" >&2
         echo "          is resolved — the search role and role groups are created by this step." >&2
+    fi
+fi
+
+# An initialized installation runs its own boot, as a Codespace does: no spawn-session.sh exists
+# here either. Boot is idempotent, so a restart re-applies it. The first activation also gets a
+# one-time admin enrolment link (enroll_admin, 1 h, a passkey), printed once to this log.
+if [ -n "${TAP_INITIALIZED}" ]; then
+    echo "==> Installation: running boot orchestration..."
+    if uv run python manage.py boot; then
+        echo "==> Installation: boot complete."
+        /app/.venv/bin/python -m tap.initialize mark finish
+        if [ "$(/app/.venv/bin/python -m tap.initialize status first-login)" = "pending" ]; then
+            if uv run python manage.py enroll_admin --email "${TAP_ADMIN_EMAIL:-admin@localhost}" \
+                    --base-url "${TAP_BASE_URL:-http://localhost:8000}" --print-token; then
+                /app/.venv/bin/python -m tap.initialize mark first-login
+                echo "==> Installation: open the link above within an hour to enroll the first admin's passkey."
+            else
+                echo "==> WARN: could not mint the first admin link; run manage.py enroll_admin by hand." >&2
+            fi
+        fi
+    else
+        echo "==> WARN: installation boot orchestration FAILED. The instance will still serve," >&2
+        echo "          but expect capability_denied on login and a failing search until this is resolved." >&2
     fi
 fi
 
