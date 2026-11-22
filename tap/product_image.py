@@ -52,9 +52,10 @@ logger = logging.getLogger("tap.product_image")
 MANIFEST_PATH = Path("/app/tap-product/install-manifest.json")
 MANIFEST_SCHEMA = "tap.install-manifest/1"
 
-# `req-tap-bake-product-image-1`: a base named by digest. A tag is mutable, so a tag-only
-# base would make the image's provenance a claim about the registry rather than a fact.
-DIGEST_REF_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
+# `req-tap-bake-product-image-1`: tap's own tap-web, named by digest. A tag is mutable, so a
+# tag-only base would make the image's provenance a claim about the registry rather than a fact,
+# and any other repository would be a base this builder was never released in.
+DIGEST_REF_RE = re.compile(r"^ghcr\.io/unified-systems-com/tap-web(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
 
 _VENV_DIR = Path("/app/.venv")
 _UV_LOCK = Path("/app/uv.lock")
@@ -87,8 +88,9 @@ def sha256_file(path: Path) -> str:
 def require_digest_ref(ref: str) -> str:
     if not DIGEST_REF_RE.match(ref):
         raise ProductImageError(
-            f"base image {ref!r} is not named by digest; a product image is built FROM tap-web@sha256:<digest>, "
-            "never from a tag (req-tap-bake-product-image-1)"
+            f"base image {ref!r} is not tap-web named by digest; a product image is built FROM "
+            "ghcr.io/unified-systems-com/tap-web@sha256:<digest>, never from a tag or another image "
+            "(req-tap-bake-product-image-1)"
         )
     return ref
 

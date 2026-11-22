@@ -7,7 +7,10 @@
 #     --build-arg TAP_WEB=ghcr.io/unified-systems-com/tap-web@sha256:<digest> \
 #     --build-arg PROFILE=<profile id> <directory holding record.boot.json>
 #
-# TAP_WEB must name the base by digest; the builder refuses a tag (req-tap-bake-product-image-1).
+# TAP_WEB must be ghcr.io/unified-systems-com/tap-web by digest; the builder refuses anything else
+# (req-tap-bake-product-image-1). A Dockerfile cannot check its own FROM, so a direct build RUNS the
+# base it is given before that refusal: build directly only from a base you have verified, as
+# `.github/workflows/bake-product-image.yml` does with `gh attestation verify` before it builds.
 ARG TAP_WEB
 
 # --- bake: build the environment as the image's unprivileged user --------------------------
