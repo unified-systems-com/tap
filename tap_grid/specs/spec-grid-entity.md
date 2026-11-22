@@ -1171,7 +1171,7 @@ What exists today (read on core main, 2026-11-21): nothing records which definit
 **Import**
 
 16. A GRIFT document states, in its header, the version of every type it carries: `metadata.type_versions` (`req-grift-header-versions` in `spec-grift-v0.md`).
-17. A document that states no version for a type is read as version 1 for that type. This rule is temporary. It lets documents written before the header carried versions import, and it is to be replaced by a refusal once the fleet's bundles state their versions (Issue# 1303 - tap): a document that forgot to state a version should not be taken for the oldest one.
+17. A document that carries a type and states no version for it is refused, naming the type. There is no default. The header fields first ship in 0.5.0, so no released grid has written a document that could state them and did not; a document that forgot to state a version is not taken for the oldest one. A document exported before 0.5.0 imports once the fields are added to its header.
 18. An import upgrades every record through its type's chain, from the stated version to the installed one, before it validates and before it writes anything. The upgrade is part of the import and runs in or beside the GRIFT importer, the one path every inbound write takes.
 19. A record at a version greater than the installed one refuses the document, naming the type and both versions.
 20. A document is refused, and nothing is written, when the chain it would have to cross contains a declared break, or when a step refuses any record. The refusal names the type, the link, and each record refused.
@@ -1206,7 +1206,7 @@ What a grid does about a declared break is deliberately not chosen here. Refusin
 | req-grid-entity-model-version-10 | A Break Refuses The Import | Proposed | A document that would cross a declared break is refused, writes nothing, and the refusal names the type and the link. | |
 | req-grid-entity-model-version-11 | One Refused Record Refuses The Document | Proposed | When a step refuses one record of many, no record is written and the refusal names that record. | |
 | req-grid-entity-model-version-12 | Dropped Fields Reported | Proposed | Importing across a step that drops a field succeeds and the result names the type and the field. | |
-| req-grid-entity-model-version-13 | Unstated Version Is 1 | Proposed | A document with no version for a type is upgraded from version 1. | Temporary; Issue# 1303 - tap replaces it with a refusal. |
+| req-grid-entity-model-version-13 | Unstated Version Refused | Proposed | A document that carries a type with no stated version is refused, names the type, and writes nothing. | |
 | req-grid-entity-model-version-14 | Step And Migration Agree | Proposed | A version-1 export upgraded by the step equals the export of the same rows after the plugin's migration. | |
 | req-grid-entity-model-version-15 | Edge Types Are Versioned | Proposed | An edge type at version 2 imports a version-1 edge with its properties upgraded by the type's step. | |
 | req-grid-entity-model-version-16 | Batch Records The Upgrade | Proposed | The batch of an import that upgraded a type names that type with the stated and the installed version. | |
@@ -1239,7 +1239,7 @@ What exists today (read on core main, 2026-11-21): the spine's shape is implied 
 1. Core carries an authored integer spine version. It covers the `Entity` row and the columns core defines on the edge table: what they are and what they mean. A tap release that does not change the spine does not move it.
 2. The grid records the spine version its database is at, written when migrations are applied. A database that records a version greater than the code declares is refused at start. Where the record lives is decided when this is built.
 3. A GRIFT document states the spine version in its header, in a field of its own beside `grift_version`: `metadata.spine_version` (`req-grift-header-versions` in `spec-grift-v0.md`). The two move independently: the form of the file can change with the spine untouched, and the spine can change inside an unchanged form.
-4. A document that states none is read as spine version 1; this is temporary, on the same terms as `req-grid-entity-model-version` rule 17 (Issue# 1303 - tap). One that states a version greater than the grid's is refused, naming both.
+4. A document that states no spine version is refused; there is no default, on the same terms as `req-grid-entity-model-version` rule 17. One that states a version greater than the grid's is refused, naming both.
 5. Core keeps a chain of links for the spine, of the same kind `req-grid-entity-model-version` describes: a step that takes one envelope at version N and returns it at N+1, or a declared break. An import upgrades each envelope through it before it validates.
 6. A type's links never read or name the spine version, and the spine's links never read a type's fields. The two chains are applied independently.
 7. The guard in `req-grid-entity-model-version` rule 5 applies to the spine: a change to the spine's definition without a change to its version fails in core.
@@ -1257,6 +1257,7 @@ The tap release version was considered as the key and left out. Most releases wi
 | req-grid-entity-spine-version-4 | Older Envelope Is Upgraded | Proposed | A document stating spine version 1 imports into a grid at version 2 with each envelope upgraded by core's step. | |
 | req-grid-entity-spine-version-5 | Newer Document Refused | Proposed | A document stating a spine version greater than the grid's is refused and writes nothing. | |
 | req-grid-entity-spine-version-6 | Independent Of Type Versions | Proposed | Raising the spine version changes no type's version or fingerprint entry, and raising a type's version changes neither the spine's. | |
+| req-grid-entity-spine-version-7 | Unstated Spine Version Refused | Proposed | A document with no spine version is refused and writes nothing. | |
 
 ### Tombstone State And Manager Surface
 ----
