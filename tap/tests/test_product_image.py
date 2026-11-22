@@ -248,3 +248,13 @@ def test_the_workflow_publishes_only_a_verified_base_from_the_default_branch() -
     verify = workflow.index("gh attestation verify")
     assert verify < workflow.index("docker cp "), "the base is verified before its Dockerfile is read"
     assert "--signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml" in workflow
+
+
+@pytest.mark.spec("req-tap-bake-immutable-env")
+def test_no_setuid_bit_survives_into_the_root_owned_venv() -> None:
+    bake = (ROOT / "docker" / "bake-product-image.sh").read_text()
+    assert "find /app/.venv /app/tap-product -perm /6000 -exec chmod ug-s {} +" in bake
+    dockerfile = (ROOT / "docker" / "product-image.Dockerfile").read_text()
+    final = dockerfile[dockerfile.rindex("\nFROM ") :]
+    copy, refuse = final.index("COPY --from=bake --chown=root:0 /app/.venv"), final.index("-perm /6000")
+    assert copy < refuse < final.index("USER nonroot"), "the final stage refuses a setuid bit after the root-owned copy"

@@ -30,5 +30,10 @@ ARG PROFILE
 COPY --from=bake --chown=root:0 /app/boot/${PROFILE}.boot.json /app/boot/${PROFILE}.boot.json
 COPY --from=bake --chown=root:0 /app/.venv /app/.venv
 COPY --from=bake --chown=root:0 /app/tap-product /app/tap-product
+# A setuid or setgid bit written during the bake would become a root-owned one here; the bake
+# strips them, and this refuses the image if any survived.
+RUN if find /app/.venv /app/tap-product -perm /6000 | grep -q .; then \
+      echo "setuid/setgid bits in the baked environment" >&2; exit 1; \
+    fi
 ENV TAP_BOOT_PROFILE=${PROFILE}
 USER nonroot

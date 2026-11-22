@@ -39,4 +39,9 @@ TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false /app/.venv/bin/python -m tap.pre
 
 # Compile once here, so no start pays for it and the read-only venv needs no __pycache__ writes.
 /app/.venv/bin/python -m compileall -q -j 0 /app/.venv/lib >/dev/null
+
+# Plugin build backends ran above as this user and could have set a setuid or setgid bit on a file
+# they wrote. The final stage hands the venv to root, so such a bit would ship as a root-owned
+# setuid binary. Strip them all; the final stage refuses the image if any survive.
+find /app/.venv /app/tap-product -perm /6000 -exec chmod ug-s {} +
 echo "==> Product image environment baked for profile '${profile}'."
