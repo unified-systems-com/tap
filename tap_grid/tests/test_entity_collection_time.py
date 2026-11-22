@@ -471,3 +471,40 @@ class TestGryphonReadsTheSpinePair:
         )["rows"]
         assert {str(row["id"]) for row in rows} == {str(early)}
         assert {str(late), str(unstated)}.isdisjoint({str(row["id"]) for row in rows})
+
+
+@pytest.mark.django_db
+class TestTheDatabaseHoldsThePair:
+    """Rule 6 at the persistence boundary: both bounds or neither, and never an end before its
+    start, whatever writer reaches the table."""
+
+    @AC[5]
+    def test_a_one_sided_or_reversed_pair_is_refused_by_the_database(self) -> None:
+        from django.db import IntegrityError, transaction
+
+        from tap_grid.write_guard import unguarded_write
+
+        result = write_batch(
+            [WriteOperation(verb="create_node", type_slug=_TYPE, payload={"name": "held"})],
+            caller_context=CallerContext(batch_id=str(uuid.uuid7())),
+        )
+        assert result.success, result.errors
+        entity_id = result.results[0].entity_id
+        assert entity_id is not None
+        event = BatchEvent.objects.filter(entity_id=entity_id).first()
+        assert event is not None
+        early = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
+        late = early + timedelta(minutes=5)
+        bad_pairs: tuple[dict[str, Any], ...] = (
+            {"collected_start": early, "collected_end": None},
+            {"collected_start": None, "collected_end": late},
+            {"collected_start": late, "collected_end": early},
+        )
+        for bad in bad_pairs:
+            with pytest.raises(IntegrityError), transaction.atomic(), unguarded_write():
+                Entity.objects.filter(pk=entity_id).update(**bad)
+            with pytest.raises(IntegrityError), transaction.atomic():
+                BatchEvent.objects.filter(pk=event.pk).update(**bad)
+        with unguarded_write():
+            assert Entity.objects.filter(pk=entity_id).update(collected_start=early, collected_end=late) == 1
+        assert BatchEvent.objects.filter(pk=event.pk).update(collected_start=early, collected_end=early) == 1

@@ -508,6 +508,22 @@ class _ObservedAtField(models.DateTimeField):  # type: ignore[type-arg]
         return name, "django.db.models.DateTimeField", args, kwargs
 
 
+def _collected_pair_constraint(name: str) -> models.CheckConstraint:
+    """A collection window is both bounds or neither, and never ends before it starts
+    (req-grid-entity-collection-time rule 6), held by the database for every writer."""
+    return models.CheckConstraint(
+        condition=(
+            models.Q(collected_start__isnull=True, collected_end__isnull=True)
+            | models.Q(
+                collected_start__isnull=False,
+                collected_end__isnull=False,
+                collected_end__gte=models.F("collected_start"),
+            )
+        ),
+        name=name,
+    )
+
+
 class Entity(models.Model):
     """The atomic unit of meaning in TAP. All domain objects are entities.
 
@@ -661,6 +677,7 @@ class Entity(models.Model):
         db_table = "tap_entity"
         verbose_name_plural = "Entities"
         ordering = ["-created_at"]
+        constraints = [_collected_pair_constraint("entity_collected_pair")]
         indexes = [
             GinIndex(fields=["dimensions"], name="idx_entity_dimensions_gin"),
             # The spine natural key (req-grid-entity-natural-key-22): a hash index for equality,
@@ -2424,6 +2441,7 @@ class BatchEvent(models.Model):
     class Meta:
         db_table = "tap_batch_event"
         ordering = ["timestamp"]
+        constraints = [_collected_pair_constraint("batchevent_collected_pair")]
         indexes = [
             models.Index(fields=["batch", "timestamp"], name="idx_batchevent_batch_ts"),
             models.Index(fields=["entity_id", "timestamp"], name="idx_batchevent_entity_ts"),
