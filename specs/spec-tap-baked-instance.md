@@ -82,12 +82,12 @@ initialize or serve names a product.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-bake-lifecycle | [Build, Initialize Once, Serve](#build-initialize-once-serve) | Proposed | The lifecycle and its names; where a seed sits beside export, backup and frozen containers |
-| req-tap-bake-product-image | [The Product Image](#the-product-image) | Proposed | `FROM tap-web@digest`; a manifest ties each source commit to its wheel digest and installed distribution |
-| req-tap-bake-immutable-env | [The Deployed Environment Is The Image's](#the-deployed-environment-is-the-images) | Proposed | Deployments run the image's venv directly, with no venv volume; development keeps today's |
+| req-tap-bake-product-image | [The Product Image](#the-product-image) | In Development | `FROM tap-web@digest`; a manifest ties each source commit to its wheel digest and installed distribution |
+| req-tap-bake-immutable-env | [The Deployed Environment Is The Image's](#the-deployed-environment-is-the-images) | In Development | Deployments run the image's venv directly, with no venv volume; development keeps today's |
 | req-tap-bake-bakeable | [What May Be Baked](#what-may-be-baked) | Proposed | Each population step is bakeable or post-activation; completion is recorded in the database and read before preflight |
 | req-tap-bake-seed | [The Seed](#the-seed) | Proposed | Database dump, plugin data and file store from a CI instance, with fixed recorded subtractions |
 | req-tap-bake-seed-key | [The Seed Key](#the-seed-key) | Proposed | Record digest, image digest and Postgres major; a seed loads only where all three match |
-| req-tap-bake-attest | [Attested Artifacts](#attested-artifacts) | Proposed | Detached attestations bound to final digests; the deploy config pins the seed |
+| req-tap-bake-attest | [Attested Artifacts](#attested-artifacts) | In Development | Detached attestations bound to final digests; the deploy config pins the seed |
 | req-tap-bake-initializer | [One Initializer Per Installation](#one-initializer-per-installation) | Proposed | Serialized, staged, with durable progress; interruption at any phase resumes or restarts cleanly |
 | req-tap-bake-activate | [Activating A New Installation](#activating-a-new-installation) | Proposed | Separate from loading: new grid id, lineage, secrets and per-installation roles, for a seed load or a clone |
 | req-tap-bake-installation-identity | [Identity Belongs To The Installation](#identity-belongs-to-the-installation) | Proposed | Secrets live in the installation's store; replicas and replacement hosts consume them, never rotate them |
@@ -146,7 +146,7 @@ only for the build, and the build does nothing a real boot would not.
 ----
 RID: `req-tap-bake-product-image`
 
-Status: `Proposed`
+Status: `In Development`
 
 A product image is built `FROM ghcr.io/unified-systems-com/tap-web@<digest>`, never from a tag. The
 build makes a wheel from each plugin's pinned commit and resolves the whole dependency closure. It
@@ -168,19 +168,42 @@ Nothing about the image is product-specific apart from its record and the plugin
 names. A product publishes its image under its own name, attested
 ([`req-tap-bake-attest`](#attested-artifacts)), and its deploy config pins it by digest.
 
+**As built (tap#1322).**
+
+- **Recipe.** `docker/product-image.Dockerfile` is shipped inside tap-web at
+  `/app/docker/product-image.Dockerfile`. A product's build reads it from the base it builds on,
+  so the recipe and the builder always come from the same release.
+- **Bake stage.** It runs `docker/bake-product-image.sh` as the image's unprivileged user, in
+  four steps:
+  1. Verify the wheel-cache seed.
+  2. Run `uv sync --frozen --all-packages`.
+  3. Run `python -m tap.product_image build`, which fetches each plugin at its pinned commit and
+     tag, builds a wheel, compiles the closure with hashes against the installed core, and
+     installs both with `--no-deps`.
+  4. Run pre-boot in product-image mode, so a record the image cannot satisfy fails the build.
+- **Final stage.** It copies the venv, the manifest and the record in, owned by root.
+- **Publishing.** `.github/workflows/bake-product-image.yml` is a reusable workflow. It builds
+  amd64 and arm64, tags the index `in-<inputs digest>` and `sha-<caller commit>`, and attests it.
+- **Measured locally, 2026-11-22.** Product image against tap-web 0.4.5, both booting the
+  playground's 15-plugin record on a fresh database on a 12-core host:
+  - Start to listening: 92.9 s against 136.1 s. The environment phase fell from about 45 s to
+    about 3 s.
+  - `manage.py boot`: 57.6 s against 73.9 s.
+  - The image's own build took 51 s, and it adds 346 MB to the base.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-product-image-1 | Pinned Base | Proposed | The product image's `FROM` line names tap-web by digest; a tag-only base is refused by the build. | |
-| req-tap-bake-product-image-2 | Manifest Covers The Closure | Proposed | Every installed distribution in the image appears in the install manifest with its source commit (for plugins), wheel digest and version, and the build fails if any is missing or extra. | |
-| req-tap-bake-product-image-3 | Satisfied By Manifest | Proposed | Pre-boot in a product image reports every record plugin satisfied from the manifest and installs nothing; changing one installed file's bytes makes it report that distribution unsatisfied. | The wheel-has-no-VCS-metadata gap |
+| req-tap-bake-product-image-1 | Pinned Base | Implemented | The product image's `FROM` line names tap-web by digest; a tag-only base is refused by the build. | `tap/product_image.py` `require_digest_ref`, run by the build and again by the reusable workflow |
+| req-tap-bake-product-image-2 | Manifest Covers The Closure | Implemented | Every installed distribution in the image appears in the install manifest with its source commit (for plugins), wheel digest and version, and the build fails if any is missing or extra. | Core digests from `uv.lock`, the plugin closure's from a hashed `uv pip compile`, each plugin's wheel sha256 and commit; tap#1322 |
+| req-tap-bake-product-image-3 | Satisfied By Manifest | Implemented | Pre-boot in a product image reports every record plugin satisfied from the manifest and installs nothing; changing one installed file's bytes makes it report that distribution unsatisfied. | The wheel-has-no-VCS-metadata gap; checked per file against RECORD, whose own digest is in the manifest |
 
 ### The Deployed Environment Is The Image's
 ----
 RID: `req-tap-bake-immutable-env`
 
-Status: `Proposed`
+Status: `In Development`
 
 A deployed product image runs the environment it ships, and its processes call that environment's
 executables directly (`/app/.venv/bin/python`, `gunicorn`). No venv volume is mounted over it, and
@@ -204,9 +227,9 @@ then happens once, at build time, and its result is recorded in the manifest.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-bake-immutable-env-1 | No Venv Volume, Read-Only Root | Proposed | A deployment compose file or task definition for a product image mounts no volume at `/app/.venv` and no bind mount over application source, and runs the container with a read-only root filesystem; writable paths are named volumes or tmpfs. | Enforced by a test over the shipped deploy configs |
-| req-tap-bake-immutable-env-2 | Nothing Installed At Start | Proposed | A deployed product image starts to serving without running `uv sync` or any package install. | |
+| req-tap-bake-immutable-env-2 | Nothing Installed At Start | Implemented | A deployed product image starts to serving without running `uv sync` or any package install. | Entrypoint product-image mode: no seed, clear or `uv sync`, `UV_NO_SYNC`, a venv mount refused; measured locally 2026-11-22, environment phase about 3 s against about 45 s |
 | req-tap-bake-immutable-env-3 | No Network To Start | Proposed | A deployed product image starts to serving with outbound network denied, when its record's post-activation steps need none. | Proves the tag lookup moved to build |
-| req-tap-bake-immutable-env-4 | Development Unchanged | Proposed | A session stack started by `spawn-session.sh` without a product image keeps the venv volume, the stamp check and the sync exactly as before. | |
+| req-tap-bake-immutable-env-4 | Development Unchanged | Implemented | A session stack started by `spawn-session.sh` without a product image keeps the venv volume, the stamp check and the sync exactly as before. | The mode switches on the baked manifest alone, which no development tree has |
 
 ### What May Be Baked
 ----
@@ -327,7 +350,7 @@ full way.
 ----
 RID: `req-tap-bake-attest`
 
-Status: `Proposed`
+Status: `In Development`
 
 The build publishes the product image and the seed with signed build provenance: GitHub artifact
 attestations, as `publish-images.yml` already does for tap-web and tap-db. The seed is published as an

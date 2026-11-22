@@ -98,6 +98,34 @@ tap_clear_if_other_image() {
   fi
   printf '%s\n' "$image_id"
 }
+# ---------------------------------------------------------------------------
+# Product image (req-tap-bake-immutable-env) — the environment is the image's.
+# ---------------------------------------------------------------------------
+# A product image (docker/product-image.Dockerfile) bakes the whole venv, core and plugins, and
+# an install manifest beside it. Its start installs nothing: no cache seeding or clearing, no
+# `uv sync`, no plugin install, and `uv run` never syncs. Pre-boot checks the installed bytes
+# against the manifest instead. The manifest's presence is the switch, and it is baked root-owned,
+# so a development stack, which has no manifest, keeps every step below exactly as before
+# (req-tap-bake-immutable-env-4).
+TAP_PRODUCT_IMAGE=""
+if [[ -f /app/tap-product/install-manifest.json ]]; then
+    TAP_PRODUCT_IMAGE=1
+    # A volume over /app/.venv would hide the baked environment behind whatever the volume holds
+    # (Docker copies the image's venv into a fresh volume once, and then never again), so the
+    # manifest would describe one environment while another ran.
+    if grep -qE '^[^ ]+ [^ ]+ [^ ]+ [^ ]+ /app/\.venv ' /proc/self/mountinfo; then
+        emit_abort product-image "a volume is mounted at /app/.venv; a product image runs the environment it ships, so remove that mount"
+        exit 1
+    fi
+    if [[ -n "${TAP_SECRET_SOURCE_DISTS:-}" ]]; then
+        emit_abort product-image "TAP_SECRET_SOURCE_DISTS is set; a product image installs nothing at start"
+        exit 1
+    fi
+    export UV_NO_SYNC=1 UV_OFFLINE=1
+    echo "==> Product image: running the baked environment (no sync, no installs at start)."
+fi
+
+if [[ -z "${TAP_PRODUCT_IMAGE}" ]]; then
 _tap_image_stamp="${UV_CACHE_DIR}/.tap-image-id"
 _tap_image_id="$(tap_clear_if_other_image /opt/uv-cache-seed.manifest.json "${UV_CACHE_DIR}" /app/.venv)"
 
@@ -137,6 +165,7 @@ if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
     echo "==> No wheel-cache seed in image — uv will download/compile (slow path, uv.lock hash-verified)."
   fi
 fi
+fi  # not a product image
 
 # ---------------------------------------------------------------------------
 # Codespaces derivation (gs#101) — before ANY settings are read.
@@ -199,13 +228,15 @@ if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_CODESPACE_DERIVE:-true}" != "false
     fi
 fi
 
-echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 # --all-packages installs every workspace member and its deps into the venv,
 # so plugin-local third-party requirements (declared in
 # plugins/<slug>/pyproject.toml under req-tap-plugin-arch-python-deps) land in
 # the runtime env. Without this flag, members' deps stay in uv.lock but never
 # get installed.
-uv sync --all-packages
+if [[ -z "${TAP_PRODUCT_IMAGE}" ]]; then
+    echo "==> Syncing Python dependencies (uv sync --all-packages)..."
+    uv sync --all-packages
+fi
 
 # ---------------------------------------------------------------------------
 # FIPS boot self-check (req-cicd-base-image-lifecycle-6, decision D15) — fail closed.

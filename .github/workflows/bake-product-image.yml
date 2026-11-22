@@ -1,0 +1,175 @@
+# Bake a product image: tap-web plus one boot record's whole environment (spec-tap-baked-instance.md,
+# req-tap-bake-product-image, req-tap-bake-attest). A REUSABLE workflow: a product repository calls it
+# from its own default branch, and the image is published under that product's name, in its owner's
+# registry, attested to the caller's run. Nothing here names a product (req-tap-bake-lifecycle-2).
+#
+#   jobs:
+#     product-image:
+#       uses: unified-systems-com/tap/.github/workflows/bake-product-image.yml@<tap commit>
+#       permissions: {contents: read, packages: write, id-token: write, attestations: write}
+#       with:
+#         record: path/to/<profile>.boot.json
+#         profile: <profile>
+#         tap-web: ghcr.io/unified-systems-com/tap-web@sha256:<digest>
+#         image: ghcr.io/<owner>/<product>-web
+#
+# The Dockerfile is taken FROM the base image (`/app/docker/product-image.Dockerfile`), not from this
+# repository, so the build recipe is always the one shipped with the builder it runs.
+#
+# Tags (ruling Q16, make-it-fast r25): `in-<inputs digest>` names the image by what it was built
+# from (the base digest and the record's bytes), so the same inputs always name the same tag, and
+# `sha-<caller short sha>` says which commit of the product published it. Consumers pin the digest.
+name: bake-product-image
+
+on:
+  workflow_call:
+    inputs:
+      record:
+        description: The boot record, as a path in the calling repository.
+        required: true
+        type: string
+      profile:
+        description: The profile id the record is installed under (/app/boot/<profile>.boot.json).
+        required: true
+        type: string
+      tap-web:
+        description: The tap-web base image, by digest.
+        required: true
+        type: string
+      image:
+        description: The product image repository to publish, without a tag.
+        required: true
+        type: string
+    outputs:
+      digest:
+        description: The multi-arch index digest of the published image.
+        value: ${{ jobs.publish.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: bake (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    outputs:
+      inputs-digest: ${{ steps.context.outputs.inputs-digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Refuse a tag-only base or an unsafe input (req-tap-bake-product-image-1)
+        env:
+          TAP_WEB: ${{ inputs.tap-web }}
+          PROFILE: ${{ inputs.profile }}
+          IMAGE: ${{ inputs.image }}
+          RECORD: ${{ inputs.record }}
+        run: |
+          [[ "$TAP_WEB" =~ ^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::tap-web must name the base by digest (got: ${TAP_WEB})"; exit 1; }
+          [[ "$PROFILE" =~ ^[a-z0-9][a-z0-9_]*$ ]] || { echo "::error::bad profile id: ${PROFILE}"; exit 1; }
+          [[ "$IMAGE" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._/-]+$ ]] || { echo "::error::bad image: ${IMAGE}"; exit 1; }
+          [[ -f "$RECORD" && "$RECORD" != /* && "$RECORD" != *..* ]] || { echo "::error::record not found: ${RECORD}"; exit 1; }
+      - name: Build context and inputs digest
+        id: context
+        env:
+          TAP_WEB: ${{ inputs.tap-web }}
+          RECORD: ${{ inputs.record }}
+        run: |
+          ctx="${RUNNER_TEMP}/ctx"
+          mkdir -p "$ctx"
+          cp "$RECORD" "$ctx/record.boot.json"
+          docker pull --quiet "$TAP_WEB"
+          id="$(docker create "$TAP_WEB")"
+          docker cp "$id:/app/docker/product-image.Dockerfile" "$ctx/Dockerfile"
+          docker rm "$id" >/dev/null
+          inputs="$(printf '%s\n%s\n' "$TAP_WEB" "$(sha256sum "$ctx/record.boot.json" | cut -d' ' -f1)" | sha256sum | cut -c1-16)"
+          echo "inputs-digest=${inputs}" >> "$GITHUB_OUTPUT"
+      - name: Registry login
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Bake and push by digest
+        env:
+          TAP_WEB: ${{ inputs.tap-web }}
+          PROFILE: ${{ inputs.profile }}
+          IMAGE: ${{ inputs.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker buildx create --use --driver docker-container >/dev/null
+          docker buildx build "${RUNNER_TEMP}/ctx" \
+            --platform "linux/${ARCH}" \
+            --build-arg "TAP_WEB=${TAP_WEB}" --build-arg "PROFILE=${PROFILE}" \
+            --provenance=false --sbom=false \
+            --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "${RUNNER_TEMP}/meta.json"
+          digest="$(jq -r '."containerimage.digest"' "${RUNNER_TEMP}/meta.json")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest from the build (${digest})"; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/digest"
+          printf '%s' "$digest" > "${RUNNER_TEMP}/digest/${ARCH}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: product-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest/${{ matrix.arch }}
+          retention-days: 1
+
+  publish:
+    name: tag + attest
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.merge.outputs.digest }}
+    steps:
+      - name: Registry login
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: product-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digest
+      - name: Merge per-arch digests into the tagged index (verified)
+        id: merge
+        env:
+          IMAGE: ${{ inputs.image }}
+          INPUTS: ${{ needs.build.outputs.inputs-digest }}
+          CALLER_SHA: ${{ github.sha }}
+        run: |
+          amd="$(cat "${RUNNER_TEMP}/digest/amd64")"
+          arm="$(cat "${RUNNER_TEMP}/digest/arm64")"
+          for d in "$amd" "$arm"; do [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest ${d}"; exit 1; }; done
+          [[ "$INPUTS" =~ ^[0-9a-f]{16}$ ]] || { echo "::error::bad inputs digest ${INPUTS}"; exit 1; }
+          docker buildx imagetools create -t "${IMAGE}:in-${INPUTS}" -t "${IMAGE}:sha-${CALLER_SHA:0:7}" \
+            "${IMAGE}@${amd}" "${IMAGE}@${arm}"
+          manifest_json="$(docker buildx imagetools inspect "${IMAGE}:in-${INPUTS}" --format '{{json .Manifest}}')"
+          children="$(printf '%s' "$manifest_json" | jq -r '[.manifests[].digest] | sort | join(",")')"
+          expected="$(printf '%s\n%s\n' "$amd" "$arm" | sort | paste -sd, -)"
+          [ "$children" = "$expected" ] || { echo "::error::index children (${children}) != built (${expected}); refusing to attest"; exit 1; }
+          echo "digest=$(printf '%s' "$manifest_json" | jq -r .digest)" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance (req-tap-bake-attest)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ inputs.image }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
