@@ -139,9 +139,11 @@ and a force-push. Auto mode refused each one and it cost a round, which matches 
 ask George first.
 
 **Rule:** when a speedup depends on platform behaviour, plan a real-platform spike before writing
-the design. List every cloud resource it will need, and ask once for all of them. When a push is
-refused, fast-forward instead: `git commit-tree <tree> -p <remote-branch>` gives the same tree with
-no force.
+the design. List every cloud resource and outward action it will need, and ask the human once for
+all of them. A refusal is a stop, not an obstacle to route around: get authorization for the action
+itself. The force-push here was refused only as a method. The human had already authorized putting
+the fix on the throwaway spike branch, so the non-destructive method served instead: a fast-forward
+built with `git commit-tree <tree> -p <remote-branch>`, which the report then named.
 
 ## 8. The platform's timing and contents are facts to observe, and they change the design
 
