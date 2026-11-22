@@ -341,6 +341,14 @@ def test_a_named_writer_updates_only_the_fields_it_is_named_for():
     assert Entity.objects.get(pk=spine.pk).dimensions == stored
     with pytest.raises(DimensionWriteError):
         grid_derived_update({"time": "not-a-kind"})
+    # An expression this module did not build is refused too, whatever it would write.
+    from django.db.models import F, Func, JSONField, Value
+
+    unmarked = Func(
+        F("dimensions"), Value({}, output_field=JSONField()), template="(%(expressions)s)", arg_joiner=" || "
+    )
+    with pytest.raises(UnguardedOperation, match="may set or remove grid-derived"):
+        _under_grid_write("event_time_rederive", lambda: one.update(dimensions=unmarked))
 
     def attempt(fields: Mapping[str, object]) -> Callable[[], object]:
         return lambda: nobody.update(**fields)

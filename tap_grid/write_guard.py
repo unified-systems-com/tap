@@ -309,9 +309,9 @@ def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
     if "dimensions" not in values:
         return
 
-    from tap_grid.dimension_map import GridDerivedUpdate
+    from tap_grid.dimension_map import is_grid_derived_update
 
-    if isinstance(values["dimensions"], GridDerivedUpdate):
+    if is_grid_derived_update(values["dimensions"]):
         return
 
     from tap_auth.errors import UnguardedOperation

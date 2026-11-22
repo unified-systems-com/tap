@@ -245,30 +245,34 @@ def with_grid_derived(stored: Mapping[str, Any] | None, values: Mapping[str, str
     return out
 
 
-class GridDerivedUpdate(Func):
-    """A database expression that sets or removes grid-derived entries of ``dimensions`` and
-    touches no other key: ``dimensions || {<id>: entry}`` to set, ``dimensions - <id>`` to remove.
+_GRID_DERIVED_MARK = "_tap_grid_derived_update"
 
-    Built only by :func:`grid_derived_update`. Writing the key in the database, not a whole map
-    computed in memory, means a writer cannot overwrite a dimension another writer changed since
-    the row was read, and a write guard can admit this type and refuse any other value.
+
+def is_grid_derived_update(value: Any) -> bool:
+    """Whether ``value`` is the expression :func:`grid_derived_update` built, and nothing else.
+
+    The expression is a plain ``Func`` carrying this module's private seal, so a write guard can
+    admit it and refuse any other ``dimensions`` value, a map included. It is a marked instance
+    and not a subclass: the operators and operands are fixed here, and nothing outside this
+    module composes one.
     """
-
-    def __init__(self, *expressions: Any, seal: object = None, **extra: Any) -> None:
-        if seal is not _SEAL:
-            raise DimensionWriteError("a grid-derived update is built by dimension_map.grid_derived_update only")
-        super().__init__(*expressions, **extra)
+    return isinstance(value, Func) and getattr(value, _GRID_DERIVED_MARK, None) is _SEAL
 
 
-def grid_derived_update(values: Mapping[str, str | None]) -> GridDerivedUpdate | None:
-    """The expression that applies the grid's derived values to a row's stored ``dimensions``: a
-    string sets the entry (``src: derived``, the value checked against the dimension), ``None``
-    removes it. None when this grid declares none of the named dimensions yet."""
+def grid_derived_update(values: Mapping[str, str | None]) -> Func | None:
+    """The database expression that applies the grid's derived values to a row's stored
+    ``dimensions`` and touches no other key: ``dimensions || {<id>: entry}`` sets an entry
+    (``src: derived``, the value checked against the dimension) and ``dimensions - <id>`` removes
+    one. None when this grid declares none of the named dimensions yet.
+
+    Writing the key in the database, not a whole map computed in memory, means a writer cannot
+    overwrite a dimension another writer changed since the row was read. Both operators are fixed
+    text and every operand is a bound parameter."""
     from django.db.models import F, JSONField, TextField, Value
     from django.db.models.functions import Cast
 
     expression: Any = F("dimensions")
-    built: GridDerivedUpdate | None = None
+    built: Func | None = None
     for name, value in values.items():
         if name not in GRID_DERIVED:
             raise DimensionWriteError(f"{name!r} is not a dimension the grid derives")
@@ -283,9 +287,8 @@ def grid_derived_update(values: Mapping[str, str | None]) -> GridDerivedUpdate |
                 joiner = " || "
         except UnknownDimension:
             continue
-        built = GridDerivedUpdate(
-            expression, operand, template="(%(expressions)s)", arg_joiner=joiner, output_field=JSONField(), seal=_SEAL
-        )
+        built = Func(expression, operand, template="(%(expressions)s)", arg_joiner=joiner, output_field=JSONField())
+        setattr(built, _GRID_DERIVED_MARK, _SEAL)
         expression = built
     return built
 
