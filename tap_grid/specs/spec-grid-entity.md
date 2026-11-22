@@ -36,6 +36,7 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | In Development | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
 | req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | Proposed | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
 | req-grid-entity-spine-version | [Spine Version](#spine-version) | Proposed | The spine's own authored version, separate from the tap release, the GRIFT format version and every type version; recorded on the grid and stated in GRIFT |
+| req-grid-entity-spine-copies | [Spine Copies On Typed Rows](#spine-copies-on-typed-rows) | Proposed | `spine_deleted_at` and `spine_dimensions` on every typed row, kept in step with `Entity` by database triggers, recorded in history, with no policy yet |
 | req-grid-entity-natural-key | [Assigned Ids, Declared Search](#assigned-ids-declared-search) | Proposed | `Entity.id` is always an assigned UUIDv7; every type declares how it is found (`NATURAL_KEY` or `KEYLESS`) and the search is generated; `Entity.natural_key` publishes each keyed row's declared identity as one readable value, derived on every save and read by no lookup |
 
 
@@ -1373,6 +1374,103 @@ The tap release version was considered as the key and left out. Most releases wi
 | req-grid-entity-spine-version-5 | Newer Document Refused | Proposed | A document stating a spine version greater than the grid's is refused and writes nothing. | |
 | req-grid-entity-spine-version-6 | Independent Of Type Versions | Proposed | Raising the spine version changes no type's version or fingerprint entry, and raising a type's version changes neither the spine's. | |
 | req-grid-entity-spine-version-7 | Unstated Spine Version Refused | Proposed | A document with no spine version is refused and writes nothing. | |
+
+### Spine Copies On Typed Rows
+----
+RID: `req-grid-entity-spine-copies`
+
+Status: `Proposed`
+
+Every typed row, node or edge, carries a copy of two values from its entity row: when it was retired, and its dimensions. The copies exist so that a database policy on a typed table can decide what a reader may see from that table's own columns, without a lookup to `Entity` for every row. The database keeps them in step. Nothing but the database writes them, and the entity row stays the authority.
+
+This requirement adds the columns and keeps them true. It adds no policy. Row-level security that reads them is a later requirement, and everything here is shaped so that adding it needs no further change to any plugin table.
+
+#### Status Details
+Proposed; nothing is built. Issue# 1147 - tap holds the evidence and Issue# 1284 - tap the rulings: copy both values, keep them in step with a database trigger, add no policies in this round and leave everything ready for them.
+
+What exists today (read on core main, 2026-11-22): `deleted_at` and `dimensions` live on `Entity` only. A live-rows manager filters a query's root by joining to `Entity`; a join, a reverse accessor or a query that never touches `Entity` can still reach a retired row. That is how the ORM search compiler returned retired entities (Issue# 1144 - tap, fixed in PR# 1145 - tap). No model in core (read 2026-11-22) or in clones of 33 plugin repositories taken on 2026-11-21 declares a field named `deleted_at`, `dimensions` or either name below.
+
+What was measured, on PostgreSQL 18.6:
+
+- 2026-11-01, three million entity rows: a policy that looks the retirement up on `Entity` for each row was 3 to 39 times slower than no policy; a policy on a copied column on the typed table was within noise of no policy. For dimensions, an indexed copy was 10 to 40 times faster than the lookup for selective scopes. Every figure was flagged unreliable by the harness for host load, so they are orders of magnitude.
+- 2026-11-22, a trigger of the design in rules 4 and 5 on two toy typed tables of 200,000 and 100,000 rows, in one transaction that was rolled back: no row out of step after six ways of writing (typed rows inserted with no copy, 20,000 entities retired by raw SQL on the entity table, dimensions changed by raw SQL, a writer setting the copies wrongly on typed rows, a restore then a rollback to a savepoint, a typed row created after its entity was retired); 7 of 7 rows out of step when the entity rows were changed with triggers disabled; a select-only role under a policy on the copies saw exactly the rows the entity table says are live. Retiring 50,000 entities took 3.0 s with the trigger, against 0.28 s for the update alone plus 0.90 s for one set-based statement to bring the typed table into step. One run each, on a shared host.
+
+Not measured: the real tables, concurrent writers, edges, and the cost on an ordinary collection pass.
+
+#### Implementation
+
+| Field on every typed row | Type | Meaning |
+| --- | --- | --- |
+| `spine_deleted_at` | timestamp with time zone, nullable | A copy of `Entity.deleted_at`. Empty while the entity is live. |
+| `spine_dimensions` | JSON object, not null, `{}` by default | A copy of `Entity.dimensions`, in the stored shape, grid-derived entries included. |
+
+**The columns**
+
+1. Both fields are declared once, on core's base model, so every node model and the edge model has them. They are not editable, not part of any service schema or GRIFT payload, and not a field a plugin declares or overrides.
+2. They are copies and are named as such. A reader that wants the authority reads `Entity`. Nothing in core computes a result that depends on a copy and the entity row disagreeing.
+3. They belong to the spine's definition, not to any type's: they are inherited from core's base model, so adding them moves the spine version (`req-grid-entity-spine-version`) and no type's version, and needs no link from any plugin (`req-grid-entity-model-version` rule 5).
+
+**Keeping them in step**
+
+4. A trigger on the entity table fires after a row's `deleted_at` or `dimensions` changes and writes both values to that entity's typed row. It finds the typed table from the entity's type, through a table core maintains from the model registry that maps each entity type to its table. An entity type with no entry (a type whose plugin is not installed) is left alone.
+5. A trigger on every typed table fires before a row is inserted or updated and sets both copies from the entity row, whatever the writer supplied. So a typed row is correct from the moment it exists, and a writer that sets a copy, by mistake or on purpose, is overruled in the same statement.
+6. The two triggers are the only writers. No Python code path writes either column. The write guard refuses a save or a queryset update that names one, for every writer, the pipeline included.
+7. An update that changes one key of `dimensions` in the database, as the grid's own derived entries are written (`req-grid-entity-event-time` rule 17), fires the trigger of rule 4 as a whole-map write does. The copy is the whole stored map after the statement.
+8. The triggers and the type-to-table map are created and kept current by core after migrations are applied, for every typed table registered at that point, the way the natural-key indexes are. A plugin's migration adds the two columns to its tables and nothing else: no plugin writes trigger SQL, and a plugin installed later gets its triggers at its first migrate.
+9. Rows that exist when the columns are added are filled by the same pass, one set-based statement for each typed table, before the triggers are relied on.
+10. The triggers do not fire when triggers are disabled for a session, which a restore or a replication apply can do. So core provides a check that counts, for each typed table, the rows whose copies differ from their entity row, and a repair that brings them into step by the statement of rule 9. The check runs at boot and reports; a difference is a defect report, not a silent repair.
+
+**History**
+
+11. Both copies are recorded in each type's history table, so a history row holds the dimensions and the retirement state the entity had at that version. This is the grid's only record of what a row's dimensions used to be: `Entity` has no history table, and a dimension change is otherwise recorded only as the fact that a change happened. The value in a history row is set when the row is written, from the map the write settles on and the entity's `deleted_at`, and not read from the typed row object: the triggers write the typed columns inside the database, after the object was loaded, and on a change of dimensions the typed row is saved before the entity row is written, so the object would still hold the old values. A type that keeps no history (`req-grid-history-optout`) records none, and a history row written before this requirement holds neither, which reads as not recorded.
+12. A retirement writes one final history row for the row it retires, and one for each edge the retirement ends, so that the retirement copy in history holds a value and the retirement's reason has a row to be recorded on (`req-grid-service-delete-reason-2`, Issue# 570 - tap). Today a retirement writes no typed history row at all, and a retired row is never written again, so without this the retirement copy would be empty in every history row. The cost is one history row for each retired row: a node with many edges writes that many edge history rows when it is retired. That is accepted; a node with ten thousand edges is a sign that a dimension was wanted.
+
+**What the copies are kept out of**
+
+13. Change detection and provenance: the copies are system-managed. They are left out of the comparison that decides whether a write changed an object, and they have no FLIP entry.
+14. The canonical surfaces: the copies are not on the spine surface, in any return layer, or in an export. `deleted_at` and `dimensions` are read from the entity row there, as now.
+
+**Readiness for row-level security**
+
+15. No policy is created by this requirement, and no table has row-level security enabled by it.
+16. Indexes on the copies are created by core for each typed table, by the mechanism of rule 8, when a policy that needs them is specified. None is created now: an index is paid for on every write, and which indexes a policy needs depends on the policy's shape, which is not decided. Because core creates them, adding them later changes no plugin's migrations.
+17. PostgreSQL only. The triggers are PostgreSQL triggers; `spec-grid-sqlite-portability-BACKLOG.md` already records that the grid's database behaviour is not portable.
+
+**Shipping it**
+
+18. The columns ship in the one core release that changes the base model (Issue# 1288 - tap), with the removal of the typed `batch_id` column, so that every plugin regenerates its migration once. That release raises the floor every plugin states for core.
+
+#### Development
+A copy kept by the service layer was the alternative. It was not chosen because the copies are meant to carry security: a stale copy would show a row that should be hidden, so they must agree with the entity row on every path, including a plugin's data migration, a bulk retirement and a statement typed into a database shell, none of which passes through the service layer. The trigger costs about two and a half times a set-based sync on a bulk retirement in the one measurement made, and it is not portable.
+
+The names say "spine" so that `row.spine_dimensions` cannot be mistaken for the authority or for a field of the model. The same names as the entity's columns were used in the first spike; they read as if a typed row owned its dimensions.
+
+Reading the copy in the live-rows manager, in place of the join to `Entity`, is not part of this requirement. With the join a read is right even where a copy has drifted; reading the copy would make every ordinary read depend on it from the first day, in the same release that migrates every plugin's tables. It is a change of code with no migration, so it can follow.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-spine-copies-1 | Every Typed Row Has Them | Proposed | Every registered node model's table and the edge table have both columns, and no model declares either itself. | |
+| req-grid-entity-spine-copies-2 | Correct At Insert | Proposed | A typed row created through the service layer, and one inserted with wrong values supplied for both copies, each hold the entity row's values after the insert. | |
+| req-grid-entity-spine-copies-3 | Retirement Reaches The Typed Row | Proposed | Retiring a node sets `spine_deleted_at` on its typed row and on the edge row of every edge the retirement ends, equal to the entity rows' values. | |
+| req-grid-entity-spine-copies-4 | Dimensions Reach The Typed Row | Proposed | A service patch of dimensions, an import that changes them, and the grid's own key-level write of the `time` dimension each leave `spine_dimensions` equal to `Entity.dimensions`. | |
+| req-grid-entity-spine-copies-5 | Raw SQL Is Covered | Proposed | An `UPDATE` of `deleted_at` and of `dimensions` on the entity table, made outside Django, leaves the typed rows' copies equal to the entity rows. | |
+| req-grid-entity-spine-copies-6 | No Python Writer | Proposed | A save or a queryset update that names either column is refused by the write guard for every writer; a source scan finds no assignment to either outside the migration that adds them. | |
+| req-grid-entity-spine-copies-7 | Triggers Without Plugin SQL | Proposed | A plugin whose migration only adds the two columns has both triggers on each of its tables after migrate, and a type in the map for each of its models. | |
+| req-grid-entity-spine-copies-8 | Existing Rows Are Filled | Proposed | After the migration on a grid that already holds rows, no typed row differs from its entity row. | |
+| req-grid-entity-spine-copies-9 | Drift Is Found And Repaired | Proposed | After entity rows are changed with triggers disabled, the check reports the number of differing rows for each table, and the repair brings it to zero. | |
+| req-grid-entity-spine-copies-10 | Recorded In History | Proposed | After a write that changes only a row's dimensions, the history row that write adds holds the new map in `spine_dimensions` and the one before it holds the old; neither is read from a stale object. | |
+| req-grid-entity-spine-copies-15 | Retirement Is In History | Proposed | Retiring a node with two edges adds exactly one history row to the node's type and two to the edge table, each holding `spine_deleted_at` equal to its entity row's `deleted_at` and the retirement's reason; the rows before them hold it empty. | |
+| req-grid-entity-spine-copies-11 | Not A Change | Proposed | A write whose only effect on a typed row is a changed copy is not classified as a change to that row by the copies, and neither column has a FLIP entry. | |
+| req-grid-entity-spine-copies-12 | Not On A Surface | Proposed | Neither column appears on the spine surface, in a return layer or in an export. | |
+| req-grid-entity-spine-copies-13 | No Policy Yet | Proposed | After migrate, no typed table has row-level security enabled and no policy exists. | |
+| req-grid-entity-spine-copies-14 | A Policy Would Agree | Proposed | With a test-only policy on `spine_deleted_at IS NULL` for a select-only role, that role's count of rows in a typed table equals the count of live entities of the type. | |
+
+#### Future
+- The policies: a column predicate for retirement, the form of a dimension scope, a scope set for the transaction so a pooled connection cannot leak one, and an administrator's path.
+- The indexes those policies need, created by core (rule 16).
+- The live-rows manager reading the copy in place of the join, once the drift check has been watched on real data (ruled: the join stays for now).
 
 ### Tombstone State And Manager Surface
 ----
