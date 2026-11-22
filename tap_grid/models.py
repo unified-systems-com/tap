@@ -422,6 +422,35 @@ class EntityQuerySet(_GuardedWriteQuerySet["Entity"]):
 EntityManager = models.Manager.from_queryset(EntityQuerySet)
 
 
+class _ObservedAtField(models.DateTimeField):  # type: ignore[type-arg]
+    """``Entity.last_observed_at``: on insert, the row's own ``updated_at``.
+
+    A create is a change and an observation at once, and the time of the observation must not be
+    earlier than the time of the change (req-grid-entity-batch-pointers rule 5). ``updated_at`` is
+    ``auto_now``, so its value is only known inside the insert; this field is declared after it,
+    and Django computes insert values in declaration order, so the value is there to copy. Only a
+    row that names an observing batch and no time of its own takes it. In a migration this is a
+    plain ``DateTimeField``: the behaviour is the model's, not the column's.
+    """
+
+    def pre_save(self, model_instance: Any, add: bool) -> Any:
+        value = super().pre_save(model_instance, add)
+        if not add or getattr(model_instance, "last_observed_batch_id", None) is None:
+            return value
+        # Django may compute an insert's values more than once, and `auto_now` gives a new time
+        # each pass; a value this method copied on an earlier pass is copied again, so the row
+        # stores the `updated_at` it is inserted with. A time the caller set is left alone.
+        if value is None or getattr(model_instance, "_observed_at_follows_insert", False):
+            value = model_instance.updated_at
+            model_instance._observed_at_follows_insert = True
+            setattr(model_instance, self.attname, value)
+        return value
+
+    def deconstruct(self) -> Any:
+        name, _path, args, kwargs = super().deconstruct()
+        return name, "django.db.models.DateTimeField", args, kwargs
+
+
 class Entity(models.Model):
     """The atomic unit of meaning in TAP. All domain objects are entities.
 
@@ -487,6 +516,35 @@ class Entity(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # The batch pointers (req-grid-entity-batch-pointers). Plain ids, not foreign keys, as batch
+    # ids travel in the caller context. Written by the grid only: nothing a caller or a GRIFT
+    # envelope supplies reaches them. Declared after `updated_at` on purpose (_ObservedAtField).
+    last_changed_batch_id = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text=(
+            "The batch whose write last changed this object: its create, any operation classified "
+            "as changed, or its retirement. Set in the statement that increments `version`."
+        ),
+    )
+    last_observed_batch_id = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text="The latest batch that wrote or re-observed this object, changed or not.",
+    )
+    last_observed_at = _ObservedAtField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "When that observation was recorded on this grid. Kept on the row so it survives the "
+            "batch record being pruned. Says that a batch named the object, nothing more."
+        ),
+    )
 
     # Tombstone-aware manager: returns both live and tombstoned rows by
     # default (internal infrastructure dominates the call sites). Callers
@@ -541,6 +599,9 @@ class Entity(models.Model):
         "updated_at",
         "deleted_at",
         "version",
+        "last_changed_batch_id",
+        "last_observed_batch_id",
+        "last_observed_at",
         "originating_grid_id",
     )
     SPINE_DJANGO_NAME: ClassVar[dict[str, str]] = {
@@ -901,6 +962,34 @@ def install_natural_key_indexes() -> None:
         model = get_model_class(entity_type)
         if isinstance(model, type) and issubclass(model, BaseModel):
             _install_natural_key_index(model)
+
+
+def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) -> uuid.UUID | None:
+    """The batch a save names on the spine as last to change and last to observe the row.
+
+    The active batch, as a UUID. None for a batch's own row: a batch cannot be written in a batch,
+    so it names none. Inside the write pipeline a missing batch is refused, not written as a null
+    pointer (req-grid-entity-batch-pointers rule 6); outside it (a named below-pipeline writer, a
+    test fixture) there is no batch to name and the pointers are left as they are.
+
+    TAP-IMPLEMENTS: req-grid-entity-batch-pointers@856ecf5f7f82/b5ccd9e8f09e (derivation) — rules 2, 5 and 6: the
+        one decision of which batch a changing save names on the spine, which ``BaseModel.save``
+        writes in the statement that increments ``version``, as changer and observer at once.
+    """
+    if entity_type == "batch":
+        return None
+    if not active_batch_id:
+        from tap_grid.write_guard import pipeline_active
+
+        if pipeline_active():
+            from tap_grid.exceptions import ServiceEvidenceError
+
+            raise ServiceEvidenceError(
+                f"a write that changes a {entity_type} has no batch in context; a change names the "
+                "batch that made it, so nothing is written"
+            )
+        return None
+    return active_batch_id if isinstance(active_batch_id, uuid.UUID) else uuid.UUID(str(active_batch_id))
 
 
 class BaseModel(models.Model):
@@ -1370,6 +1459,12 @@ class BaseModel(models.Model):
         if active_batch_id:
             self.batch_id = active_batch_id
 
+        # The spine's batch pointers (req-grid-entity-batch-pointers). A save is a change, so the
+        # batch that makes it is named on the row as the last to change and the last to observe
+        # it. Inside the write pipeline a change with no batch in context is refused, never
+        # written with a null pointer (rule 6). A batch's own row is not written in a batch.
+        pointer_batch = _pointer_batch(entity_type, active_batch_id)
+
         update_fields = kwargs.get("update_fields")
         if flip_changed_fields is not _FLIP_TOUCHED_UNSET:
             # Explicit touched-set from the service write pipeline. A list scopes FLIP
@@ -1398,6 +1493,10 @@ class BaseModel(models.Model):
                     name=self.get_name(),
                     natural_key=natural_key,
                     dimensions=stamp(base_dims, caller_dims, where=f"{entity_type} dimensions"),
+                    # A create is a change and an observation; `last_observed_at` takes the
+                    # row's own `updated_at` at insert (rule 5).
+                    last_changed_batch_id=pointer_batch,
+                    last_observed_batch_id=pointer_batch,
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1422,10 +1521,17 @@ class BaseModel(models.Model):
             # Direct .update() bypasses Django signals (Entity has no
             # HistoricalRecords anyway, but this is belt-and-suspenders).
             # See spec-grid-node.md req-grid-node-display.
+            now = timezone.now()
             spine_updates: dict[str, Any] = {
-                "updated_at": timezone.now(),
+                "updated_at": now,
                 "version": models.F("version") + 1,
             }
+            if pointer_batch is not None:
+                # In the statement that increments `version`, so the two cannot disagree
+                # (rule 2); a change is also an observation, at the time of the change (rule 5).
+                spine_updates["last_changed_batch_id"] = pointer_batch
+                spine_updates["last_observed_batch_id"] = pointer_batch
+                spine_updates["last_observed_at"] = now
             new_name = self.get_name()
             if self.entity.name != new_name:
                 spine_updates["name"] = new_name
@@ -1443,6 +1549,10 @@ class BaseModel(models.Model):
                 self.entity.name = new_name
             if "natural_key" in spine_updates:
                 self.entity.natural_key = new_key
+            if pointer_batch is not None:
+                self.entity.last_changed_batch_id = pointer_batch
+                self.entity.last_observed_batch_id = pointer_batch
+                self.entity.last_observed_at = now
 
     def prepare_for_write(self) -> None:
         """Put the instance's values into the form they are stored in. A no-op by default.

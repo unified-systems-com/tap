@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
-| unbuilt | 11 |
+| mapped | 9 |
+| unbuilt | 10 |
 | retired | 1 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 0 |
@@ -15,6 +15,7 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
+| `req-grid-entity-batch-pointers` | In Development | Implemented | `_pointer_batch` | — |
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
 | `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18` |

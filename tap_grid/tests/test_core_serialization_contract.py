@@ -45,6 +45,10 @@ EXPECTED_ENTITY_COLUMNS = [
     "deleted_at",
     "created_at",
     "updated_at",
+    # req-grid-entity-batch-pointers (Issue# 323 - tap).
+    "last_changed_batch_id",
+    "last_observed_batch_id",
+    "last_observed_at",
 ]
 
 # The exact top-level keys of a response envelope, in canonical serialization order.
@@ -64,6 +68,9 @@ EXPECTED_SPINE_SURFACE = [
     "updated_at",
     "deleted_at",
     "version",
+    "last_changed_batch_id",
+    "last_observed_batch_id",
+    "last_observed_at",
     "originating_grid_id",
 ]
 

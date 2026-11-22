@@ -31,7 +31,7 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-cascade | [Edge-Directed Cascade Deletion](#edge-directed-cascade-deletion) | Backlog | The *mechanism* is now specified as `req-grid-service-delete-cascade` (declared containment, own evaluator, fail-closed). What remains backlogged here is the entity-side half: declaring containment on the model rather than in a collector's manifest |
 | req-grid-entity-core-type-catalog | [First-Party Types In The Catalog](#first-party-types-in-the-catalog) | Backlog | Core-app types are absent from `EntityType` (only plugins write rows), so they render without icons. Pick this up when someone cares about the missing icons |
 | req-grid-entity-tombstone-managers | [Tombstone State And Manager Surface](#tombstone-state-and-manager-surface) | Approved for Development | `Entity.deleted_at` is the single canonical home of tombstone state; manager defaults differ by surface; both surfaces expose uniform `.live()` / `.tombstoned()` chainable filters |
-| req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | Proposed | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
+| req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | In Development | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
 | req-grid-entity-event-time | [Event Time On The Spine](#event-time-on-the-spine) | Proposed | `event_start`, `event_end`, `event_kind` and `event_precision` on `Entity`, copied from the fields a model declares as its event time |
 | req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | Proposed | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
 | req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | Proposed | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
@@ -119,6 +119,9 @@ The canonical Entity-row fields, in their canonical serialization order:
 | `updated_at` | audit timestamp | ISO 8601 UTC. |
 | `deleted_at` | `Entity.deleted_at` | Tombstone timestamp or `null`. |
 | `version` | `Entity.version` | Monotonic counter; increments on canonical mutation including tombstone. |
+| `last_changed_batch_id` | `Entity.last_changed_batch_id` | UUID or `null`. The batch whose write last changed the row (`req-grid-entity-batch-pointers`). Derived on this grid; not accepted on import. |
+| `last_observed_batch_id` | `Entity.last_observed_batch_id` | UUID or `null`. The latest batch that wrote or re-observed the row. Derived on this grid; not accepted on import. |
+| `last_observed_at` | `Entity.last_observed_at` | ISO 8601 UTC or `null`. When that observation was recorded on this grid. Derived on this grid; not accepted on import. |
 | `originating_grid_id` | `Entity.originating_grid_id` | Source grid identifier. **Retained** (decision 2026-09-15): the extended-grid case is real and this is its provenance field. Provenance only — never part of an identity or a correlation predicate. See Future. |
 
 The `id` field renames to `entity_id` at the serialization boundary so
@@ -959,14 +962,24 @@ The second draft moved the hash one column over: a UUIDv8 over SHA-256 of a cano
 ----
 RID: `req-grid-entity-batch-pointers`
 
-Status: `Proposed`
+Status: `In Development`
 
 The spine records, for every node and edge, the batch that last changed it and the batch that last observed it. "What did this batch change" and "what has not been seen since" become one query on one table, across every type.
 
 #### Status Details
-Proposed; nothing is built. Issue# 323 - tap holds the ruling and the prior-art review (`docs/misc/doc-grid-provenance-placement-prior-art.md`).
+In Development. The three columns, every write that sets them, the spine surface and the import refusal are built (Issue# 323 - tap): the fields on `Entity` in `tap_grid/models.py` (migration `0017_entity_batch_pointers`, `tap_grid` only), the stamp in `BaseModel.save()` and in `_execute_write_pipeline` in `tap_grid/services/_impl.py`. The tests are `tap_grid/tests/test_entity_batch_pointers.py`. Issue# 323 - tap holds the ruling and the prior-art review (`docs/misc/doc-grid-provenance-placement-prior-art.md`).
 
-What exists today (read on core main, 2026-11-21): the only row-level batch pointer is `batch_id` on each typed row, so the question is a union over every typed history table. `Entity` has no batch column.
+What is not settled is rule 12. `last_observed_at` is built with no index. One measurement was made on 2026-11-22, on PostgreSQL 18.6, on a synthetic table of one million rows with a pass that names 100,000 of them, one run each on a shared host: the observation write took 2.19 s with no index on `last_observed_at` and 2.73 s with one; a "not seen since" count took 91 ms (one type), 180 ms (all types) and 92 ms (a search matching under 1% of rows) with no index, and 31 ms, 26 ms and 2 ms with one. That is one data point on synthetic data, not the measurement on data of realistic size rule 12 asks for, and no decision has been taken from it.
+
+As built, three things the rules do not spell out:
+
+- A batch's own spine row carries no pointer. A batch cannot be written in a batch, the same reason FLIP is off for it.
+- On a create, `last_observed_at` is the row's own `updated_at`, to the microsecond; on a change and on a retirement it is the time written to `updated_at` in the same statement. That is how rule 5's "never earlier than the time of the last change" is met.
+- A repeat delete of an already retired object writes nothing (`req-grid-service-delete-tombstone-6`), so it moves no pointer, although the operation names the object. Nothing is recorded for it on the batch either.
+
+Rule 6 is enforced where the pointer is written: inside the write pipeline's scope a save with no batch in context raises and nothing is stored. `write_batch` always resolves a batch before any operation runs, so no supported caller reaches that refusal. Outside the pipeline (a named below-pipeline writer, a test fixture that saves a row directly) there is no batch to name, and the pointers are left as they are; such a row can have null pointers.
+
+The typed-row `batch_id` is still written on every save (rule 10).
 
 #### Implementation
 
@@ -996,16 +1009,16 @@ A row-level "last changed by" on the common header is the near-universal placeme
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-entity-batch-pointers-1 | Create Sets Both | Proposed | After a create, both batch pointers name the creating batch and `last_observed_at` is set. | |
-| req-grid-entity-batch-pointers-2 | Re-Observation Moves Only Observed | Proposed | After an unchanged re-import in a second batch, `last_changed_batch_id` still names the first batch, `last_observed_batch_id` names the second, `last_observed_at` moved, and `version` and `updated_at` did not. | |
-| req-grid-entity-batch-pointers-3 | Change Moves Both | Proposed | After a changed write in a third batch both pointers name the third batch. | |
-| req-grid-entity-batch-pointers-4 | Retirement Is A Change | Proposed | A tombstone sets `last_changed_batch_id` to the retiring batch, on the node and on every edge it ends, and agrees with `flip_map["deleted_at"]`. | |
-| req-grid-entity-batch-pointers-5 | One Query Per Batch | Proposed | Filtering `Entity` on `last_changed_batch_id` returns every node and edge a batch created or changed and that no later batch has changed, across all types. | |
-| req-grid-entity-batch-pointers-6 | Unnamed Objects Untouched | Proposed | A batch that names a subset of a type's objects leaves the pointers of the others unchanged. | |
-| req-grid-entity-batch-pointers-7 | No Batch, No Write | Proposed | A changing service-layer write with no batch in context is refused. | |
-| req-grid-entity-batch-pointers-8 | Not Importable | Proposed | A GRIFT envelope that supplies any of the three fields is rejected. | |
-| req-grid-entity-batch-pointers-9 | Spine Sync Counted | Proposed | A re-import that changes only spine `name` or `dimensions` moves `last_changed_batch_id`. | |
-| req-grid-entity-batch-pointers-10 | Gryphon Reads Them | Proposed | A Gryphon query can filter on `last_changed_batch_id` and compare `last_observed_at` with a time. | |
+| req-grid-entity-batch-pointers-1 | Create Sets Both | Implemented | After a create, both batch pointers name the creating batch and `last_observed_at` is set. | `TestCreate`: a service create, an import create under a given id, and an edge create. |
+| req-grid-entity-batch-pointers-2 | Re-Observation Moves Only Observed | Implemented | After an unchanged re-import in a second batch, `last_changed_batch_id` still names the first batch, `last_observed_batch_id` names the second, `last_observed_at` moved, and `version` and `updated_at` did not. | `TestObservationAndChange`: an unchanged re-import and an unchanged service patch. |
+| req-grid-entity-batch-pointers-3 | Change Moves Both | Implemented | After a changed write in a third batch both pointers name the third batch. | `TestObservationAndChange`: a changed patch and a changed replace. |
+| req-grid-entity-batch-pointers-4 | Retirement Is A Change | Implemented | A tombstone sets `last_changed_batch_id` to the retiring batch, on the node and on every edge it ends, and agrees with `flip_map["deleted_at"]`. | `TestRetirement`: a node with two edges, checked against `flip_map["deleted_at"]` on all three rows. |
+| req-grid-entity-batch-pointers-5 | One Query Per Batch | Implemented | Filtering `Entity` on `last_changed_batch_id` returns every node and edge a batch created or changed and that no later batch has changed, across all types. | `TestOneQueryPerBatch`: two nodes and an edge, then one node changed by a later batch. |
+| req-grid-entity-batch-pointers-6 | Unnamed Objects Untouched | Implemented | A batch that names a subset of a type's objects leaves the pointers of the others unchanged. | `TestObservationAndChange.test_a_batch_that_names_a_subset_leaves_the_rest_alone`. |
+| req-grid-entity-batch-pointers-7 | No Batch, No Write | Implemented | A changing service-layer write with no batch in context is refused. | `TestNoBatchNoWrite`: a change and a create inside the pipeline's scope with no batch in context. No supported caller reaches the refusal, because `write_batch` always resolves a batch. |
+| req-grid-entity-batch-pointers-8 | Not Importable | Implemented | A GRIFT envelope that supplies any of the three fields is rejected. | `TestNotImportable`: one case for each of the three fields. Refused by the envelope's closed key list, as `natural_key` is. |
+| req-grid-entity-batch-pointers-9 | Spine Sync Counted | In Development | A re-import that changes only spine `name` or `dimensions` moves `last_changed_batch_id`. | `TestSpineSyncCounted`. Tested for a re-import that changes only `dimensions`, and for a rename. A change of the spine `name` alone is not tested: the type used has a `name` field, and the importer refuses an envelope name that differs from it. |
+| req-grid-entity-batch-pointers-10 | Gryphon Reads Them | Implemented | A Gryphon query can filter on `last_changed_batch_id` and compare `last_observed_at` with a time. | `TestGryphonReadsThem`: an equality filter on `last_changed_batch_id` and `<` / `>=` on `last_observed_at`. |
 
 ### Event Time On The Spine
 ----

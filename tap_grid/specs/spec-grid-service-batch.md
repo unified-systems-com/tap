@@ -659,7 +659,7 @@ Implemented in the service write pipeline, which the GRIFT importer writes throu
 
 Before this, the pipeline caught any exception from recording, logged it and continued, and the recording function returned nothing when the batch row could not be found, so a write could commit with no record of it while reconciliation and candidate derivation read those records as proof of what a batch touched (`spec-grid-reconcile.md`).
 
-`record_batch_event` itself still returns nothing when it has no batch, for callers outside the write pipeline; the pipeline is what treats that as a failure. The spine stamp rule 4 speaks of is `req-grid-entity-batch-pointers`, not built; today a re-observation's record is its `observe` event alone.
+`record_batch_event` itself still returns nothing when it has no batch, for callers outside the write pipeline; the pipeline is what treats that as a failure. The spine stamp rule 4 speaks of is `req-grid-entity-batch-pointers`, built with Issue# 323 - tap: a re-observation's record is its `observe` event and the observed pair on the entity row.
 
 #### Implementation
 1. Recording an operation's event happens inside the operation's transaction.
