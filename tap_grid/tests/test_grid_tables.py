@@ -153,13 +153,18 @@ class TestConsumerSetRelationship:
         assert entity_table in read_guarded_tables()
 
     def test_every_classified_domain_table_has_its_history_guarded(self):
-        """Each BaseModel's simple_history table is read-guarded, and never granted to search."""
+        """Each BaseModel's simple_history table is read-guarded, and never granted to search.
+
+        A type that opts out (``TRACK_HISTORY = False``, req-grid-history-optout) has no history
+        model, table or manager, so it has nothing to guard: it is left out the way
+        ``history_tables()`` leaves it out (tap#1256; aws_core's published-version types opt out).
+        """
         from django.apps import apps
 
         expected = {
             model.history.model._meta.db_table
             for model in apps.get_models()
-            if issubclass(model, BaseModel) and not model._meta.abstract
+            if issubclass(model, BaseModel) and not model._meta.abstract and getattr(model, "TRACK_HISTORY", True)
         }
         assert expected
         assert expected == history_tables()
