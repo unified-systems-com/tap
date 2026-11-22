@@ -40,7 +40,8 @@ def _create(slug: str, tenant: str = "docker") -> Panel:
         "panel", {"slug": slug, "name": "Identity", "view": "tap_web/panels/identity.html", "config": {"tenant": tenant}}
     )
     assert result.success, result.errors
-    return Panel.objects.get(entity_id=result.entity_id)
+    panel: Panel = Panel.objects.get(entity_id=result.entity_id)
+    return panel
 
 
 def _bundle(*slugs: str) -> dict[str, Any]:
