@@ -34,7 +34,8 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | Proposed | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
 | req-grid-entity-event-time | [Event Time On The Spine](#event-time-on-the-spine) | Proposed | `event_start`, `event_end`, `event_kind` and `event_precision` on `Entity`, copied from the fields a model declares as its event time |
 | req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | Proposed | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
-| req-grid-entity-model-version | [Model Version Stamp](#model-version-stamp) | Proposed | An authored integer per model class, stamped on `Entity` by the last write, with a guard that fails when a definition changes without a bump |
+| req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | Proposed | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
+| req-grid-entity-spine-version | [Spine Version](#spine-version) | Proposed | The spine's own authored version, separate from the tap release, the GRIFT format version and every type version; recorded on the grid and stated in GRIFT |
 | req-grid-entity-natural-key | [Assigned Ids, Declared Search](#assigned-ids-declared-search) | Proposed | `Entity.id` is always an assigned UUIDv7; every type declares how it is found (`NATURAL_KEY` or `KEYLESS`) and the search is generated; `Entity.natural_key` publishes each keyed row's declared identity as one readable value, derived on every save and read by no lookup |
 
 
@@ -973,7 +974,7 @@ What exists today (read on core main, 2026-11-21): the only row-level batch poin
 | --- | --- | --- |
 | `last_changed_batch_id` | UUID, nullable, indexed | The batch whose write last changed this object: its create, any operation `req-grid-history-reobservation` classifies as changed, or its retirement. |
 | `last_observed_batch_id` | UUID, nullable, indexed | The latest batch that wrote or re-observed this object, changed or not. |
-| `last_observed_at` | timestamp, nullable, indexed | When that observation was recorded on this grid. |
+| `last_observed_at` | timestamp, nullable | When that observation was recorded on this grid. |
 
 1. They are plain ids, not foreign keys, matching how batch ids travel in the caller context.
 2. `last_changed_batch_id` is set in the same statement that increments `version`, so the two cannot disagree.
@@ -986,6 +987,7 @@ What exists today (read on core main, 2026-11-21): the only row-level batch poin
 9. All three join the canonical spine surface (`req-grid-entity-spine-surface`) after `version`, and are readable and filterable through Gryphon. They are derived on the receiving grid and are not accepted from a GRIFT import envelope, the same rule `natural_key` follows.
 10. The typed-row `batch_id` is not removed by this requirement. Its removal changes every plugin table and is specified with that release (Issue# 1288 - tap), after a check that the history rows still say which batch produced each version.
 11. `last_observed_batch_id` and `last_observed_at` record that a batch named the object, and nothing more. They do not say that a source saw the thing at that time: an analyst's edit and a collector's pass both move them, and what kind of write it was is read from the batch they point at, not from a vocabulary of change types on the row. They do not confirm every field either: a pass that sends two fields and leaves the rest under keep-absent moves them just the same, so a consumer that needs to know which fields a pass asserted reads FLIP and the batch, not these stamps.
+12. Whether `last_observed_at` is indexed is decided by measuring the cost of the write in rule 3 against the cost of a "not seen since" search, on data of realistic size. It is written for every object every pass names, so an index on it is paid on every observation. The two batch pointers are indexed in any outcome.
 
 #### Development
 A row-level "last changed by" on the common header is the near-universal placement in comparable systems, and a separate non-versioning "last seen" beside it is the pattern inventory systems converge on. Per-field provenance stays on the typed row (`req-grid-flip-map-3`); the header carries only the three scalars.
@@ -1033,28 +1035,29 @@ Compared on 2026-11-21 with the published schemas of 23 other systems (the summa
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `event_start` | timestamp with time zone, nullable | When the thing happened, or began to hold. |
-| `event_end` | timestamp with time zone, nullable | When it stopped holding. Equal to `event_start` for a moment. Empty while it still holds. |
+| `event_end` | timestamp with time zone, nullable | When it stopped holding. Equal to `event_start` for an exact moment. Empty when the source states no end. |
 | `event_kind` | short text, nullable | What `event_start` means, from a closed list core owns: `occurred`, `created`, `first_seen`, `published`. |
-| `event_precision` | short text, nullable | How exact the source value was: `exact`, `day`, `month` or `year`. |
+| `event_precision` | short text, nullable | How exact the source value was: `exact`, `day`, `month` or `year`. Anything other than `exact` means the stored pair is widened (rule 10). |
 
 1. A model declares its event time as a class attribute beside `NATURAL_KEY`: one of its own fields for a moment, or two for a span, and the kind. A model with no such time says so explicitly. A model that does neither fails plugin validation, the rule `NATURAL_KEY` and `KEYLESS` follow.
 2. The declaration names fields the model already has. No model adds a column, renames a field or changes a field's type to satisfy this requirement, and no plugin table changes.
 3. On every save of a typed row the grid derives the four spine values from the declared fields and writes them in the statement that already writes `name` and `natural_key`. Nothing a caller supplies reaches them, and a GRIFT envelope that supplies any of the four is rejected, the rule `natural_key` follows.
 4. The stored values are timezone-aware and in UTC, whatever form the source field takes.
-5. The pair states a duration: how long the thing lasted or held. It does not state how uncertain a time is; that is `event_precision`.
-6. `event_start` is inclusive and `event_end` is exclusive. A moment is stored with both equal, and the overlap test the grid publishes matches a moment that falls inside the window.
-7. A thing that still holds has an empty `event_end`. Only a value the source states closes it. The grid never closes it from the fact that a collector stopped seeing the object; "probably gone" is read from `last_observed_at`.
+5. The pair states a duration: how long the thing lasted or held. How uncertain a time is, is stated by `event_precision`. The one place the two meet is rule 10: a value less exact than a moment is stored as the interval its unit covers, and the marker says that the width is the source's precision and not the thing's length.
+6. `event_start` is inclusive and `event_end` is exclusive. An exact moment is stored with both equal, and the overlap test the grid publishes matches a moment that falls inside the window.
+7. An empty `event_end` means the source states no end: the thing still holds, or the source does not say. Only a value the source states closes it. The grid never closes it from the fact that a collector stopped seeing the object; "probably gone" is read from `last_observed_at`.
 8. A long-lived object (an instance, a repository) declares the time its source says it came to exist, kind `created`, with an open end.
 9. An event time is never defaulted. Where the source gives no value the four fields are empty, and empty means not asserted (`req-grid-node-observation`). No write path substitutes a collection time or the write time.
-10. A source value with a date and no time of day is stored as the start of that day in UTC with `event_precision` `day`; `month` and `year` follow the same form. Every other value has precision `exact`.
+10. A source value less exact than a moment is stored as the interval its unit covers. A date with no time of day is stored with `event_start` at the start of that day in UTC, `event_end` at the start of the next day, and `event_precision` `day`; `month` and `year` follow the same form. For a span, the start is the start of the start value's unit, the end is the end of the end value's unit, and the marker is the coarser of the two. Every other value has precision `exact`. The typed field keeps the value as the source gave it. This is the reading ISO 8601 and the Extended Date/Time Format give a reduced-precision date: it names an interval, not its first instant.
 11. A source value with a time of day and no time zone is not copied. The grid does not assume a zone.
 12. A value the grid cannot store truthfully (rule 11, an end before its start, a value that does not parse) leaves the four spine fields empty and adds a warning to the operation's result naming the field. The typed field keeps what the source sent. A future-dated value is stored: a scheduled thing has a real future time.
 13. Where a model has several candidate times, its author declares the one that says when the thing happened in the world, as the source states it. A collection time is never declared. The time the source last edited its own record is not declared when a time for the thing itself exists. A finding is declared at its creation, the choice OCSF and the AWS finding format make.
 14. A source's other times (first seen, last seen, published) stay typed fields. They have no copy on the spine.
 15. The four fields join the canonical spine surface (`req-grid-entity-spine-surface`) and are readable and filterable through Gryphon.
 16. Which of the four are indexed, and with what kind of index, is decided by measuring write cost and window-search cost on data of realistic size, where most long-lived objects have an empty `event_end`. `event_start` is indexed in any outcome.
-17. A change to a model's declaration reaches existing rows through a core command that re-derives the spine values from the typed rows. It writes no history and no version, because no typed value changed.
+17. A change to a model's declaration reaches existing rows through a core command that re-derives the spine values from the typed rows. It writes no history and no version, because no typed value changed. It runs as a batch and records a batch event for every row whose spine values it changes, so the change to those rows has a record that says what made it. It does not move `last_observed_batch_id` or `last_observed_at`, because no source or analyst named the objects.
 18. Event time gives no ordering guarantee across sources: two sources' clocks are not synchronised. A consumer that reads the grid incrementally keys on grid time or on batch, never on event time, because a row whose event time is in the past can arrive at any later moment.
+19. A window search returns possible matches. A row with precision `day` is returned by every window that overlaps that day: it may have happened in the window. A reader that needs certain matches adds `event_precision` `exact` to the search, or requires the stored pair to lie inside the window. The grid does not hide imprecise rows from a window search and does not narrow them.
 
 #### Development
 One time per object on the spine is a narrower choice than the forensic timeline tools make (one entry per timestamp) and than the finding schemas make (several named times side by side). It is the choice that keeps the spine one row per object. The typed fields still hold every time the source gave, and further spine columns can be added later without changing any plugin table.
@@ -1069,15 +1072,16 @@ A value a source states is never dropped to save a write. A source's own "last s
 | req-grid-entity-event-time-2 | Declared Span Is Copied | Proposed | A model declaring two fields sets `event_start` and `event_end` from them; an empty end field leaves `event_end` empty. | |
 | req-grid-entity-event-time-3 | Undeclared Model Fails Validation | Proposed | Plugin validation fails for a model that neither declares an event time nor states that it has none. | |
 | req-grid-entity-event-time-4 | Never Defaulted | Proposed | A node whose declared field is empty has all four spine fields empty after create and after update. | |
-| req-grid-entity-event-time-5 | Date-Only Value Marked | Proposed | A declared field holding a date with no time is stored as the start of that day in UTC with `event_precision` `day`. | |
+| req-grid-entity-event-time-5 | Date-Only Value Covers Its Day | Proposed | A declared field holding a date with no time is stored with `event_start` at the start of that day in UTC, `event_end` at the start of the next day and `event_precision` `day`; the typed field is unchanged. | |
 | req-grid-entity-event-time-6 | Zone-Less Value Not Copied | Proposed | A declared field holding a time with no zone leaves the spine fields empty and the result carries a warning naming the field. | |
 | req-grid-entity-event-time-7 | End Before Start Not Copied | Proposed | A span whose end precedes its start leaves the spine fields empty, keeps the typed values and warns. | |
 | req-grid-entity-event-time-8 | Moment Matches A Window | Proposed | The published overlap test returns a node whose moment falls inside the window, and a node whose span overlaps it, and no node whose span ended at the window's start. | |
 | req-grid-entity-event-time-9 | Not Importable | Proposed | A GRIFT envelope that supplies any of the four fields is rejected. | |
 | req-grid-entity-event-time-10 | Follows The Typed Field | Proposed | Changing the declared field through a patch moves the spine values in the same operation, with one version. | |
-| req-grid-entity-event-time-11 | Re-Derive Writes No History | Proposed | The re-derive command fills the spine values of existing rows and adds no history row and no version. | |
+| req-grid-entity-event-time-11 | Re-Derive Writes No History | Proposed | The re-derive command fills the spine values of existing rows, adds no history row and no version, records one batch event for each row it changed under its own batch, and leaves `last_observed_at` where it was. | |
 | req-grid-entity-event-time-12 | Gryphon Reads Them | Proposed | A Gryphon query can filter nodes of two different types by one `event_start` window. | |
 | req-grid-entity-event-time-13 | No Plugin Table Changes | Proposed | Adding the four fields produces a migration in `tap_grid` only. | |
+| req-grid-entity-event-time-14 | Imprecise Value Is A Possible Match | Proposed | A node with precision `day` is returned by a one-hour window inside that day, and is not returned once the search also requires `event_precision` `exact`. | |
 
 ### Collection Time On The Spine
 ----
@@ -1101,10 +1105,10 @@ What exists today (read on core main, 2026-11-21): a batch records when it start
 | `BatchEvent.collected_start`, `BatchEvent.collected_end` | timestamp with time zone, nullable | The same pair, for the pass that event records. |
 
 1. The pair is a window on the collector's own clock. It carries no precision marker: the width of the window is the precision.
-2. A collector states the pair for each object it sends, in a part of the write batch and of the GRIFT document that is keyed by object and kept apart from the object's own fields. The exact form is specified with the GRIFT forms, the last wave of Issue# 1284 - tap.
+2. A collector states the pair for each object it sends, in a part of the write batch and of the GRIFT document that is keyed by object and kept apart from the object's own fields. The write-batch form is specified and built with the spine columns, before the sweep that moves collectors onto it (Issue# 1289 - tap): a collector cannot be asked to state a window until there is somewhere to state it. The GRIFT document form follows with the other GRIFT forms, the last wave of Issue# 1284 - tap.
 3. A pair the collector does not state is empty, on the event and on the spine. It is never filled with the write time (`req-grid-node-observation`: empty means not asserted). A reader that wants a best estimate uses the observing batch's own start and close.
 4. The spine pair is written in the row update that sets `last_observed_batch_id` and `last_observed_at`, for every object an operation names, changed or not. It writes no history and no version.
-5. The spine pair always describes the latest observation. A later pass that states no pair empties it; a stale pair from an earlier pass is never left beside a newer `last_observed_at`.
+5. The spine pair describes the latest read of the object by the collector's clock, and it does not move backwards. A pass whose stated `collected_end` is earlier than the one on the spine is an older read arriving late: it leaves the spine pair as it is, records its own window on its batch event, and still moves `last_observed_batch_id` and `last_observed_at`, because a batch named the object. A pass that states no pair empties the spine pair, so a pair is never left standing for a pass that did not state one.
 6. Stored values are timezone-aware and in UTC. A pair with no zone, or whose end precedes its start, is not recorded and the operation's result carries a warning.
 7. For a thing already true when it was collected, event time is expected not to be later than collection time, and collection time not later than grid time. The grid does not enforce the order. A violation is a signal about a clock and is reported, never corrected.
 8. The spine pair is not indexed at first, so that the write in rule 4 stays cheap. An index is added when a search needs one and its write cost has been measured.
@@ -1123,45 +1127,136 @@ The per-pass record is the batch event; the spine holds a copy of the newest one
 | req-grid-entity-collection-time-4 | Later Unstated Pass Empties It | Proposed | After a pass that stated a window, a pass that states none leaves the spine pair empty and `last_observed_at` moved. | |
 | req-grid-entity-collection-time-5 | Bad Pair Not Recorded | Proposed | A window whose end precedes its start, or with no zone, is not recorded and the result warns. | |
 | req-grid-entity-collection-time-6 | Order Not Enforced | Proposed | A write whose event time is later than its collection time succeeds and the result reports it. | |
+| req-grid-entity-collection-time-7 | Late Older Read Does Not Regress | Proposed | After a pass that stated a window, a second pass stating an earlier window leaves the spine pair unchanged, records the earlier window on its own batch event and moves `last_observed_at`. | |
+| req-grid-entity-collection-time-8 | Stated Without GRIFT | Proposed | A service-layer write batch can state a collection window for an object before any GRIFT form for it exists. | |
 
-### Model Version Stamp
+### Model Versions And Upgrade Steps
 ----
 RID: `req-grid-entity-model-version`
 
 Status: `Proposed`
 
-Every row says which version of its model's definition last wrote it. The version is a number the model's author sets, and a guard fails when a definition changes and the number does not.
+Every node type and edge type has a version: a number its author sets. On one grid every row of a type is at the same version, because the migration that ships with a new version rewrites them together. Versions matter where data crosses between grids. A GRIFT document states the version of each type it carries, and an import upgrades older records through steps the type's author keeps, or is refused where the author has declared that no step exists.
 
 #### Status Details
-Proposed; nothing is built. Issue# 475 - tap holds the prior-art review of 16 systems, and Issue# 1284 - tap records the choices made from it: each one that upgrades stored data uses an authored integer with a derived check beside it, none keeps the version a row was created with, and refusing data stamped newer than the running code is the common gate.
+Proposed; nothing is built. Issue# 475 - tap holds the first prior-art review, and Issue# 1284 - tap records the rulings and two further comparisons made on 2026-11-21: about 25 systems on upgrading stored data, and about 30 on breaking changes. Each was one research pass over primary documentation, relayed in summary.
 
-What exists today (read on core main, 2026-11-21): nothing on a row says which definition of its model wrote it. A model whose fields change leaves old rows indistinguishable from new ones.
+What those comparisons support: systems that migrate a whole store keep one version for the store and none on a row; systems whose records arrive at mixed versions keep a version with each record and a chain of upgrade steps; nearly all refuse input newer than the code; and a change of meaning with no change of structure is caught by nothing but its author.
+
+What exists today (read on core main, 2026-11-21): nothing records which definition of a model a grid holds. `EntityType` has no version column. A GRIFT document's header carries `grift_version` and no version for any type, so an import cannot tell what definition wrote the records it reads.
 
 #### Implementation
-1. A model class carries an authored integer version as a class attribute. A model that states none is at version 1.
-2. `Entity` carries `model_version` (integer, nullable): the version of the class that last wrote the row. It is set in the statement that increments `version`. A re-observed-unchanged operation does not move it, because it wrote nothing.
-3. There is no created-with version. The stamp says what last wrote the row.
-4. A guard computes a fingerprint of each model's definition (its fields, their types and constraints, its natural key and its service schema) and compares it with the fingerprint committed beside the authored version. A definition whose fingerprint changed while its version did not fails the guard in the repository that owns the model.
-5. The stamp is informational, with one exception: a write to a row whose `model_version` is greater than the running class's version is refused. Code does not rewrite data written by a newer definition of the model than it knows.
-6. Reads are not refused on the stamp.
-7. `model_version` is derived on the receiving grid. A GRIFT envelope that supplies it is rejected.
-8. It joins the canonical spine surface and is filterable through Gryphon, so "rows of this type not yet rewritten at version 3" is one query.
-9. Adding the column changes `tap_grid` only. A plugin adopts versioning by setting the attribute and committing the fingerprint; it needs no migration.
+
+**The version of a type**
+
+1. A model class carries an authored integer version as a class attribute. A model that states none is at version 1. An edge type carries one the same way, beside its property rules. The edge table all edge types share belongs to core and is covered by `req-grid-entity-spine-version`.
+2. A grid holds each type at one version: the one the installed code declares. A new version that changes stored rows ships with the migration that rewrites them, so no row is left behind at an older version. No row carries a version, on `Entity` or on the typed table.
+3. `EntityType` records each type's version in `model_version` (integer). Registration stamps it from the class on every load, in the write that stamps `kind`. The class is the authority and the row is a record of it.
+4. Registration of a type fails, naming both numbers, when the catalog already records a version greater than the class declares. Code does not run against rows a newer definition of the model wrote.
+5. A guard computes a fingerprint of each type's definition (its fields, their types and constraints, its natural key, its service schema; for an edge type, its property rules) and compares it with the one committed beside the authored version. A definition whose fingerprint changed while its version did not fails the guard in the repository that owns the type.
+6. The committed record is a list with one entry per version, and it only grows. Changing the entry of a version already committed fails the guard. Each entry holds enough of that version's definition for rule 12 to compare two versions.
+7. A change of meaning with no change of definition (a unit, a convention inside a JSON field) is invisible to the guard. The author raises the version by hand, and the type's author guidance says so.
+
+**The chain of versions**
+
+8. For every version after the first, the type's author provides one link from the version before it. A link is either a step or a declared break.
+9. A step takes one record's fields at version N and returns them at version N+1. It reads that record and nothing else: no other record, no database, no network. It does not import the model class, so it keeps working as the class moves on. It is plain code that gives the same output for the same input.
+10. A step declares what it costs: nothing is lost, or the named fields are dropped, or it may refuse some records, with the reason.
+11. A declared break says that no step exists from version N to N+1, with the reason, and may name a successor type.
+12. The guard compares each version's definition with the one before it. A field removed, a type narrowed, a field made required or a natural key changed fails the guard unless the link declares it: as a dropped field, as a step that may refuse, or as a break.
+13. A type whose chain is missing a link fails plugin validation.
+14. A type may declare the oldest version it still imports. A record older than that is refused, naming the version.
+15. Where a change can be expressed on one record, the plugin's data migration for that version calls the same step for the stored rows. A test in the plugin checks that a version-N export upgraded by the step equals the export of the migrated table.
+
+**Import**
+
+16. A GRIFT document states, in its header, the version of every type it carries. The field is added to the GRIFT specification before the format is frozen for 0.5.0.
+17. A document that states no version for a type is read as version 1 for that type.
+18. An import upgrades every record through its type's chain, from the stated version to the installed one, before it validates and before it writes anything. The upgrade is part of the import and runs in or beside the GRIFT importer, the one path every inbound write takes.
+19. A record at a version greater than the installed one refuses the document, naming the type and both versions.
+20. A document is refused, and nothing is written, when the chain it would have to cross contains a declared break, or when a step refuses any record. The refusal names the type, the link, and each record refused.
+21. A field a step drops is reported in the operation's result, by type and field. It is never dropped without a report.
+22. The import's batch records, for each type it upgraded, the version the document stated and the version it was upgraded to. What an import did to a record is read from its batch.
+
+**History**
+
+23. History rows are left as written. They carry no version. A history row written before a version change holds the values as that definition wrote them.
+24. A migration that removes a field removes the column from the type's history table as well, because the history model is built from the live model's fields. The old values of that field are then gone from the grid. This is accepted. A step that declares a dropped field (rule 10) is the mark that it will happen, the type's author guidance states it, and an operator who needs the old values takes a database snapshot before migrating.
 
 #### Development
 A derived hash alone cannot serve as the version: it changes for edits that do not affect stored data, and it gives no order. An authored integer alone is forgotten. The pair is what every comparable system that upgrades data arrived at.
+
+A version on every row was considered and left out. Where one migration moves every row of a type, the row's version always equals the type's, and a second copy of it is one more thing that can disagree. What does differ is a document written by another grid, so that is where the version is stated.
+
+What a grid does about a declared break is deliberately not chosen here. Refusing (rule 20) is the behaviour until a way across is built, and each way across can be added as something a break declares on the model class, with no table change. Rule 24 was read from the history library's code and from the add and alter migrations core already carries for history models; no migration in core removes a field, so it has not been observed.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-entity-model-version-1 | Create Stamps The Version | Proposed | A row created by a model at version 2 has `model_version` 2. | |
-| req-grid-entity-model-version-2 | Changed Write Restamps | Proposed | A row at `model_version` 1 changed by the class at version 2 has `model_version` 2 after the write. | |
-| req-grid-entity-model-version-3 | Unchanged Observation Does Not | Proposed | The same row re-observed unchanged by the class at version 2 stays at `model_version` 1. | |
-| req-grid-entity-model-version-4 | Newer Row Refused | Proposed | A write by a class at version 1 to a row stamped 2 is refused and changes nothing. | |
-| req-grid-entity-model-version-5 | Guard Catches An Unbumped Change | Proposed | Adding a field to a model without changing its version fails the guard, naming the model. | |
-| req-grid-entity-model-version-6 | Not Importable | Proposed | A GRIFT envelope that supplies `model_version` is rejected. | |
-| req-grid-entity-model-version-7 | No Plugin Table Changes | Proposed | Adding the column produces a migration in `tap_grid` only. | |
+| req-grid-entity-model-version-1 | Catalog Records The Version | Proposed | After load, the `EntityType` row of a model declared at version 2 has `model_version` 2, and that of a model declaring none has 1. | |
+| req-grid-entity-model-version-2 | No Version On A Row | Proposed | Adding versioning produces a migration in `tap_grid` only, adds no column to `Entity`, and changes no plugin table. | |
+| req-grid-entity-model-version-3 | Newer Catalog Refused | Proposed | Loading a class at version 2 against a catalog row at version 3 fails, naming the type and both versions. | |
+| req-grid-entity-model-version-4 | Guard Catches An Unbumped Change | Proposed | Adding a field to a model without changing its version fails the guard, naming the model. | |
+| req-grid-entity-model-version-5 | Committed Versions Do Not Change | Proposed | Editing the committed entry of an earlier version fails the guard. | |
+| req-grid-entity-model-version-6 | Missing Link Fails Validation | Proposed | A model at version 3 with no link from 2 to 3 fails plugin validation. | |
+| req-grid-entity-model-version-7 | Undeclared Removal Fails | Proposed | Removing a field under a step that declares nothing lost fails the guard, and passes once the step names the field as dropped. | |
+| req-grid-entity-model-version-8 | Older Import Is Upgraded | Proposed | A document stating version 1 for a type installed at version 2 imports, and the stored row holds what the step returns, validated at version 2. | |
+| req-grid-entity-model-version-9 | Newer Import Refused | Proposed | A document stating version 3 for a type installed at version 2 is refused and writes nothing. | |
+| req-grid-entity-model-version-10 | A Break Refuses The Import | Proposed | A document that would cross a declared break is refused, writes nothing, and the refusal names the type and the link. | |
+| req-grid-entity-model-version-11 | One Refused Record Refuses The Document | Proposed | When a step refuses one record of many, no record is written and the refusal names that record. | |
+| req-grid-entity-model-version-12 | Dropped Fields Reported | Proposed | Importing across a step that drops a field succeeds and the result names the type and the field. | |
+| req-grid-entity-model-version-13 | Unstated Version Is 1 | Proposed | A document with no version for a type is upgraded from version 1. | |
+| req-grid-entity-model-version-14 | Step And Migration Agree | Proposed | A version-1 export upgraded by the step equals the export of the same rows after the plugin's migration. | |
+| req-grid-entity-model-version-15 | Edge Types Are Versioned | Proposed | An edge type at version 2 imports a version-1 edge with its properties upgraded by the type's step. | |
+| req-grid-entity-model-version-16 | Batch Records The Upgrade | Proposed | The batch of an import that upgraded a type names that type with the stated and the installed version. | |
+| req-grid-entity-model-version-17 | History Left As Written | Proposed | After a version change that keeps a field, the history rows written before it are unchanged in number and in that field's values. | |
+
+#### Future
+Ways across a declared break. None is chosen and they do not exclude each other:
+
+- A successor type, with the link between the two types recorded on the catalog so that a search by type can widen to both. It cannot carry a condition on a field across, since the two types do not share fields.
+- Changing an entity's type in place. `Entity.entity_type` is a plain string, ids do not derive from the type, and the stored natural key has no type prefix, so the entity row, its id and every edge to it can stay while the typed row is rebuilt under the new type. It needs the identity to hold, leaves the entity's history split across two history tables, and must be recorded by a batch because `Entity` has no history.
+- A place to keep fields the new version cannot hold.
+- An explicit switch by which an operator accepts a loss, where rule 21 only reports it.
+
+Also open: whether a version upgrade on one grid runs as a batch, so that history and the batch record show what it did; and whether a FLIP entry for a value a step rewrote stays with the source that asserted it.
+
+### Spine Version
+----
+RID: `req-grid-entity-spine-version`
+
+Status: `Proposed`
+
+The spine has its own version: a number core sets, which moves only when the spine changes. It is not the tap release version, not the GRIFT format version, and not any type's version. A plugin's models can then run on any number of tap releases, because nothing in a type's version or its upgrade steps refers to the spine.
+
+#### Status Details
+Proposed; nothing is built. Issue# 1284 - tap records the ruling.
+
+What exists today (read on core main, 2026-11-21): the spine's shape is implied by the tap release that created the database. A GRIFT document carries `grift_version`, which describes the form of the file, and nothing that says which spine wrote it. The grid has no table that holds a value for the instance as a whole.
+
+#### Implementation
+1. Core carries an authored integer spine version. It covers the `Entity` row and the columns core defines on the edge table: what they are and what they mean. A tap release that does not change the spine does not move it.
+2. The grid records the spine version its database is at, written when migrations are applied. A database that records a version greater than the code declares is refused at start. Where the record lives is decided when this is built.
+3. A GRIFT document states the spine version in its header, in a field of its own beside `grift_version`. The two move independently: the form of the file can change with the spine untouched, and the spine can change inside an unchanged form.
+4. A document that states none is read as spine version 1. One that states a version greater than the grid's is refused, naming both.
+5. Core keeps a chain of links for the spine, of the same kind `req-grid-entity-model-version` describes: a step that takes one envelope at version N and returns it at N+1, or a declared break. An import upgrades each envelope through it before it validates.
+6. A type's links never read or name the spine version, and the spine's links never read a type's fields. The two chains are applied independently.
+7. The guard in `req-grid-entity-model-version` rule 5 applies to the spine: a change to the spine's definition without a change to its version fails in core.
+
+#### Development
+The tap release version was considered as the key and left out. Most releases will not change the spine, and development builds between releases can, so a release number neither moves when the spine does nor stays still when it does not. The GRIFT format version was considered too; it answers a different question, how to parse the file.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-spine-version-1 | Grid Records It | Proposed | After migrations are applied the grid's recorded spine version equals the one core declares. | |
+| req-grid-entity-spine-version-2 | Newer Database Refused | Proposed | Code declaring spine version 1 does not start against a database recording version 2. | |
+| req-grid-entity-spine-version-3 | Stated In GRIFT | Proposed | An export's header carries the spine version in a field separate from `grift_version`. | |
+| req-grid-entity-spine-version-4 | Older Envelope Is Upgraded | Proposed | A document stating spine version 1 imports into a grid at version 2 with each envelope upgraded by core's step. | |
+| req-grid-entity-spine-version-5 | Newer Document Refused | Proposed | A document stating a spine version greater than the grid's is refused and writes nothing. | |
+| req-grid-entity-spine-version-6 | Independent Of Type Versions | Proposed | Raising the spine version changes no type's version or fingerprint entry, and raising a type's version changes neither the spine's. | |
 
 ### Tombstone State And Manager Surface
 ----
