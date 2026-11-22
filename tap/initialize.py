@@ -223,7 +223,8 @@ def database_contents(conn: psycopg.Connection) -> tuple[int, bool]:
           AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
         """
     ).fetchone()
-    assert row is not None
+    if row is None:  # an aggregate always returns a row; this is the type checker's case
+        raise InitializeError("the catalogue query returned no row")
     return int(row[0]), bool(row[1])
 
 
@@ -260,7 +261,10 @@ def classify(identity: dict[str, Any] | None, relations: int, has_tap_schema: bo
 
 def apply_owner_password(conn: psycopg.Connection, user: str, password: str) -> None:
     """Set the owning role's password to the stored value; setting it again changes nothing."""
-    conn.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(user), sql.Literal(password)))
+    # ALTER ROLE takes no bind parameters, so the statement is composed, not concatenated: psycopg's
+    # sql.Identifier quotes the role name and sql.Literal quotes the password, both server-side safe.
+    statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(user), sql.Literal(password))
+    conn.execute(statement)  # nosemgrep — psycopg.sql composition above, no string concatenation
 
 
 def handoff_env(target: Target, identity: dict[str, Any]) -> dict[str, str]:
@@ -290,9 +294,9 @@ def run(
 ) -> str:
     """Classify the stores, activate if needed, and write the hand-off; return the road taken.
 
-    TAP-IMPLEMENTS: req-tap-bake-initializer@3137d9b6e56b/3866df993f2f (derivation) — the one place an installation
+    TAP-IMPLEMENTS: req-tap-bake-initializer@3137d9b6e56b/7f798e4546ec (derivation) — the one place an installation
         is classified and its road chosen, under the installation lock.
-    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/3866df993f2f (enforcement) — values are stored pending
+    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/7f798e4546ec (enforcement) — values are stored pending
         before any is applied, applied from the stored values, and never minted twice.
     """
     identity = store.read()
@@ -313,7 +317,8 @@ def run(
             if road == ROAD_ACTIVATE:
                 identity = minter()
                 store.write(identity)  # pending: from here the store is the source of truth
-            assert identity is not None
+            if identity is None:  # classify returns resume or finish only with an identity present
+                raise InitializeError("no identity to apply")
             if road in (ROAD_ACTIVATE, ROAD_RESUME):
                 apply_owner_password(conn, target.user, identity["owner_password"])
                 identity = {**identity, "status": ACTIVE, "progress": {**identity["progress"], "activate": "done"}}
