@@ -9,6 +9,7 @@ from typing import ClassVar
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 from tap_web.dimensions import WEB_DIMENSIONS
 from tap_web.exceptions import PageLayoutValidationError, PageSlugValidationError
@@ -18,10 +19,10 @@ from tap_web.validation import validate_page_layout, validate_page_slug
 class Page(BaseModel):
     """A routable web page that hosts one or more panels.
 
-    TAP-IMPLEMENTS: req-web-nav-page-discoverable@96cdf096feac/b6a209cdb469 (derivation) —
+    TAP-IMPLEMENTS: req-web-nav-page-discoverable@96cdf096feac/4d8296cfd63f (derivation) —
         the `discoverable` gate every browse-discovery surface (palette, chevron
         popovers, column view, nav index) filters on; direct visits stay open.
-    TAP-IMPLEMENTS: req-web-nav-page-weight@c5d4e2ae150a/b6a209cdb469 (derivation) — the
+    TAP-IMPLEMENTS: req-web-nav-page-weight@c5d4e2ae150a/4d8296cfd63f (derivation) — the
         signed `nav_weight` sort bias every browse-discovery surface orders by
         (higher floats up, alphabetical tiebreak).
     """
@@ -31,6 +32,8 @@ class Page(BaseModel):
     # BY SLUG from other plugins' declarations, so it is the one thing that must not
     # move. `name` is display.
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("slug",)
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
@@ -133,6 +136,8 @@ class Panel(BaseModel):
     ENTITY_TYPE: ClassVar[str] = "panel"
     # Keyed (req-grid-entity-natural-key). Same as Page: panels are mounted by slug from other plugins' pages.
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("slug",)
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {

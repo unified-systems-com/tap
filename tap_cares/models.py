@@ -31,6 +31,7 @@ from django.db import models
 
 from tap_cares.exceptions import InvalidCollectorRegistryKeyError
 from tap_cares.registry import _validate_collector_token
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 from tap_grid.natural_key import KEYLESS, Keyless
 
@@ -52,6 +53,8 @@ class Collector(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed. It derives an id today (tap_cares/registry.py), but core reconciles its own collectors and can match on `collector_registry` with an ordinary query — identity derivation was never what that needed.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed. It derives an id today (tap_cares/registry.py), but core reconciles its own collectors and can match on `collector_registry` with an ordinary query — identity derivation was never what that needed"
     )

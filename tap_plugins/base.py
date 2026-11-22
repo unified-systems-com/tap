@@ -50,6 +50,11 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
         if "identity" in et:
             register_edge_identity(slug, et["identity"], property_schema=et.get("property_schema"))
 
+        if "event_time" in et:
+            from tap_grid.event_time import register_edge_event_time
+
+            register_edge_event_time(slug, et["event_time"])
+
 
 class TapPluginConfig(AppConfig):
     """Base AppConfig for TAP plugins.
@@ -63,7 +68,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/244899247bf0 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/5b7322552429 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -210,6 +215,11 @@ class TapPluginConfig(AppConfig):
 
             if edge.internal_only:
                 register_edge_internal_only(edge.slug)
+
+            if edge.event_time is not None:
+                from tap_grid.event_time import register_edge_event_time
+
+                register_edge_event_time(edge.slug, edge.event_time)
 
     # ---------------------------------------------------------------------------
     # Type registration

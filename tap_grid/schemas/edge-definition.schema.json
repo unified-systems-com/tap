@@ -53,6 +53,31 @@
       "type": "boolean",
       "description": "The type is bookkeeping that only subsystem code writes (req-grid-edge-internal): the generic edge verbs and GRIFT import refuse it, and GRIFT export leaves it out. Defaults to false."
     },
+    "event_time": {
+      "type": "object",
+      "description": "Which of the edge's properties say when the relationship happened or held in the world (req-grid-entity-event-time rule 20). Optional: an edge type that declares none has no event time. A moment names one property key; an interval names a start key and, optionally, an end key. kind says what the start means.",
+      "additionalProperties": false,
+      "required": ["shape", "kind"],
+      "properties": {
+        "shape": { "enum": ["moment", "interval"] },
+        "kind": { "enum": ["occurred", "created", "first_seen", "published"] },
+        "field": { "type": "string", "minLength": 1 },
+        "start": { "type": "string", "minLength": 1 },
+        "end": { "type": "string", "minLength": 1 }
+      },
+      "oneOf": [
+        {
+          "properties": { "shape": { "const": "moment" } },
+          "required": ["field"],
+          "not": { "anyOf": [{ "required": ["start"] }, { "required": ["end"] }] }
+        },
+        {
+          "properties": { "shape": { "const": "interval" } },
+          "required": ["start"],
+          "not": { "required": ["field"] }
+        }
+      ]
+    },
     "identity": {
       "type": "object",
       "description": "How a relationship of this type is found again (req-grid-edge-identity-declaration). Exactly one of discriminators (an empty array is the plain key: type, source and target) or keyless. Optional while declarations roll out; a ref-addressed edge of a type without one is refused at import (req-grid-edge-identity-6).",

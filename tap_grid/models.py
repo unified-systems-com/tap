@@ -5,11 +5,12 @@ Design philosophy: See DESIGN.md in this directory.
 """
 
 import contextvars
+import copy
 import datetime
 import hashlib
 import inspect
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, ClassVar, TypeVar
 
 import jsonschema
@@ -21,6 +22,18 @@ from django.db.models.functions import Left
 from django.utils import timezone
 
 from tap.jsonfiles import jsonschema_validate
+from tap_grid.event_time import (
+    EVENT_KINDS,
+    EVENT_PRECISIONS,
+    NO_EVENT_TIME,
+    Interval,
+    Moment,
+    NoEventTime,
+    declaration_for,
+    declared_fields,
+    derive,
+    derive_for_instance,
+)
 from tap_grid.history import TapHistoricalRecords, _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
@@ -30,8 +43,49 @@ from tap_grid.natural_key import (
     declaration_problems,
     index_expressions,
     is_path,
+    normalized_key_values,
     search,
 )
+
+
+def _overrides(cls: type) -> set[str]:
+    """The BaseModel hooks ``cls`` or one of its bases below BaseModel defines itself."""
+    names: set[str] = set()
+    for klass in cls.__mro__:
+        if klass.__name__ == "BaseModel" and klass.__module__ == __name__:
+            break
+        names.update(vars(klass))
+    return names
+
+
+def _key_payload(instance: Any, declared: Sequence[str]) -> dict[str, object]:
+    """The instance's own values for each column a declared entry reads (a JSON path reads its column)."""
+    from tap_grid.natural_key import split_path
+
+    return {column: getattr(instance, column, None) for column in {split_path(name)[0] for name in declared}}
+
+
+def _set_key_value(instance: Any, name: str, value: object) -> None:
+    """Write one normalised declared entry back onto ``instance``: a column directly, a JSON path into
+    a copy of its document (the original object is never mutated in place)."""
+    from tap_grid.natural_key import split_path
+
+    column, keys = split_path(name)
+    if not keys:
+        setattr(instance, column, value)
+        return
+    document = copy.deepcopy(getattr(instance, column, None))
+    if not isinstance(document, dict):
+        document = {}
+    node = document
+    for key in keys[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            node[key] = child
+        node = child
+    node[keys[-1]] = value
+    setattr(instance, column, document)
 
 
 def dangerously_ignore_validator(fn: Any) -> Any:
@@ -545,6 +599,44 @@ class Entity(models.Model):
             "batch record being pruned. Says that a batch named the object, nothing more."
         ),
     )
+    # Event time (req-grid-entity-event-time): when the thing happened or held in the world, as
+    # its source states it. Derived by the grid on every save from the fields the model declares
+    # (`EVENT_TIME`); nothing a caller or a GRIFT envelope supplies reaches them. Never defaulted.
+    event_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text="When the thing happened, or began to hold. Inclusive. Empty when the source gives no time.",
+    )
+    event_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "When it stopped holding. Exclusive. Equal to `event_start` for an exact moment; empty "
+            "when the source states no end."
+        ),
+    )
+    event_kind = models.CharField(  # noqa: DJ001
+        max_length=16,
+        null=True,
+        blank=True,
+        editable=False,
+        choices=[(kind, kind) for kind in EVENT_KINDS],
+        help_text="What `event_start` means: occurred, created, first_seen or published.",
+    )
+    event_precision = models.CharField(  # noqa: DJ001
+        max_length=8,
+        null=True,
+        blank=True,
+        editable=False,
+        choices=[(level, level) for level in EVENT_PRECISIONS],
+        help_text=(
+            "How exact the source value was: year, month, day or second. Coarser than second "
+            "means the stored pair is the interval the unit covers."
+        ),
+    )
 
     # Tombstone-aware manager: returns both live and tombstoned rows by
     # default (internal infrastructure dominates the call sites). Callers
@@ -602,6 +694,10 @@ class Entity(models.Model):
         "last_changed_batch_id",
         "last_observed_batch_id",
         "last_observed_at",
+        "event_start",
+        "event_end",
+        "event_kind",
+        "event_precision",
         "originating_grid_id",
     )
     SPINE_DJANGO_NAME: ClassVar[dict[str, str]] = {
@@ -964,6 +1060,16 @@ def install_natural_key_indexes() -> None:
             _install_natural_key_index(model)
 
 
+def _stores_event_fields(instance: Any, update_fields: Any) -> bool:
+    """Whether a save stores what the row's event time is derived from (every field, or a declared one)."""
+    if update_fields is None:
+        return True
+    declared = set(declared_fields(declaration_for(instance)))
+    if getattr(type(instance), "ENTITY_TYPE", None) == "edge":
+        return bool(declared) and "properties" in update_fields
+    return bool(declared & set(update_fields))
+
+
 def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) -> uuid.UUID | None:
     """The batch a save names on the spine as last to change and last to observe the row.
 
@@ -1052,8 +1158,34 @@ class BaseModel(models.Model):
     # The path form is read by one parser (tap_grid.natural_key) for the payload, the search,
     # the index and the lock.
     NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
+    # Event time (req-grid-entity-event-time rule 1): which of this model's own fields say when
+    # the thing happened or held in the world, as its source states it.
+    #   Moment(field, kind)              it happened at that time
+    #   Interval(start, kind, end=None)  it began to hold at the start and held until the end
+    #   NO_EVENT_TIME                    this type has no such time, on purpose
+    #   None                             undeclared: nothing is derived, and plugin validation says so
+    # Edge types declare theirs in the edge type's definition instead (rule 20).
+    EVENT_TIME: ClassVar[Moment | Interval | NoEventTime | None] = None
     # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
     NATURAL_KEY_REASON: ClassVar[str] = ""
+
+    @classmethod
+    def normalize_natural_key(cls, values: dict[str, object]) -> dict[str, object]:
+        """The canonical spelling of this type's natural key (unified-systems-com/tap#1265). Identity by default.
+
+        ``values`` maps each declared ``NATURAL_KEY`` entry to its value, a hole as ``None``.
+        Return the same entries with every value in the form the row stores. Use this for a rule
+        that spans entries; a rule over one field belongs in that field's ``to_python``
+        (``req-grid-entity-natural-key-19``).
+
+        Core applies it before it builds the identity lock key, in the importer's in-batch index,
+        in the lookup (``find_existing``, ``find_by_natural_key``), to keys that arrive only as
+        references (edge endpoints, removal targets, anchors), and to the row's own fields in
+        ``prepare_for_write``'s default, so the rule is stated once. It must be pure,
+        deterministic and idempotent: no instance, no database, the same answer every time.
+        Changing a type's rule changes its stored keys: ship it as a re-key with a migration.
+        """
+        return values
     # Containment (req-grid-service-delete-cascade): the edge types through which THIS
     # node contains children, so `delete_node(..., cascade="contained")` retires them
     # with it. A dedicated declaration, deliberately not a flag inside OUTBOUND_EDGES —
@@ -1250,6 +1382,8 @@ class BaseModel(models.Model):
                 f"properties {tuple(declared)}: missing={sorted(expected - given)}, "
                 f"unexpected={sorted(given - expected)}"
             )
+        # The type's own spelling, so a caller holding a short form finds the canonical row (tap#1265).
+        properties = normalized_key_values(cls, properties)
         if any(properties[name] is None for name in declared):
             return None
         # One query, capped: the message names candidates, it does not enumerate a grid.
@@ -1299,6 +1433,28 @@ class BaseModel(models.Model):
             for column, attname in attnames.items()
         }
         return row_natural_key(type(self), row)
+
+    def _stored_event_time(self, update_fields: Iterable[str]) -> Any:
+        """The event time after a partial save: declared values the save wrote come from this
+        instance, the ones it left out are read back from the row, which still holds them. The
+        spine never states a time the stored fields could not reproduce. An edge's declared
+        values all live in ``properties``, which a save stores whole or not at all."""
+        declaration = declaration_for(self)
+        if getattr(type(self), "ENTITY_TYPE", None) == "edge":
+            return derive_for_instance(self)
+        saved = set(update_fields)
+        meta = self._meta
+        attnames = {name: getattr(meta.get_field(name), "attname", name) for name in declared_fields(declaration)}
+        unsaved = [attname for name, attname in attnames.items() if name not in saved and attname not in saved]
+        stored = (
+            type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).values(*unsaved).first()
+            if unsaved
+            else {}
+        ) or {}
+        return derive(
+            declaration,
+            lambda name: stored.get(attnames[name]) if attnames[name] in unsaved else getattr(self, attnames[name], None),
+        )
 
     def get_name(self) -> str:
         """Return the name for the auto-created Entity.
@@ -1438,7 +1594,7 @@ class BaseModel(models.Model):
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
         flip_changed_fields: Any = kwargs.pop("flip_changed_fields", _FLIP_TOUCHED_UNSET)
-        self.prepare_for_write()
+        self._prepare_for_write_checked()
         if not skip_validation:
             self.full_validate()
 
@@ -1481,6 +1637,11 @@ class BaseModel(models.Model):
         # (req-grid-entity-natural-key-19); nothing a caller supplies reaches it.
         natural_key = self.derive_natural_key()
 
+        # Event time (req-grid-entity-event-time rule 3): derived here on every save from the
+        # fields the model declares, and written with `name` and `natural_key`. A value that
+        # cannot be stored truthfully leaves the four empty; the pipeline reports why (rule 12).
+        event_time = derive_for_instance(self)
+
         if self.entity_id is None:
             with transaction.atomic():
                 # Defaults stamped src: default, the caller's values over them (req-grid-dimension-reference-3).
@@ -1497,6 +1658,7 @@ class BaseModel(models.Model):
                     # row's own `updated_at` at insert (rule 5).
                     last_changed_batch_id=pointer_batch,
                     last_observed_batch_id=pointer_batch,
+                    **event_time.as_columns(),
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1543,7 +1705,22 @@ class BaseModel(models.Model):
                 new_key = self._stored_natural_key(kwargs["update_fields"])
             if self.entity.natural_key != new_key:
                 spine_updates["natural_key"] = new_key
+            # Event time, in this same statement, written only where it changed. A partial save
+            # that stores none of the declared fields leaves it alone: the unsaved in-memory
+            # values are not what the row holds.
+            event_updates: dict[str, Any] = {}
+            if _stores_event_fields(self, kwargs.get("update_fields")):
+                if kwargs.get("update_fields") is not None:
+                    event_time = self._stored_event_time(kwargs["update_fields"])
+                event_updates = {
+                    name: value
+                    for name, value in event_time.as_columns().items()
+                    if getattr(self.entity, name) != value
+                }
+                spine_updates.update(event_updates)
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
+            for name, value in event_updates.items():
+                setattr(self.entity, name, value)
             if "name" in spine_updates:
                 # Keep the in-memory entity in lockstep with the persisted spine.
                 self.entity.name = new_name
@@ -1555,7 +1732,12 @@ class BaseModel(models.Model):
                 self.entity.last_observed_at = now
 
     def prepare_for_write(self) -> None:
-        """Put the instance's values into the form they are stored in. A no-op by default.
+        """Put the instance's values into the form they are stored in.
+
+        By default it writes the type's normalised natural key (:meth:`normalize_natural_key`)
+        onto the row's own fields, and does nothing else. An override must call
+        ``super().prepare_for_write()``; a row whose key is not in normalised form after this
+        hook is refused at write time (:meth:`_prepare_for_write_checked`).
 
         A model that normalises or derives a stored value (a canonical spelling, a stamp set
         when another field is first true) does it here, not in a ``save`` override. The write
@@ -1565,6 +1747,33 @@ class BaseModel(models.Model):
         ``save`` calls it too. It runs more than once per write, so it must give the same
         result each time.
         """
+        declared = getattr(type(self), "NATURAL_KEY", None)
+        if not isinstance(declared, tuple) or "normalize_natural_key" not in _overrides(type(self)):
+            return
+        from tap_grid.natural_key import constituting_properties
+
+        current = constituting_properties(declared, _key_payload(self, declared))
+        for name, value in normalized_key_values(type(self), current).items():
+            if value != current[name]:
+                _set_key_value(self, name, value)
+
+    def _prepare_for_write_checked(self) -> None:
+        """:meth:`prepare_for_write`, then proof that the natural key it leaves is a fixed point of
+        :meth:`normalize_natural_key`. Fails on an override that skipped ``super()`` or a rule that
+        is not idempotent, either of which would let the lock and the row disagree (tap#1265)."""
+        self.prepare_for_write()
+        declared = getattr(type(self), "NATURAL_KEY", None)
+        if not isinstance(declared, tuple) or "normalize_natural_key" not in _overrides(type(self)):
+            return
+        from tap_grid.natural_key import constituting_properties
+
+        current = constituting_properties(declared, _key_payload(self, declared))
+        if normalized_key_values(type(self), current) != current:
+            raise ImproperlyConfigured(
+                f"{type(self).__name__}'s natural key is not in normalised form after prepare_for_write: an "
+                "override must call super().prepare_for_write(), and normalize_natural_key must be idempotent "
+                "(unified-systems-com/tap#1265)."
+            )
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Delete the node/edge — must route through the service layer.
@@ -1692,6 +1901,8 @@ class Dimension(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it"
     )
@@ -1793,6 +2004,8 @@ class Search(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id"
     )
@@ -2069,6 +2282,10 @@ class BatchEventType(models.TextChoices):
     # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
     # each proposal, and on the batch for each claim's outcome.
     AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
+    # A spine value the grid itself re-derived (req-grid-entity-event-time rule 17). Not a
+    # sighting: no source or analyst named the object, so every reader that asks whether a batch
+    # saw an object leaves this type out, and it never moves the last-observed pointers.
+    MAINTENANCE = "maintenance", "Maintenance (the grid re-derived a spine value)"
 
 
 class NaturalKeyRecipe(models.Model):
@@ -2188,6 +2405,8 @@ class Keystone(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: keystones are appended to record instance context, never re-recognised from an external source.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: keystones are appended to record instance context, never re-recognised from an external source"
     )

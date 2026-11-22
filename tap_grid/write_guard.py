@@ -68,6 +68,10 @@ BELOW_PIPELINE_WRITERS: dict[str, str] = {
         "the replace in the same batch carries the version bump and the update event"
     ),
     "scheduler_cursor": "the scheduler's own cursors on a Schedule: the claim of a due slot and the enable stamp",
+    "event_time_rederive": (
+        "the re-derive pass that brings a spine row's event time in step with its model's declaration; "
+        "no typed value changes, so it writes no version and no history, and records a maintenance event"
+    ),
 }
 
 # The writes each named writer may make: (operation, model label) mapped to the fields it may
@@ -93,6 +97,9 @@ BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
     },
     "spine_sync": {("queryset update", "tap_grid.Entity"): frozenset({"name", "dimensions", "updated_at"})},
     "scheduler_cursor": {("queryset update", "tap_cares.Schedule"): frozenset({"last_schedule_fired", "enabled_at"})},
+    "event_time_rederive": {
+        ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_kind", "event_precision"})
+    },
 }
 
 # Writers that may touch spine (`tap_grid.Entity`) rows of these entity types only. A writer
@@ -130,6 +137,7 @@ def _writer_gates() -> dict[str, frozenset[str]]:
         # The scheduler's capabilities are spelled where its gates are (tap_cares.services.
         # scheduler); test_write_guard checks each name here is a registered capability.
         "scheduler_cursor": frozenset({"cares.run_scheduler", "cares.toggle_schedules"}),
+        "event_time_rederive": frozenset({caps.WRITE_CAPABILITY}),
     }
 
 

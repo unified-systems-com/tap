@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/2fa4eb2d8b0c (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/9a1eb70624e0 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1461,7 +1461,7 @@ def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     """Run loads-level checks: class-path validation via Django imports.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/4e03a7f4a5e2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/049be25c087d (derivation) — the
         loads level's import-and-contract checks.
     """
     _check_model_classes(manifest, result)
@@ -1471,6 +1471,83 @@ def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     _check_falsifier_classes(manifest, result)
     _check_falsifier_coverage(manifest, result)
     _check_history_opt_outs(manifest, result)
+    _check_event_time_declarations(manifest, result)
+    _check_edge_event_time(manifest, result)
+
+
+def _check_edge_event_time(manifest: Any, result: ValidationResult) -> None:
+    """An edge type's ``event_time`` names keys its own ``property_schema`` defines (req-grid-entity-event-time rule 20).
+
+    Declaring is optional and absence is not reported. A declaration that is present and names a
+    key the schema does not define fails: it would register and leave every edge of the type
+    with no event time, with nothing to say so.
+    """
+    declared = [edge for edge in (manifest.edges or []) if getattr(edge, "event_time", None) is not None]
+    if not declared:
+        return
+
+    from tap_grid.event_time import edge_declaration_problems
+
+    check = CheckResult(id="edge-event-time", name="Edge event-time declarations name defined properties")
+    for edge in declared:
+        for problem in edge_declaration_problems(edge.event_time, edge.property_schema):
+            check.fail(f"{edge.slug}: {problem}", path=edge.file_path)
+    if check.status == "pass":
+        check.info(f"{len(declared)} edge type(s) declare an event time on properties their schema defines")
+    result.checks.append(check)
+
+
+def _check_event_time_declarations(manifest: Any, result: ValidationResult) -> None:
+    """Every node model declares its event time or says it has none (req-grid-entity-event-time rule 1).
+
+    Staged. Until the collector sweep has reached every plugin (Issue# 1289 - tap), a model that
+    does neither is reported and the check passes; with ``TAP_REQUIRE_EVENT_TIME_DECLARATION=1``
+    it fails. The report is carried at INFO severity, worded as a warning: ``--strict`` promotes
+    a warning-severity message to a failure (req-tap-plugin-validate-strict) and every plugin
+    repository's CI runs ``--strict``, so a true warning would fail the fleet on the day this
+    lands, which is the outcome the staging exists to avoid.
+
+    A declaration that is present and wrong (an unknown field, a field that holds neither a date
+    nor text) fails now: it is a mistake in something the author wrote, not something not yet written.
+    """
+    if not manifest.models:
+        return
+
+    from django.utils.module_loading import import_string
+
+    from tap_grid.event_time import REQUIRE_DECLARATION_ENV, declaration_problems, declaration_required
+
+    check = CheckResult(id="event-time-declarations", name="Node models declare an event time or say they have none")
+    required = declaration_required()
+    undeclared: list[str] = []
+    for entry in manifest.models:
+        cls = _import_or_none(import_string, entry.class_path)
+        if cls is None:
+            continue
+        try:
+            problems = declaration_problems(cls)
+        except Exception as exc:  # noqa: BLE001 — a model that cannot be inspected is reported, not raised
+            check.fail(f"{entry.slug}: EVENT_TIME could not be read: {exc}", path=entry.class_path)
+            continue
+        for problem in problems:
+            check.fail(f"{entry.slug}: {problem}", path=entry.class_path)
+        if getattr(cls, "EVENT_TIME", None) is None:
+            undeclared.append(entry.slug)
+            text = (
+                f"{entry.slug} declares no EVENT_TIME: state a Moment or an Interval naming the "
+                "field that says when the thing happened in the world, or NO_EVENT_TIME"
+            )
+            if required:
+                check.fail(text, path=entry.class_path)
+            else:
+                check.info(
+                    f"WARNING (not yet a failure; {REQUIRE_DECLARATION_ENV}=1 makes it one): {text}",
+                    path=entry.class_path,
+                )
+    if not undeclared and check.status == "pass":
+        check.info("Every node model declares its event time or states that it has none")
+    check.details = {"undeclared": undeclared, "required": required}
+    result.checks.append(check)
 
 
 def _check_history_opt_outs(manifest: Any, result: ValidationResult) -> None:

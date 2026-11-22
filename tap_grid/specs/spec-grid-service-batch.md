@@ -115,7 +115,7 @@ Each Batch accumulates an append-only log of per-operation events. Events record
 | --- | --- | --- | --- | --- |
 | `id` | UUIDField (PK) | No | uuid7 | Unique event identifier. |
 | `batch` | FK → Batch | No | — | The Batch this event belongs to. `CASCADE` on batch deletion. |
-| `event_type` | CharField choices | No | — | One of `create`, `update`, `observe`, `delete`, `link`, `unlink`, and the importer's and reconciliation's own types (`force_reimport`, `skip`, `authority_proposed`), each specified where it is written. |
+| `event_type` | CharField choices | No | — | One of `create`, `update`, `observe`, `delete`, `link`, `unlink`, the importer's and reconciliation's own types (`force_reimport`, `skip`, `authority_proposed`), and `maintenance` for a spine value the grid re-derived itself (`req-grid-entity-event-time` rule 17), each specified where it is written. |
 | `entity_id` | UUIDField | No | — | The affected Entity's UUID. |
 | `entity_type` | CharField | No | — | Type slug of the affected Entity (denormalised for fast filtering). |
 | `model_name` | CharField | No | `""` | ORM model class name, e.g. `"Character"`. Empty for raw entity ops. |
