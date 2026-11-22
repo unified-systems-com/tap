@@ -59,9 +59,16 @@ def _record_entry(commit: str = COMMIT) -> dict[str, Any]:
 
 @pytest.mark.spec("req-tap-bake-product-image-1")
 def test_the_base_must_be_named_by_digest() -> None:
-    assert product_image.require_digest_ref(f"ghcr.io/org/tap-web@{DIGEST}")
-    assert product_image.require_digest_ref(f"ghcr.io/org/tap-web:0.4.5@{DIGEST}")
-    for ref in ("ghcr.io/org/tap-web:0.4.5", "ghcr.io/org/tap-web", f"ghcr.io/org/tap-web@{DIGEST[:-1]}"):
+    base = "ghcr.io/unified-systems-com/tap-web"
+    assert product_image.require_digest_ref(f"{base}@{DIGEST}")
+    assert product_image.require_digest_ref(f"{base}:0.4.5@{DIGEST}")
+    for ref in (
+        f"{base}:0.4.5",
+        base,
+        f"{base}@{DIGEST[:-1]}",
+        f"ghcr.io/someone/tap-web@{DIGEST}",
+        f"evil.example/tap-web@{DIGEST}",
+    ):
         with pytest.raises(product_image.ProductImageError, match="by digest"):
             product_image.require_digest_ref(ref)
 
@@ -245,6 +252,10 @@ def test_the_workflow_publishes_only_a_verified_base_from_the_default_branch() -
     assert guard < workflow.index("actions/checkout@"), "the branch guard runs before anything else"
     assert 'case "$EVENT" in push|workflow_dispatch)' in workflow
     assert '"refs/heads/${DEFAULT_BRANCH}"' in workflow
+    publish = workflow[workflow.index("Merge per-arch digests") :]
+    assert publish.index("--dry-run") < publish.index("imagetools create -t"), (
+        "the index is verified before it is tagged"
+    )
     verify = workflow.index("gh attestation verify")
     assert verify < workflow.index("docker cp "), "the base is verified before its Dockerfile is read"
     assert "--signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml" in workflow

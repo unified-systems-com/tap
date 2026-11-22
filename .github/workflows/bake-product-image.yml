@@ -181,11 +181,22 @@ jobs:
           arm="$(cat "${RUNNER_TEMP}/digest/arm64")"
           for d in "$amd" "$arm"; do [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest ${d}"; exit 1; }; done
           [[ "$INPUTS" =~ ^[0-9a-f]{16}$ ]] || { echo "::error::bad inputs digest ${INPUTS}"; exit 1; }
+          expected="$(printf '%s\n%s\n' "$amd" "$arm" | sort | paste -sd, -)"
+          # Verify BEFORE any public tag exists: each child resolves as the platform it was built
+          # for, and the index a dry run would create holds exactly those two children.
+          for pair in "amd64:${amd}" "arm64:${arm}"; do
+            arch="${pair%%:*}" digest="${pair#*:}"
+            got="$(docker buildx imagetools inspect "${IMAGE}@${digest}" --format '{{json .Image}}' | jq -r .architecture)"
+            [ "$got" = "$arch" ] || { echo "::error::${IMAGE}@${digest} is ${got}, built as ${arch}; refusing to tag"; exit 1; }
+          done
+          planned="$(docker buildx imagetools create --dry-run "${IMAGE}@${amd}" "${IMAGE}@${arm}")"
+          children="$(printf '%s' "$planned" | jq -r '[.manifests[].digest] | sort | join(",")')"
+          [ "$children" = "$expected" ] || { echo "::error::planned index children (${children}) != built (${expected}); refusing to tag"; exit 1; }
           docker buildx imagetools create -t "${IMAGE}:in-${INPUTS}" -t "${IMAGE}:sha-${CALLER_SHA:0:7}" \
             "${IMAGE}@${amd}" "${IMAGE}@${arm}"
+          # Re-read through the tag, so a tag moved between create and attest is refused rather than signed.
           manifest_json="$(docker buildx imagetools inspect "${IMAGE}:in-${INPUTS}" --format '{{json .Manifest}}')"
           children="$(printf '%s' "$manifest_json" | jq -r '[.manifests[].digest] | sort | join(",")')"
-          expected="$(printf '%s\n%s\n' "$amd" "$arm" | sort | paste -sd, -)"
           [ "$children" = "$expected" ] || { echo "::error::index children (${children}) != built (${expected}); refusing to attest"; exit 1; }
           echo "digest=$(printf '%s' "$manifest_json" | jq -r .digest)" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance (req-tap-bake-attest)
