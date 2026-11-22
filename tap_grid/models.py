@@ -409,11 +409,7 @@ class _GuardedWriteQuerySet(models.QuerySet[_ModelT]):
         from tap_grid.write_guard import enforce_value_rules
 
         # A named writer held to a key inside a JSON column, which a field lock cannot express.
-        enforce_value_rules(
-            self.model._meta.label,
-            lambda: list(self.model._base_manager.filter(pk__in=self.values("pk")).values_list("dimensions", flat=True)),
-            kwargs,
-        )
+        enforce_value_rules(self.model._meta.label, kwargs)
         return super().update(**kwargs)
 
     def delete(self) -> tuple[int, dict[str, int]]:
@@ -1721,13 +1717,17 @@ class BaseModel(models.Model):
                 }
                 # The kind, as the row's `time` dimension, in this same statement: set where an
                 # event time was derived, removed where none was. Written only when it differs.
-                from tap_grid.dimension_map import with_grid_derived
+                # Written as a key-level database expression, not a whole map from this instance's
+                # copy, so a dimension another writer changed since the row was read is not lost.
+                from tap_grid.dimension_map import grid_derived_update, with_grid_derived
 
                 stored_dims = self.entity.dimensions or {}
                 new_dims = dict(with_grid_derived(stored_dims, event_time.as_dimensions()))
-                if new_dims != stored_dims:
-                    event_updates["dimensions"] = new_dims
+                time_update = grid_derived_update(event_time.as_dimensions()) if new_dims != stored_dims else None
                 spine_updates.update(event_updates)
+                if time_update is not None:
+                    spine_updates["dimensions"] = time_update
+                    event_updates["dimensions"] = new_dims
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
             for name, value in event_updates.items():
                 setattr(self.entity, name, value)

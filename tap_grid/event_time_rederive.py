@@ -18,7 +18,7 @@ from django.db import transaction
 
 from tap_auth.capabilities import WRITE_CAPABILITY
 from tap_auth.enforcement import requires_capability
-from tap_grid.dimension_map import with_grid_derived
+from tap_grid.dimension_map import grid_derived_update, with_grid_derived
 from tap_grid.event_time import SPINE_EVENT_FIELDS, TIME_DIMENSION, derive_for_instance
 from tap_grid.write_guard import below_pipeline_write
 
@@ -96,8 +96,12 @@ def rederive_event_time(
                 stored_dims = row.entity.dimensions or {}
                 new_dims = dict(with_grid_derived(stored_dims, derived.as_dimensions()))
                 if new_dims != stored_dims:
-                    columns["dimensions"] = new_dims
-                    moved.append(f"dimensions[{TIME_DIMENSION}]")
+                    time_update = grid_derived_update(derived.as_dimensions())
+                    if time_update is not None:
+                        # A key-level expression: it sets or removes the `time` entry and touches
+                        # no other dimension, which is all this writer is allowed (write_guard).
+                        columns["dimensions"] = time_update
+                        moved.append(f"dimensions[{TIME_DIMENSION}]")
                 if not moved:
                     continue
                 if batch is None:

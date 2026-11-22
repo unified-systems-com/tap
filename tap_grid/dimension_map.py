@@ -28,6 +28,8 @@ import contextvars
 from collections.abc import Mapping
 from typing import Any
 
+from django.db.models import Func
+
 from tap_grid.dimension_names import UnknownDimension, declared
 
 TIME_DIMENSION = "time"
@@ -241,6 +243,51 @@ def with_grid_derived(stored: Mapping[str, Any] | None, values: Mapping[str, str
         except UnknownDimension:
             continue
     return out
+
+
+class GridDerivedUpdate(Func):
+    """A database expression that sets or removes grid-derived entries of ``dimensions`` and
+    touches no other key: ``dimensions || {<id>: entry}`` to set, ``dimensions - <id>`` to remove.
+
+    Built only by :func:`grid_derived_update`. Writing the key in the database, not a whole map
+    computed in memory, means a writer cannot overwrite a dimension another writer changed since
+    the row was read, and a write guard can admit this type and refuse any other value.
+    """
+
+    def __init__(self, *expressions: Any, seal: object = None, **extra: Any) -> None:
+        if seal is not _SEAL:
+            raise DimensionWriteError("a grid-derived update is built by dimension_map.grid_derived_update only")
+        super().__init__(*expressions, **extra)
+
+
+def grid_derived_update(values: Mapping[str, str | None]) -> GridDerivedUpdate | None:
+    """The expression that applies the grid's derived values to a row's stored ``dimensions``: a
+    string sets the entry (``src: derived``, the value checked against the dimension), ``None``
+    removes it. None when this grid declares none of the named dimensions yet."""
+    from django.db.models import F, JSONField, TextField, Value
+    from django.db.models.functions import Cast
+
+    expression: Any = F("dimensions")
+    built: GridDerivedUpdate | None = None
+    for name, value in values.items():
+        if name not in GRID_DERIVED:
+            raise DimensionWriteError(f"{name!r} is not a dimension the grid derives")
+        try:
+            if value is None:
+                operand: Any = Cast(Value(declared(name).id), TextField())
+                joiner = " - "
+            else:
+                entry_value = {"v": value, "src": SRC_DERIVED}
+                dim_id, entry = _entry(name, entry_value, trusted=True, where="grid derivation", by_grid=True)
+                operand = Value({dim_id: entry}, output_field=JSONField())
+                joiner = " || "
+        except UnknownDimension:
+            continue
+        built = GridDerivedUpdate(
+            expression, operand, template="(%(expressions)s)", arg_joiner=joiner, output_field=JSONField(), seal=_SEAL
+        )
+        expression = built
+    return built
 
 
 def settle(

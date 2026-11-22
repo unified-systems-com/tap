@@ -288,22 +288,19 @@ def unguarded_write() -> Iterator[None]:
         _write_guard_bypass.reset(token)
 
 
-def enforce_value_rules(
-    model_label: str, stored_dimensions: Callable[[], Iterable[Any]], values: Mapping[str, Any]
-) -> None:
+def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
     """Hold a named writer to WHAT it writes where a field name is too coarse a lock.
 
     A field lock cannot name a key inside a JSON column. The ``event_time_rederive`` writer is
     allowed the ``dimensions`` field only to set or remove the grid-derived entries (the ``time``
-    dimension, req-grid-entity-event-time rule 17), so a ``dimensions`` value it writes must leave
-    every other entry of every row it touches exactly as stored. Anything else is refused as an
-    unguarded write. Called by the guarded queryset ``update`` after the field lock has passed.
+    dimension, req-grid-entity-event-time rule 17). So the only ``dimensions`` value it may write
+    is the key-level expression ``dimension_map.grid_derived_update`` builds, which touches no
+    other key and whose entry is ``src: derived`` with a value the dimension accepts. A map, or
+    any other expression, is refused as an unguarded write. Called by the guarded queryset
+    ``update`` after the field lock has passed.
 
-    Args:
-        model_label: The model written.
-        stored_dimensions: A callable returning the stored ``dimensions`` map of each row the
-            update would touch; read only when a rule applies.
-        values: The update's keyword arguments.
+    The rule binds this one writer. The pipeline and the other named writers that may write
+    ``dimensions`` (``spine_sync``) are held by their own rules, as before.
     """
     if _write_guard_bypass.get() or _service_write_active.get():
         return
@@ -312,25 +309,20 @@ def enforce_value_rules(
     if "dimensions" not in values:
         return
 
-    from tap_auth.errors import UnguardedOperation
-    from tap_grid.dimension_map import without_grid_derived
+    from tap_grid.dimension_map import GridDerivedUpdate
 
-    new = values["dimensions"]
+    if isinstance(values["dimensions"], GridDerivedUpdate):
+        return
+
+    from tap_auth.errors import UnguardedOperation
+
     detail = "queryset update tap_grid.Entity"
-    if not isinstance(new, Mapping):
-        raise UnguardedOperation(
-            f"unguarded write: {detail}: the event_time_rederive writer may set `dimensions` only to a "
-            "map that changes the grid-derived entries and nothing else",
-            callsite=detail,
-        )
-    kept = without_grid_derived(new)
-    for stored in stored_dimensions():
-        if without_grid_derived(stored or {}) != kept:
-            raise UnguardedOperation(
-                f"unguarded write: {detail}: the event_time_rederive writer would change a dimension "
-                "the grid does not derive; it may set or remove grid-derived entries only",
-                callsite=detail,
-            )
+    raise UnguardedOperation(
+        f"unguarded write: {detail}: the event_time_rederive writer may set or remove grid-derived "
+        "dimension entries only, through dimension_map.grid_derived_update; it may not write a "
+        "dimensions map",
+        callsite=detail,
+    )
 
 
 def _writer_permits(

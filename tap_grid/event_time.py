@@ -397,7 +397,7 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     Nothing is defaulted (rule 9): an empty declared value gives no event time. A value that
     cannot be stored truthfully gives none either, and a warning naming the field (rule 12).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@b2be04693cd4/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@e406b27b8a93/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
