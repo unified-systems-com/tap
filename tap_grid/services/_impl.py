@@ -595,7 +595,7 @@ def _record_provenance(
     (req-grid-history-reobservation). The record is evidence reconciliation reads, so a batch
     that cannot be found is a failure, never a skipped record (req-grid-service-batch-evidence).
 
-    TAP-IMPLEMENTS: req-grid-service-batch-evidence@9edd6850342f/fae4893e76a3 (enforcement) — the one
+    TAP-IMPLEMENTS: req-grid-service-batch-evidence@02ccdac55a7a/fae4893e76a3 (enforcement) — the one
         recorder the write pipeline calls: a missing batch or a failed insert fails the operation.
     """
     from tap_grid.batch import record_batch_event
@@ -626,6 +626,34 @@ def _record_provenance(
         ) from exc
     if recorded is None:
         raise ServiceEvidenceError(f"no batch {batch_id} to record {verb} on {entity.pk} in; nothing applied")
+
+
+def _pointer_uuid(batch_id: str | uuid.UUID) -> uuid.UUID:
+    """The pipeline's batch id as the UUID the spine's batch pointers store.
+
+    A pipeline operation always runs in a batch; one that somehow has none is refused here, so a
+    change never leaves a null pointer (req-grid-entity-batch-pointers rule 6).
+    """
+    if not batch_id:
+        raise ServiceEvidenceError("the operation has no batch in context; a change names the batch that made it")
+    return batch_id if isinstance(batch_id, uuid.UUID) else uuid.UUID(str(batch_id))
+
+
+def _stamp_observed(entity: Entity, batch_id: str) -> None:
+    """Record on the spine that this batch named an object it did not change.
+
+    A direct row update: it does not increment ``version``, does not move ``updated_at`` (a
+    queryset update does not fire ``auto_now``) and writes no history, since ``Entity`` has none.
+    ``last_changed_batch_id`` is left naming the batch that last changed the row.
+
+    req-grid-entity-batch-pointers rule 3: the observed pair is set for an object an operation
+    names and leaves unchanged, with no version, no ``updated_at`` move and no history.
+    """
+    observed_by = _pointer_uuid(batch_id)
+    now = timezone.now()
+    Entity.objects.filter(pk=entity.pk).update(last_observed_batch_id=observed_by, last_observed_at=now)
+    entity.last_observed_batch_id = observed_by
+    entity.last_observed_at = now
 
 
 def _ensure_batch(batch_id: str, user: Any, *, name: str, description: str) -> None:
@@ -996,6 +1024,11 @@ def _execute_write_pipeline(
                 # logical create, so the spine copy is written here.
                 natural_key=instance.derive_natural_key(),
                 dimensions=merged_dims,
+                # The creating batch, as last to change and last to observe the row; the save
+                # below skips its spine update for this same create, so they are written here
+                # (req-grid-entity-batch-pointers rules 2 and 5).
+                last_changed_batch_id=_pointer_uuid(batch_id),
+                last_observed_batch_id=_pointer_uuid(batch_id),
             )
             # Signal BaseModel.save() to skip its spine_updates branch on the
             # subsequent save: this Entity row was created moments ago at
@@ -1107,10 +1140,17 @@ def _execute_write_pipeline(
             # Tombstone: set deleted_at on the entity and cascade to its edges.
             now = timezone.now()
 
+            # A retirement is a change: the retiring batch is named in the statement that
+            # increments `version`, on the node here and on every edge it ends below
+            # (req-grid-entity-batch-pointers rules 2 and 5).
+            retiring_batch = _pointer_uuid(batch_id)
             Entity.objects.filter(pk=instance.entity_id, deleted_at__isnull=True).update(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
+                last_changed_batch_id=retiring_batch,
+                last_observed_batch_id=retiring_batch,
+                last_observed_at=now,
             )
             if getattr(model_cls, "ENTITY_TYPE", None) == "dimension":
                 # A queryset update sends no signal: tell the live vocabulary a node retired, so it
@@ -1151,6 +1191,9 @@ def _execute_write_pipeline(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
+                last_changed_batch_id=retiring_batch,
+                last_observed_batch_id=retiring_batch,
+                last_observed_at=now,
             )
             _flip_record_retirement(Edge, edge_entity_ids, batch_id)
 
@@ -1224,6 +1267,8 @@ def _execute_write_pipeline(
                 # the object, as an `observe` event, which batch-scoped sweeps and
                 # reconciliation read beside create and update.
                 _record_provenance(op.verb, instance.entity, batch_id, user, observed_unchanged=unchanged)
+                if unchanged:
+                    _stamp_observed(instance.entity, batch_id)
             entity_id_out = instance.entity_id
 
         # Step 12: Response shaping.

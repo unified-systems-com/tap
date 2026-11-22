@@ -141,7 +141,7 @@ def classify(
     TAP-IMPLEMENTS: req-grid-flip-change@62f1830e2b38/8a9b44fc800c (derivation) — the one
         stored-versus-written comparison, and the stamped set it yields: changed fields, plus
         named fields asserted for the first time.
-    TAP-IMPLEMENTS: req-grid-history-reobservation@e18921dd4e41/8a9b44fc800c (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-history-reobservation@c613b5f23bfe/8a9b44fc800c (derivation) — the one
         place an update-shaped operation is ruled changed or re-observed unchanged; the save, the
         version, FLIP and the batch's record all read this result.
     """

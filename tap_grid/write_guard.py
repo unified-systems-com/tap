@@ -222,6 +222,11 @@ def service_write_scope() -> Iterator[None]:
         _service_write_active.reset(token)
 
 
+def pipeline_active() -> bool:
+    """Whether the write pipeline's scope is open: the block `write_batch` runs its operations in."""
+    return _service_write_active.get()
+
+
 @contextlib.contextmanager
 def below_pipeline_write(writer: str) -> Iterator[None]:
     """Mark the wrapped block as the named below-pipeline writer ``writer``.
