@@ -158,6 +158,7 @@ if [[ -n "$identity" ]]; then
     echo "==> WARN: TAP_CODESPACE_NAME_WAIT must be 0-900 seconds; waiting 180" >&2
     wait_s=180
   fi
+  wait_s=$(( 10#$wait_s ))  # 008 is decimal 8 here, not an invalid octal constant later
   deadline=$(( $(date +%s) + wait_s ))
   complete=false
   while :; do

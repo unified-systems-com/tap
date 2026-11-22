@@ -146,6 +146,15 @@ def test_a_hostile_wait_runs_nothing(tmp_path: Path) -> None:
     assert "must be 0-900 seconds" in proc.stderr
 
 
+@pytest.mark.spec("req-tap-serving-codespace-9")
+def test_a_wait_with_leading_zeros_is_decimal(tmp_path: Path) -> None:
+    ident = tmp_path / "identity.env"
+    ident.write_text(_full("zeros"))
+    proc = _derive(tmp_path, str(ident), wait="008")
+    assert proc.returncode == 0, proc.stderr
+    assert _hosts(tmp_path) == "zeros-8000.app.github.dev"
+
+
 @pytest.mark.spec("req-tap-serving-codespace-5")
 def test_the_generated_file_runs_nothing_from_its_own_comments(tmp_path: Path) -> None:
     """The heredoc is unquoted, so a backtick span in its comments was a command substitution."""
