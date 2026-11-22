@@ -283,7 +283,7 @@ def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -
     assert str(main["uses"]).endswith("plugin-ci.yml")
     assert main["with"]["harness_ref"] == "main"
     owner = plugin_nightly["jobs"]["owner-issue"]
-    assert owner["needs"] == ["main", "latest"]
+    assert owner["needs"] == ["main", "latest", "migrations"]
     assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
 
 
@@ -584,7 +584,9 @@ def test_the_fast_set_runs_after_pre_boot_and_before_health_and_the_suite() -> N
     ]
     assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
     fast = steps[names.index("Fast set (ci_fast) — fail early")]
-    assert "if" not in fast, "a failed fast set must stop the job, not be stepped over"
+    # Its one condition is the migrations road, which runs no suite (tap#1262); no other `if:`
+    # may let a failed fast set be stepped over.
+    assert fast.get("if", _NOT_PARITY) == _NOT_PARITY, "a failed fast set must stop the job, not be stepped over"
     run = fast["run"]
     assert '-m "ci_fast and not live_fetch"' in run
     assert "--no-sync" in run, "the venv must not be synced under the boot's running migrate"
@@ -814,3 +816,132 @@ def test_the_secrets_root_is_cleared_before_the_image_and_filled_after() -> None
     assert clear < image < prepare
     run = steps[clear]["run"]
     assert "rm -f tap_secrets" in run and "exit 1" in run
+
+
+# The migrations road (tap#1262). Every other database plugin CI makes is built from the models
+# (tap#1258), so these hold the one road that still replays a plugin's migrations from zero.
+
+_NOT_PARITY = "${{ !inputs.schema_parity }}"
+
+
+def _inputs(path: Path) -> dict[str, Any]:
+    # YAML 1.1 reads the bare `on:` key as the boolean True, so the trigger table is keyed by it.
+    loaded: dict[Any, Any] = _load(path)
+    inputs: dict[str, Any] = loaded[True]["workflow_call"]["inputs"]
+    return inputs
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+def test_the_migrations_road_is_off_unless_asked_for() -> None:
+    """A pull request never takes it: the input defaults false, and only the nightly passes it."""
+    parity = _inputs(PLUGIN_CI)["schema_parity"]
+    assert parity["type"] == "boolean" and parity["default"] is False and parity["required"] is False
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+def test_the_migrations_road_boots_from_zero_and_proves_parity_before_anything_else() -> None:
+    steps, names = _boot_steps()
+    boot = steps[names.index("Boot the plugin profile")]
+    assert boot["env"]["TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS"] == "${{ inputs.schema_parity && 'false' || 'true' }}"
+    parity_name = "Parity — the real migrations from zero equal a model-built database"
+    parity = steps[names.index(parity_name)]
+    assert parity["if"] == "${{ inputs.schema_parity }}"
+    assert parity["id"] == "parity"
+    assert "python -m tap.schema_parity" in parity["run"]
+    assert "set -o pipefail" in parity["run"], "the tee must not swallow a failed parity"
+    assert "tap/schema_parity.py" in parity["run"], "a harness without the module fails closed"
+    order = ["Wait for the stack to become healthy", parity_name, "Run the plugin's in-package tests"]
+    assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+def test_the_migrations_road_runs_no_suite_and_its_summary_needs_the_parity_step() -> None:
+    steps, names = _boot_steps()
+    for name in (
+        "Start the test-DB template build (background)",
+        "Fast set (ci_fast) — fail early",
+        "Run the plugin's in-package tests",
+    ):
+        assert steps[names.index(name)]["if"] == _NOT_PARITY, name
+    after = steps[names.index("After-tests command (caller-supplied)")]
+    assert after["if"] == "${{ inputs.after_tests_command != '' && !inputs.schema_parity }}"
+    summary = steps[names.index("Summary (fails on zero executed tests)")]
+    assert summary["env"]["PARITY_OUTCOME"] == "${{ steps.parity.outcome || 'not reached' }}"
+    run = summary["run"]
+    # On the migrations road the evidence is the parity step, and anything but success is red.
+    assert '[ "$PARITY_OUTCOME" != success ]' in run
+    assert run.index('[ "$SCHEMA_PARITY" = true ]') < run.index('[ "$executed" = "0" ]')
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+def test_the_nightly_runs_the_migrations_row_against_core_main(plugin_nightly: dict[str, Any]) -> None:
+    row = plugin_nightly["jobs"]["migrations"]
+    assert str(row["uses"]).endswith("plugin-ci.yml")
+    assert row["if"] == "${{ inputs.migrations }}"
+    assert row["with"]["harness_ref"] == "main"
+    assert row["with"]["schema_parity"] is True
+    assert row["with"]["boot_and_test_timeout_minutes"] == "${{ inputs.migrations_timeout_minutes }}"
+    assert row["permissions"] == plugin_nightly["jobs"]["main"]["permissions"]
+    inputs = _inputs(PLUGIN_NIGHTLY)
+    assert inputs["migrations"]["default"] is True, "on by default: it is the only road that replays them"
+    assert inputs["migrations_timeout_minutes"]["default"] > inputs["boot_and_test_timeout_minutes"]["default"]
+
+
+def _owner_issue(tmp_path: Path, plugin_nightly: dict[str, Any], *, main: str, migrations: str) -> tuple[int, str, str]:
+    """Run the owner-issue step under a stand-in `gh` and `jq`: not a fork, no open issue, writes logged."""
+    script = "\n".join(step.get("run", "") for step in _steps(plugin_nightly["jobs"]["owner-issue"]))
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    log = tmp_path / "gh.log"
+    (fake / "gh").write_text(
+        "#!/bin/sh\n"
+        'case "$1 $2" in\n'
+        '  "api repos/"*) echo false ;;\n'
+        '  "issue list") echo "[]" ;;\n'
+        '  *) echo "$*" >> "$GH_LOG" ;;\n'
+        "esac\n"
+    )
+    (fake / "gh").chmod(0o755)
+    # The listing is `[]`, so the script's two jq reads are fixed: a count of 0 and no match. A
+    # stand-in, because the web image ships no jq and the verdict, not jq, is what is under test.
+    (fake / "jq").write_text('#!/bin/sh\ncat >/dev/null\nfor a; do [ "$a" = length ] && { echo 0; exit 0; }; done\nexit 0\n')
+    (fake / "jq").chmod(0o755)
+    env = {
+        "PATH": f"{fake}:{os.environ['PATH']}",
+        "GH_LOG": str(log),
+        "GITHUB_SERVER_URL": "https://github.example",
+        "GITHUB_REPOSITORY": "owner/plugin",
+        "GITHUB_RUN_ID": "1",
+        "MAIN_RESULT": main,
+        "LATEST_RESULT": "success",
+        "MIGRATIONS_RESULT": migrations,
+        "TITLE": "Nightly red vs core main",
+        "ASSIGNEE": "",
+        "MARKER": "<!-- tap-plugin-nightly-owner-issue -->",
+        "LIMIT": "1000",
+    }
+    done = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body under a stub gh IS the test; argv list, no shell, PATH leads with a temp stub dir
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
+    )
+    return done.returncode, log.read_text() if log.exists() else "", done.stderr
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+@pytest.mark.parametrize(
+    ("main", "migrations", "red"),
+    [
+        ("success", "success", False),
+        ("success", "skipped", False),
+        ("success", "failure", True),
+        ("failure", "success", True),
+    ],
+)
+def test_a_red_migrations_row_files_the_owner_issue(
+    tmp_path: Path, plugin_nightly: dict[str, Any], main: str, migrations: str, red: bool
+) -> None:
+    """The row is not informational: with `main` green, a failed migrations row still reds the night."""
+    code, writes, stderr = _owner_issue(tmp_path, plugin_nightly, main=main, migrations=migrations)
+    assert (code != 0) is red, stderr
+    assert ("issue create" in writes) is red
+    if red:
+        assert f"migrations row: {migrations}" in writes
