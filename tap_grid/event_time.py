@@ -356,7 +356,7 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     Nothing is defaulted (rule 9): an empty declared value gives four empty fields. A value that
     cannot be stored truthfully gives four empty fields and a warning naming the field (rule 12).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@f1920e40923a/164aad0509ac (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@913c032824b4/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
@@ -383,7 +383,12 @@ def derive(declaration: Declaration, values: Any) -> Derived:
             return _empty(declaration.end, str(error))
         if end is None:
             return Derived(start.start, None, declaration.kind, start.level)
-        if end.end_exclusive < start.start:
+        # The end is before the start when its unit is over by the time the start's begins. Equal
+        # bounds are a real zero-length span only when both are exact moments; two coarse units
+        # that merely touch (a start of 2 November, an end of 1 November) are reversed, and
+        # storing them equal would read as a moment.
+        both_moments = start.level == "second" and end.level == "second"
+        if end.end_exclusive < start.start or (end.end_exclusive == start.start and not both_moments):
             return _empty(declaration.end, f"the end is before the start in {declaration.start}")
         return Derived(start.start, end.end_exclusive, declaration.kind, _coarser(start.level, end.level))
     return _EMPTY

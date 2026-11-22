@@ -198,6 +198,21 @@ class TestDerive:
         got = derive(Interval("a", "created"), {"a": _utc(2020, 5, 5)}.get)
         assert (got.event_start, got.event_end, got.event_precision) == (_utc(2020, 5, 5), None, "second")
 
+    @AC[7]
+    def test_an_end_whose_unit_is_over_when_the_start_begins_is_reversed(self) -> None:
+        declaration = Interval("s", "created", end="e")
+        for values in (
+            {"s": "2026-11-02", "e": "2026-11-01"},
+            {"s": "2026-11-02T00:00:00Z", "e": "2026-11-01"},
+            {"s": "2026-12", "e": "2026-11"},
+        ):
+            derived = event_time.derive(declaration, values.get)
+            assert derived.event_start is None and len(derived.warnings) == 1, values
+        same_day = event_time.derive(declaration, {"s": "2026-11-02", "e": "2026-11-02"}.get)
+        assert (same_day.event_start, same_day.event_end) == (_utc(2026, 11, 2), _utc(2026, 11, 3))
+        instant = event_time.derive(declaration, {"s": "2026-11-02T00:00:00Z", "e": "2026-11-02T00:00:00Z"}.get)
+        assert instant.event_start == instant.event_end == _utc(2026, 11, 2)
+
     def test_an_end_alone_is_not_an_event_time(self) -> None:
         got = derive(Interval("a", "created", end="b"), {"a": None, "b": "2026"}.get)
         assert got.as_columns() == dict.fromkeys(FOUR)
@@ -542,6 +557,27 @@ class TestEdges:
 
 @pytest.mark.django_db
 class TestRederive:
+    @AC[11]
+    def test_a_row_changed_since_it_was_read_is_left_to_the_newer_save(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_grid.event_time_rederive import rederive_event_time
+
+        pk = _create({"name": "raced", "observed_at": "2026-12-01T18:30:00Z"}).entity_id
+        monkeypatch.setattr(PgNode, "EVENT_TIME", Moment("observed_at", "occurred"), raising=False)
+        real = event_time.derive_for_instance
+
+        def derive_then_lose_the_race(row: Any) -> Any:
+            derived = real(row)  # the pass has read the row; now another writer changes it
+            result = patch_node(pk, {"observed_at": "2027-01-01T00:00:00Z"}, caller_context=_ctx())
+            assert result.success, result.errors
+            return derived
+
+        monkeypatch.setattr("tap_grid.event_time_rederive.derive_for_instance", derive_then_lose_the_race)
+        report = rederive_event_time([_TYPE])
+
+        assert (report.changed, report.raced) == (0, 1)
+        assert _row(pk).event_start == _utc(2027, 1, 1)
+        assert report.batch_id is None or not BatchEvent.objects.filter(batch__entity_id=report.batch_id).exists()
+
     @AC[11]
     def test_it_fills_existing_rows_and_writes_no_history_and_no_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tap_grid.candidates import _OBSERVATION_EVENTS

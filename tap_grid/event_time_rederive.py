@@ -39,6 +39,7 @@ class RederiveReport:
     changed: int = 0
     by_type: dict[str, int] = field(default_factory=dict)
     warnings: int = 0
+    raced: int = 0
     batch_id: str | None = None
 
 
@@ -107,7 +108,15 @@ def rederive_event_time(
                     report.batch_id = str(batch.entity_id)
                 with below_pipeline_write("event_time_rederive"):
                     # The named writer may write these four columns and nothing else; no typed value changes.
-                    Entity.objects.filter(pk=row.entity_id).update(**columns)  # TAP-WRITE-COV: event-time re-derive
+                    # Only while the row is at the version it was read at: a save that changed it
+                    # since has bumped `version` and written its own event time in that statement,
+                    # which is newer than what this pass derived, and must not be overwritten.
+                    written = Entity.objects.filter(  # TAP-WRITE-COV: event-time re-derive
+                        pk=row.entity_id, version=row.entity.version
+                    ).update(**columns)
+                if not written:
+                    report.raced += 1
+                    continue
                 record_batch_event(
                     row.entity,
                     BatchEventType.MAINTENANCE,
