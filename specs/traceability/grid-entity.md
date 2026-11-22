@@ -19,7 +19,7 @@
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
 | `req-grid-entity-event-time` | In Development | Implemented | `derive` | — |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
-| `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18` |
+| `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18`, `req-grid-entity-natural-key-26`, `req-grid-entity-natural-key-27` |
 | `req-grid-entity-resolve` | Implemented | Tested | — | `req-grid-entity-resolve-2`, `req-grid-entity-resolve-3`, `req-grid-entity-resolve-4` |
 | `req-grid-entity-spine` | Implemented | Tested | — | `req-grid-entity-spine-4` |
 | `req-grid-entity-type` | Implemented | Tested | — | `req-grid-entity-type-2`, `req-grid-entity-type-3` |
