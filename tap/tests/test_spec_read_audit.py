@@ -59,7 +59,7 @@ def _run_recorder(tmp_path: Path, conftest_reads_at_import: bool = False) -> dic
     out = tmp_path / "out"
     env = {**os.environ, "TAP_SPEC_READ_AUDIT": str(out), "PYTHONPATH": str(REPO)}
     env.pop("PYTEST_XDIST_WORKER", None)
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — a child pytest over a throwaway repo IS the test; argv list of sys.executable and fixed strings, no shell  # nosec B603  # noqa: S603
         [sys.executable, "-m", "pytest", "-p", "tap.spec_read_audit", "-p", "no:cacheprovider", "-q", "-n0",
          "-p", "no:django", "--rootdir", str(root), "-c", str(root / "pyproject.toml"), str(root)],
         cwd=root, env=env, capture_output=True, text=True, check=False,
