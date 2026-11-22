@@ -181,6 +181,10 @@ names. A product publishes its image under its own name, attested
      tag, builds a wheel, compiles the closure with hashes against the installed core, and
      installs both with `--no-deps`.
   4. Run pre-boot in product-image mode, so a record the image cannot satisfy fails the build.
+- **What start checks.** Pre-boot checks every file of every record plugin against its RECORD and
+  the manifest. The core, workspace and closure distributions are recorded too, but start does not
+  hash them; they are protected by being root-owned in the image and by the entrypoint refusing any
+  mount over `/app`, `/app/.venv` or `/app/tap-product`.
 - **Final stage.** It copies the venv, the manifest and the record in, owned by root.
 - **Publishing.** `.github/workflows/bake-product-image.yml` is a reusable workflow. It builds
   amd64 and arm64, tags the index `in-<inputs digest>` and `sha-<caller commit>`, and attests it.

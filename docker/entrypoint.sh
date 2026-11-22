@@ -103,8 +103,8 @@ tap_clear_if_other_image() {
 # ---------------------------------------------------------------------------
 # A product image (docker/product-image.Dockerfile) bakes the whole venv, core and plugins, and
 # an install manifest beside it. Its start installs nothing: no cache seeding or clearing, no
-# `uv sync`, no plugin install, and `uv run` never syncs. Pre-boot checks the installed bytes
-# against the manifest instead. The manifest's presence is the switch, and it is baked root-owned,
+# `uv sync`, no plugin install, and `uv run` never syncs. Pre-boot checks every file of every record
+# plugin against the manifest instead; the rest of the venv is root-owned and may not be mounted over. The manifest's presence is the switch, and it is baked root-owned,
 # so a development stack, which has no manifest, keeps every step below exactly as before
 # (req-tap-bake-immutable-env-4).
 TAP_PRODUCT_IMAGE=""

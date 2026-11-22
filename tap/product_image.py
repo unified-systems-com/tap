@@ -361,7 +361,7 @@ def build(profile_id: str, base_image: str) -> dict[str, Any]:
     versions already installed) and hash-verified. The build fails if any installed
     distribution is not accounted for (`req-tap-bake-product-image-2`).
 
-    TAP-IMPLEMENTS: req-tap-bake-product-image@b678bc82fc6b/0be40de65fec (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-bake-product-image@f9de390e4de9/0be40de65fec (derivation) — the one
         place a product image's environment and its install manifest are produced.
     """
     require_digest_ref(base_image)

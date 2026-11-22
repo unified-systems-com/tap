@@ -17,7 +17,7 @@
 # repository, so the build recipe is always the one shipped with the builder it runs.
 #
 # Tags (ruling Q16, make-it-fast r25): `in-<inputs digest>` names the image by what it was built
-# from (the base digest and the record's bytes), so the same inputs always name the same tag, and
+# from (the base digest, the profile and the record's bytes), so the same inputs always name the same tag, and
 # `sha-<caller short sha>` says which commit of the product published it. Consumers pin the digest.
 name: bake-product-image
 
@@ -99,6 +99,7 @@ jobs:
         id: context
         env:
           TAP_WEB: ${{ inputs.tap-web }}
+          PROFILE: ${{ inputs.profile }}
           RECORD: ${{ inputs.record }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -113,7 +114,9 @@ jobs:
           id="$(docker create "$TAP_WEB")"
           docker cp "$id:/app/docker/product-image.Dockerfile" "$ctx/Dockerfile"
           docker rm "$id" >/dev/null
-          inputs="$(printf '%s\n%s\n' "$TAP_WEB" "$(sha256sum "$ctx/record.boot.json" | cut -d' ' -f1)" | sha256sum | cut -c1-16)"
+          # Every input that changes the image: the base, the profile (it names the record's path,
+          # TAP_BOOT_PROFILE and the bake), and the record's bytes.
+          inputs="$(printf '%s\n%s\n%s\n' "$TAP_WEB" "$PROFILE" "$(sha256sum "$ctx/record.boot.json" | cut -d' ' -f1)" | sha256sum | cut -c1-16)"
           echo "inputs-digest=${inputs}" >> "$GITHUB_OUTPUT"
       - name: Registry login
         env:

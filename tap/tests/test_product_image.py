@@ -248,6 +248,9 @@ def test_the_workflow_publishes_only_a_verified_base_from_the_default_branch() -
     verify = workflow.index("gh attestation verify")
     assert verify < workflow.index("docker cp "), "the base is verified before its Dockerfile is read"
     assert "--signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml" in workflow
+    digest_line = next(line for line in workflow.splitlines() if line.strip().startswith('inputs="$(printf'))
+    for part in ('"$TAP_WEB"', '"$PROFILE"', "record.boot.json"):
+        assert part in digest_line, f"the inputs digest must cover {part}"
 
 
 @pytest.mark.spec("req-tap-bake-immutable-env")
