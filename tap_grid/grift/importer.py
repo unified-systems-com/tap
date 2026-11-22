@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/bba92d074081 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/fc9f277ace42 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -33,7 +33,7 @@ from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift.refs import resolve_refs, substitute_ids
 from tap_grid.models import BaseModel, Entity
-from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
+from tap_grid.natural_key import AmbiguousIdentity, Keyless, identity_lock_key, key_values, normalized_key_values
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import (
     find_by_natural_key,
@@ -3814,7 +3814,7 @@ def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
     declared = model_cls.NATURAL_KEY
     if declared is None or isinstance(declared, Keyless):
         return None
-    return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))
+    return identity_lock_key(model_cls.ENTITY_TYPE, key_values(model_cls, node_obj["node"]))
 
 
 def _take_identity_locks(keys: Iterable[str]) -> None:
@@ -4188,10 +4188,10 @@ def _batch_node_keys(batch_container: dict[str, Any]) -> dict[str, list[str]]:
     batch_keys: dict[str, list[str]] = {}
     for node_obj in batch_container.get("nodes", []):
         entity_type = node_obj["entity"]["entity_type"]
-        declared = getattr(get_model_class(entity_type), "NATURAL_KEY", None)
-        if not isinstance(declared, tuple):
+        model_cls = get_model_class(entity_type)
+        if not isinstance(getattr(model_cls, "NATURAL_KEY", None), tuple):
             continue
-        key = identity_lock_key(entity_type, constituting_properties(declared, node_obj["node"]))
+        key = identity_lock_key(entity_type, key_values(model_cls, node_obj["node"]))
         if key is not None:
             batch_keys.setdefault(key, []).append(node_obj["entity"]["entity_id"])
     return batch_keys
@@ -4205,6 +4205,16 @@ def _find_node_by_key(
     The caller has authorised ``grid.read``. Raises ``AmbiguousIdentity`` when more than one
     node of the batch, or more than one live row, matches.
     """
+    from tap_grid.registry import get_model_class
+
+    # A reference (an edge endpoint, a removal target, an anchor) in the type's own spelling, so
+    # a short form finds the batch node or the stored row it names (tap#1265).
+    try:
+        model_cls = get_model_class(entity_type)
+    except KeyError:
+        model_cls = None  # an unknown type: find_by_natural_key below refuses it with its own reason
+    if model_cls is not None:
+        properties = normalized_key_values(model_cls, properties)
     in_batch = batch_keys.get(identity_lock_key(entity_type, properties) or "", [])
     if len(in_batch) > 1:
         raise AmbiguousIdentity(entity_type, properties, list[object](in_batch))

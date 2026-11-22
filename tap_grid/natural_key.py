@@ -184,6 +184,37 @@ def constituting_properties(declared: Sequence[str], payload: Mapping[str, objec
     return {name: _extract(payload, name) for name in declared}
 
 
+def normalized_key_values(model: Any, properties: Mapping[str, object]) -> dict[str, object]:
+    """``properties`` (a type's declared constituting values) put through the type's own
+    ``normalize_natural_key`` (unified-systems-com/tap#1265).
+
+    The one place the hook is applied, so the lock, the in-batch index, the lookup and the stored
+    row all see the same spelling: two writers sending ``nginx:1.25`` and
+    ``docker.io/library/nginx:1.25`` for a type whose rule maps one to the other lock on one key and
+    find one row. The hook must return exactly the keys it was given; anything else is a
+    declaration defect and is refused here, never guessed around.
+    """
+    hook = getattr(model, "normalize_natural_key", None)
+    given = dict(properties)
+    if hook is None:
+        return given
+    result = hook(dict(given))
+    if not isinstance(result, Mapping) or set(result) != set(given):
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            f"{getattr(model, '__name__', model)}.normalize_natural_key must return a mapping with exactly the "
+            f"declared entries {sorted(given)}; got {sorted(result) if isinstance(result, Mapping) else type(result).__name__}"
+        )
+    return dict(result)
+
+
+def key_values(model: Any, payload: Mapping[str, object]) -> dict[str, object]:
+    """A type's constituting values read from ``payload`` (:func:`constituting_properties`) and normalised
+    (:func:`normalized_key_values`): what every identity reader hands to the lock and the lookup."""
+    return normalized_key_values(model, constituting_properties(model.NATURAL_KEY, payload))
+
+
 def _key_transform(name: str) -> Expression:
     """The JSON value a path names, as an expression — typed (``jsonb``), never cast to text.
 

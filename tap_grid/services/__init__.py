@@ -1664,12 +1664,12 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@9a9f9d5d6e87/af7e2a65f8ce (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@571d730b546d/31edfb02d83c (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
     """
-    from tap_grid.natural_key import Keyless, constituting_properties, identity_lock_key
+    from tap_grid.natural_key import Keyless, constituting_properties, identity_lock_key, normalized_key_values
     from tap_grid.registry import get_model_class
 
     try:
@@ -1693,7 +1693,8 @@ def resolve_identity(
             "resolve_identity must run inside the caller's transaction: its lock is transaction-scoped, "
             "so resolution and the write it precedes commit together."
         )
-    properties = constituting_properties(declared, payload)
+    # The type's own spelling before the lock, so two spellings of one new key take one lock (tap#1265).
+    properties = normalized_key_values(model_cls, constituting_properties(declared, payload))
     key = identity_lock_key(type_slug, properties)
     if key is not None:
         with connection.cursor() as cursor:
