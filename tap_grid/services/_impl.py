@@ -1009,11 +1009,19 @@ def _execute_write_pipeline(
                 base_dims = dict(get_edge_default_dimensions(op.edge_type))  # type: ignore[arg-type]
             else:
                 base_dims = dict(getattr(model_cls, "DEFAULT_DIMENSIONS", {}))
-            from tap_grid.dimension_map import DimensionWriteError, stamp
+            from tap_grid.dimension_map import DimensionWriteError, settle
 
             caller_dims: Any = getattr(instance, "_initial_dimensions", {}) or {}
+            # Derived once and written twice below: the three event columns, and the kind as the
+            # row's `time` dimension (req-grid-entity-event-time rule 3).
+            created_event_time = derive_for_instance(instance)
             try:
-                merged_dims = stamp(base_dims, caller_dims, where=f"{op.type_slug or op.edge_type} dimensions")
+                merged_dims = settle(
+                    base_dims,
+                    caller_dims,
+                    grid=created_event_time.as_dimensions(),
+                    where=f"{op.type_slug or op.edge_type} dimensions",
+                )
             except (DimensionWriteError, LookupError) as error:
                 raise ServiceValidationError(str(error)) from error
             instance.entity = Entity.objects.create(
@@ -1032,7 +1040,7 @@ def _execute_write_pipeline(
                 last_observed_batch_id=_pointer_uuid(batch_id),
                 # Event time, derived from the fields the model declares; written here for the
                 # same reason as the natural key (req-grid-entity-event-time rule 3).
-                **derive_for_instance(instance).as_columns(),
+                **created_event_time.as_columns(),
             )
             # Signal BaseModel.save() to skip its spine_updates branch on the
             # subsequent save: this Entity row was created moments ago at

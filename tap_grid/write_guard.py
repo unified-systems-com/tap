@@ -98,7 +98,8 @@ BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
     "spine_sync": {("queryset update", "tap_grid.Entity"): frozenset({"name", "dimensions", "updated_at"})},
     "scheduler_cursor": {("queryset update", "tap_cares.Schedule"): frozenset({"last_schedule_fired", "enabled_at"})},
     "event_time_rederive": {
-        ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_kind", "event_precision"})
+        # The three event columns, and `dimensions` for the `time` dimension the kind is stamped as.
+        ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_precision", "dimensions"})
     },
 }
 

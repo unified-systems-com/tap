@@ -2,7 +2,8 @@
 
 ``req-grid-entity-event-time`` (spec-grid-entity.md). A model says which of its own fields state
 when the thing happened or held in the world; the grid copies them into ``Entity.event_start``,
-``event_end``, ``event_kind`` and ``event_precision`` on every save. This module holds:
+``event_end`` and ``event_precision`` on every save, and stamps what the start means as the row's
+``time`` dimension. This module holds:
 
 - the declaration a node model carries beside ``NATURAL_KEY`` (:class:`Moment`, :class:`Interval`,
   :data:`NO_EVENT_TIME`) and the registry of what edge types declare in their definitions;
@@ -29,6 +30,7 @@ __all__ = [
     "FHIR_DATETIME_PATTERN",
     "NO_EVENT_TIME",
     "SPINE_EVENT_FIELDS",
+    "TIME_DIMENSION",
     "Derived",
     "EventTimeDeclarationError",
     "Interval",
@@ -45,18 +47,25 @@ __all__ = [
     "edge_declaration_problems",
     "derive_for_instance",
     "get_edge_event_time",
+    "kind_problem",
     "overlapping",
     "overlaps",
     "read_value",
     "register_edge_event_time",
 ]
 
-# What `event_start` means: a closed list core owns (the field table of the requirement).
+# What `event_start` means: the values of the `time` dimension core seeds
+# (tap_grid/data/dimensions.grift.json). This tuple is the copy a declaration is checked against
+# where no grid is loaded (a class body, a static scan); a test holds it equal to the seed's
+# `values`, and where the live vocabulary is available the dimension's own list decides.
 EVENT_KINDS: Final[tuple[str, ...]] = ("occurred", "created", "first_seen", "published")
 # The levels of precision, coarsest first (rule 10). There is no hour or minute level.
 EVENT_PRECISIONS: Final[tuple[str, ...]] = ("year", "month", "day", "second")
-# The four spine columns, in the order the canonical surface carries them.
-SPINE_EVENT_FIELDS: Final[tuple[str, ...]] = ("event_start", "event_end", "event_kind", "event_precision")
+# The three spine columns, in the order the canonical surface carries them.
+SPINE_EVENT_FIELDS: Final[tuple[str, ...]] = ("event_start", "event_end", "event_precision")
+# The dimension that carries the kind on the row (rule 3). The name is dimension_map's; it is
+# repeated here as a literal so this module still imports nothing from the grid at module scope.
+TIME_DIMENSION: Final[str] = "time"
 
 # The pattern FHIR R4 publishes for `dateTime` (https://hl7.org/fhir/R4/datatypes.html#dateTime),
 # copied from that page on 2026-11-22 and printed in the requirement. Not to be edited by hand.
@@ -128,6 +137,28 @@ def _check_kind(kind: str) -> None:
         raise EventTimeDeclarationError(f"event kind {kind!r} is not one of {', '.join(EVENT_KINDS)}")
 
 
+def kind_problem(kind: str) -> str | None:
+    """Why a kind is not a value of the ``time`` dimension, or None.
+
+    Where the grid's vocabulary is loaded and declares ``time``, the dimension's own ``values``
+    decide, so a term added to the dimension is accepted without a change here. Where it is not
+    (a static scan, a grid whose core vocabulary has not landed), :data:`EVENT_KINDS` decides.
+    """
+    allowed: tuple[str, ...] | None = EVENT_KINDS
+    try:
+        from tap_grid.dimension_names import UnknownDimension, declared
+
+        try:
+            allowed = declared(TIME_DIMENSION).values
+        except UnknownDimension:
+            allowed = EVENT_KINDS
+    except Exception:  # noqa: BLE001 — no database, apps not loaded: fall back to the static list
+        allowed = EVENT_KINDS
+    if allowed is not None and kind not in allowed:
+        return f"event kind {kind!r} is not a value of the {TIME_DIMENSION!r} dimension ({', '.join(allowed)})"
+    return None
+
+
 def declared_fields(declaration: Declaration) -> tuple[str, ...]:
     """The field names (or, for an edge type, property keys) a declaration reads."""
     if isinstance(declaration, Moment):
@@ -184,7 +215,8 @@ def edge_declaration_problems(definition: Any, property_schema: Any) -> list[str
     properties = property_schema.get("properties") if isinstance(property_schema, dict) else None
     if not isinstance(properties, dict):
         return ["event_time names edge properties, and the edge type has no property_schema that defines any"]
-    return [
+    wrong_kind = kind_problem(declaration.kind)
+    return ([f"event_time: {wrong_kind}"] if wrong_kind else []) + [
         f"event_time names {name!r}, which the edge type's property_schema does not define"
         for name in declared_fields(declaration)
         if name not in properties
@@ -325,16 +357,25 @@ def _why_not(text: str) -> str:
 
 @dataclass(frozen=True)
 class Derived:
-    """The four spine values for one row, and what could not be stored and why."""
+    """The spine values for one row (three columns and the kind), and what could not be stored and why."""
 
     event_start: datetime | None = None
     event_end: datetime | None = None
-    event_kind: str | None = None
+    kind: str | None = None
     event_precision: str | None = None
     warnings: tuple[str, ...] = field(default=(), compare=False)
 
     def as_columns(self) -> dict[str, Any]:
+        """The three event columns of ``Entity``."""
         return {name: getattr(self, name) for name in SPINE_EVENT_FIELDS}
+
+    def as_dimensions(self) -> dict[str, str | None]:
+        """The row's ``time`` dimension: the kind where an event time was derived, else removed.
+
+        A row with no event time carries no ``time`` value (rule 9): the kind says what the start
+        means, and there is no start.
+        """
+        return {TIME_DIMENSION: self.kind if self.event_start is not None else None}
 
 
 _EMPTY: Final[Derived] = Derived()
@@ -350,13 +391,13 @@ def _coarser(left: str, right: str) -> str:
 
 
 def derive(declaration: Declaration, values: Any) -> Derived:
-    """Apply a declaration to a row's values: the four spine values, or all empty with a warning.
+    """Apply a declaration to a row's values: the event values (three columns and the kind), or all empty with a warning.
 
     ``values`` is called with a declared name and returns that field's (or property's) value.
-    Nothing is defaulted (rule 9): an empty declared value gives four empty fields. A value that
-    cannot be stored truthfully gives four empty fields and a warning naming the field (rule 12).
+    Nothing is defaulted (rule 9): an empty declared value gives no event time. A value that
+    cannot be stored truthfully gives none either, and a warning naming the field (rule 12).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@913c032824b4/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@b2be04693cd4/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
@@ -402,7 +443,7 @@ def declaration_for(instance: Any) -> Declaration:
 
 
 def derive_for_instance(instance: Any) -> Derived:
-    """The four spine values for a typed row, from the fields (or edge properties) it declares."""
+    """The event values for a typed row, from the fields (or edge properties) it declares."""
     declaration = declaration_for(instance)
     if not isinstance(declaration, (Moment, Interval)):
         return _EMPTY
@@ -427,6 +468,9 @@ def declaration_problems(model_cls: Any) -> list[str]:
     if not isinstance(declaration, (Moment, Interval)):
         return [f"EVENT_TIME is a {type(declaration).__name__}; it is a Moment, an Interval or NO_EVENT_TIME"]
     problems: list[str] = []
+    wrong_kind = kind_problem(declaration.kind)
+    if wrong_kind:
+        problems.append(f"EVENT_TIME: {wrong_kind}")
     for name in declared_fields(declaration):
         try:
             model_field = model_cls._meta.get_field(name)

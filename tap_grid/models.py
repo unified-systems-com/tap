@@ -23,7 +23,6 @@ from django.utils import timezone
 
 from tap.jsonfiles import jsonschema_validate
 from tap_grid.event_time import (
-    EVENT_KINDS,
     EVENT_PRECISIONS,
     NO_EVENT_TIME,
     Interval,
@@ -618,14 +617,6 @@ class Entity(models.Model):
             "when the source states no end."
         ),
     )
-    event_kind = models.CharField(  # noqa: DJ001
-        max_length=16,
-        null=True,
-        blank=True,
-        editable=False,
-        choices=[(kind, kind) for kind in EVENT_KINDS],
-        help_text="What `event_start` means: occurred, created, first_seen or published.",
-    )
     event_precision = models.CharField(  # noqa: DJ001
         max_length=8,
         null=True,
@@ -696,7 +687,6 @@ class Entity(models.Model):
         "last_observed_at",
         "event_start",
         "event_end",
-        "event_kind",
         "event_precision",
         "originating_grid_id",
     )
@@ -1639,13 +1629,15 @@ class BaseModel(models.Model):
 
         # Event time (req-grid-entity-event-time rule 3): derived here on every save from the
         # fields the model declares, and written with `name` and `natural_key`. A value that
-        # cannot be stored truthfully leaves the four empty; the pipeline reports why (rule 12).
+        # cannot be stored truthfully leaves them empty; the pipeline reports why (rule 12).
         event_time = derive_for_instance(self)
 
         if self.entity_id is None:
             with transaction.atomic():
-                # Defaults stamped src: default, the caller's values over them (req-grid-dimension-reference-3).
-                from tap_grid.dimension_map import stamp
+                # Defaults stamped src: default, the caller's values over them
+                # (req-grid-dimension-reference-3), then the grid's own `time` dimension from
+                # the event time just derived (req-grid-entity-event-time rule 3).
+                from tap_grid.dimension_map import settle
 
                 base_dims = dict(getattr(self.__class__, "DEFAULT_DIMENSIONS", {}))
                 caller_dims: Any = getattr(self, "_initial_dimensions", {})
@@ -1653,7 +1645,9 @@ class BaseModel(models.Model):
                     entity_type=entity_type,
                     name=self.get_name(),
                     natural_key=natural_key,
-                    dimensions=stamp(base_dims, caller_dims, where=f"{entity_type} dimensions"),
+                    dimensions=settle(
+                        base_dims, caller_dims, grid=event_time.as_dimensions(), where=f"{entity_type} dimensions"
+                    ),
                     # A create is a change and an observation; `last_observed_at` takes the
                     # row's own `updated_at` at insert (rule 5).
                     last_changed_batch_id=pointer_batch,
@@ -1717,6 +1711,14 @@ class BaseModel(models.Model):
                     for name, value in event_time.as_columns().items()
                     if getattr(self.entity, name) != value
                 }
+                # The kind, as the row's `time` dimension, in this same statement: set where an
+                # event time was derived, removed where none was. Written only when it differs.
+                from tap_grid.dimension_map import with_grid_derived
+
+                stored_dims = self.entity.dimensions or {}
+                new_dims = dict(with_grid_derived(stored_dims, event_time.as_dimensions()))
+                if new_dims != stored_dims:
+                    event_updates["dimensions"] = new_dims
                 spine_updates.update(event_updates)
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
             for name, value in event_updates.items():

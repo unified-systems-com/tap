@@ -13,7 +13,7 @@ as in production. Every other test keeps the hatch, which stops at a gated body.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import cast
 
 import pytest
@@ -301,6 +301,20 @@ def test_a_named_writer_updates_only_the_fields_it_is_named_for():
     )
     with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
         _under_import_grift("spine_sync", lambda: Entity.objects.filter(pk=uuid.uuid4()).update(version=7))
+    # The event-time re-derive pass: the three event columns and `dimensions` (for the grid-derived
+    # `time` dimension), and nothing else on the spine (req-grid-entity-event-time rule 17).
+    nobody = Entity.objects.filter(pk=uuid.uuid4())
+    _under_grid_write(
+        "event_time_rederive",
+        lambda: nobody.update(event_start=None, event_end=None, event_precision=None, dimensions={}),
+    )
+
+    def attempt(fields: Mapping[str, object]) -> Callable[[], object]:
+        return lambda: nobody.update(**fields)
+
+    for forbidden in ({"version": 7}, {"name": "x"}, {"updated_at": None}, {"last_observed_batch_id": None}):
+        with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+            _under_grid_write("event_time_rederive", attempt(forbidden))
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")

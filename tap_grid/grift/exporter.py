@@ -277,10 +277,14 @@ def _entity_envelope(entity: Entity) -> dict[str, Any]:
     retired entity's retirement travels in its object's ``retirement`` block
     (req-grift-retirement), never in the envelope.
     """
+    from tap_grid.dimension_map import without_grid_derived
+
     envelope: dict[str, Any] = {
         "entity_id": str(entity.id),
         "entity_type": entity.entity_type,
-        "dimensions": dict(entity.dimensions or {}),
+        # Without the entries the grid derives itself (the `time` dimension): the receiving grid
+        # derives its own from the record's fields and refuses one from a document.
+        "dimensions": without_grid_derived(entity.dimensions),
     }
     # The schema requires a non-empty string when `name` is present at all; an
     # unnamed entity carries no key rather than an empty one.

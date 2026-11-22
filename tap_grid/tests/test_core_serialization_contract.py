@@ -52,7 +52,6 @@ EXPECTED_ENTITY_COLUMNS = [
     # req-grid-entity-event-time (Issue# 194 - tap).
     "event_start",
     "event_end",
-    "event_kind",
     "event_precision",
 ]
 
@@ -78,7 +77,6 @@ EXPECTED_SPINE_SURFACE = [
     "last_observed_at",
     "event_start",
     "event_end",
-    "event_kind",
     "event_precision",
     "originating_grid_id",
 ]

@@ -177,7 +177,7 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     # {} clears them (Issue# 608 - tap; aws-build Q46b). The type's defaults are re-merged under
     # it, src default, as a create builds them, so a collector's run never wipes them (aws-build
     # Q59 D6; req-grid-dimension-reference-7).
-    from tap_grid.dimension_map import stamp
+    from tap_grid.dimension_map import settle
     from tap_grid.models import Entity
     from tap_grid.registry import get_model_class
 
@@ -185,14 +185,18 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
         type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
     except KeyError:
         type_defaults = {}
-    stored_dims = stamp(type_defaults, envelope_dims)
-
     # Read the persisted spine values to decide whether anything needs to
     # change. A no-op update should not bump updated_at.
     try:
         persisted = Entity.objects.values("name", "dimensions").get(pk=uuid.UUID(str(intent["entity_id"])))
     except Entity.DoesNotExist:
         return {}
+    # The expected map is built where every stored map is (dimension_map.settle): defaults, the
+    # envelope over them, and the grid's own derived entries (the `time` dimension) carried from
+    # the stored row. An envelope never carries those, so leaving them out would make every
+    # re-import of a row that has one differ from the spine, be classified changed, and have the
+    # post-pass strip the entry it just compared against.
+    stored_dims = settle(type_defaults, envelope_dims, persisted=persisted["dimensions"] or {})
 
     delta: dict[str, Any] = {}
     if envelope_name is not None and envelope_name != persisted["name"]:
