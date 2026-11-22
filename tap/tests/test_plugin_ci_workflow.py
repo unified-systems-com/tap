@@ -887,8 +887,11 @@ def test_the_nightly_runs_the_migrations_row_against_core_main(plugin_nightly: d
     assert inputs["migrations_timeout_minutes"]["default"] > inputs["boot_and_test_timeout_minutes"]["default"]
 
 
-def _owner_issue(tmp_path: Path, plugin_nightly: dict[str, Any], *, main: str, migrations: str) -> tuple[int, str, str]:
-    """Run the owner-issue step under a stand-in `gh` and `jq`: not a fork, no open issue, writes logged."""
+def _owner_issue(
+    tmp_path: Path, plugin_nightly: dict[str, Any], *, main: str, migrations: str, open_issue: bool = False
+) -> tuple[int, str, str]:
+    """Run the owner-issue step under a stand-in `gh` and `jq`: not a fork, writes logged, and either no
+    open owner issue or one (number 7) that an earlier red night filed."""
     script = "\n".join(step.get("run", "") for step in _steps(plugin_nightly["jobs"]["owner-issue"]))
     fake = tmp_path / "bin"
     fake.mkdir()
@@ -902,9 +905,14 @@ def _owner_issue(tmp_path: Path, plugin_nightly: dict[str, Any], *, main: str, m
         "esac\n"
     )
     (fake / "gh").chmod(0o755)
-    # The listing is `[]`, so the script's two jq reads are fixed: a count of 0 and no match. A
+    # The script's two jq reads are fixed: the count of open issues and the owner issue's number. A
     # stand-in, because the web image ships no jq and the verdict, not jq, is what is under test.
-    (fake / "jq").write_text('#!/bin/sh\ncat >/dev/null\nfor a; do [ "$a" = length ] && { echo 0; exit 0; }; done\nexit 0\n')
+    count, number = ("1", "7") if open_issue else ("0", "")
+    (fake / "jq").write_text(
+        "#!/bin/sh\ncat >/dev/null\n"
+        f'for a; do [ "$a" = length ] && {{ echo {count}; exit 0; }}; done\n'
+        f'[ -n "{number}" ] && echo {number}\nexit 0\n'
+    )
     (fake / "jq").chmod(0o755)
     env = {
         "PATH": f"{fake}:{os.environ['PATH']}",
@@ -945,3 +953,15 @@ def test_a_red_migrations_row_files_the_owner_issue(
     assert ("issue create" in writes) is red
     if red:
         assert f"migrations row: {migrations}" in writes
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-17")
+@pytest.mark.parametrize(("main", "migrations", "closes"), [("success", "success", True), ("success", "cancelled", False)])
+def test_only_a_migrations_row_that_ran_closes_the_owner_issue(
+    tmp_path: Path, plugin_nightly: dict[str, Any], main: str, migrations: str, closes: bool
+) -> None:
+    """A cancelled replay proved nothing: it must not close the issue a failed replay opened (PR 1313 review)."""
+    code, writes, stderr = _owner_issue(tmp_path, plugin_nightly, main=main, migrations=migrations, open_issue=True)
+    assert code == 0, stderr
+    assert ("issue close 7" in writes) is closes, writes
+    assert "issue create" not in writes

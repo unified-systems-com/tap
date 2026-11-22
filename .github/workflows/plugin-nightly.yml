@@ -289,12 +289,14 @@ jobs:
 
           # The verdict is the `main` row's, unless the migrations row failed while `main` passed:
           # then the night is red too (tap#1262). A skipped migrations row (the caller turned it
-          # off) leaves the verdict to `main` alone, and a cancelled one is said out loud below.
+          # off) leaves the verdict to `main` alone. A cancelled one proved nothing, so with `main`
+          # green the night is `cancelled`: the issue neither opens nor closes, or a cancelled
+          # replay would close an issue a failed one opened, reading as green again.
           verdict="$MAIN_RESULT"
           if [ "$MAIN_RESULT" = success ] && [ "$MIGRATIONS_RESULT" = failure ]; then
             verdict="failure (migrations row)"
-          fi
-          if [ "$MIGRATIONS_RESULT" = cancelled ]; then
+          elif [ "$MAIN_RESULT" = success ] && [ "$MIGRATIONS_RESULT" = cancelled ]; then
+            verdict="cancelled"
             echo "::warning::the migrations row finished 'cancelled'; it proved nothing tonight"
           fi
           rows="latest release row: $LATEST_RESULT; migrations row: $MIGRATIONS_RESULT"
