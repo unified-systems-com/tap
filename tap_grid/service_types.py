@@ -7,7 +7,22 @@ so callers can import them without triggering the Django app registry.
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
+
+
+@dataclass(frozen=True)
+class CollectionWindow:
+    """When a collector read one object, on the collector's own clock (req-grid-entity-collection-time).
+
+    Stated beside a write operation, apart from the object's own fields. ``end`` equals ``start``
+    when the object was read in one call. Each bound is a timezone-aware datetime or an ISO 8601
+    text with a zone; a window with no zone, or whose end precedes its start, is not recorded
+    and the operation's result says so.
+    """
+
+    start: datetime | str
+    end: datetime | str
 
 
 @dataclass(frozen=True)
@@ -53,6 +68,12 @@ class WriteOperation:
             stored spine under the target's row lock, so an envelope that differs makes the
             operation a change even when no typed value moves (req-grid-history-reobservation
             rule 2). Set by the GRIFT importer; never read from a request.
+        collected: When the collector read this operation's object (req-grid-entity-collection-time
+            rule 2): the write batch's statement of collection time for the one object the
+            operation names, kept apart from ``payload``. Recorded on the operation's batch
+            event and on the object's spine row. Omitted means not stated: both are left empty,
+            never filled with the write time. It is not a field of the object and never makes
+            an operation a change.
     """
 
     verb: str
@@ -70,6 +91,7 @@ class WriteOperation:
     cascade: Literal["none", "contained"] = "none"
     absent: Literal["reset", "keep"] = "reset"
     spine_intent: dict[str, Any] | None = None
+    collected: CollectionWindow | None = None
 
 
 # Retirement reasons — a closed vocabulary (req-grid-service-delete-reason-3). A third

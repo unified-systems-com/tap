@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 10 |
-| unbuilt | 9 |
+| mapped | 11 |
+| unbuilt | 8 |
 | retired | 1 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 0 |
@@ -16,6 +16,7 @@
 | --- | --- | --- | --- | --- |
 | `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
 | `req-grid-entity-batch-pointers` | In Development | Implemented | `_pointer_batch` | — |
+| `req-grid-entity-collection-time` | In Development | Verified | `settle_window` | `req-grid-entity-collection-time-1` |
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
 | `req-grid-entity-event-time` | In Development | Implemented | `derive` | — |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |

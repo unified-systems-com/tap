@@ -508,6 +508,22 @@ class _ObservedAtField(models.DateTimeField):  # type: ignore[type-arg]
         return name, "django.db.models.DateTimeField", args, kwargs
 
 
+def _collected_pair_constraint(name: str) -> models.CheckConstraint:
+    """A collection window is both bounds or neither, and never ends before it starts
+    (req-grid-entity-collection-time rule 6), held by the database for every writer."""
+    return models.CheckConstraint(
+        condition=(
+            models.Q(collected_start__isnull=True, collected_end__isnull=True)
+            | models.Q(
+                collected_start__isnull=False,
+                collected_end__isnull=False,
+                collected_end__gte=models.F("collected_start"),
+            )
+        ),
+        name=name,
+    )
+
+
 class Entity(models.Model):
     """The atomic unit of meaning in TAP. All domain objects are entities.
 
@@ -632,6 +648,24 @@ class Entity(models.Model):
             "means the stored pair is the interval the unit covers."
         ),
     )
+    # Collection time (req-grid-entity-collection-time): the window the latest batch to name this
+    # object stated for reading it, on the collector's clock. Empty when that batch stated none;
+    # never the write time. Not indexed (rule 8): written on every observation.
+    collected_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "When the collector began reading this object, as stated by the latest batch to name "
+            "it. Empty when that batch stated no window."
+        ),
+    )
+    collected_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="When it finished. Equal to `collected_start` when the object was read in one call.",
+    )
 
     # Tombstone-aware manager: returns both live and tombstoned rows by
     # default (internal infrastructure dominates the call sites). Callers
@@ -643,6 +677,7 @@ class Entity(models.Model):
         db_table = "tap_entity"
         verbose_name_plural = "Entities"
         ordering = ["-created_at"]
+        constraints = [_collected_pair_constraint("entity_collected_pair")]
         indexes = [
             GinIndex(fields=["dimensions"], name="idx_entity_dimensions_gin"),
             # The spine natural key (req-grid-entity-natural-key-22): a hash index for equality,
@@ -692,6 +727,8 @@ class Entity(models.Model):
         "event_start",
         "event_end",
         "event_precision",
+        "collected_start",
+        "collected_end",
         "originating_grid_id",
     )
     SPINE_DJANGO_NAME: ClassVar[dict[str, str]] = {
@@ -1588,6 +1625,11 @@ class BaseModel(models.Model):
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
         flip_changed_fields: Any = kwargs.pop("flip_changed_fields", _FLIP_TOUCHED_UNSET)
+        # The collection window the writer stated for this object, already settled by the write
+        # pipeline (req-grid-entity-collection-time). Absent means none was stated: where this
+        # save names its batch on the spine, the pair is written empty, so a pair is never left
+        # standing for a batch that did not state one (rule 5).
+        collected: dict[str, Any] = kwargs.pop("_collected", None) or {"collected_start": None, "collected_end": None}
         self._prepare_for_write_checked()
         if not skip_validation:
             self.full_validate()
@@ -1657,6 +1699,8 @@ class BaseModel(models.Model):
                     last_changed_batch_id=pointer_batch,
                     last_observed_batch_id=pointer_batch,
                     **event_time.as_columns(),
+                    # The window the creating batch stated, if it named itself on the row.
+                    **(collected if pointer_batch is not None else {}),
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1692,6 +1736,9 @@ class BaseModel(models.Model):
                 spine_updates["last_changed_batch_id"] = pointer_batch
                 spine_updates["last_observed_batch_id"] = pointer_batch
                 spine_updates["last_observed_at"] = now
+                # The collection window belongs to the batch `last_observed_batch_id` names, so
+                # it is written with it: the stated pair, or empty (collection-time rules 4, 5).
+                spine_updates.update(collected)
             new_name = self.get_name()
             if self.entity.name != new_name:
                 spine_updates["name"] = new_name
@@ -1740,6 +1787,8 @@ class BaseModel(models.Model):
                 self.entity.last_changed_batch_id = pointer_batch
                 self.entity.last_observed_batch_id = pointer_batch
                 self.entity.last_observed_at = now
+                self.entity.collected_start = collected["collected_start"]
+                self.entity.collected_end = collected["collected_end"]
 
     def prepare_for_write(self) -> None:
         """Put the instance's values into the form they are stored in.
@@ -2376,10 +2425,23 @@ class BatchEvent(models.Model):
         blank=True,
         help_text="Additional context (edge endpoints, etc.).",
     )
+    # Collection time for this pass (req-grid-entity-collection-time): the per-pass record. The
+    # spine row holds a copy of the pair from the latest batch to name the object.
+    collected_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the collector began reading the object in this pass, if the writer stated it.",
+    )
+    collected_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When it finished. Never the write time; empty when not stated.",
+    )
 
     class Meta:
         db_table = "tap_batch_event"
         ordering = ["timestamp"]
+        constraints = [_collected_pair_constraint("batchevent_collected_pair")]
         indexes = [
             models.Index(fields=["batch", "timestamp"], name="idx_batchevent_batch_ts"),
             models.Index(fields=["entity_id", "timestamp"], name="idx_batchevent_entity_ts"),
