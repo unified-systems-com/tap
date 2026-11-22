@@ -387,7 +387,11 @@ COPY --from=js-vendor /opt/tap-static-vendor /opt/tap-static-vendor
 # is root-owned and a non-root process cannot create a path in it.
 RUN mkdir -p /app/.venv /home/nonroot/.cache/uv /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files \
  && chown -R nonroot:0 /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files \
- && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files
+ && chmod -R g+rwX /app/.venv /home/nonroot /opt/tailwind /run/tap /var/lib/tap/plugin-data /var/lib/tap/files \
+ && install -d -o nonroot -g 0 -m 0700 /var/lib/tap/installation
+# /var/lib/tap/installation is the mount point of an installation's state volume (tap.initialize,
+# req-tap-bake-installation-identity): a fresh named volume takes this directory's owner and mode,
+# so the serving user can write the identity and nobody else in the container can read it.
 
 # HOME is declared, not inherited: under the dev `user:` override the runtime uid has no
 # /etc/passwd entry, so Docker would hand it HOME=/ and uv, git and anything else reaching
