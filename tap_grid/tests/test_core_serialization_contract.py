@@ -49,6 +49,11 @@ EXPECTED_ENTITY_COLUMNS = [
     "last_changed_batch_id",
     "last_observed_batch_id",
     "last_observed_at",
+    # req-grid-entity-event-time (Issue# 194 - tap).
+    "event_start",
+    "event_end",
+    "event_kind",
+    "event_precision",
 ]
 
 # The exact top-level keys of a response envelope, in canonical serialization order.
@@ -71,6 +76,10 @@ EXPECTED_SPINE_SURFACE = [
     "last_changed_batch_id",
     "last_observed_batch_id",
     "last_observed_at",
+    "event_start",
+    "event_end",
+    "event_kind",
+    "event_precision",
     "originating_grid_id",
 ]
 

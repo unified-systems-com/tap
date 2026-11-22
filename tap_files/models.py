@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 
 SHA256_PATTERN = "^[0-9a-f]{64}$"
@@ -54,7 +55,7 @@ class TapFile(BaseModel):
     store returned about the bytes and nothing of the bytes themselves; what they are is recorded on
     a format record joined by ``FILE_CONTENTS``.
 
-    TAP-IMPLEMENTS: req-tap-files-node@0719d00cb09d/facdff69600b (derivation) — the one declaration of
+    TAP-IMPLEMENTS: req-tap-files-node@0719d00cb09d/f58dae9c757c (derivation) — the one declaration of
         the core file type: its fields and their shapes, internal-only, found again by its path.
     """
 
@@ -69,6 +70,8 @@ class TapFile(BaseModel):
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {}
     INTERNAL_ONLY: ClassVar[bool] = True
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("path",)
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict[str, Any]]] = {
         "name": {"type": "string", "minLength": 1, "maxLength": 255},
@@ -123,6 +126,8 @@ class TapDirectory(BaseModel):
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {}
     INTERNAL_ONLY: ClassVar[bool] = True
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("path",)
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "tap_directory"}], "edges": [{"type": "CONTAINS_TAP_DIRECTORY"}]},

@@ -31,6 +31,7 @@ from tap_grid.caller_context import (
 )
 from tap_grid.compound_edges import EMPTY_INDEX, DependentsIndex
 from tap_grid.constraints import validate_edge as _validate_edge_constraint
+from tap_grid.event_time import derive_for_instance
 from tap_grid.exceptions import (
     EdgePropertyValidationError,
     InvalidEdgeError,
@@ -1029,6 +1030,9 @@ def _execute_write_pipeline(
                 # (req-grid-entity-batch-pointers rules 2 and 5).
                 last_changed_batch_id=_pointer_uuid(batch_id),
                 last_observed_batch_id=_pointer_uuid(batch_id),
+                # Event time, derived from the fields the model declares; written here for the
+                # same reason as the natural key (req-grid-entity-event-time rule 3).
+                **derive_for_instance(instance).as_columns(),
             )
             # Signal BaseModel.save() to skip its spine_updates branch on the
             # subsequent save: this Entity row was created moments ago at
@@ -1286,6 +1290,10 @@ def _execute_write_pipeline(
             entity_id=entity_id_out,
             object_summary=summary,
             state=outcome,
+            # A declared event time the grid could not store truthfully is left off the spine
+            # and reported here, naming the field (req-grid-entity-event-time rule 12). It is
+            # reported on an unchanged write too: the typed value is still what it was.
+            warnings=[] if is_delete else list(derive_for_instance(instance).warnings),
         )
 
     except ServiceVersionConflictError as exc:

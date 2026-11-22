@@ -1,6 +1,6 @@
 """tap_viz models — Viz layout, projection, elevation, and arrangement entities.
 
-TAP-IMPLEMENTS: req-viz-info-window-row-link@48330d75451b/73fd5f34890d (derivation) — the
+TAP-IMPLEMENTS: req-viz-info-window-row-link@48330d75451b/cb71eca0f23c (derivation) — the
     `info_window.row_url_template` property on a projection's badge-set schema; the
     placeholder-fill and same-origin enforcement it authorizes live client-side in
     `tap_viz/static/tap_viz/js/runtime/info-window.js` (`_buildRowUrl`), which `ast`-based
@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 from tap_grid.natural_key import KEYLESS, Keyless
 
@@ -61,9 +62,9 @@ class Arrangement(BaseModel):
     code — and are connected to layouts via USES_ARRANGEMENT edges (hotlinks).
     See spec-viz-arrangement.md.
 
-    TAP-IMPLEMENTS: req-viz-arrangement-model@058264396ff1/ef484d91ce8f (derivation) — the
+    TAP-IMPLEMENTS: req-viz-arrangement-model@058264396ff1/9535ff62cae4 (derivation) — the
         TAP-managed entity that stores the declarative arrangement rule.
-    TAP-IMPLEMENTS: req-viz-arrangement-definition@9a086380314a/ef484d91ce8f (derivation) —
+    TAP-IMPLEMENTS: req-viz-arrangement-definition@9a086380314a/9535ff62cae4 (derivation) —
         the definition JSON shape (anchor, members, positioning, distribution) is
         schema-validated here via FIELD_VALIDATION_SCHEMA; the runtime executes what
         this model admits.
@@ -73,6 +74,8 @@ class Arrangement(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed — and designed to float: arrangements change constantly and nothing needs to recognise one across a rewrite.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed — and designed to float: arrangements change constantly and nothing needs to recognise one across a rewrite"
     )
@@ -144,13 +147,13 @@ class Layout(BaseModel):
     polish applied after the module runs). Both are optional; layouts may use
     either, both, or neither. See spec-viz-layouts.md.
 
-    TAP-IMPLEMENTS: req-viz-layout-artifact@dbd78fbb7bd6/22941d3a9c72 (derivation) — the
+    TAP-IMPLEMENTS: req-viz-layout-artifact@dbd78fbb7bd6/2ef1551c3f83 (derivation) — the
         TAP-managed layout artifact whose definition carries the file-backed module
         reference.
-    TAP-IMPLEMENTS: req-viz-layout-dual-mode@c2ac6c52a142/22941d3a9c72 (derivation) — the
+    TAP-IMPLEMENTS: req-viz-layout-dual-mode@c2ac6c52a142/2ef1551c3f83 (derivation) — the
         dual-mode definition contract: optional js_file, optional ordered arrangements,
         both or neither, admitted by the definition schema.
-    TAP-IMPLEMENTS: req-viz-arrangement-layout-hotlink@958618d0f494/22941d3a9c72 (derivation) —
+    TAP-IMPLEMENTS: req-viz-arrangement-layout-hotlink@958618d0f494/2ef1551c3f83 (derivation) —
         the layout-arrangements HOTLINK declaration: definition arrangements.* entries
         become validated USES_ARRANGEMENT edges.
     """
@@ -159,6 +162,8 @@ class Layout(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed — designed to float, like Arrangement.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = "authored, not observed — designed to float, like Arrangement"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
@@ -252,6 +257,8 @@ class Elevation(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # an event: a record of an elevation happening, not an observation of a thing.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = "an event: a record of an elevation happening, not an observation of a thing"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
@@ -541,9 +548,9 @@ class Projection(BaseModel):
       - USES_ELEVATION (ordered, exact) — every elevation in the journey
       - USES_DEFAULT_ELEVATION (single, exact) — the landing point on initial load
 
-    TAP-IMPLEMENTS: req-viz-projection-artifact@97e6eb81eca2/b990f5c85066 (derivation) — the
+    TAP-IMPLEMENTS: req-viz-projection-artifact@97e6eb81eca2/441b72bfb265 (derivation) — the
         first-class TAP Viz projection artifact.
-    TAP-IMPLEMENTS: req-viz-projection-entity-structure@a46a83f09d44/b990f5c85066 (derivation) —
+    TAP-IMPLEMENTS: req-viz-projection-entity-structure@a46a83f09d44/441b72bfb265 (derivation) —
         elevations-plus-default composition via the two typed hotlinks, with the
         cross-hotlink invariant (default must appear in elevations) enforced in
         validate().
@@ -553,6 +560,8 @@ class Projection(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed — designed to float, like Arrangement.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = "authored, not observed — designed to float, like Arrangement"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {

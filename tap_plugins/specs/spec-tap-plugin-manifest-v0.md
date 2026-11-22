@@ -308,6 +308,7 @@ Optional fields:
 - `property_schema`: object
 - `default_dimensions`: object
 - `internal_only`: boolean, default false; true makes the type internal-only (`req-grid-edge-internal`)
+- `event_time`: object; which of the edge's properties say when the relationship happened or held (`req-grid-entity-event-time` rule 20 in `tap_grid/specs/spec-grid-entity.md`). Absent means the type has no event time
 
 Unknown keys are invalid.
 
