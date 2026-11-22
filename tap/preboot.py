@@ -857,7 +857,9 @@ def _check_product_plugins(entries: list[dict[str, Any]], manifest: dict[str, An
     problems = [p for entry in entries for p in product_image.plugin_problems(entry, manifest)]
     if problems:
         for problem in problems:
-            logger.error("[e4a7] pre-boot (product image): %s", _one_log_line(problem))
+            # NOSONAR (S5145) — `_one_log_line` replaces every control character, so a RECORD path
+            # cannot forge a log line.
+            logger.error("[e4a7] pre-boot (product image): %s", _one_log_line(problem))  # NOSONAR (S5145)
         raise PrebootError(
             f"product image: {len(problems)} plugin problem(s), first: {_one_log_line(problems[0])}; a product image installs "
             "nothing at start, so rebuild the image rather than patching it"

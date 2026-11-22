@@ -234,3 +234,17 @@ def test_the_product_image_build_names_no_product() -> None:
         named = [n for n in names if n and re.search(rf"\b{re.escape(n.lower())}\b", text)]
         assert not named, f"{source.relative_to(ROOT)} names {named}"
     assert not [n for n in names if re.search(rf"\b{re.escape(n)}\b", _product_block().lower())]
+
+
+@pytest.mark.spec("req-tap-bake-attest")
+def test_the_workflow_publishes_only_a_verified_base_from_the_default_branch() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "bake-product-image.yml").read_text()
+    on = workflow[workflow.index("\non:") : workflow.index("\npermissions:")]
+    assert "workflow_call" in on and "pull_request" not in on
+    guard = workflow.index("Refuse anything but a push or dispatch")
+    assert guard < workflow.index("actions/checkout@"), "the branch guard runs before anything else"
+    assert 'case "$EVENT" in push|workflow_dispatch)' in workflow
+    assert '"refs/heads/${DEFAULT_BRANCH}"' in workflow
+    verify = workflow.index("gh attestation verify")
+    assert verify < workflow.index("docker cp "), "the base is verified before its Dockerfile is read"
+    assert "--signer-workflow unified-systems-com/tap/.github/workflows/publish-images.yml" in workflow

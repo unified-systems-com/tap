@@ -27,7 +27,7 @@ echo "==> Building the core environment from uv.lock (uv sync --frozen --all-pac
 # FIPS OpenSSL, which is why the image's deps-warm stage builds it; --no-build refuses it outright
 # (tried 2026-11-22). Every sdist is hash-checked against uv.lock, and its built wheel comes from
 # the seed verified above, so nothing unpinned builds here. The entrypoint has run this same sync.
-uv sync --frozen --all-packages  # NOSONAR — see above
+uv sync --frozen --all-packages  # NOSONAR (S8541) — see above
 
 echo "==> Installing the record's plugins and writing the install manifest..."
 /app/.venv/bin/python -m tap.product_image build --profile "${profile}" --base-image "${base_image}"

@@ -361,7 +361,7 @@ def build(profile_id: str, base_image: str) -> dict[str, Any]:
     versions already installed) and hash-verified. The build fails if any installed
     distribution is not accounted for (`req-tap-bake-product-image-2`).
 
-    TAP-IMPLEMENTS: req-tap-bake-product-image@b678bc82fc6b/4b185d013798 (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-bake-product-image@b678bc82fc6b/0be40de65fec (derivation) — the one
         place a product image's environment and its install manifest are produced.
     """
     require_digest_ref(base_image)
@@ -369,8 +369,12 @@ def build(profile_id: str, base_image: str) -> dict[str, Any]:
         raise ProductImageError(f"profile id {profile_id!r} is not a lowercase identifier")
     # The record is read from the one place the Dockerfile puts it, and the manifest is written
     # to the one place pre-boot reads it: neither path is an input.
-    record_path = _BOOT_DIR / f"{profile_id}.boot.json"
-    record_bytes = record_path.read_bytes()
+    boot_dir = _BOOT_DIR.resolve()
+    record_path = (boot_dir / f"{profile_id}.boot.json").resolve()
+    if not record_path.is_relative_to(boot_dir) or not record_path.is_file():
+        raise ProductImageError(f"no boot record for profile {profile_id!r} in {boot_dir}")
+    # NOSONAR (S8707) — checked immediately above: resolved, inside /app/boot, a real file.
+    record_bytes = record_path.read_bytes()  # NOSONAR (S8707)
     record = json.loads(record_bytes)
     plugins = _record_plugins(record)
     core = installed_distributions()
@@ -460,7 +464,8 @@ def build(profile_id: str, base_image: str) -> dict[str, Any]:
         "distributions": distributions,
     }
     target = MANIFEST_PATH
-    target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    # NOSONAR (S8707) — a module constant; no argument names this path.
+    target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")  # NOSONAR (S8707)
     logger.info(
         "[b4k2] product image: manifest written to %s (%d distributions, %d plugins)",
         target,
