@@ -75,6 +75,26 @@ on:
         required: false
         type: number
         default: 25
+      migrations:
+        description: >-
+          Run the `migrations` row (tap#1262, req-tap-plugin-extdev-repo-ci-17): boot against core
+          `main` with the plugin's real migrations replayed from zero, then prove a migrated
+          database equals a model-built one. Every PR and the other two rows build the schema from
+          the models, so this row is the only place a plugin migration that no longer applies, or
+          that has drifted from its models, is seen before a real install. On by default; false
+          only for a repository that ships no migrations.
+        required: false
+        type: boolean
+        default: true
+      migrations_timeout_minutes:
+        description: >-
+          Job timeout for the migrations row. It migrates from zero twice over (the boot, then
+          tap.schema_parity's two migrated builds, which run alongside its model build), so it
+          is longer than the suite rows' timeout: aws_core's migrate alone took about 13 minutes
+          on the free runner before tap#1258.
+        required: false
+        type: number
+        default: 90
       issue_title:
         description: >-
           Title of the owner issue. NOT what identifies it — see the owner-issue job: the title
@@ -176,6 +196,29 @@ jobs:
     secrets:
       plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
 
+  # The migrations row (tap#1262). Since tap#1258 every other database CI makes, this lane's two
+  # rows included, is built from the models, so nothing else replays a plugin's migrations. Core's
+  # own `migrations` job (product-lines.yml) replays core's and the core_ci fixture plugins'
+  # only. This row boots against core `main` with the migrations switched back on and runs
+  # tap.schema_parity (plugin-ci's `schema_parity` road). It is not informational: a red here
+  # files the owner issue as a red `main` row does, because it is the field's road, and
+  # nothing else will notice it breaking.
+  migrations:
+    name: migrations from zero vs core main
+    if: ${{ inputs.migrations }}
+    uses: ./.github/workflows/plugin-ci.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      plugin_slug: ${{ inputs.plugin_slug }}
+      plugin_subdir: ${{ inputs.plugin_subdir }}
+      harness_ref: main
+      schema_parity: true
+      boot_and_test_timeout_minutes: ${{ inputs.migrations_timeout_minutes }}
+    secrets:
+      plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
+
   # The owner issue. A red night nobody hears about is the failure tap#367 describes.
   #
   # Three defects in the hand-written copies this replaces, all fixed here, all found 2026-09-26
@@ -198,7 +241,7 @@ jobs:
   # job result — so nothing in the tree under test can reach the write.
   owner-issue:
     name: file or close the owner issue
-    needs: [main, latest]
+    needs: [main, latest, migrations]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -211,6 +254,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       MAIN_RESULT: ${{ needs.main.result }}
       LATEST_RESULT: ${{ needs.latest.result }}
+      MIGRATIONS_RESULT: ${{ needs.migrations.result }}
       TITLE: ${{ inputs.issue_title }}
       ASSIGNEE: ${{ inputs.assignee }}
       MARKER: "<!-- tap-plugin-nightly-owner-issue -->"
@@ -243,27 +287,41 @@ jobs:
             '[.[] | select(.author.login == "app/github-actions" and ((.body // "") | contains($m)))]
              | sort_by(.number) | .[0].number // empty' <<<"$listed")"
 
-          case "$MAIN_RESULT" in
+          # The verdict is the `main` row's, unless the migrations row failed while `main` passed:
+          # then the night is red too (tap#1262). A skipped migrations row (the caller turned it
+          # off) leaves the verdict to `main` alone. A cancelled one proved nothing, so with `main`
+          # green the night is `cancelled`: the issue neither opens nor closes, or a cancelled
+          # replay would close an issue a failed one opened, reading as green again.
+          verdict="$MAIN_RESULT"
+          if [ "$MAIN_RESULT" = success ] && [ "$MIGRATIONS_RESULT" = failure ]; then
+            verdict="failure (migrations row)"
+          elif [ "$MAIN_RESULT" = success ] && [ "$MIGRATIONS_RESULT" = cancelled ]; then
+            verdict="cancelled"
+            echo "::warning::the migrations row finished 'cancelled'; it proved nothing tonight"
+          fi
+          rows="latest release row: $LATEST_RESULT; migrations row: $MIGRATIONS_RESULT"
+
+          case "$verdict" in
             success)
               if [ -n "$existing" ]; then
                 gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
-                  --comment "Green again vs core main: $run_url (latest release row: $LATEST_RESULT)."
+                  --comment "Green again vs core main: $run_url ($rows)."
               fi
-              echo "vs core main: green (latest release row: $LATEST_RESULT)"
+              echo "vs core main: green ($rows)"
               ;;
             skipped|cancelled)
               # The run proved nothing either way, so the issue neither opens nor closes. Said
               # loudly, because a nightly that keeps getting cancelled must not read as green.
-              echo "::warning::vs core main finished '$MAIN_RESULT'; owner issue left as it was"
+              echo "::warning::vs core main finished '$verdict'; owner issue left as it was"
               ;;
             *)
               if [ -n "$existing" ]; then
                 gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
-                  --body "Still red: $run_url (latest release row: $LATEST_RESULT)."
+                  --body "Still red ($verdict): $run_url ($rows)."
               else
                 body="$(printf '%s\n\n%s\n\n%s\n' \
-                  "The nightly run of this plugin against core \`main\` is **$MAIN_RESULT**: $run_url" \
-                  "Latest core release row: $LATEST_RESULT. The push/PR lane proves the declared floor; this row proves the next core. Owner: fix the plugin (keep the floor), or raise the floor if the fix needs a newer core. This issue is updated by each red nightly and closed by the next green one (tap#367)." \
+                  "The nightly run of this plugin against core \`main\` is **$verdict**: $run_url" \
+                  "Rows: $rows. The push/PR lane proves the declared floor; the main row proves the next core, and the migrations row proves the plugin's migrations still apply from zero and match its models. Owner: fix the plugin (keep the floor), or raise the floor if the fix needs a newer core. This issue is updated by each red nightly and closed by the next green one (tap#367)." \
                   "$MARKER")"
                 if [ -n "$ASSIGNEE" ]; then
                   gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE"
@@ -271,7 +329,7 @@ jobs:
                   gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
                 fi
               fi
-              echo "::error::vs core main is $MAIN_RESULT — see $run_url"
+              echo "::error::vs core main is $verdict — see $run_url"
               exit 1
               ;;
           esac
