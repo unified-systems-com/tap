@@ -155,6 +155,18 @@ on:
         required: false
         type: number
         default: 25
+      schema_parity:
+        description: >-
+          The migrations road (tap#1262, req-tap-plugin-extdev-repo-ci-17). true boots the
+          profile with the real migrations from zero (TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS=false)
+          instead of building the schema from the models, then runs `tap.schema_parity`, which
+          fails on any difference between a migrated and a model-built database. The fast set,
+          the test-DB template, the suite and the after-tests command do not run: every other
+          road builds from the models, so this one exists only to replay the migrations.
+          plugin-nightly.yml's `migrations` row passes it; a pull request never does.
+        required: false
+        type: boolean
+        default: false
     secrets:
       plugins_ro_pat:
         description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
@@ -764,6 +776,9 @@ jobs:
           # checkout. Both roads in produce this same id.
           TAP_BOOT_PROFILE: _ext_ci__dev
           TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+          # docker-compose.ci.yml defaults this true (req-boot-schema-from-models-6). The
+          # migrations road turns it off, so the entrypoint migrates every app from zero.
+          TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS: ${{ inputs.schema_parity && 'false' || 'true' }}
         run: docker compose --env-file .env up -d
 
       # The boot's long pole is `migrate` (aws_core, 2026-11-17: ~13 of the boot's 13.5 minutes),
@@ -809,6 +824,7 @@ jobs:
       # `test_workers: "0"` for a suite that is not xdist-safe, runs serially exactly as before.
       - name: Start the test-DB template build (background)
         id: template
+        if: ${{ !inputs.schema_parity }}
         env:
           TEST_WORKERS: ${{ inputs.test_workers }}
         run: |
@@ -846,6 +862,7 @@ jobs:
       # suite runs them again; the zero-executed guard below counts the suite alone.
       - name: Fast set (ci_fast) — fail early
         id: fast
+        if: ${{ !inputs.schema_parity }}
         env:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
@@ -883,6 +900,25 @@ jobs:
             echo "::error::web did not become healthy within the timeout"
             docker compose --env-file .env logs web | tail -150; exit 1
           fi
+
+      # The migrations road (tap#1262). The boot above migrated every app from zero, so a
+      # migration that no longer applies has already failed the health wait with TAP-ABORT.
+      # tap.schema_parity then builds three scratch databases from the same installed apps (a
+      # migrate with Django's reload, one with the shallow reload, one from the models) and fails
+      # on any difference in schema, rows or recorded migrations. It is core's nightly check
+      # (product-lines.yml `migrations`, req-boot-schema-from-models-5), run here over the
+      # plugin's own migrations, which core's job never installs. A harness older than tap#1258
+      # has no tap.schema_parity and fails closed: the road would otherwise prove nothing green.
+      - name: Parity — the real migrations from zero equal a model-built database
+        id: parity
+        if: ${{ inputs.schema_parity }}
+        run: |
+          set -o pipefail
+          if [ ! -f tap/schema_parity.py ]; then
+            echo "::error::this harness has no tap/schema_parity.py (it predates tap#1258): the migrations road cannot run on it"
+            exit 1
+          fi
+          docker compose --env-file .env exec -T web sh -c 'cd /app && uv run --no-sync python -m tap.schema_parity' | tee parity.log
 
       # The plugin's OWN dependency closure, read from the venv this boot actually resolved
       # (tap#664). A plugin repo has no lockfile — `uv lock` cannot resolve there, and the
@@ -940,6 +976,7 @@ jobs:
       # suite across xdist workers that each clone it. A template that failed to build fails
       # here with its log: the serial road would have failed the same migration, more slowly.
       - name: Run the plugin's in-package tests
+        if: ${{ !inputs.schema_parity }}
         env:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
           TEST_WORKERS: ${{ inputs.test_workers }}
@@ -984,7 +1021,7 @@ jobs:
       # cannot ask for them itself).
       - name: After-tests command (caller-supplied)
         id: after_tests
-        if: ${{ inputs.after_tests_command != '' }}
+        if: ${{ inputs.after_tests_command != '' && !inputs.schema_parity }}
         env:
           AFTER_TESTS_COMMAND: ${{ inputs.after_tests_command }}
           HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
@@ -1093,6 +1130,8 @@ jobs:
           FAST_RESULT: ${{ steps.fast.outputs.result || 'not run' }}
           TEST_MODE: ${{ steps.template.outputs.mode || 'not reached' }}
           TEST_WORKERS: ${{ inputs.test_workers }}
+          SCHEMA_PARITY: ${{ inputs.schema_parity }}
+          PARITY_OUTCOME: ${{ steps.parity.outcome || 'not reached' }}
         run: |
           plugin_sha=$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)
           executed=$(python3 - <<'PY'
@@ -1109,10 +1148,23 @@ jobs:
             echo "| --- | --- |"
             echo "| core harness | \`$HARNESS_SHA\` (${HARNESS_SOURCE}${HARNESS_FLOOR:+, floor $HARNESS_FLOOR}) |"
             echo "| plugin | \`$plugin_sha\` |"
+            if [ "$SCHEMA_PARITY" = true ]; then
+              echo "| road | migrations from zero, then \`tap.schema_parity\` (no suite) |"
+              echo "| parity | $PARITY_OUTCOME |"
+            fi
             echo "| fast set (ci_fast) | $FAST_RESULT |"
             echo "| suite mode | $TEST_MODE$([ "$TEST_MODE" = parallel ] && echo " (-n $TEST_WORKERS)") |"
             echo "| tests executed | $executed |"
           } >> "$GITHUB_STEP_SUMMARY"
+          # The migrations road runs no suite by design; its evidence is the parity step, which
+          # must have run and passed. Every other road keeps the zero-executed rule below.
+          if [ "$SCHEMA_PARITY" = true ]; then
+            if [ "$PARITY_OUTCOME" != success ]; then
+              echo "::error::the migrations road's parity check is '$PARITY_OUTCOME', not success"
+              exit 1
+            fi
+            exit 0
+          fi
           if [ "$FAST_RESULT" = FAILED ]; then
             echo "::error::the ci_fast set failed, so the suite never ran — see the fast-set step"
             exit 1
