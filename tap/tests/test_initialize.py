@@ -9,8 +9,11 @@ stack and is recorded in tap#1328.
 
 from __future__ import annotations
 
+import os
 import shlex
 import stat
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -40,7 +43,10 @@ class _FakeConn:
 @pytest.fixture
 def cluster(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """A fake cluster: what the database holds, the passwords tried, and every owner re-key."""
-    state: dict[str, Any] = {"relations": 0, "tap_schema": False, "rekeys": [], "tried": [], "fail_rekey": False}
+    state: dict[str, Any] = {
+        "relations": 0, "tap_schema": False, "stamp": "", "rekeys": [], "stamps": [], "tried": [],
+        "fail_rekey": False, "locks": 0,
+    }  # fmt: skip
 
     def connect(target: Any, passwords: list[str], dbname: str | None = None, **_: Any) -> _FakeConn:
         state["tried"].append([p for p in passwords if p])
@@ -49,7 +55,12 @@ def cluster(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     @contextmanager
     def lock(conn: Any, dbname: str):
         state["locked"] = dbname
-        yield
+        state["locks"] += 1
+        state["held"] = True
+        try:
+            yield
+        finally:
+            state["held"] = False
 
     def rekey(conn: Any, user: str, password: str) -> None:
         if state["fail_rekey"]:
@@ -58,8 +69,16 @@ def cluster(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(initialize, "connect", connect)
     monkeypatch.setattr(initialize, "installation_lock", lock)
-    monkeypatch.setattr(initialize, "database_contents", lambda conn: (state["relations"], state["tap_schema"]))
+
+    def stamp(conn: Any, dbname: str, activation_id: str) -> None:
+        state["stamp"] = initialize.STAMP_PREFIX + activation_id
+        state["stamps"].append(activation_id)
+
+    monkeypatch.setattr(
+        initialize, "database_contents", lambda conn: (state["relations"], state["tap_schema"], state["stamp"])
+    )
     monkeypatch.setattr(initialize, "apply_owner_password", rekey)
+    monkeypatch.setattr(initialize, "apply_stamp", stamp)
     return state
 
 
@@ -69,25 +88,44 @@ def _handoff(path: Path) -> dict[str, str]:
 
 @pytest.mark.spec("req-tap-bake-initializer-7")
 @pytest.mark.parametrize(
-    ("identity", "relations", "tap_schema", "road"),
+    ("identity", "relations", "tap_schema", "stamp", "road"),
     [
-        (None, 0, False, initialize.ROAD_ACTIVATE),
-        (None, 50, True, initialize.ROAD_LEGACY),
-        ({"status": "pending", "progress": {}}, 0, False, initialize.ROAD_RESUME),
-        ({"status": "active", "progress": {}}, 0, False, initialize.ROAD_FINISH),
-        ({"status": "active", "progress": {"finish": "done"}}, 50, True, initialize.ROAD_FINISH),
+        (None, 0, False, "", initialize.ROAD_ACTIVATE),
+        (None, 50, True, "", initialize.ROAD_LEGACY),
+        (None, 0, False, "a comment someone else wrote", initialize.ROAD_ACTIVATE),
+        ({"status": "pending", "activation_id": "A", "progress": {}}, 0, False, "", initialize.ROAD_RESUME),
+        ({"status": "active", "activation_id": "A", "progress": {}}, 0, False, "tap-installation:A", initialize.ROAD_FINISH),
+        (
+            {"status": "active", "activation_id": "A", "progress": {"finish": "done"}},
+            50, True, "tap-installation:A", initialize.ROAD_FINISH,
+        ),
     ],
-)
-def test_each_store_state_has_one_road(identity: Any, relations: int, tap_schema: bool, road: str) -> None:
-    assert initialize.classify(identity, relations, tap_schema) == road
+)  # fmt: skip
+def test_each_store_state_has_one_road(identity: Any, relations: int, tap_schema: bool, stamp: str, road: str) -> None:
+    assert initialize.classify(identity, relations, tap_schema, stamp) == road
 
 
 @pytest.mark.spec("req-tap-bake-initializer-7")
-def test_unknown_stores_are_refused() -> None:
-    with pytest.raises(initialize.InitializeError, match="no TAP schema"):
-        initialize.classify(None, 1, False)
-    with pytest.raises(initialize.InitializeError, match="stores disagree"):
-        initialize.classify({"status": "active", "progress": {"finish": "done"}}, 0, False)
+@pytest.mark.parametrize(
+    ("identity", "relations", "tap_schema", "stamp", "refused"),
+    [
+        (None, 1, False, "", "no TAP schema"),
+        (None, 40, False, "", "no TAP schema"),  # a Django database that is not TAP's
+        (None, 50, True, "tap-installation:B", "volume is missing"),
+        ({"status": "active", "activation_id": "A", "progress": {"finish": "done"}}, 0, False, "tap-installation:A",
+         "stores disagree"),
+        ({"status": "active", "activation_id": "A", "progress": {}}, 50, True, "tap-installation:B",
+         "different installations"),
+        ({"status": "active", "activation_id": "A", "progress": {}}, 50, True, "", "no stamp from this installation"),
+        ({"status": "active", "activation_id": "A", "progress": {}}, 40, False, "tap-installation:A", "not TAP's"),
+        ({"status": "pending", "activation_id": "A", "progress": {}}, 40, False, "", "not TAP's"),
+    ],
+)  # fmt: skip
+def test_unknown_or_mismatched_stores_are_refused(
+    identity: Any, relations: int, tap_schema: bool, stamp: str, refused: str
+) -> None:
+    with pytest.raises(initialize.InitializeError, match=refused):
+        initialize.classify(identity, relations, tap_schema, stamp)
 
 
 @pytest.mark.spec("req-tap-bake-initializer-7")
@@ -131,7 +169,7 @@ def test_a_restart_never_mints_again(store: initialize.StateStore, cluster: dict
     initialize.run(store, initialize.Target(URL), handoff=handoff)
     first = store.read()
     assert first is not None
-    cluster.update(relations=50, tap_schema=True, rekeys=[])
+    cluster.update(relations=50, tap_schema=True, rekeys=[], stamps=[])
     minted: list[int] = []
 
     def must_not_mint() -> dict[str, Any]:
@@ -139,7 +177,7 @@ def test_a_restart_never_mints_again(store: initialize.StateStore, cluster: dict
         return initialize.mint_identity()
 
     assert initialize.run(store, initialize.Target(URL), handoff=handoff, minter=must_not_mint) == "finish"
-    assert minted == [] and cluster["rekeys"] == [] and store.read() == first
+    assert minted == [] and cluster["rekeys"] == [] and cluster["stamps"] == [] and store.read() == first
     assert cluster["tried"][-1][0] == first["owner_password"], (
         "an activated installation connects with its own password"
     )
@@ -195,10 +233,77 @@ def test_the_store_must_be_an_absolute_writable_directory(monkeypatch: pytest.Mo
 
 
 @pytest.mark.spec("req-tap-bake-initializer")
-def test_the_entrypoint_runs_the_initializer_before_any_setting_and_boot_after() -> None:
+def test_the_entrypoint_runs_the_initializer_before_any_setting_and_finish_fails_closed() -> None:
     text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
     init = text.index("python -m tap.initialize run")
     assert init < text.index("scripts/codespace-env") and init < text.index("python -m tap.preboot")
     assert "mounted volume; the installation's identity must outlive the container" in text
-    boot = text.index('if [ -n "${TAP_INITIALIZED}" ]; then')
-    assert text.index("tap.initialize mark finish", boot) < text.index("tap.initialize mark first-login", boot)
+    block = text[text.index("==> Installation: Finish") :]
+    block = block[: block.index("\nfi\n")]
+    assert "if ! /app/.venv/bin/python -m tap.initialize finish; then" in block and "exit 1" in block
+    assert "enroll_admin" not in block, "the link is minted under the lock, inside tap.initialize finish"
+
+
+@pytest.mark.spec("req-tap-bake-initializer")
+def test_the_module_imports_without_django() -> None:
+    """Settings-free is the security model: the module must load before any setting exists."""
+    env = {k: v for k, v in os.environ.items() if k != "DJANGO_SETTINGS_MODULE"}
+    probe = (
+        "import sys, tap.initialize; print(sorted(m for m in sys.modules if m == 'django' or m.startswith('django.')))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, env=env, cwd=Path(__file__).resolve().parents[2]
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]"
+
+
+@pytest.mark.spec("req-tap-bake-initializer-1")
+def test_finish_boots_and_issues_the_first_link_once_under_the_lock(
+    store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path
+) -> None:
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    calls: list[tuple[str, bool]] = []
+
+    def runner(argv: list[str]) -> int:
+        calls.append((argv[2], cluster["held"]))
+        return 0
+
+    initialize.finish(store, initialize.Target(URL), runner=runner)
+    assert calls == [("boot", True), ("enroll_admin", True)], "boot and the link both run inside the lock"
+    identity = store.read()
+    assert identity is not None and identity["progress"]["finish"] == "done" and identity["first_login"] == "issued"
+    calls.clear()
+    initialize.finish(store, initialize.Target(URL), runner=runner)
+    assert calls == [("boot", True)], "a second Finish boots again but issues no second link"
+
+
+@pytest.mark.spec("req-tap-bake-initializer")
+def test_a_failed_boot_is_fatal_and_records_no_finish(
+    store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path
+) -> None:
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    with pytest.raises(initialize.InitializeError, match="boot failed"):
+        initialize.finish(store, initialize.Target(URL), runner=lambda argv: 1)
+    identity = store.read()
+    assert identity is not None and "finish" not in identity["progress"] and identity["first_login"] == "pending"
+
+
+@pytest.mark.spec("req-tap-bake-initializer-1")
+def test_schema_steps_run_under_the_lock(store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path) -> None:
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    seen: list[bool] = []
+
+    def runner(argv: list[str]) -> int:
+        seen.append(cluster["held"])
+        return 3
+
+    assert (
+        initialize.locked(store, initialize.Target(URL), ["uv", "run", "python", "manage.py", "migrate"], runner=runner)
+        == 3
+    )
+    assert seen == [True], "the step ran inside the lock and its exit status is passed back"
+    text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
+    for step in ("manage.py createcachetable", 'manage.py "$MIGRATE_COMMAND"'):
+        line = next(ln for ln in text.splitlines() if step in ln and not ln.lstrip().startswith(("#", "echo")))
+        assert line.startswith('"${TAP_LOCKED[@]}" uv run python'), line

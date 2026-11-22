@@ -25,9 +25,10 @@ CLI:
 
 - ``python -m tap.initialize run``: classify, activate if needed, write the hand-off env file.
   Prints ``activated``, ``finish`` or ``skipped`` on stdout for the entrypoint.
-- ``python -m tap.initialize mark finish``: record that boot (Finish) completed.
-- ``python -m tap.initialize mark first-login``: record that the one-time admin link was issued.
-- ``python -m tap.initialize status first-login``: print ``issued`` or ``pending``.
+- ``python -m tap.initialize locked -- <command>``: run one start-up step (the entrypoint's schema
+  steps) under the installation lock.
+- ``python -m tap.initialize finish``: under the same lock, run boot, record Finish, and on the
+  first activation only print a one-time admin enrolment link.
 
 Spec: specs/spec-tap-baked-instance.md (`req-tap-bake-initializer`, `req-tap-bake-activate`,
 `req-tap-bake-installation-identity`).
@@ -42,6 +43,7 @@ import os
 import re
 import secrets
 import shlex
+import subprocess  # nosec B404 — fixed argv: this interpreter running manage.py, never a shell
 import sys
 import time
 import uuid
@@ -211,12 +213,22 @@ def installation_lock(conn: psycopg.Connection, dbname: str) -> Iterator[None]:
         conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", [key])
 
 
-def database_contents(conn: psycopg.Connection) -> tuple[int, bool]:
-    """(relations outside the system schemas, whether Django's migration table exists)."""
+STAMP_PREFIX = "tap-installation:"
+
+
+def database_contents(conn: psycopg.Connection) -> tuple[int, bool, str]:
+    """(relations outside the system schemas, whether TAP's own schema is there, the installation stamp).
+
+    TAP's schema is recognised by its entity table, not by Django's migration table, which any Django
+    database has. The stamp is the comment activation leaves on the database, naming the activation
+    that made it; it is how a database and an installation volume are known to belong together.
+    """
     row = conn.execute(
         """
         SELECT count(*),
-               bool_or(c.relname = 'django_migrations' AND n.nspname = 'public')
+               coalesce(bool_or(c.relname = 'tap_entity' AND n.nspname = 'public'), false),
+               coalesce((SELECT shobj_description(d.oid, 'pg_database')
+                         FROM pg_database d WHERE d.datname = current_database()), '')
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
           AND n.nspname NOT LIKE 'pg_temp_%' AND n.nspname NOT LIKE 'pg_toast_temp_%'
@@ -225,33 +237,52 @@ def database_contents(conn: psycopg.Connection) -> tuple[int, bool]:
     ).fetchone()
     if row is None:  # an aggregate always returns a row; this is the type checker's case
         raise InitializeError("the catalogue query returned no row")
-    return int(row[0]), bool(row[1])
+    return int(row[0]), bool(row[1]), str(row[2])
 
 
-def classify(identity: dict[str, Any] | None, relations: int, has_tap_schema: bool) -> str:
+def classify(identity: dict[str, Any] | None, relations: int, has_tap_schema: bool, stamp: str = "") -> str:
     """The one road for what the stores hold, or a refusal naming what was found (`-initializer-7`)."""
-    if identity is not None and identity["status"] == PENDING:
-        return ROAD_RESUME
-    if identity is not None and identity["status"] == ACTIVE:
-        # Activation creates no tables; migrate does, during Finish. Until Finish has completed once,
-        # an empty database is this installation still being built, by a concurrent start or by one
-        # that was interrupted, not stores that disagree.
-        if relations == 0 and identity["progress"].get("finish") == "done":
+    if stamp and not stamp.startswith(STAMP_PREFIX):
+        stamp = ""  # a comment someone else wrote is not an installation stamp
+    ours = STAMP_PREFIX + identity["activation_id"] if identity else ""
+    if identity is None:
+        if stamp:
             raise InitializeError(
-                "the installation's identity is active but its database is empty: the stores disagree. "
-                "If the database was deliberately reset, remove the installation volume too and start again"
+                f"the database is stamped by another installation ({stamp}) but there is no identity here: "
+                "its installation volume is missing or not mounted; refusing to initialize over it"
             )
-        return ROAD_FINISH
-    if identity is not None:
+        if relations == 0:
+            return ROAD_ACTIVATE
+        if has_tap_schema:
+            return ROAD_LEGACY
+        raise InitializeError(
+            f"the installation's database holds {relations} relation(s) but no TAP schema and there is no "
+            "identity: refusing to initialize over it"
+        )
+    if stamp and stamp != ours:
+        raise InitializeError(
+            f"this installation volume belongs to activation {identity['activation_id']} but the database is "
+            f"stamped {stamp}: the volume and the database are from different installations"
+        )
+    if relations and not has_tap_schema:
+        raise InitializeError(
+            f"the database holds {relations} relation(s) that are not TAP's: refusing to boot over them"
+        )
+    if identity["status"] == PENDING:
+        return ROAD_RESUME
+    if identity["status"] != ACTIVE:
         raise InitializeError(f"identity status {identity['status']!r} is not one this initializer knows")
-    if relations == 0:
-        return ROAD_ACTIVATE
-    if has_tap_schema:
-        return ROAD_LEGACY
-    raise InitializeError(
-        f"the installation's database holds {relations} relation(s) but no TAP schema and there is no "
-        "identity: refusing to initialize over it"
-    )
+    # Activation creates no tables; migrate does, during Finish. Until Finish has completed once, an
+    # empty database is this installation still being built, by a concurrent start or by one that was
+    # interrupted, not stores that disagree.
+    if relations == 0 and identity["progress"].get("finish") == "done":
+        raise InitializeError(
+            "the installation's identity is active but its database is empty: the stores disagree. "
+            "If the database was deliberately reset, remove the installation volume too and start again"
+        )
+    if relations and stamp != ours:
+        raise InitializeError("the database holds a TAP schema but no stamp from this installation")
+    return ROAD_FINISH
 
 
 # =============================================================================
@@ -265,6 +296,14 @@ def apply_owner_password(conn: psycopg.Connection, user: str, password: str) -> 
     # sql.Identifier quotes the role name and sql.Literal quotes the password, both server-side safe.
     statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(user), sql.Literal(password))
     conn.execute(statement)  # nosemgrep — psycopg.sql composition above, no string concatenation
+
+
+def apply_stamp(conn: psycopg.Connection, dbname: str, activation_id: str) -> None:
+    """Mark the database as this installation's; writing the same stamp again changes nothing."""
+    statement = sql.SQL("COMMENT ON DATABASE {} IS {}").format(
+        sql.Identifier(dbname), sql.Literal(STAMP_PREFIX + activation_id)
+    )
+    conn.execute(statement)  # nosemgrep — psycopg.sql composition, no string concatenation
 
 
 def handoff_env(target: Target, identity: dict[str, Any]) -> dict[str, str]:
@@ -294,9 +333,9 @@ def run(
 ) -> str:
     """Classify the stores, activate if needed, and write the hand-off; return the road taken.
 
-    TAP-IMPLEMENTS: req-tap-bake-initializer@3137d9b6e56b/7f798e4546ec (derivation) — the one place an installation
+    TAP-IMPLEMENTS: req-tap-bake-initializer@3137d9b6e56b/2685aed96a4d (derivation) — the one place an installation
         is classified and its road chosen, under the installation lock.
-    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/7f798e4546ec (enforcement) — values are stored pending
+    TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/2685aed96a4d (enforcement) — values are stored pending
         before any is applied, applied from the stored values, and never minted twice.
     """
     identity = store.read()
@@ -321,6 +360,7 @@ def run(
                 raise InitializeError("no identity to apply")
             if road in (ROAD_ACTIVATE, ROAD_RESUME):
                 apply_owner_password(conn, target.user, identity["owner_password"])
+                apply_stamp(conn, target.dbname, identity["activation_id"])
                 identity = {**identity, "status": ACTIVE, "progress": {**identity["progress"], "activate": "done"}}
                 store.write(identity)
                 logger.info(
@@ -330,6 +370,74 @@ def run(
                 )
         write_handoff(handoff_env(target, identity), handoff)
     return "activated" if road in (ROAD_ACTIVATE, ROAD_RESUME) else ROAD_FINISH
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9.-]{1,253}$")
+_BASE_URL_RE = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$")
+
+
+def _run_child(argv: list[str]) -> int:
+    """Run a start-up step as a child, its output going straight to the container log.
+
+    The argv comes from this module (``manage.py`` under this interpreter) or from the entrypoint's
+    own fixed lines through ``locked``; it is never a shell string.
+    """
+    return subprocess.run(argv, cwd="/app", check=False, shell=False).returncode  # nosec B603  # nosemgrep
+
+
+def locked(
+    store: StateStore, target: Target, argv: list[str], *, runner: Callable[[list[str]], int] = _run_child
+) -> int:
+    """Run one start-up step under the installation lock, so a second start waits for it.
+
+    The entrypoint wraps its schema steps (``createcachetable``, ``migrate``) in this, because the
+    initializer is the only thing that may change the installation's schema, one start at a time.
+    """
+    if not argv:
+        raise InitializeError("locked needs a command")
+    identity = store.read()
+    if identity is None or identity["status"] != ACTIVE:
+        raise InitializeError("a locked step needs an activated installation")
+    maint = connect(target, [identity["owner_password"]], MAINTENANCE_DB)
+    with maint, installation_lock(maint, target.dbname):
+        return runner(argv)
+
+
+def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], int] = _run_child) -> None:
+    """Finish under the installation lock: boot, then the first admin link once.
+
+    Everything that reads or writes the installation's state after activation happens here, inside
+    the same lock as activation, so two starts never boot together, never both see the first login
+    as pending, and never overwrite each other's progress. A failed boot is fatal: the installation
+    is not served half-initialized, and the next start runs Finish again (boot is idempotent).
+    """
+    identity = store.read()
+    if identity is None or identity["status"] != ACTIVE:
+        raise InitializeError("Finish needs an activated installation")
+    email = os.environ.get("TAP_ADMIN_EMAIL") or "admin@localhost"
+    base_url = os.environ.get("TAP_BASE_URL") or "http://localhost:8000"
+    if not _EMAIL_RE.match(email) or not _BASE_URL_RE.match(base_url):
+        raise InitializeError("TAP_ADMIN_EMAIL or TAP_BASE_URL is not a plain address")
+    maint = connect(target, [identity["owner_password"]], MAINTENANCE_DB)
+    with maint, installation_lock(maint, target.dbname):
+        identity = store.read()
+        if identity is None:
+            raise InitializeError("the identity disappeared while waiting for the lock")
+        logger.info("[i1a5] initializer: Finish — running boot")
+        if runner([sys.executable, "manage.py", "boot"]) != 0:
+            raise InitializeError("manage.py boot failed; refusing to serve a half-initialized installation")
+        identity = {**identity, "progress": {**identity["progress"], "finish": "done"}}
+        store.write(identity)
+        if identity.get("first_login") == "issued":
+            return
+        argv = [sys.executable, "manage.py", "enroll_admin", "--email", email, "--base-url", base_url, "--print-token"]
+        if runner(argv) == 0:
+            store.write({**identity, "first_login": "issued"})
+            logger.info("[i1a6] initializer: open the link above within an hour to enroll the first admin's passkey")
+        else:
+            logger.warning(
+                "[i1a7] initializer: could not mint the first admin link; run manage.py enroll_admin by hand"
+            )
 
 
 _STORE_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
@@ -350,26 +458,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tap.initialize", description="Initialize this installation once.")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="classify, activate if needed, write the hand-off env file")
-    mark = sub.add_parser("mark", help="record a one-time step as done")
-    mark.add_argument("what", choices=["finish", "first-login"])
-    status = sub.add_parser("status", help="print whether a one-time step is done")
-    status.add_argument("what", choices=["first-login"])
+    sub.add_parser("finish", help="under the installation lock: boot, then the first admin link once")
+    lk = sub.add_parser("locked", help="run one start-up step under the installation lock")
+    lk.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
         store = _store_from_env()
+        target = Target(os.environ.get("DATABASE_URL", ""))
         if args.command == "run":
-            print(run(store, Target(os.environ.get("DATABASE_URL", ""))))
-            return 0
-        identity = store.read()
-        if identity is None or identity["status"] != ACTIVE:
-            raise InitializeError("the installation is not activated")
-        if args.command == "mark" and args.what == "finish":
-            store.write({**identity, "progress": {**identity["progress"], "finish": "done"}})
-            return 0
-        if args.command == "mark":
-            store.write({**identity, "first_login": "issued"})
-            return 0
-        print(identity.get("first_login", "pending"))
+            print(run(store, target))
+        elif args.command == "locked":
+            command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            return locked(store, target, command)
+        else:
+            finish(store, target)
         return 0
     except (InitializeError, OSError, ValueError, psycopg.Error) as exc:
         abort(logger, "initialize", str(exc))

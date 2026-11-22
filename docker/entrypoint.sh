@@ -393,7 +393,14 @@ fi
 # against an as-yet-unmigrated DB; it creates the table via the schema editor
 # independently of migration state.
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
-uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
+# An initialized installation runs its schema steps under the installation lock, so a second start
+# waits for the first's migrate instead of racing it (req-tap-bake-initializer: only one thing
+# migrates). Elsewhere the prefix is empty and the steps run exactly as before.
+TAP_LOCKED=()
+if [ -n "${TAP_INITIALIZED}" ]; then
+    TAP_LOCKED=(/app/.venv/bin/python -m tap.initialize locked --)
+fi
+"${TAP_LOCKED[@]}" uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
 
 # Schema from the models (req-boot-schema-from-models, tap#1258). When the boot variable
 # install.schema_from_models resolves true (TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS — CI and dev
@@ -418,7 +425,7 @@ fi
 # migrate runs django.setup(), which imports every INSTALLED_APPS module; a core module
 # reaching a plugin-only dependency raises ModuleNotFoundError here. The sentinel turns that
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
-uv run python manage.py "$MIGRATE_COMMAND" --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+"${TAP_LOCKED[@]}" uv run python manage.py "$MIGRATE_COMMAND" --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Persistent database connections (req-tap-serving-conn-max-age).
@@ -514,25 +521,15 @@ if [ "${CODESPACES:-}" = "true" ]; then
 fi
 
 # An initialized installation runs its own boot, as a Codespace does: no spawn-session.sh exists
-# here either. Boot is idempotent, so a restart re-applies it. The first activation also gets a
-# one-time admin enrolment link (enroll_admin, 1 h, a passkey), printed once to this log.
+# here either. The initializer runs it under the installation lock, records Finish, and on the first
+# activation only prints a one-time admin enrolment link (enroll_admin, 1 h, a passkey). A failed
+# boot is fatal here, unlike a Codespace's: the installation is not served half-initialized, and the
+# next start runs Finish again.
 if [ -n "${TAP_INITIALIZED}" ]; then
-    echo "==> Installation: running boot orchestration..."
-    if uv run python manage.py boot; then
-        echo "==> Installation: boot complete."
-        /app/.venv/bin/python -m tap.initialize mark finish
-        if [ "$(/app/.venv/bin/python -m tap.initialize status first-login)" = "pending" ]; then
-            if uv run python manage.py enroll_admin --email "${TAP_ADMIN_EMAIL:-admin@localhost}" \
-                    --base-url "${TAP_BASE_URL:-http://localhost:8000}" --print-token; then
-                /app/.venv/bin/python -m tap.initialize mark first-login
-                echo "==> Installation: open the link above within an hour to enroll the first admin's passkey."
-            else
-                echo "==> WARN: could not mint the first admin link; run manage.py enroll_admin by hand." >&2
-            fi
-        fi
-    else
-        echo "==> WARN: installation boot orchestration FAILED. The instance will still serve," >&2
-        echo "          but expect capability_denied on login and a failing search until this is resolved." >&2
+    echo "==> Installation: Finish (boot, then the first admin link once), under the installation lock..."
+    if ! /app/.venv/bin/python -m tap.initialize finish; then
+        emit_abort initialize "Finish failed (see above); refusing to serve a half-initialized installation"
+        exit 1
     fi
 fi
 
