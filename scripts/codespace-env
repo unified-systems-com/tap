@@ -127,12 +127,15 @@ fi
 # The fix is an IDENTITY FILE: KEY=value lines naming CODESPACE_NAME,
 # GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN and GITHUB_USER, and nothing else. The dev
 # container's postStartCommand writes it, because Codespaces injects the current values
-# there on every start, and the compose file mounts it read-only at TAP_CODESPACE_IDENTITY.
-# When it is set, the file wins over the environment, wholly.
+# there on every start, and the compose file mounts it at TAP_CODESPACE_IDENTITY (read-only
+# where another container writes it). When it is set, the file wins over the environment,
+# wholly.
 #
 # NOT Codespaces' own /workspaces/.codespaces/shared/.env, though it holds the same names
 # and is current: it also holds GITHUB_TOKEN and GITHUB_CODESPACE_TOKEN (read 2026-11-22),
-# and the stack keeps the visitor's token out of this container on purpose.
+# so a compose file never mounts it here. Where this container IS the dev container (the
+# playground's visitor layout), Codespaces mounts it regardless; this script still reads
+# only the identity file.
 #
 # The writer runs after this container has started, so the identity is WAITED for, up to
 # TAP_CODESPACE_NAME_WAIT seconds. During a prebuild no postStartCommand runs, the wait

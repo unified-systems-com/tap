@@ -9,6 +9,7 @@
 * **ci:** the spec-read audit resolves symlinks before matching a spec path ([ba2e1fe](https://github.com/unified-systems-com/tap/commit/ba2e1fe992c4b947e6c217a1faec20444c910a2a))
 * **ci:** the spec-read audit resolves symlinks before matching a spec path [via make-it-fast] ([744cf07](https://github.com/unified-systems-com/tap/commit/744cf07883dba1d2628324f8c4b3ab6ccea05512))
 * **ci:** the spec-read audit sees conftest imports and refuses reads it cannot charge ([d7879b2](https://github.com/unified-systems-com/tap/commit/d7879b2d0b33cee0c9482d378f1710eee48e7997))
+* **codespaces:** a prebuilt Codespace learns its name at start, from an identity file at `TAP_CODESPACE_IDENTITY` ([1c83f2b](https://github.com/unified-systems-com/tap/commit/1c83f2b6), [c7fa8c8](https://github.com/unified-systems-com/tap/commit/c7fa8c8d49f09be223b0157fceaeac2e559996b7), [#1308](https://github.com/unified-systems-com/tap/issues/1308)) — added by hand: the release PR merged before release-please refreshed it
 
 ## [0.4.4](https://github.com/unified-systems-com/tap/compare/v0.4.3...v0.4.4) (2026-11-21)
 
