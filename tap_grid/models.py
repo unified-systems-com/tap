@@ -30,6 +30,7 @@ from tap_grid.event_time import (
     NoEventTime,
     declaration_for,
     declared_fields,
+    derive,
     derive_for_instance,
 )
 from tap_grid.history import TapHistoricalRecords, _get_history_user
@@ -1371,6 +1372,28 @@ class BaseModel(models.Model):
         }
         return row_natural_key(type(self), row)
 
+    def _stored_event_time(self, update_fields: Iterable[str]) -> Any:
+        """The event time after a partial save: declared values the save wrote come from this
+        instance, the ones it left out are read back from the row, which still holds them. The
+        spine never states a time the stored fields could not reproduce. An edge's declared
+        values all live in ``properties``, which a save stores whole or not at all."""
+        declaration = declaration_for(self)
+        if getattr(type(self), "ENTITY_TYPE", None) == "edge":
+            return derive_for_instance(self)
+        saved = set(update_fields)
+        meta = self._meta
+        attnames = {name: getattr(meta.get_field(name), "attname", name) for name in declared_fields(declaration)}
+        unsaved = [attname for name, attname in attnames.items() if name not in saved and attname not in saved]
+        stored = (
+            type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).values(*unsaved).first()
+            if unsaved
+            else {}
+        ) or {}
+        return derive(
+            declaration,
+            lambda name: stored.get(attnames[name]) if attnames[name] in unsaved else getattr(self, attnames[name], None),
+        )
+
     def get_name(self) -> str:
         """Return the name for the auto-created Entity.
 
@@ -1625,6 +1648,8 @@ class BaseModel(models.Model):
             # values are not what the row holds.
             event_updates: dict[str, Any] = {}
             if _stores_event_fields(self, kwargs.get("update_fields")):
+                if kwargs.get("update_fields") is not None:
+                    event_time = self._stored_event_time(kwargs["update_fields"])
                 event_updates = {
                     name: value
                     for name, value in event_time.as_columns().items()

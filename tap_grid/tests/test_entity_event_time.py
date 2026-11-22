@@ -245,6 +245,24 @@ class TestOverlapsInPython:
                 overlapping(*window)
 
 
+class TestTheLastStorableYear:
+    @AC[16]
+    @pytest.mark.parametrize("value", ["9999", "9999-12", "9999-12-31"])
+    def test_a_unit_that_ends_after_the_last_storable_time_is_refused(self, value: str) -> None:
+        with pytest.raises(event_time.Unreadable, match="last time the grid can store"):
+            event_time.read_value(value)
+
+    @AC[15]
+    def test_the_units_before_it_are_read_whole(self) -> None:
+        for value, end in (
+            ("9998", _utc(9999, 1, 1)),
+            ("9999-11", _utc(9999, 12, 1)),
+            ("9999-12-30", _utc(9999, 12, 31)),
+        ):
+            reading = event_time.read_value(value)
+            assert reading is not None and reading.end_exclusive == end
+
+
 # ---------------------------------------------------------------------------
 # The spine columns
 # ---------------------------------------------------------------------------
@@ -307,6 +325,16 @@ class TestDeclaredInterval:
     def test_an_empty_end_field_leaves_the_end_empty(self, interval_on_text: None) -> None:
         result = _create({"name": "still-holds", "description": "2026-11-01T00:00:00Z"})
         assert _four(result.entity_id) == (_utc(2026, 11, 1), None, "created", "second")
+
+    @AC[2]
+    def test_a_partial_save_derives_from_what_the_row_holds(self, interval_on_text: None) -> None:
+        result = _create({"name": "held", "description": "2026-11-01T00:00:00Z", "kind": "2026-11-03T06:00:00Z"})
+        node = PgNode.objects.get(entity_id=result.entity_id)
+        node.description = "2026-11-02T00:00:00Z"
+        node.kind = "2030-01-01T00:00:00Z"  # changed in memory and not stored
+        node.save(update_fields=["description"])
+        assert PgNode.objects.get(entity_id=result.entity_id).kind == "2026-11-03T06:00:00Z"
+        assert _four(result.entity_id) == (_utc(2026, 11, 2), _utc(2026, 11, 3, 6), "created", "second")
 
     @AC[7]
     def test_an_end_before_its_start_is_not_copied(self, interval_on_text: None) -> None:

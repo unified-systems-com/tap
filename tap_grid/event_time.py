@@ -238,19 +238,26 @@ def _real_year(year: int) -> None:
         raise Unreadable(f"year {year} is outside 0001 to 9999")
 
 
+_BEYOND: Final[str] = "its unit ends after the last time the grid can store"
+
+
 def _start_of_year(year: int) -> datetime:
-    return datetime.max.replace(tzinfo=UTC) if year > 9999 else datetime(year, 1, 1, tzinfo=UTC)
+    if year > 9999:
+        raise Unreadable(_BEYOND)
+    return datetime(year, 1, 1, tzinfo=UTC)
 
 
 def _start_of_month(year: int, month: int) -> datetime:
-    return datetime.max.replace(tzinfo=UTC) if year > 9999 else datetime(year, month, 1, tzinfo=UTC)
+    if year > 9999:
+        raise Unreadable(_BEYOND)
+    return datetime(year, month, 1, tzinfo=UTC)
 
 
 def _after(start: datetime, width: timedelta) -> datetime:
     try:
         return start + width
-    except OverflowError:
-        return datetime.max.replace(tzinfo=UTC)
+    except OverflowError as error:
+        raise Unreadable(_BEYOND) from error
 
 
 def read_value(value: Any) -> Reading | None:
@@ -349,7 +356,7 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     Nothing is defaulted (rule 9): an empty declared value gives four empty fields. A value that
     cannot be stored truthfully gives four empty fields and a warning naming the field (rule 12).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@f7a59a07e409/164aad0509ac (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@f1920e40923a/164aad0509ac (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
