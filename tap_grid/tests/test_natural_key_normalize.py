@@ -88,11 +88,15 @@ class TestWhereItApplies:
         assert panel.slug == "library-nginx"
         assert panel.config == {"tenant": "docker"}
 
-    def test_the_lookup_finds_the_row_by_either_spelling(self, ruled: None) -> None:
+    def test_the_lookup_finds_the_row_by_either_spelling(self, ruled: None, default_caller_context: Any) -> None:
+        from tap_grid.services import find_by_natural_key
+
         panel = _create("nginx")
         for slug in ("nginx", "library-nginx"):
-            found = Panel.find_existing(slug=slug, **{"config.tenant": "docker"})
-            assert found is not None and found.entity_id == panel.entity_id, slug
+            found = find_by_natural_key(
+                "panel", {"slug": slug, "config.tenant": "docker"}, caller_context=default_caller_context
+            )
+            assert found == panel.entity_id, slug
 
     def test_a_second_spelling_imported_later_updates_the_row(self, ruled: None) -> None:
         first = grift_import(_bundle("library-nginx"))
