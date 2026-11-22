@@ -122,6 +122,17 @@ class TestWhereItApplies:
         found = _find_node_by_key("panel", {"slug": "nginx", "config.tenant": "docker"}, {}, default_caller_context)
         assert found == str(panel.entity_id)
 
+    def test_a_reference_missing_an_entry_is_refused_by_the_lookup_not_the_hook(
+        self, ruled: None, default_caller_context: Any
+    ) -> None:
+        """The hook reads only a complete key; an incomplete one keeps the lookup's own refusal (PR 1318 review)."""
+        from tap_grid.exceptions import ServiceValidationError
+        from tap_grid.grift.importer import _find_node_by_key
+
+        assert normalized_key_values(Panel, {"slug": "nginx"}) == {"slug": "nginx"}
+        with pytest.raises(ServiceValidationError, match="is found by exactly"):
+            _find_node_by_key("panel", {"slug": "nginx"}, {}, default_caller_context)
+
     def test_an_override_that_skips_super_is_refused_at_write(self, ruled: None, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(Panel, "prepare_for_write", lambda self: None)
         try:

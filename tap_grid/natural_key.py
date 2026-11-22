@@ -196,7 +196,11 @@ def normalized_key_values(model: Any, properties: Mapping[str, object]) -> dict[
     """
     hook = getattr(model, "normalize_natural_key", None)
     given = dict(properties)
-    if hook is None:
+    declared = getattr(model, "NATURAL_KEY", None)
+    if hook is None or not isinstance(declared, tuple) or set(given) != set(declared):
+        # A key that does not carry exactly the declared entries is not this hook's to read: the
+        # caller's own check (find_by_natural_key, find_existing) refuses it with its reason, rather
+        # than the hook failing on a missing entry (PR 1318 review).
         return given
     result = hook(dict(given))
     if not isinstance(result, Mapping) or set(result) != set(given):
