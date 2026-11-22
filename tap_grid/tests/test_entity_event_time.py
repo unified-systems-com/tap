@@ -233,6 +233,17 @@ class TestOverlapsInPython:
     def test_a_row_with_no_event_time_matches_nothing(self) -> None:
         assert not overlaps(None, None, *self.W)
 
+    @AC[8]
+    def test_an_empty_or_reversed_window_is_refused(self) -> None:
+        from tap_grid.event_time import overlapping
+
+        start, end = self.W
+        for window in ((start, start), (end, start)):
+            with pytest.raises(ValueError, match="after its start"):
+                overlaps(_utc(2020, 1, 1), None, *window)
+            with pytest.raises(ValueError, match="after its start"):
+                overlapping(*window)
+
 
 # ---------------------------------------------------------------------------
 # The spine columns
@@ -644,6 +655,30 @@ class TestTheDeclarationCheck:
         result: Any = SimpleNamespace(checks=[])
         _check_event_time_declarations(manifest, result)
         return result.checks[-1]
+
+    @AC[18]
+    def test_an_edge_declaration_must_name_a_property_its_schema_defines(self) -> None:
+        from tap_plugins.validate.service import _check_edge_event_time
+
+        schema = {"type": "object", "properties": {"since": {"type": "string"}}}
+
+        def run(event_time_entry: Any, property_schema: Any) -> Any:
+            edge = SimpleNamespace(
+                slug="LINKS_THING",
+                file_path="edges/links.edge.json",
+                event_time=event_time_entry,
+                property_schema=property_schema,
+            )
+            result: Any = SimpleNamespace(checks=[])
+            _check_edge_event_time(SimpleNamespace(edges=[edge]), result)
+            return result.checks
+
+        good = {"shape": "moment", "field": "since", "kind": "first_seen"}
+        assert run(good, schema)[-1].status == "pass"
+        typo = run({**good, "field": "sincee"}, schema)[-1]
+        assert typo.status == "fail" and "sincee" in str(typo.messages)
+        assert run(good, None)[-1].status == "fail"
+        assert run(None, schema) == []
 
     @AC[3]
     def test_an_undeclared_model_is_reported_and_the_check_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:

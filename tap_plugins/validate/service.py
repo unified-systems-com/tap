@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6b1d1bea8dd8 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/9a1eb70624e0 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1461,7 +1461,7 @@ def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     """Run loads-level checks: class-path validation via Django imports.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/612013434698 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/049be25c087d (derivation) — the
         loads level's import-and-contract checks.
     """
     _check_model_classes(manifest, result)
@@ -1472,6 +1472,29 @@ def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     _check_falsifier_coverage(manifest, result)
     _check_history_opt_outs(manifest, result)
     _check_event_time_declarations(manifest, result)
+    _check_edge_event_time(manifest, result)
+
+
+def _check_edge_event_time(manifest: Any, result: ValidationResult) -> None:
+    """An edge type's ``event_time`` names keys its own ``property_schema`` defines (req-grid-entity-event-time rule 20).
+
+    Declaring is optional and absence is not reported. A declaration that is present and names a
+    key the schema does not define fails: it would register and leave every edge of the type
+    with no event time, with nothing to say so.
+    """
+    declared = [edge for edge in (manifest.edges or []) if getattr(edge, "event_time", None) is not None]
+    if not declared:
+        return
+
+    from tap_grid.event_time import edge_declaration_problems
+
+    check = CheckResult(id="edge-event-time", name="Edge event-time declarations name defined properties")
+    for edge in declared:
+        for problem in edge_declaration_problems(edge.event_time, edge.property_schema):
+            check.fail(f"{edge.slug}: {problem}", path=edge.file_path)
+    if check.status == "pass":
+        check.info(f"{len(declared)} edge type(s) declare an event time on properties their schema defines")
+    result.checks.append(check)
 
 
 def _check_event_time_declarations(manifest: Any, result: ValidationResult) -> None:

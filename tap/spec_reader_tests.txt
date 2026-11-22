@@ -18,6 +18,7 @@ tap_grid/tests/test_batch_corpus.py
 tap_grid/tests/test_cascade_corpus.py
 tap_grid/tests/test_dimension_knobs.py
 tap_grid/tests/test_dimension_migration.py
+tap_grid/tests/test_entity_event_time.py
 tap_grid/tests/test_find_existing.py
 tap_grid/tests/test_natural_key.py
 tap_grid/tests/test_require_caller_context.py

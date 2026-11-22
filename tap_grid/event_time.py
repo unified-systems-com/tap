@@ -42,6 +42,7 @@ __all__ = [
     "declaration_required",
     "declared_fields",
     "derive",
+    "edge_declaration_problems",
     "derive_for_instance",
     "get_edge_event_time",
     "overlapping",
@@ -167,6 +168,27 @@ def declaration_from_definition(definition: Any) -> Moment | Interval:
 # What each edge type declares in its definition (rule 20). An edge type that declares nothing
 # has no entry and no event time; that is the default and needs no statement.
 _edge_event_time: dict[str, Moment | Interval] = {}
+
+
+def edge_declaration_problems(definition: Any, property_schema: Any) -> list[str]:
+    """What is wrong with an edge type's ``event_time`` entry; empty when it is sound.
+
+    The entry must parse, and every property key it names must be one the edge type's own
+    ``property_schema`` defines. A key the schema does not define can never hold a value, so the
+    declaration would register and every edge of the type would have no event time (rule 20).
+    """
+    try:
+        declaration = declaration_from_definition(definition)
+    except EventTimeDeclarationError as error:
+        return [str(error)]
+    properties = property_schema.get("properties") if isinstance(property_schema, dict) else None
+    if not isinstance(properties, dict):
+        return ["event_time names edge properties, and the edge type has no property_schema that defines any"]
+    return [
+        f"event_time names {name!r}, which the edge type's property_schema does not define"
+        for name in declared_fields(declaration)
+        if name not in properties
+    ]
 
 
 def register_edge_event_time(edge_type: str, definition: Any) -> None:
@@ -327,7 +349,7 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     Nothing is defaulted (rule 9): an empty declared value gives four empty fields. A value that
     cannot be stored truthfully gives four empty fields and a warning naming the field (rule 12).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@ea9b0b4fc048/164aad0509ac (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@f7a59a07e409/164aad0509ac (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
@@ -412,6 +434,12 @@ def declaration_problems(model_cls: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _check_window(window_start: datetime, window_end: datetime) -> None:
+    """Refuse a window that is empty or reversed (rule 6): its end must be after its start."""
+    if not window_start < window_end:
+        raise ValueError(f"a window's end must be after its start; got {window_start!s} to {window_end!s}")
+
+
 def overlaps(
     event_start: datetime | None, event_end: datetime | None, window_start: datetime, window_end: datetime
 ) -> bool:
@@ -420,8 +448,10 @@ def overlaps(
     The start is inclusive and the end exclusive (rule 6). A moment, stored with both equal, is in
     the window when it is at or after the window's start and before its end. An empty end means
     the source states none, so the row is a possible match for every window after its start
-    (rule 19). A row with no event time matches nothing.
+    (rule 19). A row with no event time matches nothing. A window whose end is not after its start
+    is refused: it is empty or reversed, and an open-ended row would otherwise match it.
     """
+    _check_window(window_start, window_end)
     if event_start is None or event_start >= window_end:
         return False
     if event_end is None:
@@ -443,6 +473,7 @@ def overlapping(window_start: datetime, window_end: datetime, *, prefix: str = "
     """
     from django.db.models import F, Q
 
+    _check_window(window_start, window_end)
     start, end = f"{prefix}event_start", f"{prefix}event_end"
     return Q(**{f"{start}__lt": window_end}) & (
         Q(**{f"{end}__isnull": True})
