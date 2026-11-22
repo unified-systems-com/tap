@@ -358,6 +358,29 @@ def test_a_named_writer_updates_only_the_fields_it_is_named_for():
             _under_grid_write("event_time_rederive", attempt(forbidden))
 
 
+@pytest.mark.spec("req-grid-entity-collection-time-1")
+def test_no_named_writer_writes_the_collection_window():
+    # The collection pair is written by the pipeline alone, in the statements that name a batch
+    # on the row. No below-pipeline writer is given either column, and one that tries is refused.
+    pair = {"collected_start", "collected_end"}
+    for writer, writes in BELOW_PIPELINE_WRITES.items():
+        for target, fields in writes.items():
+            assert not pair & fields, (writer, target)
+    spine = _batch_spine(f"collected-{uuid.uuid4()}")
+    one = Entity.objects.filter(pk=spine.pk)
+
+    def clear(field: str) -> Callable[[], object]:
+        return lambda: one.update(**{field: None})
+
+    for field in sorted(pair):
+        with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+            _under_import_grift("spine_sync", clear(field))
+        with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+            _under_grid_write("event_time_rederive", clear(field))
+    row = Entity.objects.get(pk=spine.pk)
+    assert (row.collected_start, row.collected_end) == (None, None)
+
+
 @pytest.mark.spec("req-tap-auth-write-batch-routing")
 def test_no_named_writer_changes_a_rows_entity_type():
     spine = _batch_spine(f"typed-{uuid.uuid4()}")

@@ -53,6 +53,9 @@ EXPECTED_ENTITY_COLUMNS = [
     "event_start",
     "event_end",
     "event_precision",
+    # req-grid-entity-collection-time (Issue# 194 - tap).
+    "collected_start",
+    "collected_end",
 ]
 
 # The exact top-level keys of a response envelope, in canonical serialization order.
@@ -78,6 +81,8 @@ EXPECTED_SPINE_SURFACE = [
     "event_start",
     "event_end",
     "event_precision",
+    "collected_start",
+    "collected_end",
     "originating_grid_id",
 ]
 

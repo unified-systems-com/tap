@@ -33,7 +33,7 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-tombstone-managers | [Tombstone State And Manager Surface](#tombstone-state-and-manager-surface) | Approved for Development | `Entity.deleted_at` is the single canonical home of tombstone state; manager defaults differ by surface; both surfaces expose uniform `.live()` / `.tombstoned()` chainable filters |
 | req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | In Development | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
 | req-grid-entity-event-time | [Event Time On The Spine](#event-time-on-the-spine) | In Development | `event_start`, `event_end` and `event_precision` on `Entity`, and the kind as the row's `time` dimension,, copied from the fields a model declares as its event time |
-| req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | Proposed | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
+| req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | In Development | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
 | req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | Proposed | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
 | req-grid-entity-spine-version | [Spine Version](#spine-version) | Proposed | The spine's own authored version, separate from the tap release, the GRIFT format version and every type version; recorded on the grid and stated in GRIFT |
 | req-grid-entity-natural-key | [Assigned Ids, Declared Search](#assigned-ids-declared-search) | Proposed | `Entity.id` is always an assigned UUIDv7; every type declares how it is found (`NATURAL_KEY` or `KEYLESS`) and the search is generated; `Entity.natural_key` publishes each keyed row's declared identity as one readable value, derived on every save and read by no lookup |
@@ -125,6 +125,8 @@ The canonical Entity-row fields, in their canonical serialization order:
 | `event_start` | `Entity.event_start` | ISO 8601 UTC or `null`. When the thing happened or began to hold, as its source states it (`req-grid-entity-event-time`). Derived on this grid; not accepted on import. |
 | `event_end` | `Entity.event_end` | ISO 8601 UTC or `null`. When it stopped holding; exclusive; equal to `event_start` for a moment. Derived on this grid; not accepted on import. |
 | `event_precision` | `Entity.event_precision` | `year`, `month`, `day`, `second` or `null`. Derived on this grid; not accepted on import. |
+| `collected_start` | `Entity.collected_start` | ISO 8601 UTC or `null`. When the collector began reading the object, as stated by the latest batch to name it (`req-grid-entity-collection-time`). Written by the grid from the write operation's stated window; not accepted on import. |
+| `collected_end` | `Entity.collected_end` | ISO 8601 UTC or `null`. When it finished; equal to `collected_start` for a read in one call. Not accepted on import. |
 | `originating_grid_id` | `Entity.originating_grid_id` | Source grid identifier. **Retained** (decision 2026-09-15): the extended-grid case is real and this is its provenance field. Provenance only — never part of an identity or a correlation predicate. See Future. |
 
 The `id` field renames to `entity_id` at the serialization boundary so
@@ -1153,14 +1155,31 @@ A value a source states is never dropped to save a write. A source's own "last s
 ----
 RID: `req-grid-entity-collection-time`
 
-Status: `Proposed`
+Status: `In Development`
 
 Collection time is when a collector gathered an object at the boundary to the grid. The spine carries it for the latest batch to name each object, as a start and an end, and each batch event carries it for its own pass.
 
 #### Status Details
-Proposed; nothing is built. Issue# 194 - tap and Issue# 1284 - tap hold the rulings. This requirement places the latest pair on `Entity`; the design record placed it on the batch event only.
+In Development. Issue# 194 - tap and Issue# 1284 - tap hold the rulings. This requirement places the latest pair on `Entity`; the design record placed it on the batch event only.
 
-What exists today (read on core main, 2026-11-21): a batch records when it started and closed. Nothing records when a collector read one object, and a collector that makes many calls over minutes before it commits one batch has no way to say so.
+Built (Issue# 194 - tap): the two columns on `Entity` and the same two on `BatchEvent` (migration `0020_entity_collection_time`, `tap_grid` only, no index); the write-batch form; the settling of a stated window and the three reports (`tap_grid/collection_time.py`); and every write that names a batch on a row, which now writes the pair in that same statement: the create and the changing save in `BaseModel.save()`, the create under a given id, the unchanged observation and the two retirement updates in `_execute_write_pipeline` (`tap_grid/services/_impl.py`). Tests: `tap_grid/tests/test_entity_collection_time.py`.
+
+The write-batch form (rule 2), as built: `WriteOperation.collected`, a `CollectionWindow(start, end)` beside the operation's `payload` and never inside it. An operation names one object, so the window is keyed by object through the operation that carries it, the shape `dimensions` and `spine_intent` already have. Each bound is a timezone-aware datetime or an ISO 8601 text with a zone. The single-verb helpers (`create_node`, `patch_node` and the rest) do not take it; a writer that states a window calls `write_batch`.
+
+Not built:
+
+- The GRIFT document form (rule 2). It follows with the other GRIFT forms. Until it exists a GRIFT import states no window for anything, so every row an import names has an empty pair after it (rule 5), collectors included, since they write through the importer.
+- Reading the batch event's pair through Gryphon (rule 9). Gryphon reads entities, and a batch event is not one. The spine pair is filterable through Gryphon; the per-pass pair is read from `BatchEvent` rows. This half of rule 9 cannot be met as written.
+- No collector states a window. The sweep that moves them onto the form is Issue# 1289 - tap.
+
+As built, things the rules do not spell out:
+
+- A retirement states its window for the node the operation names. The edges that end with it are named by the retiring batch too (`last_observed_batch_id`), and that batch stated no window for them, so their pair is emptied (rule 5). A node retired by a contained cascade is treated the same way.
+- A repeat delete of an already retired object writes nothing (`req-grid-service-delete-tombstone-6`), so it moves no pair.
+- A window that is not recorded (rule 6) empties the pair like an unstated one: the batch is still the last to name the object.
+- "Earlier" in rule 5 compares the stated `collected_end` with the `collected_end` the row carried, read under the row lock the write already holds. A create has nothing to compare with.
+- Rule 7 is reported in two cases: the object's event time start is later than the window's end, and the window's end is later than the time of the write. Each is a warning in the operation's result that starts with `collection_time_out_of_order`; an older read arriving late starts with `collection_time_older_read`, and a window left out with `collection_time_not_recorded`.
+- A save made outside the write pipeline with no batch in context names no batch on the row and leaves the pair as it is.
 
 #### Implementation
 
@@ -1178,7 +1197,7 @@ What exists today (read on core main, 2026-11-21): a batch records when it start
 6. Stored values are timezone-aware and in UTC. A pair with no zone, or whose end precedes its start, is not recorded and the operation's result carries a warning.
 7. For a thing already true when it was collected, event time is expected not to be later than collection time, and collection time not later than grid time. The grid does not enforce the order. A violation is a signal about a clock and is reported, never corrected.
 8. The spine pair is not indexed at first, so that the write in rule 4 stays cheap. An index is added when a search needs one and its write cost has been measured.
-9. Both pairs are readable through Gryphon. The spine pair joins the canonical spine surface.
+9. The spine pair joins the canonical spine surface and is readable and filterable through Gryphon. The pair on a batch event is read from the batch's events: a batch event is not an entity, so Gryphon does not reach it.
 
 #### Development
 The per-pass record is the batch event; the spine holds a copy of the newest one so that a search does not join to events. Keeping the copy on the row is the same choice `last_observed_at` makes, for the same reason: a time must survive the pruning of the record it came from.
@@ -1187,14 +1206,14 @@ The per-pass record is the batch event; the spine holds a copy of the newest one
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-entity-collection-time-1 | Stated Pair Is Recorded | Proposed | A write that states a collection window for an object sets the pair on that object's batch event and on its spine row. | |
-| req-grid-entity-collection-time-2 | Unstated Pair Stays Empty | Proposed | A write that states none leaves both pairs empty; neither equals the write time. | |
-| req-grid-entity-collection-time-3 | Unchanged Observation Moves It | Proposed | An unchanged re-import that states a new window moves the spine pair and adds no history row and no version. | |
-| req-grid-entity-collection-time-4 | Later Unstated Pass Empties It | Proposed | After a pass that stated a window, a pass that states none leaves the spine pair empty and `last_observed_at` moved. | |
-| req-grid-entity-collection-time-5 | Bad Pair Not Recorded | Proposed | A window whose end precedes its start, or with no zone, is not recorded and the result warns. | |
-| req-grid-entity-collection-time-6 | Order Not Enforced | Proposed | A write whose event time is later than its collection time succeeds and the result reports it. | |
-| req-grid-entity-collection-time-7 | Late Older Read Moves It And Warns | Proposed | After a pass that stated a window, a second pass stating an earlier window moves the spine pair to the earlier window, records that window on its own batch event, moves `last_observed_at`, and the result carries a warning naming the object and both windows. | |
-| req-grid-entity-collection-time-8 | Stated Without GRIFT | Proposed | A service-layer write batch can state a collection window for an object before any GRIFT form for it exists. | |
+| req-grid-entity-collection-time-1 | Stated Pair Is Recorded | Implemented | A write that states a collection window for an object sets the pair on that object's batch event and on its spine row. | `TestStatedPairIsRecorded`: a create, a create under a given id, a changing patch, an edge, and a retirement; `TestSettleWindow` for UTC and a read in one call. |
+| req-grid-entity-collection-time-2 | Unstated Pair Stays Empty | Implemented | A write that states none leaves both pairs empty; neither equals the write time. | `TestUnstatedPairStaysEmpty`; `TestSettleWindow.test_nothing_stated_is_an_empty_pair_and_no_warning`. |
+| req-grid-entity-collection-time-3 | Unchanged Observation Moves It | Implemented | An unchanged re-import that states a new window moves the spine pair and adds no history row and no version. | `TestUnchangedObservation`: a keep-absent replace, the write a re-import makes, with a new window: version, `updated_at`, history count and `last_changed_batch_id` unmoved, an `observe` event carrying the window. Stated through the write batch; a GRIFT document cannot state one yet. |
+| req-grid-entity-collection-time-4 | Later Unstated Pass Empties It | Implemented | After a pass that stated a window, a pass that states none leaves the spine pair empty and `last_observed_at` moved. | `TestUnchangedObservation`: an unchanged pass and a changing pass that state none. |
+| req-grid-entity-collection-time-5 | Bad Pair Not Recorded | Implemented | A window whose end precedes its start, or with no zone, is not recorded and the result warns. | `TestBadPairNotRecorded` and `TestSettleWindow`: end before start, no zone on either bound, text that is not a time. |
+| req-grid-entity-collection-time-6 | Order Not Enforced | Implemented | A write whose event time is later than its collection time succeeds and the result reports it. | `TestOrderNotEnforced`: event time later than the window, and a window later than the write; an ordinary window reports nothing. |
+| req-grid-entity-collection-time-7 | Late Older Read Moves It And Warns | Implemented | After a pass that stated a window, a second pass stating an earlier window moves the spine pair to the earlier window, records that window on its own batch event, moves `last_observed_at`, and the result carries a warning naming the object and both windows. | `TestLateOlderRead`: an unchanged and a changing older read; a later window does not warn. |
+| req-grid-entity-collection-time-8 | Stated Without GRIFT | Implemented | A service-layer write batch can state a collection window for an object before any GRIFT form for it exists. | `TestStatedPairIsRecorded.test_a_create_that_states_a_window_sets_the_event_and_the_spine`: `WriteOperation.collected` through `write_batch`, no GRIFT document involved. |
 
 ### Model Versions And Upgrade Steps
 ----

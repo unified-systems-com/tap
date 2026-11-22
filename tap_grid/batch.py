@@ -211,6 +211,8 @@ def record_batch_event(
     actor: AbstractUser | None = None,
     metadata: dict[str, Any] | None = None,
     batch_id: str | None = None,
+    collected_start: datetime | None = None,
+    collected_end: datetime | None = None,
 ) -> BatchEvent | None:
     """Record a change event in the current batch.
 
@@ -221,6 +223,9 @@ def record_batch_event(
         actor: User making the change (falls back to context user).
         metadata: Additional context.
         batch_id: Explicit batch ID (falls back to context batch_id).
+        collected_start: When the collector began reading the object in this pass, if the
+            writer stated it (req-grid-entity-collection-time). Never the write time.
+        collected_end: When it finished.
 
     Returns:
         The created BatchEvent, or None if no batch context.
@@ -247,6 +252,8 @@ def record_batch_event(
         model_name=model_name,
         actor=actor,
         metadata=metadata or {},
+        collected_start=collected_start,
+        collected_end=collected_end,
     )
 
 

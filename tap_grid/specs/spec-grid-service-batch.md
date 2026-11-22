@@ -122,6 +122,8 @@ Each Batch accumulates an append-only log of per-operation events. Events record
 | `timestamp` | DateTimeField | No | auto | When the event was recorded. |
 | `actor` | FK → User | Yes | `null` | User responsible for this specific operation. `SET_NULL` on user deletion. |
 | `metadata` | JSONField | No | `{}` | Free-form per-event metadata (e.g. field names changed, count deltas). |
+| `collected_start` | DateTimeField | Yes | `null` | When the collector began reading the object in this pass, as the write operation stated it (`req-grid-entity-collection-time` in `spec-grid-entity.md`). Empty when not stated; never the write time. |
+| `collected_end` | DateTimeField | Yes | `null` | When it finished. |
 
 #### Event Types
 

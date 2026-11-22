@@ -828,7 +828,7 @@ class TestTheTimeDimension:
 class TestSpineSurface:
     def test_the_three_join_the_canonical_surface(self) -> None:
         names = Entity.SPINE_FIELD_NAMES
-        assert names[names.index("last_observed_at") + 1 : names.index("originating_grid_id")] == THREE
+        assert names[names.index("last_observed_at") + 1 : names.index("collected_start")] == THREE
         assert "event_kind" not in {field.name for field in Entity._meta.fields}
 
     def test_only_the_start_is_indexed(self) -> None:

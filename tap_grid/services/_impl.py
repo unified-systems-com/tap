@@ -29,6 +29,7 @@ from tap.jsonfiles import jsonschema_validate
 from tap_grid.caller_context import (
     drain_deferred_hotlink_checks,
 )
+from tap_grid.collection_time import Settled, order_warnings, settle_window
 from tap_grid.compound_edges import EMPTY_INDEX, DependentsIndex
 from tap_grid.constraints import validate_edge as _validate_edge_constraint
 from tap_grid.event_time import derive_for_instance
@@ -589,14 +590,18 @@ def _record_provenance(
     metadata: dict[str, Any] | None = None,
     *,
     observed_unchanged: bool = False,
+    collected: Settled | None = None,
 ) -> None:
     """Record a BatchEvent for the operation, or raise: a write is not applied without its record.
+
+    ``collected`` is the collection window the writer stated for the object; the event carries
+    it as the per-pass record (req-grid-entity-collection-time), empty when none was stated.
 
     An update-shaped operation that re-observed its object unchanged is recorded as ``observe``
     (req-grid-history-reobservation). The record is evidence reconciliation reads, so a batch
     that cannot be found is a failure, never a skipped record (req-grid-service-batch-evidence).
 
-    TAP-IMPLEMENTS: req-grid-service-batch-evidence@02ccdac55a7a/fae4893e76a3 (enforcement) — the one
+    TAP-IMPLEMENTS: req-grid-service-batch-evidence@02ccdac55a7a/318a9e86fed5 (enforcement) — the one
         recorder the write pipeline calls: a missing batch or a failed insert fails the operation.
     """
     from tap_grid.batch import record_batch_event
@@ -620,6 +625,8 @@ def _record_provenance(
             actor=user,
             batch_id=batch_id,
             metadata=metadata,
+            collected_start=collected.start if collected is not None else None,
+            collected_end=collected.end if collected is not None else None,
         )
     except Exception as exc:
         raise ServiceEvidenceError(
@@ -640,7 +647,7 @@ def _pointer_uuid(batch_id: str | uuid.UUID) -> uuid.UUID:
     return batch_id if isinstance(batch_id, uuid.UUID) else uuid.UUID(str(batch_id))
 
 
-def _stamp_observed(entity: Entity, batch_id: str) -> None:
+def _stamp_observed(entity: Entity, batch_id: str, collected: Settled) -> None:
     """Record on the spine that this batch named an object it did not change.
 
     A direct row update: it does not increment ``version``, does not move ``updated_at`` (a
@@ -649,12 +656,23 @@ def _stamp_observed(entity: Entity, batch_id: str) -> None:
 
     req-grid-entity-batch-pointers rule 3: the observed pair is set for an object an operation
     names and leaves unchanged, with no version, no ``updated_at`` move and no history.
+
+    The collection window rides the same statement (req-grid-entity-collection-time rule 4): the
+    pair this batch stated for the object, or empty when it stated none, so the pair on the row
+    is always the one of the batch ``last_observed_batch_id`` names (rule 5).
     """
     observed_by = _pointer_uuid(batch_id)
     now = timezone.now()
-    Entity.objects.filter(pk=entity.pk).update(last_observed_batch_id=observed_by, last_observed_at=now)
+    Entity.objects.filter(pk=entity.pk).update(
+        last_observed_batch_id=observed_by,
+        last_observed_at=now,
+        collected_start=collected.start,
+        collected_end=collected.end,
+    )
     entity.last_observed_batch_id = observed_by
     entity.last_observed_at = now
+    entity.collected_start = collected.start
+    entity.collected_end = collected.end
 
 
 def _ensure_batch(batch_id: str, user: Any, *, name: str, description: str) -> None:
@@ -718,6 +736,12 @@ def _execute_write_pipeline(
     # null (req-grid-service-write-observation) — never blanket-stripped here, which would
     # collapse "asserted absence" into "omitted" and erase the convention's known-unknown.
     payload: dict[str, Any] = dict(op.payload or {})
+    # The collection window the writer stated for this operation's object, settled once: the pair
+    # every write below records, or empty with the reason (req-grid-entity-collection-time rules
+    # 3 and 6). It is not a field of the object and takes no part in classifying the write.
+    collected = settle_window(op.collected)
+    # The pair the row carried before this write, to tell an older read arriving late (rule 5).
+    stored_window: tuple[Any, Any] = (None, None)
 
     try:
         # Step 2: Security/authz stub (reserved; logs identity at DEBUG).
@@ -869,6 +893,7 @@ def _execute_write_pipeline(
             instance = model_cls.all_objects.select_related("entity").get(entity_id=target_uuid)
             if isinstance(instance, Edge):
                 _refuse_internal_edge_type(instance.edge_type, op.verb, internal_only_bypass)
+            stored_window = (instance.entity.collected_start, instance.entity.collected_end)
 
             # Write prohibition — tombstoned entities cannot be mutated.
             if not is_delete and instance.entity.deleted_at is not None:
@@ -1041,6 +1066,9 @@ def _execute_write_pipeline(
                 # Event time, derived from the fields the model declares; written here for the
                 # same reason as the natural key (req-grid-entity-event-time rule 3).
                 **created_event_time.as_columns(),
+                # The collection window the creating batch stated, for the same reason as the
+                # pointers (req-grid-entity-collection-time rule 4).
+                **collected.as_columns(),
             )
             # Signal BaseModel.save() to skip its spine_updates branch on the
             # subsequent save: this Entity row was created moments ago at
@@ -1148,7 +1176,7 @@ def _execute_write_pipeline(
             # cannot be written is not applied (req-grid-service-delete-reason-1; Codex
             # and Grok on #568). The exception propagates, the transaction rolls back.
             if hasattr(instance, "entity"):
-                _record_provenance(op.verb, instance.entity, batch_id, user, metadata=provenance)
+                _record_provenance(op.verb, instance.entity, batch_id, user, metadata=provenance, collected=collected)
             # Tombstone: set deleted_at on the entity and cascade to its edges.
             now = timezone.now()
 
@@ -1163,6 +1191,9 @@ def _execute_write_pipeline(
                 last_changed_batch_id=retiring_batch,
                 last_observed_batch_id=retiring_batch,
                 last_observed_at=now,
+                # The window the retiring batch stated for this object, or empty
+                # (req-grid-entity-collection-time rules 4 and 5).
+                **collected.as_columns(),
             )
             if getattr(model_cls, "ENTITY_TYPE", None) == "dimension":
                 # A queryset update sends no signal: tell the live vocabulary a node retired, so it
@@ -1206,6 +1237,11 @@ def _execute_write_pipeline(
                 last_changed_batch_id=retiring_batch,
                 last_observed_batch_id=retiring_batch,
                 last_observed_at=now,
+                # The batch stated a window for the node it named, not for the edges that end
+                # with it; a pair is never left standing for a batch that stated none
+                # (req-grid-entity-collection-time rule 5).
+                collected_start=None,
+                collected_end=None,
             )
             _flip_record_retirement(Edge, edge_entity_ids, batch_id)
 
@@ -1272,15 +1308,18 @@ def _execute_write_pipeline(
                         skip_validation=True,
                         _spine_just_created=spine_just_created,
                         flip_changed_fields=_flip_stamped(payload, classification),
+                        _collected=collected.as_columns(),
                     )
                 # A re-observed-unchanged operation does not save the typed row, so it writes
                 # no history row, no version and no FLIP entry, and leaves updated_at alone
                 # (req-grid-history-reobservation rule 3). The batch still records that it saw
                 # the object, as an `observe` event, which batch-scoped sweeps and
                 # reconciliation read beside create and update.
-                _record_provenance(op.verb, instance.entity, batch_id, user, observed_unchanged=unchanged)
+                _record_provenance(
+                    op.verb, instance.entity, batch_id, user, observed_unchanged=unchanged, collected=collected
+                )
                 if unchanged:
-                    _stamp_observed(instance.entity, batch_id)
+                    _stamp_observed(instance.entity, batch_id, collected)
             entity_id_out = instance.entity_id
 
         # Step 12: Response shaping.
@@ -1301,7 +1340,20 @@ def _execute_write_pipeline(
             # A declared event time the grid could not store truthfully is left off the spine
             # and reported here, naming the field (req-grid-entity-event-time rule 12). It is
             # reported on an unchanged write too: the typed value is still what it was.
-            warnings=[] if is_delete else list(derive_for_instance(instance).warnings),
+            # Then what there is to say about the collection window: one left out, an older read
+            # arriving late, a clock out of order (req-grid-entity-collection-time rules 5 to 7).
+            warnings=[
+                *([] if is_delete else derive_for_instance(instance).warnings),
+                *collected.warnings,
+                *order_warnings(
+                    collected,
+                    entity_id=entity_id_out,
+                    stored_start=stored_window[0],
+                    stored_end=stored_window[1],
+                    event_start=getattr(getattr(instance, "entity", None), "event_start", None),
+                    now=timezone.now(),
+                ),
+            ],
         )
 
     except ServiceVersionConflictError as exc:
