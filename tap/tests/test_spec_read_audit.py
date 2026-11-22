@@ -55,6 +55,11 @@ def _run_recorder(tmp_path: Path, conftest_reads_at_import: bool = False) -> dic
     )
     (root / "test_fixture_first.py").write_text("def test_one(spec_rows):\n    assert spec_rows\n")
     (root / "test_fixture_second.py").write_text("def test_two(spec_rows):\n    assert spec_rows\n")
+    (root / "alias").symlink_to(root / "specs", target_is_directory=True)
+    (root / "test_symlink.py").write_text(
+        "from pathlib import Path\n"
+        "def test_alias():\n    assert (Path(__file__).parent / 'alias' / 'spec-a.md').read_text()\n"
+    )
     (root / "test_clean.py").write_text("def test_nothing():\n    assert open(__file__).read()\n")
     out = tmp_path / "out"
     env = {**os.environ, "TAP_SPEC_READ_AUDIT": str(out), "PYTHONPATH": str(REPO)}
@@ -74,8 +79,8 @@ def test_reads_are_charged_to_the_module_the_test_and_every_fixture_requester(tm
     record = _run_recorder(tmp_path)
     assert record["unattributed"] == [], "pytest walking specs/ is not a read"
     assert record["readers"] == sorted(
-        ["test_collects.py", "test_reads.py", "test_fixture_first.py", "test_fixture_second.py"]
-    ), "the second requester of a session fixture never triggers its setup, and must still be charged"
+        ["test_collects.py", "test_reads.py", "test_fixture_first.py", "test_fixture_second.py", "test_symlink.py"]
+    ), "the second requester of a session fixture never triggers its setup, and a symlinked read is still a read"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-7")

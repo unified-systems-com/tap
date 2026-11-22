@@ -13,7 +13,7 @@ file it saw. A PR that adds a new spec reader fails on that PR, with the fix pri
 What counts as a read, and who it is charged to:
 
 * `open()`, `os.listdir()` and `os.scandir()` of a path under `<rootdir>`, with `specs` as one of
-  its directory parts. Paths outside the repository (a test's own temporary `specs/`) are not
+  its directory parts, both compared after resolving symlinks. Paths outside the repository (a test's own temporary `specs/`) are not
   the repository's specs, and a spec edit cannot reach them.
 * A read inside a test (setup, call, teardown) is charged to the test's file. A read while pytest
   imports or collects a module (parametrizing over spec rows) is charged to that module. A read
@@ -77,7 +77,8 @@ class _Recorder:
         if event not in _EVENTS or not args or args[0] is None:
             return
         try:
-            path = os.path.abspath(os.fsdecode(args[0]))
+            # realpath, not abspath: a read through a symlink (`alias/ -> specs/`) is still a spec read.
+            path = os.path.realpath(os.fsdecode(args[0]))
         except (TypeError, ValueError):
             return  # a file descriptor, not a path
         if not is_spec_path(path, self.root):
@@ -104,7 +105,7 @@ def _install() -> None:
     global _REC
     if not os.environ.get(ENV) or _REC is not None:
         return
-    _REC = _Recorder(os.getcwd())
+    _REC = _Recorder(os.path.realpath(os.getcwd()))
     sys.addaudithook(lambda event, args: _REC.hook(event, args) if _REC is not None else None)
 
 
@@ -117,7 +118,7 @@ def _file_of(nodeid: str) -> str:
 
 def pytest_configure(config: pytest.Config) -> None:
     if _REC is not None:
-        _REC.root = str(config.rootpath)
+        _REC.root = os.path.realpath(config.rootpath)
 
 
 def pytest_collectstart(collector: pytest.Collector) -> None:
