@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.5](https://github.com/unified-systems-com/tap/compare/v0.4.4...v0.4.5) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** --core-files reads and names only files inside the root ([76e9ae9](https://github.com/unified-systems-com/tap/commit/76e9ae9b5cde9020681852bb8c913db50a6b4f66))
+* **ci:** the spec-read audit resolves symlinks before matching a spec path ([ba2e1fe](https://github.com/unified-systems-com/tap/commit/ba2e1fe992c4b947e6c217a1faec20444c910a2a))
+* **ci:** the spec-read audit resolves symlinks before matching a spec path [via make-it-fast] ([744cf07](https://github.com/unified-systems-com/tap/commit/744cf07883dba1d2628324f8c4b3ab6ccea05512))
+* **ci:** the spec-read audit sees conftest imports and refuses reads it cannot charge ([d7879b2](https://github.com/unified-systems-com/tap/commit/d7879b2d0b33cee0c9482d378f1710eee48e7997))
+
 ## [0.4.4](https://github.com/unified-systems-com/tap/compare/v0.4.3...v0.4.4) (2026-11-21)
 
 
