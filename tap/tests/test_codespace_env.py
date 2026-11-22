@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
 
-def _derive(tmp_path: Path, identity: str | None, wait: int = 3, **env: str) -> subprocess.CompletedProcess[str]:
+def _derive(tmp_path: Path, identity: str | None, wait: int | str = 3, **env: str) -> subprocess.CompletedProcess[str]:
     # A copy of the script, so the signing key it generates lands in the throwaway tree, not the repository.
     tree = tmp_path / "tree"
     (tree / "scripts").mkdir(parents=True, exist_ok=True)
@@ -100,6 +100,18 @@ def test_a_malformed_name_is_refused_not_run(tmp_path: Path) -> None:
     proc = _derive(tmp_path, str(ident), wait=1)
     assert proc.returncode != 0
     assert not marker.exists()
+
+
+@pytest.mark.spec("req-tap-serving-codespace-9")
+def test_a_hostile_wait_runs_nothing(tmp_path: Path) -> None:
+    """The wait reaches bash arithmetic, where an array subscript would run a command."""
+    ident = tmp_path / "identity.env"
+    ident.write_text("CODESPACE_NAME=named\n")
+    marker = tmp_path / "pwned"
+    proc = _derive(tmp_path, str(ident), wait=f"x[$(touch {marker})]")
+    assert not marker.exists()
+    assert proc.returncode == 0, proc.stderr
+    assert "must be 0-900 seconds" in proc.stderr
 
 
 @pytest.mark.spec("req-tap-serving-codespace-5")

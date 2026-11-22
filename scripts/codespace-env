@@ -144,7 +144,13 @@ fi
 identity="${TAP_CODESPACE_IDENTITY:-}"
 _identity() { sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}\$/\1/p" "$identity" 2>/dev/null | tail -1; }
 if [[ -n "$identity" ]]; then
+  # Digits only, and capped: bash evaluates a variable's text as an arithmetic expression,
+  # and an array subscript there runs a command substitution (x[$(...)]).
   wait_s="${TAP_CODESPACE_NAME_WAIT:-180}"
+  if [[ ! "$wait_s" =~ ^[0-9]{1,4}$ ]] || (( 10#$wait_s > 900 )); then
+    echo "==> WARN: TAP_CODESPACE_NAME_WAIT must be 0-900 seconds; waiting 180" >&2
+    wait_s=180
+  fi
   deadline=$(( $(date +%s) + wait_s ))
   until [[ "$(_identity CODESPACE_NAME)" =~ ^[A-Za-z0-9-]+$ ]] || (( $(date +%s) >= deadline )); do
     sleep 1
