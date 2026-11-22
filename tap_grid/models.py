@@ -21,6 +21,17 @@ from django.db.models.functions import Left
 from django.utils import timezone
 
 from tap.jsonfiles import jsonschema_validate
+from tap_grid.event_time import (
+    EVENT_KINDS,
+    EVENT_PRECISIONS,
+    NO_EVENT_TIME,
+    Interval,
+    Moment,
+    NoEventTime,
+    declaration_for,
+    declared_fields,
+    derive_for_instance,
+)
 from tap_grid.history import TapHistoricalRecords, _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
@@ -545,6 +556,44 @@ class Entity(models.Model):
             "batch record being pruned. Says that a batch named the object, nothing more."
         ),
     )
+    # Event time (req-grid-entity-event-time): when the thing happened or held in the world, as
+    # its source states it. Derived by the grid on every save from the fields the model declares
+    # (`EVENT_TIME`); nothing a caller or a GRIFT envelope supplies reaches them. Never defaulted.
+    event_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text="When the thing happened, or began to hold. Inclusive. Empty when the source gives no time.",
+    )
+    event_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "When it stopped holding. Exclusive. Equal to `event_start` for an exact moment; empty "
+            "when the source states no end."
+        ),
+    )
+    event_kind = models.CharField(  # noqa: DJ001
+        max_length=16,
+        null=True,
+        blank=True,
+        editable=False,
+        choices=[(kind, kind) for kind in EVENT_KINDS],
+        help_text="What `event_start` means: occurred, created, first_seen or published.",
+    )
+    event_precision = models.CharField(  # noqa: DJ001
+        max_length=8,
+        null=True,
+        blank=True,
+        editable=False,
+        choices=[(level, level) for level in EVENT_PRECISIONS],
+        help_text=(
+            "How exact the source value was: year, month, day or second. Coarser than second "
+            "means the stored pair is the interval the unit covers."
+        ),
+    )
 
     # Tombstone-aware manager: returns both live and tombstoned rows by
     # default (internal infrastructure dominates the call sites). Callers
@@ -602,6 +651,10 @@ class Entity(models.Model):
         "last_changed_batch_id",
         "last_observed_batch_id",
         "last_observed_at",
+        "event_start",
+        "event_end",
+        "event_kind",
+        "event_precision",
         "originating_grid_id",
     )
     SPINE_DJANGO_NAME: ClassVar[dict[str, str]] = {
@@ -964,6 +1017,16 @@ def install_natural_key_indexes() -> None:
             _install_natural_key_index(model)
 
 
+def _stores_event_fields(instance: Any, update_fields: Any) -> bool:
+    """Whether a save stores what the row's event time is derived from (every field, or a declared one)."""
+    if update_fields is None:
+        return True
+    declared = set(declared_fields(declaration_for(instance)))
+    if getattr(type(instance), "ENTITY_TYPE", None) == "edge":
+        return bool(declared) and "properties" in update_fields
+    return bool(declared & set(update_fields))
+
+
 def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) -> uuid.UUID | None:
     """The batch a save names on the spine as last to change and last to observe the row.
 
@@ -1052,6 +1115,14 @@ class BaseModel(models.Model):
     # The path form is read by one parser (tap_grid.natural_key) for the payload, the search,
     # the index and the lock.
     NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
+    # Event time (req-grid-entity-event-time rule 1): which of this model's own fields say when
+    # the thing happened or held in the world, as its source states it.
+    #   Moment(field, kind)              it happened at that time
+    #   Interval(start, kind, end=None)  it began to hold at the start and held until the end
+    #   NO_EVENT_TIME                    this type has no such time, on purpose
+    #   None                             undeclared: nothing is derived, and plugin validation says so
+    # Edge types declare theirs in the edge type's definition instead (rule 20).
+    EVENT_TIME: ClassVar[Moment | Interval | NoEventTime | None] = None
     # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
     NATURAL_KEY_REASON: ClassVar[str] = ""
     # Containment (req-grid-service-delete-cascade): the edge types through which THIS
@@ -1481,6 +1552,11 @@ class BaseModel(models.Model):
         # (req-grid-entity-natural-key-19); nothing a caller supplies reaches it.
         natural_key = self.derive_natural_key()
 
+        # Event time (req-grid-entity-event-time rule 3): derived here on every save from the
+        # fields the model declares, and written with `name` and `natural_key`. A value that
+        # cannot be stored truthfully leaves the four empty; the pipeline reports why (rule 12).
+        event_time = derive_for_instance(self)
+
         if self.entity_id is None:
             with transaction.atomic():
                 # Defaults stamped src: default, the caller's values over them (req-grid-dimension-reference-3).
@@ -1497,6 +1573,7 @@ class BaseModel(models.Model):
                     # row's own `updated_at` at insert (rule 5).
                     last_changed_batch_id=pointer_batch,
                     last_observed_batch_id=pointer_batch,
+                    **event_time.as_columns(),
                 )
                 super().save(*args, **kwargs)
         else:
@@ -1543,7 +1620,20 @@ class BaseModel(models.Model):
                 new_key = self._stored_natural_key(kwargs["update_fields"])
             if self.entity.natural_key != new_key:
                 spine_updates["natural_key"] = new_key
+            # Event time, in this same statement, written only where it changed. A partial save
+            # that stores none of the declared fields leaves it alone: the unsaved in-memory
+            # values are not what the row holds.
+            event_updates: dict[str, Any] = {}
+            if _stores_event_fields(self, kwargs.get("update_fields")):
+                event_updates = {
+                    name: value
+                    for name, value in event_time.as_columns().items()
+                    if getattr(self.entity, name) != value
+                }
+                spine_updates.update(event_updates)
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
+            for name, value in event_updates.items():
+                setattr(self.entity, name, value)
             if "name" in spine_updates:
                 # Keep the in-memory entity in lockstep with the persisted spine.
                 self.entity.name = new_name
@@ -1692,6 +1782,8 @@ class Dimension(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it"
     )
@@ -1793,6 +1885,8 @@ class Search(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id"
     )
@@ -2069,6 +2163,10 @@ class BatchEventType(models.TextChoices):
     # record: it removes nothing, which is why it is never ``unlink``. Recorded on the edge for
     # each proposal, and on the batch for each claim's outcome.
     AUTHORITY_PROPOSED = "authority_proposed", "Authority proposed (dry-run, nothing removed)"
+    # A spine value the grid itself re-derived (req-grid-entity-event-time rule 17). Not a
+    # sighting: no source or analyst named the object, so every reader that asks whether a batch
+    # saw an object leaves this type out, and it never moves the last-observed pointers.
+    MAINTENANCE = "maintenance", "Maintenance (the grid re-derived a spine value)"
 
 
 class NaturalKeyRecipe(models.Model):
@@ -2188,6 +2286,8 @@ class Keystone(BaseModel):
     # Keyless (req-grid-entity-natural-key):
     # authored, not observed: keystones are appended to record instance context, never re-recognised from an external source.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    # No field of this type says when a thing happened in the world (req-grid-entity-event-time rule 1).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: keystones are appended to record instance context, never re-recognised from an external source"
     )
