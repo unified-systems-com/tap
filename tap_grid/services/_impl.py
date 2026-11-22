@@ -923,7 +923,7 @@ def _execute_write_pipeline(
         # before the write is classified, so a write found unchanged has skipped none of them
         # (req-grid-history-reobservation rule 10).
         if not is_delete:
-            instance.prepare_for_write()
+            instance._prepare_for_write_checked()
             if is_create and op.entity_id is not None and instance.entity_id is None:
                 # The id this create will land under, so a whole-record check can tell the row
                 # from another one (Dimension.validate's duplicate-name rule; the spine row is
