@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from tap import git_pin, plugin_deps
+from tap import git_pin, plugin_deps, product_image
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
 from tap.flaws import HANDLING_OBSERVE_CONTINUE, AppFlaw, InstanceFlaw
 from tap.git_pin import COMMIT_SHA_PATTERN, TAG_MATCHES, TAG_NOT_OBSERVABLE, TagCheck, check_pin
@@ -825,6 +825,48 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
         logger.info("[c5d5] pre-boot install: '%s' installed", slug)
 
 
+def _product_manifest(profile_id: str) -> dict[str, Any] | None:
+    """The install manifest of a product image, checked against the record being booted; None otherwise.
+
+    A product image carries its boot record, and the manifest names that record's digest, so
+    booting it against a different record (a mounted or edited one) is refused rather than
+    run against plugins built for another (req-tap-bake-product-image).
+    """
+    try:
+        manifest = product_image.load_manifest()
+        if manifest is not None:
+            product_image.check_record(manifest, profile_id, profile_path(_boot_dir(), profile_id))
+    except (product_image.ProductImageError, OSError, ValueError) as exc:
+        raise PrebootError(f"product image: {exc}") from exc
+    return manifest
+
+
+def _check_product_plugins(entries: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
+    """Satisfaction from the install manifest, never from git metadata, and nothing installed.
+
+    A plugin installed from a wheel carries no PEP 610 VCS record, so ``_is_satisfied`` would
+    call correct code unsatisfied and reinstall it from git at every start. In a product image
+    the manifest decides instead, and an unsatisfied plugin is fatal: the environment is the
+    image's, so a mismatch means a tampered or mis-built image, which a reinstall would hide
+    (`req-tap-bake-product-image-3`, `req-tap-bake-immutable-env-2`). The tag lookups ran once,
+    at build time; their results are in the manifest, so start needs no network for them.
+
+    TAP-IMPLEMENTS: req-tap-bake-immutable-env@5e8a0708622f/4c95da4bda9a (enforcement) — a product
+        image's start checks its baked environment and installs nothing.
+    """
+    problems = [p for entry in entries for p in product_image.plugin_problems(entry, manifest)]
+    if problems:
+        for problem in problems:
+            # NOSONAR (S5145) — `_one_log_line` replaces every control character, so a RECORD path
+            # cannot forge a log line.
+            logger.error("[e4a7] pre-boot (product image): %s", _one_log_line(problem))  # NOSONAR (S5145)
+        raise PrebootError(
+            f"product image: {len(problems)} plugin problem(s), first: {_one_log_line(problems[0])}; a product image installs "
+            "nothing at start, so rebuild the image rather than patching it"
+        )
+    logger.info("[e4a8] pre-boot (product image): %d plugin(s) satisfied by the install manifest", len(entries))
+
+
 # =============================================================================
 # Entry-point discovery → TAP_PLUGINS (identity check: key == slug)
 # =============================================================================
@@ -1337,7 +1379,11 @@ def run_preboot(profile_id: str) -> list[str]:
     profile = _read_profile(profile_id)
 
     entries = _install_plugin_specs(profile)
-    _install_plugins(entries, profile_id)
+    manifest = _product_manifest(profile_id)
+    if manifest is None:
+        _install_plugins(entries, profile_id)
+    else:
+        _check_product_plugins(entries, manifest)
 
     discovered = discover_entry_points()
     app_configs = _resolve_tap_plugins(entries, discovered)
