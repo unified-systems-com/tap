@@ -126,6 +126,40 @@ if [[ -f /app/tap-product/install-manifest.json ]]; then
     echo "==> Product image: running the baked environment (no sync, no installs at start)."
 fi
 
+# ---------------------------------------------------------------------------
+# Initializer (req-tap-bake-initializer, tap#1328) — this installation's identity.
+# ---------------------------------------------------------------------------
+# A product image whose deploy config names an installation volume (TAP_INSTALLATION_DIR) gets its
+# identity from that volume, not from the deploy config: on the first start the initializer mints
+# the secret key, the database role passwords and the grid id, re-keys the owning role away from
+# the config's bootstrap password, and keeps them; every later start reads them back. It runs
+# before anything reads a setting, under a lock that makes a second container wait. The volume must
+# be a real mount, or the identity would vanish with the container.
+TAP_INITIALIZED=""
+if [[ -n "${TAP_PRODUCT_IMAGE}" && -n "${TAP_INSTALLATION_DIR:-}" ]]; then
+    # A mount, and not a memory-backed one: the owner's new password lives only here, so a tmpfs
+    # would lose it with the container and strand the database (mountinfo's fstype follows " - ").
+    if ! awk -v p="${TAP_INSTALLATION_DIR}" '$5 == p { for (i = 6; i <= NF; i++) if ($i == "-") { t = $(i + 1); break }
+            if (t != "tmpfs" && t != "ramfs" && t != "devtmpfs") found = 1 } END { exit !found }' /proc/self/mountinfo; then
+        emit_abort initialize "TAP_INSTALLATION_DIR (${TAP_INSTALLATION_DIR}) is not a mounted, durable volume; the installation's identity must outlive the container"
+        exit 1
+    fi
+    echo "==> Initializer: this installation's identity..."
+    if ! _tap_road="$(/app/.venv/bin/python -m tap.initialize run)"; then
+        emit_abort initialize "the initializer refused or failed (see above); nothing was served"
+        exit 1
+    fi
+    if [[ -f /run/tap/installation.env ]]; then
+        set -a
+        # shellcheck disable=SC1091  # written by tap.initialize, values shell-quoted
+        . /run/tap/installation.env
+        set +a
+        rm -f /run/tap/installation.env
+        TAP_INITIALIZED=1
+    fi
+    echo "==> Initializer: ${_tap_road}."
+fi
+
 if [[ -z "${TAP_PRODUCT_IMAGE}" ]]; then
 _tap_image_stamp="${UV_CACHE_DIR}/.tap-image-id"
 _tap_image_id="$(tap_clear_if_other_image /opt/uv-cache-seed.manifest.json "${UV_CACHE_DIR}" /app/.venv)"
@@ -362,7 +396,14 @@ fi
 # against an as-yet-unmigrated DB; it creates the table via the schema editor
 # independently of migration state.
 echo "==> Provisioning the DatabaseCache table (createcachetable)..."
-uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
+# An initialized installation runs its schema steps under the installation lock, so a second start
+# waits for the first's migrate instead of racing it (req-tap-bake-initializer: only one thing
+# migrates). Elsewhere the prefix is empty and the steps run exactly as before.
+TAP_LOCKED=()
+if [ -n "${TAP_INITIALIZED}" ]; then
+    TAP_LOCKED=(/app/.venv/bin/python -m tap.initialize locked --)
+fi
+"${TAP_LOCKED[@]}" uv run python manage.py createcachetable || { emit_abort migrate "createcachetable failed"; exit 1; }
 
 # Schema from the models (req-boot-schema-from-models, tap#1258). When the boot variable
 # install.schema_from_models resolves true (TAP_BOOT_INSTALL__SCHEMA_FROM_MODELS — CI and dev
@@ -387,7 +428,7 @@ fi
 # migrate runs django.setup(), which imports every INSTALLED_APPS module; a core module
 # reaching a plugin-only dependency raises ModuleNotFoundError here. The sentinel turns that
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
-uv run python manage.py "$MIGRATE_COMMAND" --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
+"${TAP_LOCKED[@]}" uv run python manage.py "$MIGRATE_COMMAND" --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Persistent database connections (req-tap-serving-conn-max-age).
@@ -479,6 +520,19 @@ if [ "${CODESPACES:-}" = "true" ]; then
         echo "==> WARN: Codespace boot orchestration FAILED. The instance will still serve," >&2
         echo "          but expect capability_denied on login and a failing search until this" >&2
         echo "          is resolved — the search role and role groups are created by this step." >&2
+    fi
+fi
+
+# An initialized installation runs its own boot, as a Codespace does: no spawn-session.sh exists
+# here either. The initializer runs it under the installation lock, records Finish, and on the first
+# activation only prints a one-time admin enrolment link (enroll_admin, 1 h, a passkey). A failed
+# boot is fatal here, unlike a Codespace's: the installation is not served half-initialized, and the
+# next start runs Finish again.
+if [ -n "${TAP_INITIALIZED}" ]; then
+    echo "==> Installation: Finish (boot, then the first admin link once), under the installation lock..."
+    if ! /app/.venv/bin/python -m tap.initialize finish; then
+        emit_abort initialize "Finish failed (see above); refusing to serve a half-initialized installation"
+        exit 1
     fi
 fi
 

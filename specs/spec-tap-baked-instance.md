@@ -88,9 +88,9 @@ initialize or serve names a product.
 | req-tap-bake-seed | [The Seed](#the-seed) | Proposed | Database dump, plugin data and file store from a CI instance, with fixed recorded subtractions |
 | req-tap-bake-seed-key | [The Seed Key](#the-seed-key) | Proposed | Record digest, image digest and Postgres major; a seed loads only where all three match |
 | req-tap-bake-attest | [Attested Artifacts](#attested-artifacts) | In Development | Detached attestations bound to final digests; the deploy config pins the seed |
-| req-tap-bake-initializer | [One Initializer Per Installation](#one-initializer-per-installation) | Proposed | Serialized, staged, with durable progress; interruption at any phase resumes or restarts cleanly |
-| req-tap-bake-activate | [Activating A New Installation](#activating-a-new-installation) | Proposed | Separate from loading: new grid id, lineage, secrets and per-installation roles, for a seed load or a clone |
-| req-tap-bake-installation-identity | [Identity Belongs To The Installation](#identity-belongs-to-the-installation) | Proposed | Secrets live in the installation's store; replicas and replacement hosts consume them, never rotate them |
+| req-tap-bake-initializer | [One Initializer Per Installation](#one-initializer-per-installation) | In Development | Serialized, staged, with durable progress; interruption at any phase resumes or restarts cleanly |
+| req-tap-bake-activate | [Activating A New Installation](#activating-a-new-installation) | In Development | Separate from loading: new grid id, lineage, secrets and per-installation roles, for a seed load or a clone |
+| req-tap-bake-installation-identity | [Identity Belongs To The Installation](#identity-belongs-to-the-installation) | In Development | Secrets live in the installation's store; replicas and replacement hosts consume them, never rotate them |
 | req-tap-bake-crypto-bom | [The Crypto Verdict Travels With The Image](#the-crypto-verdict-travels-with-the-image) | Proposed | Scan at build, attested against the final image digest and the policy inputs; runtime self-check kept |
 | req-tap-bake-startup | [Django Starts Once](#django-starts-once) | Proposed | One initializer process instead of several; import cost profiled; preloading decided deliberately |
 | req-tap-bake-hosts | [One Lifecycle, Every Host](#one-lifecycle-every-host) | Proposed | Codespaces, `spawn-session.sh`, dedicated managed Postgres, shared clusters, replicas |
@@ -393,7 +393,7 @@ alone is never loaded.
 ----
 RID: `req-tap-bake-initializer`
 
-Status: `Proposed`
+Status: `In Development`
 
 One initializer takes an installation from empty to ready. It is the only thing that loads, activates
 or migrates, and only one runs per installation at a time. A second initializer started meanwhile (a
@@ -463,25 +463,46 @@ installation from coming up.
 contradict them, because it restores nothing of the installation's own. It is the first build of a
 new installation from a reviewed, pinned artifact.
 
+**As built, first slice (tap#1328).** `tap/initialize.py` is settings-free. The entrypoint runs it
+first, in a product image whose deploy config sets `TAP_INSTALLATION_DIR` to a mounted volume.
+
+- **State store.** The volume holds `identity.json`, mode 0600: the secret key, the owner and search
+  role passwords, the grid id, an activation id, a status and per-phase progress. The image prepares
+  the mount point as `nonroot`, mode 0700, so a fresh named volume takes that owner and mode.
+- **Classification.** The roads built so far are activate (an empty database with no identity),
+  resume (a pending identity) and Finish (an active identity whose stamp matches the database).
+  Everything else is refused, including a TAP database with no identity: adopting a database made
+  without the initializer is not built yet. Activation stamps the database with its activation id,
+  as a database comment, so a volume and a database from different installations are told apart.
+- **The lock.** It covers activation, the entrypoint's schema steps (`tap.initialize locked --`)
+  and Finish, so a second start waits rather than migrating, booting or issuing alongside the first.
+- **Finish.** `tap.initialize finish` runs `manage.py boot`, then records `finish: done`; a failed
+  boot is fatal. On the first activation only, it records `issuing`, then prints a one-time
+  `enroll_admin` link, so a crash can never issue a second one.
+- **Not built yet.** The seed rows, clone activation and per-installation role names.
+- **Measured locally, 2026-11-22.** The playground's 15-plugin record, with no seed, on a compose file
+  carrying only a bootstrap password. From `compose up` to HTTP 302, with one admin link printed: 107.6
+  s on Docker and 113.5 s on rootless Podman, on a shared 12-core host.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-initializer-1 | One At A Time | Proposed | Two initializers started together against one installation complete as one: one does the work, the other waits and then finds it done, including while the first drops and recreates the installation's database. | The lock is in the maintenance database |
+| req-tap-bake-initializer-1 | One At A Time | In Development | Two initializers started together against one installation complete as one: one does the work, the other waits and then finds it done, including while the first drops and recreates the installation's database. | The lock is in the maintenance database; Two concurrent `tap.initialize run`s on one installation: one activated, one waited and took Finish (tap#1328); the drop-and-recreate case waits for the seed |
 | req-tap-bake-initializer-8 | In-Flight Recorded First | Proposed | Killing the initializer after `pg_restore` has created some tables but before it finished, then restarting it, drops and reloads the database instead of refusing it, because the progress record names `load` as started. | The crash the classification would otherwise refuse |
 | req-tap-bake-initializer-2 | Interrupted Anywhere | Proposed | Killing the initializer during each phase in turn (load, file staging, activation, Finish), then restarting it, yields an installation equal to an uninterrupted one. | One case per phase; the parity check of -4 |
 | req-tap-bake-initializer-9 | Roots Commit Separately | Proposed | Killing the initializer after the first of several file roots is renamed into place, then restarting it, leaves every root holding exactly the seed's contents once; a root holding files without a `.tap-seed` marker is refused, not emptied. | |
 | req-tap-bake-initializer-3 | Files Atomic | Proposed | After an interruption during file staging, each file root holds either nothing from the seed or all of it, verified against the manifest. | |
 | req-tap-bake-initializer-4 | Same Installation Either Road | Proposed | A seeded and a full initialization of the same record produce the same Gryphon counts by entity type, the same schema (`tap.schema_parity`), the same recorded migrations, and the same file-store inventory and plugin-data hashes. | |
 | req-tap-bake-initializer-5 | Fallback Is Loud And Complete | Proposed | For each seed refusal named above, the pristine installation initializes the full way and serves, and its run record and log name what declined and why. | One case per refusal |
-| req-tap-bake-initializer-7 | Unknown Stores Refused | Proposed | Given a database holding an unrelated table, or a partial TAP schema with no progress row, the initializer exits non-zero naming what it found, and no migration, load or population write occurs. | |
-| req-tap-bake-initializer-6 | Restart Skips To Finish | Proposed | Starting an already-initialized installation runs neither load nor activation, and leaves its identity unchanged. | |
+| req-tap-bake-initializer-7 | Unknown Stores Refused | Implemented | Given a database holding an unrelated table, or a partial TAP schema with no progress row, the initializer exits non-zero naming what it found, and no migration, load or population write occurs. | `tap.initialize.classify`; on a real database an unrelated table was refused and the state volume left empty |
+| req-tap-bake-initializer-6 | Restart Skips To Finish | Implemented | Starting an already-initialized installation runs neither load nor activation, and leaves its identity unchanged. | A restart took the Finish road with the same grid id and printed no second admin link |
 
 ### Activating A New Installation
 ----
 RID: `req-tap-bake-activate`
 
-Status: `Proposed`
+Status: `In Development`
 
 Loading state and activating a new installation are separate steps. A seed load ends with an
 unactivated installation, and so does a copy-on-write clone of an activated one: a clone holds its
@@ -533,15 +554,15 @@ dedicated RDS instance, may keep the plain names.
 | --- | --- | :---: | --- | --- |
 | req-tap-bake-activate-1 | New Identity | Proposed | After activation the grid id differs from the seed's or the clone source's, and a lineage batch names the source. | |
 | req-tap-bake-activate-2 | Clones Activate | Proposed | A declared copy-on-write clone of an activated installation is activated by the initializer even though its stores are not pristine, and afterwards shares no grid id, secret or role password with its source. | |
-| req-tap-bake-activate-3 | Once Only | Proposed | Re-running the initializer on an activated installation changes neither its grid id nor its secrets. | |
-| req-tap-bake-activate-5 | Interrupted Activation Reuses Its Values | Proposed | Killing the initializer after each activation write in turn (role password, grid id, lineage, secret store), then restarting it, yields one grid id, one lineage batch, and role passwords and secrets that match the state store, with no value minted twice. | One case per write |
+| req-tap-bake-activate-3 | Once Only | Implemented | Re-running the initializer on an activated installation changes neither its grid id nor its secrets. |  |
+| req-tap-bake-activate-5 | Interrupted Activation Reuses Its Values | In Development | Killing the initializer after each activation write in turn (role password, grid id, lineage, secret store), then restarting it, yields one grid id, one lineage batch, and role passwords and secrets that match the state store, with no value minted twice. | One case per write; The owner re-key is applied from the stored value and resumed without minting; the grid id, lineage and secret-store writes arrive with the seed |
 | req-tap-bake-activate-4 | Siblings Unaffected | Proposed | Activating an installation in a cluster that hosts another leaves the other's roles, passwords and objects untouched. | |
 
 ### Identity Belongs To The Installation
 ----
 RID: `req-tap-bake-installation-identity`
 
-Status: `Proposed`
+Status: `In Development`
 
 Activation mints the installation's secrets, each from a CSPRNG (`secrets`), and stores them in the
 **installation's secret store**:
@@ -576,10 +597,10 @@ does in a Codespace today.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-bake-installation-identity-1 | Minted By Activation | Proposed | `SECRET_KEY` and the role passwords of an activated installation were created by its activation; no host-side command, image layer or repository file supplies them. | |
-| req-tap-bake-installation-identity-2 | Two Installations Share Nothing | Proposed | Two installations initialized from the same image and seed have different `SECRET_KEY`s, role passwords and grid ids. | |
+| req-tap-bake-installation-identity-1 | Minted By Activation | Implemented | `SECRET_KEY` and the role passwords of an activated installation were created by its activation; no host-side command, image layer or repository file supplies them. | The deploy compose file carries only a bootstrap password, refused after the first start's re-key |
+| req-tap-bake-installation-identity-2 | Two Installations Share Nothing | Implemented | Two installations initialized from the same image and seed have different `SECRET_KEY`s, role passwords and grid ids. |  |
 | req-tap-bake-installation-identity-3 | Replicas Consume | Proposed | Starting a second serving host against an initialized installation changes no secret, role password or grid id, and both hosts serve the same sessions. | |
-| req-tap-bake-installation-identity-4 | No Host Trigger | Proposed | Changing the host identity of an initialized installation (a new container, a new hostname, a new `CODESPACE_NAME`) causes no minting. | |
+| req-tap-bake-installation-identity-4 | No Host Trigger | Implemented | Changing the host identity of an initialized installation (a new container, a new hostname, a new `CODESPACE_NAME`) causes no minting. | The initializer reads no host identity; a new container consumed the stored identity |
 
 ### The Crypto Verdict Travels With The Image
 ----
