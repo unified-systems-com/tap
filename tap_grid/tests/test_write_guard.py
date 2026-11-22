@@ -13,7 +13,7 @@ as in production. Every other test keeps the hatch, which stops at a gated body.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import cast
 
 import pytest
@@ -25,6 +25,7 @@ from tap_auth.enforcement import requires_capability
 from tap_auth.errors import UnguardedOperation
 from tap_cares.models import Schedule
 from tap_grid.batch import create_batch
+from tap_grid.dimension_map import DimensionWriteError
 from tap_grid.models import Batch, BatchStatus, Entity, Search
 from tap_grid.services import create_node, delete_node
 from tap_grid.write_guard import (
@@ -301,6 +302,60 @@ def test_a_named_writer_updates_only_the_fields_it_is_named_for():
     )
     with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
         _under_import_grift("spine_sync", lambda: Entity.objects.filter(pk=uuid.uuid4()).update(version=7))
+    # The event-time re-derive pass: the three event columns and `dimensions` (for the grid-derived
+    # `time` dimension), and nothing else on the spine (req-grid-entity-event-time rule 17).
+    from tap_grid.dimension_map import grid_derived_update
+    from tap_grid.dimension_names import declared
+
+    nobody = Entity.objects.filter(pk=uuid.uuid4())
+    _under_grid_write(
+        "event_time_rederive",
+        lambda: nobody.update(event_start=None, event_end=None, event_precision=None),
+    )
+
+    # The field lock admits `dimensions`; the value rule admits only the key-level expression
+    # that sets or removes a grid-derived entry. A map of any content is refused, a forged
+    # `time` entry included.
+    spine = _batch_spine(f"dims-{uuid.uuid4()}")
+    one = Entity.objects.filter(pk=spine.pk)
+    time_id = declared("time").id
+    stored = {"01a1d14c-d80b-725d-8002-eb0b3e272f1d": {"v": "keystone", "src": "declared"}}  # tap.meta's node id
+    _under_import_grift("spine_sync", lambda: one.update(dimensions=stored))
+
+    def write_map(value: Mapping[str, object]) -> Callable[[], object]:
+        return lambda: one.update(dimensions=value)
+
+    for refused in (
+        {},
+        stored,
+        {**stored, "x": {"v": "y", "src": "declared"}},
+        {**stored, time_id: {"v": "forged", "src": "declared"}},
+    ):
+        with pytest.raises(UnguardedOperation, match="may set or remove grid-derived"):
+            _under_grid_write("event_time_rederive", write_map(refused))
+    assert Entity.objects.get(pk=spine.pk).dimensions == stored
+
+    _under_grid_write("event_time_rederive", lambda: one.update(dimensions=grid_derived_update({"time": "occurred"})))
+    assert Entity.objects.get(pk=spine.pk).dimensions == {**stored, time_id: {"v": "occurred", "src": "derived"}}
+    _under_grid_write("event_time_rederive", lambda: one.update(dimensions=grid_derived_update({"time": None})))
+    assert Entity.objects.get(pk=spine.pk).dimensions == stored
+    with pytest.raises(DimensionWriteError):
+        grid_derived_update({"time": "not-a-kind"})
+    # An expression this module did not build is refused too, whatever it would write.
+    from django.db.models import F, Func, JSONField, Value
+
+    unmarked = Func(
+        F("dimensions"), Value({}, output_field=JSONField()), template="(%(expressions)s)", arg_joiner=" || "
+    )
+    with pytest.raises(UnguardedOperation, match="may set or remove grid-derived"):
+        _under_grid_write("event_time_rederive", lambda: one.update(dimensions=unmarked))
+
+    def attempt(fields: Mapping[str, object]) -> Callable[[], object]:
+        return lambda: nobody.update(**fields)
+
+    for forbidden in ({"version": 7}, {"name": "x"}, {"updated_at": None}, {"last_observed_batch_id": None}):
+        with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+            _under_grid_write("event_time_rederive", attempt(forbidden))
 
 
 @pytest.mark.spec("req-tap-auth-write-batch-routing")

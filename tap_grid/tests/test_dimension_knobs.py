@@ -19,7 +19,7 @@ import tap_grid
 from tap_grid.models import Dimension
 
 SEED = Path(tap_grid.__file__).resolve().parent / "data" / "dimensions.grift.json"
-CORE_KEYS = {"tap.meta", "tap.graph", "tap_cares"}
+CORE_KEYS = {"tap.meta", "tap.graph", "tap_cares", "time"}
 
 
 @pytest.mark.spec("req-grid-dimension-knobs-1")
@@ -62,8 +62,22 @@ class TestCoreVocabularySeed:
         return [n for batch in doc["batches"] for n in batch["nodes"]]
 
     def test_the_seed_declares_every_key_core_stamps(self) -> None:
-        names = {n["entity"]["name"] for n in self._nodes()}
-        assert names == CORE_KEYS
+        """Every node is a key core stamps, or the description of one value of a bounded key."""
+        nodes = {n["entity"]["name"]: n["node"] for n in self._nodes()}
+        described = {
+            f"{key}.{value}" for key in CORE_KEYS for value in (nodes[key].get("values") or ()) if key in nodes
+        }
+        assert set(nodes) == CORE_KEYS | described
+        assert described == {"time.occurred", "time.created", "time.first_seen", "time.published"}
+
+    def test_a_seed_batch_is_never_edited_once_shipped(self) -> None:
+        """A batch a grid has imported is skipped by id, so new nodes go in a new batch."""
+        doc = json.loads(SEED.read_text(encoding="utf-8"))
+        first, second = doc["batches"]
+        assert first["batch_entity"]["entity_id"] == "01a1d14c-d80b-725d-8002-eb0a03110525"
+        assert {n["entity"]["name"] for n in first["nodes"]} == {"tap.meta", "tap.graph", "tap_cares"}
+        assert uuid.UUID(second["batch_entity"]["entity_id"]).version == 7
+        assert second["batch_entity"]["entity_id"] != first["batch_entity"]["entity_id"]
 
     def test_every_node_is_a_dimension_with_a_fixed_uuid7(self) -> None:
         for node in self._nodes():

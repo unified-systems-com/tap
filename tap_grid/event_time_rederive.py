@@ -1,6 +1,6 @@
 """Re-derive the spine's event time from the typed rows (req-grid-entity-event-time rule 17).
 
-``BaseModel.save`` keeps the four event-time values current on every changing write. A change to
+``BaseModel.save`` keeps the three event columns and the row's ``time`` dimension current on every changing write. A change to
 a model's declaration reaches the rows already stored through this pass. It writes no history and
 no version, because no typed value changed. It runs as a batch of its own and records, for every
 row whose spine values it changes, a batch event of the ``maintenance`` type: the change has a
@@ -18,7 +18,8 @@ from django.db import transaction
 
 from tap_auth.capabilities import WRITE_CAPABILITY
 from tap_auth.enforcement import requires_capability
-from tap_grid.event_time import SPINE_EVENT_FIELDS, derive_for_instance
+from tap_grid.dimension_map import grid_derived_update, with_grid_derived
+from tap_grid.event_time import SPINE_EVENT_FIELDS, TIME_DIMENSION, derive_for_instance
 from tap_grid.write_guard import below_pipeline_write
 
 if TYPE_CHECKING:
@@ -68,8 +69,9 @@ def rederive_event_time(
 ) -> RederiveReport:
     """Re-derive ``Entity.event_*`` for every row of the named types (else every registered type).
 
-    Writes only the rows whose four values differ from what their declaration now derives; a type
-    that declares none has its values emptied. Retired rows are included: a retirement does not
+    Writes only the rows whose three event columns or ``time`` dimension differ from what their
+    declaration now derives; a type that declares none has the columns emptied and the dimension
+    removed. Retired rows are included: a retirement does not
     change when the thing happened. One transaction: the spine values, the batch and its events
     commit together or not at all. The batch is opened on the first change, so a pass that finds
     nothing to do leaves no batch behind.
@@ -91,6 +93,15 @@ def rederive_event_time(
                 report.warnings += len(derived.warnings)
                 columns = derived.as_columns()
                 moved = [name for name in SPINE_EVENT_FIELDS if getattr(row.entity, name) != columns[name]]
+                stored_dims = row.entity.dimensions or {}
+                new_dims = dict(with_grid_derived(stored_dims, derived.as_dimensions()))
+                if new_dims != stored_dims:
+                    time_update = grid_derived_update(derived.as_dimensions())
+                    if time_update is not None:
+                        # A key-level expression: it sets or removes the `time` entry and touches
+                        # no other dimension, which is all this writer is allowed (write_guard).
+                        columns["dimensions"] = time_update
+                        moved.append(f"dimensions[{TIME_DIMENSION}]")
                 if not moved:
                     continue
                 if batch is None:
@@ -107,7 +118,8 @@ def rederive_event_time(
                     )
                     report.batch_id = str(batch.entity_id)
                 with below_pipeline_write("event_time_rederive"):
-                    # The named writer may write these four columns and nothing else; no typed value changes.
+                    # The named writer may write the three event columns and `dimensions` (for the
+                    # `time` dimension) and nothing else; no typed value changes.
                     # Only while the row is at the version it was read at: a save that changed it
                     # since has bumped `version` and written its own event time in that statement,
                     # which is newer than what this pass derived, and must not be overwritten.

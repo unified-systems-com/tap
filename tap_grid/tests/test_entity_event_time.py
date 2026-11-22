@@ -24,6 +24,8 @@ from tap_plugin.grid_fixtures.models.pg_node import PgNode
 
 from tap_grid import event_time
 from tap_grid.caller_context import CallerContext
+from tap_grid.dimension_map import DimensionWriteError, grid_derived_ids, settle, with_grid_derived
+from tap_grid.dimension_names import declared, view
 from tap_grid.event_time import (
     EVENT_KINDS,
     EVENT_PRECISIONS,
@@ -42,16 +44,18 @@ from tap_grid.event_time import (
 from tap_grid.grift import grift_import
 from tap_grid.grift.subgraph import build_spine_surface
 from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
-from tap_grid.service_types import WRITE_UNCHANGED
-from tap_grid.services import create_edge, create_node, patch_edge, patch_node
+from tap_grid.service_types import WRITE_UNCHANGED, WriteOperation
+from tap_grid.services import create_edge, create_node, patch_edge, patch_node, write_batch
 from tap_grid.tests.test_grift import _batch_container, _batch_entity_id, _minimal_doc
 
-AC = {n: pytest.mark.spec(f"req-grid-entity-event-time-{n}") for n in range(1, 20)}
+AC = {n: pytest.mark.spec(f"req-grid-entity-event-time-{n}") for n in range(1, 25)}
 
 _TYPE = "grid_fixtures__node"
 _HUB = "grid_fixtures__hub"
 LINK = "PG_LINKS__grid_fixtures"
-FOUR = ("event_start", "event_end", "event_kind", "event_precision")
+THREE = ("event_start", "event_end", "event_precision")
+TIME = "time"
+CORE_SEED = Path(__file__).resolve().parents[1] / "data" / "dimensions.grift.json"
 SPEC = Path(__file__).resolve().parents[1] / "specs" / "spec-grid-entity.md"
 
 
@@ -73,9 +77,15 @@ def _row(entity_id: Any) -> Entity:
     return Entity.objects.get(pk=entity_id)
 
 
+def _kind(entity_id: Any) -> Any:
+    """The row's `time` dimension value, by name, or None when it carries none."""
+    return view(_row(entity_id).dimensions).get(TIME)
+
+
 def _four(entity_id: Any) -> tuple[Any, ...]:
+    """Start, end, kind and precision: the three columns and the `time` dimension, in the old order."""
     row = _row(entity_id)
-    return tuple(getattr(row, name) for name in FOUR)
+    return (row.event_start, row.event_end, _kind(entity_id), row.event_precision)
 
 
 @pytest.fixture
@@ -112,6 +122,14 @@ class TestTheReader:
     def test_the_closed_lists(self) -> None:
         assert EVENT_KINDS == ("occurred", "created", "first_seen", "published")
         assert EVENT_PRECISIONS == ("year", "month", "day", "second")
+
+    @AC[20]
+    def test_the_static_kinds_are_the_seeded_time_dimensions_values(self) -> None:
+        """One definition: the tuple a class body is checked against equals the seed's bounded list."""
+        seed = json.loads(CORE_SEED.read_text(encoding="utf-8"))
+        nodes = {n["node"]["name"]: n["node"] for batch in seed["batches"] for n in batch["nodes"]}
+        assert tuple(nodes[TIME]["values"]) == EVENT_KINDS
+        assert {name for name in nodes if name.startswith("time.")} == {f"time.{kind}" for kind in EVENT_KINDS}
 
     @AC[15]
     @pytest.mark.parametrize(
@@ -188,7 +206,8 @@ class TestDerive:
         assert (got.event_start, got.event_end) == (_utc(2026, 3, 1), _utc(2026, 5, 11))
         # The marker is the coarser of the bounds that are stated.
         assert got.event_precision == "month"
-        assert got.event_kind == "created"
+        assert got.kind == "created"
+        assert got.as_dimensions() == {TIME: "created"}
 
     def test_an_unstated_end_is_not_closed_at_the_end_of_the_starts_unit(self) -> None:
         got = derive(Interval("a", "created", end="b"), {"a": "2026", "b": None}.get)
@@ -215,12 +234,13 @@ class TestDerive:
 
     def test_an_end_alone_is_not_an_event_time(self) -> None:
         got = derive(Interval("a", "created", end="b"), {"a": None, "b": "2026"}.get)
-        assert got.as_columns() == dict.fromkeys(FOUR)
+        assert got.as_columns() == dict.fromkeys(THREE)
+        assert got.as_dimensions() == {TIME: None}
         assert got.warnings == ()
 
     def test_no_declaration_derives_nothing(self) -> None:
         for declaration in (None, NO_EVENT_TIME):
-            assert derive(declaration, {}.get).as_columns() == dict.fromkeys(FOUR)
+            assert derive(declaration, {}.get).as_columns() == dict.fromkeys(THREE)
 
     def test_a_future_time_is_stored(self) -> None:
         got = derive(Moment("a", "occurred"), {"a": "2999-01-01"}.get)
@@ -454,7 +474,6 @@ class TestNotImportable:
         [
             ("event_start", "2026-12-01T00:00:00Z"),
             ("event_end", "2026-12-02T00:00:00Z"),
-            ("event_kind", "occurred"),
             ("event_precision", "day"),
         ],
     )
@@ -515,9 +534,9 @@ class TestEdges:
         jsonschema.validate(base, schema)  # none is the default, and validation does not fail
         moment = {"shape": "moment", "field": "since", "kind": "first_seen"}
         interval = {"shape": "interval", "start": "from", "end": "until", "kind": "created"}
-        for declared in (moment, interval, {"shape": "interval", "start": "from", "kind": "created"}):
-            jsonschema.validate({**base, "event_time": declared}, schema)
-            declaration_from_definition(declared)
+        for entry in (moment, interval, {"shape": "interval", "start": "from", "kind": "created"}):
+            jsonschema.validate({**base, "event_time": entry}, schema)
+            declaration_from_definition(entry)
         for wrong in (
             {"shape": "moment", "kind": "first_seen"},
             {"shape": "moment", "field": "a", "start": "b", "kind": "first_seen"},
@@ -558,6 +577,23 @@ class TestEdges:
 @pytest.mark.django_db
 class TestRederive:
     @AC[11]
+    def test_a_type_whose_declaration_is_removed_loses_its_time_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_grid.event_time_rederive import rederive_event_time
+
+        monkeypatch.setattr(PgNode, "EVENT_TIME", Moment("observed_at", "occurred"), raising=False)
+        pk = _create({"name": "was-timed", "observed_at": "2026-12-01T18:30:00Z"}).entity_id
+        before = _row(pk)
+        assert _kind(pk) == "occurred"
+        monkeypatch.setattr(PgNode, "EVENT_TIME", NO_EVENT_TIME, raising=False)
+        report = rederive_event_time([_TYPE])
+        assert report.changed == 1
+        after = _row(pk)
+        assert _four(pk) == (None, None, None, None)
+        assert (after.version, after.updated_at) == (before.version, before.updated_at)
+        other = {key: value for key, value in before.dimensions.items() if key != declared(TIME).id}
+        assert after.dimensions == other
+
+    @AC[11]
     def test_a_row_changed_since_it_was_read_is_left_to_the_newer_save(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tap_grid.event_time_rederive import rederive_event_time
 
@@ -596,7 +632,7 @@ class TestRederive:
         assert report.batch_id is not None
         for pk in timed:
             row = _row(pk)
-            assert (row.event_start, row.event_end, row.event_kind, row.event_precision) == (
+            assert (row.event_start, row.event_end, _kind(pk), row.event_precision) == (
                 _utc(2026, 12, 1, 18, 30),
                 _utc(2026, 12, 1, 18, 30),
                 "occurred",
@@ -654,24 +690,165 @@ class TestRederive:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.django_db
+class TestTheTimeDimension:
+    """The kind is the row's `time` dimension, written by the grid alone (rule 3)."""
+
+    def _panel(self, entity_id: str, description: str, *, dimensions: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "entity": {
+                "entity_id": entity_id,
+                "entity_type": "panel",
+                "name": "p-time",
+                "dimensions": {"tap.graph": "web"} if dimensions is None else dimensions,
+            },
+            "node": {
+                "name": "p-time",
+                "slug": "p-time",
+                "description": description,
+                "view": "tap_web/panel_error.html",
+            },
+        }
+
+    def _import(self, node: dict[str, Any]) -> Any:
+        return grift_import(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[node])]))
+
+    @pytest.fixture
+    def timed_panels(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_web.models import Panel
+
+        monkeypatch.setattr(Panel, "EVENT_TIME", Moment("description", "published"), raising=False)
+
+    @AC[20]
+    def test_the_kind_is_stored_as_a_derived_dimension_entry(self, moment_on_observed_at: None) -> None:
+        pk = _create({"name": "kinded", "observed_at": "2026-12-01T18:30:00Z"}).entity_id
+        entry = _row(pk).dimensions[declared(TIME).id]
+        assert entry == {"v": "occurred", "src": "derived"}
+        assert declared(TIME).id in grid_derived_ids()
+
+    @AC[20]
+    def test_a_kind_is_checked_against_the_dimensions_own_values(self) -> None:
+        assert event_time.kind_problem("occurred") is None
+        problem = event_time.kind_problem("resolved")
+        assert problem is not None and "'time' dimension" in problem and "first_seen" in problem
+
+    @AC[20]
+    def test_a_row_with_no_event_time_carries_no_time_value(self, moment_on_observed_at: None) -> None:
+        pk = _create({"name": "untimed"}).entity_id
+        assert TIME not in view(_row(pk).dimensions)
+        assert patch_node(pk, {"observed_at": "2026-12-02T08:00:00Z"}, caller_context=_ctx()).success
+        assert _kind(pk) == "occurred"
+        assert patch_node(pk, {"observed_at": None}, caller_context=_ctx()).success
+        assert TIME not in view(_row(pk).dimensions)
+
+    @AC[21]
+    def test_a_writer_may_not_supply_it(self, moment_on_observed_at: None) -> None:
+        op = WriteOperation(
+            verb="create_node", type_slug=_TYPE, payload={"name": "forged"}, dimensions={TIME: "published"}
+        )
+        refused = write_batch([op], caller_context=_ctx())
+        assert not refused.success
+        assert "written by the grid only" in str([r.errors for r in refused.results]), refused.results
+        assert not PgNode.objects.filter(name="forged").exists()
+        with pytest.raises(DimensionWriteError, match="written by the grid only"):
+            settle({TIME: "created"}, None)
+        with pytest.raises(DimensionWriteError, match="written by the grid only"):
+            settle(None, {TIME: {"v": "created", "src": "derived"}})
+        with pytest.raises(DimensionWriteError, match="not a dimension the grid derives"):
+            with_grid_derived({}, {"tap.graph": "web"})
+
+    @AC[21]
+    def test_an_envelope_that_supplies_it_is_refused(self, timed_panels: None) -> None:
+        entity_id = str(uuid.uuid4())
+        result = self._import(self._panel(entity_id, "2026-12-01", dimensions={"tap.graph": "web", TIME: "published"}))
+        assert not result.success
+        assert any("written by the grid only" in error.message for error in result.errors), [
+            e.message for e in result.errors
+        ]
+        assert not Entity.objects.filter(pk=entity_id).exists()
+
+    @AC[22]
+    def test_an_unchanged_reimport_is_unchanged_and_keeps_it(self, timed_panels: None) -> None:
+        """The hazard: an envelope never carries `time`, and the stored map does."""
+        from tap_web.models import Panel
+
+        entity_id = str(uuid.uuid4())
+        assert self._import(self._panel(entity_id, "2026-12-01")).success
+        before = _row(entity_id)
+        assert _four(entity_id) == (_utc(2026, 12, 1), _utc(2026, 12, 2), "published", "day")
+        history = getattr(Panel, "history").filter(entity_id=entity_id).count()  # noqa: B009
+
+        for _ in range(2):
+            assert self._import(self._panel(entity_id, "2026-12-01")).success
+        after = _row(entity_id)
+        assert (after.version, after.updated_at) == (before.version, before.updated_at)
+        assert getattr(Panel, "history").filter(entity_id=entity_id).count() == history  # noqa: B009
+        assert after.dimensions == before.dimensions
+        assert _kind(entity_id) == "published"
+        events = list(
+            BatchEvent.objects.filter(entity_id=entity_id).order_by("id").values_list("event_type", flat=True)
+        )
+        assert events == [BatchEventType.CREATE, BatchEventType.OBSERVE, BatchEventType.OBSERVE]
+
+    @AC[22]
+    def test_a_reimport_that_moves_only_the_declared_field_keeps_it(self, timed_panels: None) -> None:
+        entity_id = str(uuid.uuid4())
+        assert self._import(self._panel(entity_id, "2026-12-01")).success
+        version = _row(entity_id).version
+        assert self._import(self._panel(entity_id, "2026-12-05")).success
+        assert _four(entity_id) == (_utc(2026, 12, 5), _utc(2026, 12, 6), "published", "day")
+        assert _row(entity_id).version == version + 1
+
+    @AC[22]
+    def test_a_reimport_that_changes_a_callers_dimension_keeps_it(self, timed_panels: None) -> None:
+        entity_id = str(uuid.uuid4())
+        assert self._import(self._panel(entity_id, "2026-12-01")).success
+        assert self._import(
+            self._panel(entity_id, "2026-12-01", dimensions={"tap.graph": "web", "zone": "north"})
+        ).success
+        names = view(_row(entity_id).dimensions)
+        assert (names["zone"], names[TIME]) == ("north", "published")
+
+    @AC[23]
+    def test_an_export_leaves_it_out_and_round_trips(self, timed_panels: None) -> None:
+        from tap_grid.grift.exporter import _entity_envelope
+
+        entity_id = str(uuid.uuid4())
+        assert self._import(self._panel(entity_id, "2026-12-01")).success
+        envelope = _entity_envelope(_row(entity_id))
+        assert declared(TIME).id not in envelope["dimensions"]
+        assert envelope["dimensions"]
+        node = self._panel(entity_id, "2026-12-01", dimensions=envelope["dimensions"])
+        before = _row(entity_id)
+        assert self._import(node).success
+        after = _row(entity_id)
+        assert (after.version, after.dimensions) == (before.version, before.dimensions)
+
+
 class TestSpineSurface:
-    def test_the_four_join_the_canonical_surface(self) -> None:
+    def test_the_three_join_the_canonical_surface(self) -> None:
         names = Entity.SPINE_FIELD_NAMES
-        assert names[names.index("last_observed_at") + 1 : names.index("originating_grid_id")] == FOUR
+        assert names[names.index("last_observed_at") + 1 : names.index("originating_grid_id")] == THREE
+        assert "event_kind" not in {field.name for field in Entity._meta.fields}
 
     def test_only_the_start_is_indexed(self) -> None:
         fields = {field.name: field for field in Entity._meta.fields}
         assert getattr(fields["event_start"], "db_index") is True  # noqa: B009
-        for name in ("event_end", "event_kind", "event_precision"):
+        for name in ("event_end", "event_precision"):
             assert getattr(fields[name], "db_index") is False  # noqa: B009
 
     @AC[13]
     def test_the_migration_touches_the_grids_own_tables_only(self) -> None:
         migration = importlib.import_module("tap_grid.migrations.0018_entity_event_time").Migration
         added = [op.name for op in migration.operations if type(op).__name__ == "AddField"]
-        assert sorted(added) == sorted(FOUR)
+        assert sorted(added) == sorted([*THREE, "event_kind"])
         assert {op.model_name for op in migration.operations} == {"entity", "batchevent"}
         assert migration.dependencies == [("tap_grid", "0017_entity_batch_pointers")]
+        # The kind left the row for the `time` dimension: the next migration drops that one column.
+        follow_up = importlib.import_module("tap_grid.migrations.0019_entity_event_kind_to_time_dimension").Migration
+        assert [(type(op).__name__, op.model_name, op.name) for op in follow_up.operations] == [
+            ("RemoveField", "entity", "event_kind")
+        ]
 
     @pytest.mark.django_db
     def test_the_envelope_surface_carries_them(self, moment_on_description: None) -> None:
@@ -679,7 +856,9 @@ class TestSpineSurface:
         surface = build_spine_surface(_row(pk))
         assert surface["event_start"] == "2026-12-01T00:00:00+00:00"
         assert surface["event_end"] == "2026-12-02T00:00:00+00:00"
-        assert (surface["event_kind"], surface["event_precision"]) == ("published", "day")
+        assert surface["event_precision"] == "day"
+        assert "event_kind" not in surface
+        assert view(_row(pk).dimensions)[TIME] == "published"
 
 
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
@@ -705,6 +884,30 @@ class TestGryphonReadsThem:
             assert {row["precision"] for row in rows} == {"second"}
             found |= {str(row["id"]) for row in rows}
         assert found == {str(node_in), str(hub_in)}
+
+    @AC[24]
+    def test_one_query_filters_a_window_and_a_kind(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_grid.gryphon import execute_gryphon_raw
+
+        monkeypatch.setattr(PgNode, "EVENT_TIME", Moment("observed_at", "occurred"), raising=False)
+        monkeypatch.setattr(PgHub, "EVENT_TIME", Moment("observed_at", "created"), raising=False)
+        occurred = _create({"name": "occurred-in", "observed_at": "2026-12-01T12:30:00Z"}).entity_id
+        created = _create({"name": "created-in", "observed_at": "2026-12-01T12:40:00Z"}, _HUB).entity_id
+        _create({"name": "occurred-out", "observed_at": "2026-12-01T14:00:00Z"})
+
+        def found(label: str, kind: str) -> set[str]:
+            rows = execute_gryphon_raw(
+                f"MATCH (n:{label}) WHERE n.event_start >= $from AND n.event_start < $to "
+                f'AND n.dimensions["time"] = "{kind}" RETURN n.entity_id AS id',
+                {"from": "2026-12-01T12:00:00+00:00", "to": "2026-12-01T13:00:00+00:00"},
+            )
+            # A query that matches nothing returns no `rows` key.
+            return {str(row["id"]) for row in rows.get("rows", [])}
+
+        assert found(_TYPE, "occurred") == {str(occurred)}
+        assert found(_HUB, "occurred") == set()
+        assert found(_HUB, "created") == {str(created)}
+        assert found(_TYPE, "created") == set()
 
 
 class TestTheDeclarationCheck:

@@ -4,7 +4,7 @@ Management command to re-derive the spine's event time (req-grid-entity-event-ti
 Usage:
     docker compose exec web uv run python manage.py rederive_event_time --as USERNAME [--type SLUG ...]
 
-BaseModel.save keeps Entity.event_start, event_end, event_kind and event_precision current on every
+BaseModel.save keeps Entity.event_start, event_end and event_precision, and the row's `time` dimension, current on every
 changing write. Run this after a model's EVENT_TIME declaration (or an edge type's ``event_time``)
 changes, so the rows already stored follow it. It writes no history and no version. It runs as a
 batch and records one ``maintenance`` event for each row whose spine values it changed; nothing

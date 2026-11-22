@@ -47,7 +47,8 @@ import contextlib
 import contextvars
 import logging
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,8 @@ BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
     "spine_sync": {("queryset update", "tap_grid.Entity"): frozenset({"name", "dimensions", "updated_at"})},
     "scheduler_cursor": {("queryset update", "tap_cares.Schedule"): frozenset({"last_schedule_fired", "enabled_at"})},
     "event_time_rederive": {
-        ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_kind", "event_precision"})
+        # The three event columns, and `dimensions` for the `time` dimension the kind is stamped as.
+        ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_precision", "dimensions"})
     },
 }
 
@@ -284,6 +286,43 @@ def unguarded_write() -> Iterator[None]:
         yield
     finally:
         _write_guard_bypass.reset(token)
+
+
+def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
+    """Hold a named writer to WHAT it writes where a field name is too coarse a lock.
+
+    A field lock cannot name a key inside a JSON column. The ``event_time_rederive`` writer is
+    allowed the ``dimensions`` field only to set or remove the grid-derived entries (the ``time``
+    dimension, req-grid-entity-event-time rule 17). So the only ``dimensions`` value it may write
+    is the key-level expression ``dimension_map.grid_derived_update`` builds, which touches no
+    other key and whose entry is ``src: derived`` with a value the dimension accepts. A map, or
+    any other expression, is refused as an unguarded write. Called by the guarded queryset
+    ``update`` after the field lock has passed.
+
+    The rule binds this one writer. The pipeline and the other named writers that may write
+    ``dimensions`` (``spine_sync``) are held by their own rules, as before.
+    """
+    if _write_guard_bypass.get() or _service_write_active.get():
+        return
+    if _below_pipeline_writer.get() != "event_time_rederive" or model_label != "tap_grid.Entity":
+        return
+    if "dimensions" not in values:
+        return
+
+    from tap_grid.dimension_map import is_grid_derived_update
+
+    if is_grid_derived_update(values["dimensions"]):
+        return
+
+    from tap_auth.errors import UnguardedOperation
+
+    detail = "queryset update tap_grid.Entity"
+    raise UnguardedOperation(
+        f"unguarded write: {detail}: the event_time_rederive writer may set or remove grid-derived "
+        "dimension entries only, through dimension_map.grid_derived_update; it may not write a "
+        "dimensions map",
+        callsite=detail,
+    )
 
 
 def _writer_permits(
