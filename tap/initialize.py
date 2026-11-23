@@ -418,6 +418,20 @@ def locked(
         return runner(argv)
 
 
+def _owner_named() -> bool:
+    """True only for an owner a sign-in can match: a JSON object with a numeric `user_id`.
+
+    That is the shape `scripts/codespace-env` writes for a resolved owner. Anything else, empty,
+    `{}`, `null`, or a malformed value, names nobody, and the first admin link is issued instead.
+    """
+    raw = os.environ.get("TAP_AUTH_INSTANCE_OWNER") or ""
+    try:
+        owner = json.loads(raw)
+    except ValueError:
+        return False
+    return isinstance(owner, dict) and bool(re.fullmatch(r"[0-9]+", str(owner.get("user_id") or "")))
+
+
 def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], int] = _run_child) -> None:
     """Finish under the installation lock: boot, then the first admin link once.
 
@@ -453,7 +467,7 @@ def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], i
                 "if you have none, run: manage.py enroll_admin --email <you> --print-token"
             )
             return
-        if identity.get("first_login") == "owner" or os.environ.get("TAP_AUTH_INSTANCE_OWNER"):
+        if identity.get("first_login") == "owner" or _owner_named():
             # A named instance owner (a Codespace's opener, req-tap-serving-codespace-7) is the first
             # admin, granted on their first sign-in; a passkey link beside it would be a second way in
             # that nobody asked for. An unresolved owner leaves this empty, and the link is issued.
