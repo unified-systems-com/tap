@@ -856,3 +856,14 @@ class TestOneMigrationOfATypeAtATime:
         _apply(widget_v1, _widget_operations(seen))
         assert (seen[0].from_version, seen[0].applied) == (1, True)
         assert mv.applied_version(WIDGET) == 2
+
+
+class TestANonAtomicMigration:
+    def test_the_adapter_refuses_a_migration_that_is_not_atomic(self, widget_v1: ProjectState) -> None:
+        """Outside one transaction a later operation could fail after the applied version was set."""
+        from types import SimpleNamespace
+
+        editor = SimpleNamespace(connection=connection, atomic_migration=False)
+        with pytest.raises(version_migration.VersionMigrationRefused, match="atomic = False"):
+            version_migration.apply_version(widget_v1.apps, editor, WIDGET, to_version=2)
+        assert mv.applied_version(WIDGET) in (None, 1)

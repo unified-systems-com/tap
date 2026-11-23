@@ -449,6 +449,15 @@ def apply_version(
     from tap_grid.caller_context import CallerContext
 
     using = getattr(getattr(schema_editor, "connection", None), "alias", DEFAULT_DB_ALIAS)
+    # The rule that a failed migration leaves the applied version where it was holds only while
+    # the whole migration is one transaction. In a migration that sets ``atomic = False`` the
+    # adapter's own transaction would commit, and a later operation could then fail on its own.
+    if schema_editor is not None and not getattr(schema_editor, "atomic_migration", True):
+        raise VersionMigrationRefused(
+            f"{type_slug!r} cannot be carried to version {to_version} from a migration that sets "
+            "atomic = False: the rows, the applied version and the schema operations beside them must "
+            "succeed or fail together. Leave the migration atomic, which is Django's default."
+        )
     target = _target(apps, type_slug)
     report = MigrationReport(type_slug, to_version - 1, to_version)
 
