@@ -449,6 +449,13 @@ def apply_version(
     from tap_grid.caller_context import CallerContext
 
     using = getattr(getattr(schema_editor, "connection", None), "alias", DEFAULT_DB_ALIAS)
+    # The batch, its events and the actor are written through helpers that use the default
+    # database. A migration aimed at another one would split its work across two, so it is refused.
+    if using != DEFAULT_DB_ALIAS:
+        raise VersionMigrationRefused(
+            f"{type_slug!r} cannot be carried to version {to_version} on the database {using!r}: the "
+            f"adapter works on the {DEFAULT_DB_ALIAS!r} database only."
+        )
     # The rule that a failed migration leaves the applied version where it was holds only while
     # the whole migration is one transaction. In a migration that sets ``atomic = False`` the
     # adapter's own transaction would commit, and a later operation could then fail on its own.
@@ -509,8 +516,10 @@ def apply_version(
             actor = _actor()
             with authorized(CallerContext(user=actor), WRITE_CAPABILITY, operation="apply_version"):
                 _carry_rows(target, link, to_version, using, actor, report)
-                for name, new_type in discard:
-                    report.history_discarded[name] = _discard_unconvertible(target.history, name, new_type, using)
+        # History outlives the rows it describes, so a declared discard is applied whether or not
+        # the type holds a live row: a value left behind would fail the column change that follows.
+        for name, new_type in discard:
+            report.history_discarded[name] = _discard_unconvertible(target.history, name, new_type, using)
         if report.history_discarded and report.batch_id is None:
             logger.info(
                 "[5f1b] %s: history values discarded with no row changed: %s", type_slug, report.history_discarded

@@ -867,3 +867,33 @@ class TestANonAtomicMigration:
         with pytest.raises(version_migration.VersionMigrationRefused, match="atomic = False"):
             version_migration.apply_version(widget_v1.apps, editor, WIDGET, to_version=2)
         assert mv.applied_version(WIDGET) in (None, 1)
+
+
+class TestReviewRoundFour:
+    def test_a_database_other_than_the_default_is_refused(self, widget_v1: ProjectState) -> None:
+        from types import SimpleNamespace
+
+        editor = SimpleNamespace(connection=SimpleNamespace(alias="replica"), atomic_migration=True)
+        with pytest.raises(version_migration.VersionMigrationRefused, match="'replica'"):
+            version_migration.apply_version(widget_v1.apps, editor, WIDGET, to_version=2)
+        assert mv.applied_version(WIDGET) in (None, 1)
+
+    @AC[27]
+    def test_a_declared_discard_is_applied_when_no_live_row_is_left(self, widget_v1: ProjectState) -> None:
+        """History outlives its rows: with none left, the unconvertible value is still emptied."""
+        version_links.declare(
+            WIDGET,
+            {2: Step(_widget_step, renames={"title": "label"}, may_refuse="x", discards_history=("size",))},
+        )
+        entity_id = _row(widget_v1, "VmWidget", WIDGET, name="n", label="L", size="5")
+        _history_row(widget_v1, entity_id, name="n", label="L", size="several")
+        with mv._writing_applied_version():
+            EntityType.objects.get_or_create(slug=WIDGET, defaults={"name": WIDGET})
+        widget_v1.apps.get_model(APP, "VmWidget")._default_manager.all().delete()
+        seen: list[Any] = []
+
+        state = _apply(widget_v1, _widget_operations(seen))
+
+        assert seen[0].history_discarded == {"size": 1}
+        assert None in _history_values(state, "size")
+        assert mv.applied_version(WIDGET) == 2
