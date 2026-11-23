@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.4.6](https://github.com/unified-systems-com/tap/compare/v0.4.5...v0.4.6) (2026-11-22)
+
+
+### Features
+
+* **bake:** the product image — a record's whole environment baked, nothing installed at start ([f4f839d](https://github.com/unified-systems-com/tap/commit/f4f839d653214fab2cd38b1690d7a6c19279064e))
+* **bake:** the product image — a record's whole environment baked, nothing installed at start [via make-it-fast] ([79792a9](https://github.com/unified-systems-com/tap/commit/79792a94e8662e57a6cf903961e4fd30e77a7093))
+* **grid:** a re-observation that changes nothing writes no history (+ time and model-version specs) [via hard-things] ([183d709](https://github.com/unified-systems-com/tap/commit/183d709bd6bb9364a84bb7cfb54ef74bec0afef8))
+* **grid:** a type states its natural key's spelling once, and core applies it wherever a key is resolved ([11b7eff](https://github.com/unified-systems-com/tap/commit/11b7eff3e778a76839d7a39dfcf74e9042a5ca82))
+* **grid:** a type states its natural key's spelling once, and core applies it wherever a key is resolved (+1 more) [via aws-build] ([2914ff5](https://github.com/unified-systems-com/tap/commit/2914ff53b6f5d61d293e60673fc575496f7f7554))
+* **grid:** batch pointers on the entity row ([bd8a8d5](https://github.com/unified-systems-com/tap/commit/bd8a8d530debfa1c63eddb2b01c701b4af08c9e1))
+* **grid:** batch pointers on the entity row [via hard-things] ([6da5c68](https://github.com/unified-systems-com/tap/commit/6da5c68912c8441b5f6a34a72ab6654ea47a6c07))
+* **grid:** event time on the entity row ([b2c177f](https://github.com/unified-systems-com/tap/commit/b2c177f2073a5d8e418a7eba1294cf1ada8ed414))
+* **grid:** event time on the entity row [via hard-things] ([6dbc686](https://github.com/unified-systems-com/tap/commit/6dbc68633e8b43e02e38559f37c64bbc5f316ea6))
+* **grid:** the kind of event time is the grid-derived `time` dimension ([5416383](https://github.com/unified-systems-com/tap/commit/54163836cc26ea610d9346843a2aefd34b925550))
+* **grid:** the kind of event time is the grid-derived `time` dimension [via hard-things] ([6a867e8](https://github.com/unified-systems-com/tap/commit/6a867e87c1eb7d791c3360f34f5674b638afeaf2))
+
+
+### Bug Fixes
+
+* **bake:** default-branch publishing only; Sonar's sanitizers at the line ([bd1883c](https://github.com/unified-systems-com/tap/commit/bd1883c6450ef4a3bb685eb5e625dbe93f69886e))
+* **bake:** no setuid or setgid bit reaches the root-owned venv ([970d0b7](https://github.com/unified-systems-com/tap/commit/970d0b7154ebd52b05102039060d3583140a737c))
+* **bake:** the inputs digest covers the profile; say what start checks ([686acd0](https://github.com/unified-systems-com/tap/commit/686acd002bfaa6b1cac233fc34461a83fc973147))
+* **bake:** treat the record and the base as untrusted inputs ([be6b9c7](https://github.com/unified-systems-com/tap/commit/be6b9c79f9391d64aae77c71d5dda664b92c6433))
+* **bake:** verify the index before any public tag; only tap-web as a base ([60cdb6a](https://github.com/unified-systems-com/tap/commit/60cdb6a4111b932f52a963d71ec44bb56eada6c2))
+* **bake:** verify the index before any public tag; only tap-web as a base [via make-it-fast] ([3fb391f](https://github.com/unified-systems-com/tap/commit/3fb391f671f9b6ceb5758609ff9e9ba95115c3da))
+* **grid:** a partial save derives event time from stored values; refuse the last units of 9999 ([d4711fa](https://github.com/unified-systems-com/tap/commit/d4711fa61f1e8b06c5809c6e4994cf38429c0573))
+* **grid:** build the grid-derived dimension update as a marked expression, not a subclass ([ee6fc18](https://github.com/unified-systems-com/tap/commit/ee6fc1812cb91ab08fb538b08c42aa7ad6703056))
+* **grid:** check edge event-time keys against the schema; refuse an empty window ([390fd06](https://github.com/unified-systems-com/tap/commit/390fd0658f6c59931b1c439681f7bb7341b99af0))
+* **grid:** hold the re-derive writer to grid-derived dimension entries ([f940145](https://github.com/unified-systems-com/tap/commit/f9401450cafe6f264ea0f5353a7448901dabb9ed))
+* **grid:** re-derive leaves a row a newer save changed; touching coarse units are reversed ([6fde8e4](https://github.com/unified-systems-com/tap/commit/6fde8e46cfcf68eb9eb390c7c7e54f48f728a7a7))
+* **grid:** the natural-key hook reads only a complete key; an incomplete one keeps its refusal ([7830614](https://github.com/unified-systems-com/tap/commit/7830614b2f92e52727383d2d082d6a01c25d03f0))
+* **grid:** write the time dimension as a key-level update, and admit only that ([a342dd1](https://github.com/unified-systems-com/tap/commit/a342dd126fde62391d00ada887b14f7a769c8b85))
+* **plugins:** a cancelled migrations row leaves the owner issue as it was ([95f89c7](https://github.com/unified-systems-com/tap/commit/95f89c77fef917e5247cd482821e49211e158782))
+
+
+### Documentation
+
+* **codespaces:** 0.4.5 lists the prebuild fix; -9 proven and Implemented ([f8efa9b](https://github.com/unified-systems-com/tap/commit/f8efa9bb0bfc3537707da645367afafd1ae2adc6))
+* **codespaces:** 0.4.5 lists the prebuild fix; -9 proven and Implemented [via make-it-fast] ([ea5a2a6](https://github.com/unified-systems-com/tap/commit/ea5a2a639552a21280823bf14cfee8309b3c2feb))
+* **misc:** a refusal is a stop, not a workaround cue ([6f68218](https://github.com/unified-systems-com/tap/commit/6f682187d6ababd641e9484cb953a710adfa8946))
+* **misc:** a refusal is a stop, not a workaround cue [via make-it-fast] ([cb10df4](https://github.com/unified-systems-com/tap/commit/cb10df42d395aadf62533df761d86744e409d785))
+* **misc:** lessons learned from the make-it-fast session ([c226515](https://github.com/unified-systems-com/tap/commit/c2265157ab2fc61a25a2248ba1fdad14f514b5fb))
+* **misc:** lessons learned from the make-it-fast session [via make-it-fast] ([4db28a0](https://github.com/unified-systems-com/tap/commit/4db28a024ee1f531585616d2e70c6830be568bef))
+
 ## [0.4.5](https://github.com/unified-systems-com/tap/compare/v0.4.4...v0.4.5) (2026-11-22)
 
 
