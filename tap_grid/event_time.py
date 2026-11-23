@@ -243,7 +243,7 @@ def _callable_label(reader: Any) -> str:
 
 
 # Import paths already resolved, so a path is imported once per process.
-_resolved_readers: dict[str, Callable[[Any], Any]] = {}
+_resolved_readers: dict[Reader, Callable[[Any], Any]] = {}
 
 
 def resolve_reader(reader: Reader) -> Callable[[Any], Any] | None:
@@ -255,22 +255,43 @@ def resolve_reader(reader: Reader) -> Callable[[Any], Any] | None:
     """
     if reader is None:
         return None
-    if not isinstance(reader, str):
-        return reader
     found = _resolved_readers.get(reader)
     if found is None:
-        from django.utils.module_loading import import_string
+        target: Any = reader
+        if isinstance(reader, str):
+            from django.utils.module_loading import import_string
 
-        try:
-            target = import_string(reader.replace(":", "."))
-        except Exception as error:  # noqa: BLE001 — whatever the import raised, the path did not resolve
-            raise EventTimeDeclarationError(
-                f"reader {reader!r} does not resolve to a function ({type(error).__name__})"
-            ) from error
-        if not callable(target):
-            raise EventTimeDeclarationError(f"reader {reader!r} names a {type(target).__name__}, not a function")
+            try:
+                target = import_string(reader.replace(":", "."))
+            except Exception as error:  # noqa: BLE001 — whatever the import raised, the path did not resolve
+                raise EventTimeDeclarationError(
+                    f"reader {reader!r} does not resolve to a function ({type(error).__name__})"
+                ) from error
+        _check_resolved_reader(reader, target)
         _resolved_readers[reader] = found = target
     return found
+
+
+def _check_resolved_reader(reader: Reader, target: Any) -> None:
+    """What a reader resolves to is a plain module-level function of an installed app (rule 26).
+
+    A path is checked against the same bar as a function given directly, and one more: the
+    function's module must belong to an app this process has installed, core or a plugin. So a
+    path cannot name ``builtins:eval``, ``os:system`` or any other callable outside the code the
+    operator installed, to be called with a stored value.
+    """
+    from django.apps import apps
+
+    label = f"reader {reader!r}" if isinstance(reader, str) else f"reader {_callable_label(reader)}"
+    qualified = getattr(target, "__qualname__", "")
+    if not isinstance(target, FunctionType) or not qualified or "<" in qualified or "." in qualified:
+        raise EventTimeDeclarationError(f"{label} names a {type(target).__name__}, not a function at module level")
+    module = getattr(target, "__module__", "") or ""
+    if apps.get_containing_app_config(module) is None:
+        raise EventTimeDeclarationError(
+            f"{label} is defined in {module!r}, which is not part of an installed app: a reader must be a "
+            "function in core or in a plugin"
+        )
 
 
 def reader_name(reader: Reader) -> str | None:
@@ -686,7 +707,8 @@ def _through(reader: Reader, value: Any) -> Any:
         function = resolve_reader(reader)
     except EventTimeDeclarationError as error:
         raise Unreadable(f"its reader function cannot be loaded ({error})") from error
-    assert function is not None  # noqa: S101 — narrowed for the type checker; reader is not None here
+    if function is None:
+        return value
     try:
         read = function(value)
     except Exception as error:  # noqa: BLE001 — a reader is an author's code, run on a value nothing has checked

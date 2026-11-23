@@ -521,6 +521,9 @@ class TestEdgeTypes:
         for path, why in (
             (f"{HERE}:no_such_function", "does not resolve"),
             (f"{HERE}:not_a_function", "not a function"),
+            ("builtins:eval", "not a function at module level"),
+            ("os:system", "not a function at module level"),
+            ("json:dumps", "not part of an installed app"),
         ):
             with pytest.raises(EventTimeDeclarationError, match=why) as raised:
                 event_time.register_edge_event_time(
@@ -872,3 +875,35 @@ class TestAMemberOfAJsonField:
         for owner, states in model_definition.core_states().items():
             for state in states:
                 assert "member" not in json.dumps(state.definition.get("event_time")), (owner, state.label)
+
+
+class TestAReaderComesFromInstalledCode:
+    """A reader runs on a stored value, so it must be code the operator installed (rule 26)."""
+
+    @AC[30]
+    @pytest.mark.parametrize(
+        ("path", "why"),
+        [
+            ("builtins:eval", "not a function at module level"),
+            ("os:system", "not a function at module level"),
+            ("subprocess:getoutput", "not part of an installed app"),
+            ("json:dumps", "not part of an installed app"),
+        ],
+    )
+    def test_a_path_outside_installed_apps_is_refused(self, path: str, why: str) -> None:
+        event_time._resolved_readers.pop(path, None)
+        with pytest.raises(EventTimeDeclarationError, match=why):
+            event_time.resolve_reader(path)
+        assert path not in event_time._resolved_readers
+
+    @AC[30]
+    def test_a_function_given_directly_from_outside_installed_apps_is_refused(self) -> None:
+        import json as json_module
+
+        with pytest.raises(EventTimeDeclarationError, match="not part of an installed app"):
+            event_time.resolve_reader(json_module.dumps)
+
+    @AC[30]
+    def test_core_s_helpers_and_a_module_level_function_in_core_resolve(self) -> None:
+        assert event_time.resolve_reader("tap_grid.event_time:from_epoch_seconds") is from_epoch_seconds
+        assert event_time.resolve_reader(f"{HERE}:year_only") is year_only
