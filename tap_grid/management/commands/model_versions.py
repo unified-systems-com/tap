@@ -39,7 +39,9 @@ class Command(BaseCommand):
             TypeState,
             app_record_path,
             append_entry,
+            chain_problems,
             entries_for,
+            link_problems,
             load_record,
             type_problems,
             unrecorded,
@@ -57,7 +59,18 @@ class Command(BaseCommand):
                 raise CommandError(str(error)) from error
             before = len(problems)
             for state in states:
-                problems.extend(f"{owner}: {problem}" for problem in type_problems(state, entries_for(record, state)))
+                entries = entries_for(record, state)
+                # A version declared one past the record's last entry is what --record is for: it is
+                # not a problem to refuse the append over. Its link must be declared first (rule 16).
+                to_append = bool(
+                    options["record"]
+                    and entries
+                    and not chain_problems(state.label, entries)
+                    and entries[-1]["version"] == state.version - 1
+                )
+                if not to_append:
+                    problems.extend(f"{owner}: {problem}" for problem in type_problems(state, entries))
+                problems.extend(f"{owner}: {problem}" for problem in link_problems(state, entries))
             if options["check"]:
                 missing: list[TypeState] = unrecorded(states, record)
                 problems.extend(f"{owner}: {state.label} has no committed entry in {path.name}" for state in missing)

@@ -71,13 +71,13 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from tap_grid.grift.importer import (
-    GRIFT_VERSION,
     GriftIssue,
     _validate_edge_payload,
     _validate_node_payload,
     validate_grift_document,
 )
 from tap_grid.grift.subgraph import json_safe
+from tap_grid.grift.upgrade import VERSIONED_FORMAT, build_header
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -844,7 +844,7 @@ def export_grid(
 
     capture_data: dict[str, Any] = {
         "exporter": "tap_grid.grift.exporter",
-        "grift_version": GRIFT_VERSION,
+        "grift_version": VERSIONED_FORMAT,
         # Never "live": the one word a consumer keys off to know these rows were
         # replayed rather than observed by this batch.
         "capture_kind": "captured-snapshot",
@@ -867,7 +867,8 @@ def export_grid(
     }
 
     document: dict[str, Any] = {
-        "metadata": {"grift_version": GRIFT_VERSION},
+        # Filled once the batches are built: the header states every type they carry or name.
+        "metadata": {},
         "_reserved": {},
         "batches": [
             {
@@ -905,6 +906,10 @@ def export_grid(
             }
         ],
     }
+
+    # The header: the format, the spine version this database records and, from the type catalog,
+    # the version of every type the document carries or names (req-grift-header-versions rule 6).
+    document["metadata"] = build_header(document)
 
     issues = _validate_document(document)
     logger.info(

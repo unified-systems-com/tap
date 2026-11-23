@@ -185,7 +185,7 @@ class TestRootShape:
 
 
 class TestGriftVersionPinned:
-    @pytest.mark.parametrize("version", ["1", "banana", "00", " 0", "0.0", "v0"])
+    @pytest.mark.parametrize("version", ["2", "banana", "00", " 0", "0.0", "v0", "01", "1.0"])
     def test_an_unknown_version_refuses_the_file(self, version: str) -> None:
         before = _snapshot()
         doc = _minimal_doc([_batch_container(_batch_entity_id(), nodes=[_character_node(_node_entity_id())])])
@@ -193,7 +193,9 @@ class TestGriftVersionPinned:
         result = grift_import(doc)
         _refused(result, "unsupported_grift_version", "preflight", "$.metadata.grift_version", before)
         assert result.grift_version == version, "the result still reports what the file declared"
-        assert "'0'" in result.errors[0].message
+        # The refusal names the version it was given and the versions it reads.
+        assert repr(version) in result.errors[0].message
+        assert "'0'" in result.errors[0].message and "'1'" in result.errors[0].message
 
     def test_a_non_string_version_is_the_schema_s_refusal(self) -> None:
         before = _snapshot()

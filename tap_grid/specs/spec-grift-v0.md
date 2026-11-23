@@ -347,11 +347,20 @@ These schemas are normative for structure and basic field validation. Model-spec
       "additionalProperties": false,
       "required": ["grift_version"],
       "properties": {
-        "grift_version": {
-          "type": "string",
-          "minLength": 1
+        "grift_version": { "type": "string", "minLength": 1 },
+        "spine_version": { "type": "integer", "minimum": 1 },
+        "type_versions": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "grift_version": { "const": "0" } }, "required": ["grift_version"] },
+          "then": { "properties": { "spine_version": false, "type_versions": false } }
+        },
+        {
+          "if": { "properties": { "grift_version": { "const": "1" } }, "required": ["grift_version"] },
+          "then": { "required": ["spine_version", "type_versions"] }
         }
-      }
+      ]
     },
     "_reserved": {
       "type": "object"
@@ -586,7 +595,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-retirement | [Retirement Block](#retirement-block) | Implemented | A node or edge object may carry the entity's retirement in its source grid as plain data: retired-at time, retiring batch id, reason, metadata |
 | req-grift-contents | [Contents Declaration](#contents-declaration) | Implemented | A batch declares what kinds of record it carries; the importer verifies the declaration against the batch and decides whether it accepts each kind |
 | req-grift-export | [Grid Export](#grid-export) | Implemented | `manage.py export_grift` serialises a grid, retired rows included, optionally narrowed by dimension, batch or reachability |
-| req-grift-header-versions | [Version Declarations In The Header](#version-declarations-in-the-header) | Proposed | `metadata.spine_version` and `metadata.type_versions`: the spine version and the version of each type the document carries, beside `grift_version` |
+| req-grift-header-versions | [Version Declarations In The Header](#version-declarations-in-the-header) | In Development | `metadata.spine_version` and `metadata.type_versions`: the spine version and the version of each type the document carries, beside `grift_version` |
 | req-grift-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | Explicit exclusions for this version |
 
 ## Document Format
@@ -607,7 +616,8 @@ The top-level object contains exactly these keys:
 
 `metadata` contains:
 
-- `grift_version`: string, required
+- `grift_version`: string, required. `"1"` states versions; `"0"` is the earlier form, which states none
+- `spine_version`, `type_versions`: required at `"1"`, refused at `"0"` (`req-grift-header-versions`)
 
 `_reserved` contains:
 
@@ -1322,14 +1332,23 @@ Each selector flag may repeat. Repeats of one flag are OR-ed; different flags ar
 ----
 RID: `req-grift-header-versions`
 
-Status: `Proposed`
+Status: `In Development`
 
 A document says which definitions wrote it. Beside `grift_version`, which says how to parse the file, the header carries the version of the spine and the version of every type the document carries. An importer uses them to upgrade older records before it validates them, and to refuse a document written by definitions newer than its own. What the versions are and how an import acts on them is specified in `spec-grid-entity.md` (`req-grid-entity-model-version`, `req-grid-entity-spine-version`); this requirement specifies only how they are written in the document.
 
 #### Status Details
-Proposed; nothing is built. Issue# 1284 - tap records the rulings.
+In Development. Rules 1 to 6, 8 and 9 are built; rules 7 and 10 are built for a document at format `"1"` and staged for one at `"0"`. Issue# 1284 - tap records the rulings.
 
-What exists today (read on core main, 2026-11-21): `metadata` holds `grift_version` and nothing else, and its schema refuses any other key. The `GriftDocument` schema above is the implemented one and is not changed by this requirement until it is built.
+Built:
+
+- The schema (`tap_grid/schemas/grift-document.schema.json`): `spine_version` and `type_versions` are properties of `metadata`, each value an integer of 1 or more; at `grift_version` `"1"` both are required, at `"0"` both are refused, and `metadata` still refuses an unknown key.
+- The exporter writes `grift_version` `"1"` with both fields (`build_header` in `tap_grid/grift/upgrade.py`): the spine version the database records, and for every type the document carries or names the version the type catalog records as applied. `build_header` is also the call for any producer that builds a document in code.
+- The importer reads `"0"` and `"1"`. At `"1"` a missing `spine_version`, and a carried or named type with no entry in `type_versions`, refuse the document with `version_unstated`, naming what is missing, before validation and before anything is written. A format it does not read is refused with `unsupported_grift_version`, naming the version given and the versions read.
+
+Staged, and why the requirement is not Implemented:
+
+- Rule 10 has an importer at `"1"` refuse a document at `"0"`. That is not switched on. Read on 2026-11-22: every committed GRIFT document in core (six files) and in the plugin repositories (122 files across 29 of the 33 repositories cloned on 2026-11-21, 30 of them in the eight plugins installed in the development stack) is stamped `"0"`, and collectors in 14 repositories build documents in code and stamp them from core's `GRIFT_VERSION` constant. Refusing `"0"` in core before those are moved would refuse every seed bundle and every collection at once, and a bundle restamped `"1"` is refused by every core release before this one, which a plugin's CI still tests against. So `"0"` is read as it always was, with no upgrade and nothing assumed about versions beyond what was already assumed, until `TAP_REQUIRE_GRIFT_VERSIONS=1`, under which it is refused naming the version. `GRIFT_VERSION` stays `"0"` for the same reason: it is what an unversioned producer stamps. When the refusal becomes the default is an owner decision that goes with the collector sweep (Issue# 1289 - tap) and has not been made.
+- Rule 7's "every committed bundle in core and in the plugin repositories is given them in the release that ships this" is not done, for core's six files or any plugin's.
 
 #### Implementation
 
@@ -1357,18 +1376,18 @@ What exists today (read on core main, 2026-11-21): `metadata` holds `grift_versi
 7. A document that omits `spine_version`, or carries a type with no entry in `type_versions`, is refused, naming what is missing. Nothing is assumed for a version a document does not state. From 0.5.0 every GRIFT document states its versions; a document written before then imports once the two fields are added to its header, and every committed bundle in core and in the plugin repositories is given them in the release that ships this.
 8. The versions describe the document's source. An importer does not store them on any row. Its batch records what it upgraded (`req-grid-entity-model-version` rule 26).
 9. Both fields are added to the `metadata` schema as required properties, and `metadata` continues to refuse unknown keys.
-10. Adding the two fields moves `grift_version` from `"0"` to `"1"`. An importer refuses a document whose `grift_version` it does not know, naming the version it was given and the versions it reads. An importer built before this requirement therefore refuses a new document for a reason it can state, the format version, and not for an unknown key. An importer at `"1"` refuses a document at `"0"`: it states no versions (rule 7). The document schema above is the implemented one, at `"0"`, until this requirement is built.
+10. Adding the two fields moves `grift_version` from `"0"` to `"1"`. An importer refuses a document whose `grift_version` it does not know, naming the version it was given and the versions it reads. An importer built before this requirement therefore refuses a new document for a reason it can state, the format version, and not for an unknown key. An importer at `"1"` refuses a document at `"0"`: it states no versions (rule 7). That last refusal is staged behind `TAP_REQUIRE_GRIFT_VERSIONS=1` while the fleet's bundles and collectors still write `"0"` (Status Details).
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grift-header-versions-1 | Export Writes Both | Proposed | An export's `metadata` carries `spine_version` and a `type_versions` entry for every entity type in the document, each equal to what the grid records. | |
-| req-grift-header-versions-2 | Schema Accepts Them | Proposed | A document carrying both fields validates; one whose `spine_version` or any `type_versions` value is not an integer of 1 or more does not. | |
-| req-grift-header-versions-3 | Edge Types Included | Proposed | A document carrying edges has a `type_versions` entry for each edge type. | |
-| req-grift-header-versions-4 | Absent Is Refused | Proposed | A document with no `spine_version`, or carrying a type with no `type_versions` entry, is refused, names what is missing and writes nothing. | |
-| req-grift-header-versions-5 | Not Stored On Rows | Proposed | After an import no entity or typed row holds the document's stated versions; the import's batch names what was upgraded. | |
-| req-grift-header-versions-6 | Format Version Moves To 1 | Proposed | An export states `grift_version` `"1"`. An importer at `"1"` refuses a document stating `"0"`, and an importer that reads only `"0"` refuses one stating `"1"`, each naming the version. | |
+| req-grift-header-versions-1 | Export Writes Both | Implemented | An export's `metadata` carries `spine_version` and a `type_versions` entry for every entity type in the document, each equal to what the grid records. |  |
+| req-grift-header-versions-2 | Schema Accepts Them | Implemented | A document carrying both fields validates; one whose `spine_version` or any `type_versions` value is not an integer of 1 or more does not. |  |
+| req-grift-header-versions-3 | Edge Types Included | Implemented | A document carrying edges has a `type_versions` entry for each edge type. |  |
+| req-grift-header-versions-4 | Absent Is Refused | Implemented | A document with no `spine_version`, or carrying a type with no `type_versions` entry, is refused, names what is missing and writes nothing. | Code `version_unstated`, at format `"1"` |
+| req-grift-header-versions-5 | Not Stored On Rows | Implemented | After an import no entity or typed row holds the document's stated versions; the import's batch names what was upgraded. | The batch's importer provenance holds `upgraded` |
+| req-grift-header-versions-6 | Format Version Moves To 1 | In Development | An export states `grift_version` `"1"`. An importer at `"1"` refuses a document stating `"0"`, and an importer that reads only `"0"` refuses one stating `"1"`, each naming the version. | Observed: an export states `"1"`; an unknown format is refused naming what is read; with `TAP_REQUIRE_GRIFT_VERSIONS=1` a `"0"` document is refused naming the version. Not the default, and an importer that reads only `"0"` is the released one, not run here |
 
 ## Stored Files
 ----

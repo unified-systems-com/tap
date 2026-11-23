@@ -66,6 +66,7 @@ _NOT_ROUND_TRIPPED = frozenset({"id", "entity_id", "batch_id", "flip_map"})
 # Independent snapshot oracle
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def whole_skip_sample(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift the export's per-reason sample cap, for a test that looks for one id in the sample.
@@ -585,7 +586,7 @@ def test_output_dash_emits_a_document_and_nothing_else_on_stdout() -> None:
     call_command("export_grift", "--output", "-", "--compact", stdout=out, stderr=err)
 
     document = json.loads(out.getvalue())
-    assert document["metadata"]["grift_version"] == "0"
+    assert document["metadata"]["grift_version"] == "1"
     domain = [n for n in document["batches"][0]["nodes"] if n["entity"]["entity_type"] != "dimension"]
     assert len(domain) == 4
     assert validate_grift_document(document) == []
@@ -686,4 +687,4 @@ def test_the_written_snapshot_is_readable_only_by_its_owner(tmp_path: Path) -> N
     target.chmod(0o644)
     call_command("export_grift", "--output", str(target), stdout=StringIO())
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
-    assert json.loads(target.read_text())["metadata"]["grift_version"] == "0"
+    assert json.loads(target.read_text())["metadata"]["grift_version"] == "1"

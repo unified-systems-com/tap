@@ -1053,3 +1053,40 @@ class TestReviewRoundTwo:
         # A type declared at 1 cannot be behind version 1, and the surrounding transaction still works.
         mv.refuse_if_pending("batch", "a write")
         assert EntityType.objects.count() >= 0
+
+
+class TestReviewRoundThree:
+    """What the third review of the slice found."""
+
+    def test_a_catalog_row_above_version_1_is_not_deleted_without_a_writer(self) -> None:
+        with mv._writing_applied_version():
+            row = EntityType.objects.create(slug="rr3_kept", name="rr3", model_version=2)
+        with pytest.raises(mv.ModelVersionError):
+            EntityType.objects.filter(slug="rr3_kept").delete()
+        with pytest.raises(mv.ModelVersionError):
+            row.delete()
+        assert EntityType.objects.filter(slug="rr3_kept").exists()
+        with mv._writing_applied_version():
+            row.delete()
+        EntityType.objects.create(slug="rr3_plain", name="rr3")
+        EntityType.objects.filter(slug="rr3_plain").delete()
+
+    def test_the_owed_comparison_counts_an_uncatalogued_type_with_rows_as_version_1(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A type declared at 2 whose rows exist and whose catalog row does not is behind."""
+        EntityType.objects.filter(slug="batch").delete()
+        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else 1)
+        monkeypatch.setattr(mv, "_holds_rows", lambda slug, kind, using: slug == "batch")
+        mv._start_incomplete = True
+        with pytest.raises(mv.ModelVersionPending) as raised:
+            mv.refuse_if_pending("batch", "a write")
+        assert (raised.value.declared, raised.value.applied) == (2, 1)
+
+    def test_an_uncatalogued_type_with_no_rows_is_not_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        EntityType.objects.filter(slug="batch").delete()
+        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else 1)
+        monkeypatch.setattr(mv, "_holds_rows", lambda slug, kind, using: False)
+        mv._start_incomplete = True
+        mv.refuse_if_pending("batch", "a write")
+        assert "batch" not in mv._pending
