@@ -40,7 +40,7 @@ brought in step by its own catch-up, called here for the type.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -59,6 +59,8 @@ BATCH_SOURCE = "grid:maintenance"
 REASON = "model_version"
 WRITER = "version_migration"
 CHUNK = 2_000
+_CHECK_NOW = "SET CONSTRAINTS ALL IMMEDIATE"
+_DEFER_AGAIN = "SET CONSTRAINTS ALL DEFERRED"
 SAMPLE = 10
 
 #: The spine fields the adapter may write: the revision and its time, the batch that last changed
@@ -139,8 +141,16 @@ def _target(apps: Any, type_slug: str) -> _Target:
     if getattr(live, "TRACK_HISTORY", True):
         try:
             history = apps.get_model(meta.app_label, f"Historical{meta.object_name}")
-        except LookupError:
-            history = None
+        except LookupError as missing:
+            # A type that keeps history is never carried without writing it. The history model is
+            # absent from this point of the migration only when the migration does not depend on
+            # the state that has it.
+            raise VersionMigrationRefused(
+                f"{type_slug!r} keeps history, and the migration's state has no Historical{meta.object_name} "
+                f"model in {meta.app_label!r}. The migration must depend on the migration that creates the "
+                "history table, so the adapter can write a history row for every row it changes; nothing was "
+                "changed"
+            ) from missing
     return _Target(type_slug, kind, live, rows, history, declared)
 
 
@@ -230,9 +240,10 @@ def _recorded_definition(target: _Target, version: int) -> Mapping[str, Any] | N
 
 def _field_from_definition(definition: Mapping[str, Any]) -> models.Field[Any, Any] | None:
     """A field of the recorded type, enough of it to ask the database what column type it has."""
-    field_class = getattr(models, str(definition.get("type", "")), None)
-    if not isinstance(field_class, type) or not issubclass(field_class, models.Field):
+    named = getattr(models, str(definition.get("type", "")), None)
+    if not isinstance(named, type) or not issubclass(named, models.Field):
         return None
+    field_class: Callable[..., models.Field[Any, Any]] = named
     options: dict[str, Any] = {"null": bool(definition.get("null"))}
     for name in ("max_length", "max_digits", "decimal_places"):
         if definition.get(name) is not None:
@@ -270,47 +281,53 @@ def _retyped_fields(target: _Target, to_version: int, using: str) -> dict[str, t
     return retyped
 
 
-def _unconvertible(history: Any, column: str, new_type: str, using: str) -> int:
-    """How many history values of ``column`` the database could not read as ``new_type``."""
-    connection = connections[using]
-    quote = connection.ops.quote_name
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"SELECT count(*) FROM {quote(history._meta.db_table)} "  # noqa: S608 — identifiers are quoted model metadata
-            f"WHERE {quote(column)} IS NOT NULL AND NOT pg_input_is_valid({quote(column)}::text, %s)",
-            [new_type],
-        )
-        row = cursor.fetchone()
-    return int(row[0]) if row else 0
+def _unreadable_history(history: Any, name: str, new_type: str, using: str) -> Any:
+    """The history rows whose value of field ``name`` the database could not read as ``new_type``.
+
+    ``pg_input_is_valid(value::text, type)`` asked through the ORM on the history model, so the
+    table and the column are the model's own and no SQL text is put together here.
+    """
+    from django.db.models import BooleanField, F, Func, TextField, Value
+    from django.db.models.functions import Cast
+
+    readable = Func(
+        Cast(F(name), TextField()),
+        Value(new_type),
+        function="pg_input_is_valid",
+        output_field=BooleanField(),
+    )
+    return (
+        history._default_manager.using(using)
+        .filter(**{f"{name}__isnull": False})
+        .annotate(version_migration_readable=readable)
+        .filter(version_migration_readable=False)
+    )
 
 
-def _discard_unconvertible(history: Any, column: str, new_type: str, using: str) -> int:
-    """Empty the history values of ``column`` the database could not read as ``new_type``."""
-    connection = connections[using]
-    quote = connection.ops.quote_name
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"UPDATE {quote(history._meta.db_table)} SET {quote(column)} = NULL "  # noqa: S608 — quoted model metadata
-            f"WHERE {quote(column)} IS NOT NULL AND NOT pg_input_is_valid({quote(column)}::text, %s)",
-            [new_type],
-        )
-        return int(cursor.rowcount)
+def _unconvertible(history: Any, name: str, new_type: str, using: str) -> int:
+    """How many history values of field ``name`` the database could not read as ``new_type``."""
+    return int(_unreadable_history(history, name, new_type, using).count())
+
+
+def _discard_unconvertible(history: Any, name: str, new_type: str, using: str) -> int:
+    """Empty the history values of field ``name`` the database could not read as ``new_type``."""
+    return int(_unreadable_history(history, name, new_type, using).update(**{name: None}))
 
 
 def _history_plan(
     target: _Target, step: version_links.Step, to_version: int, using: str, problems: list[str]
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str]]:
     """What must be emptied in the history table before a field's type changes (rule 27).
 
     Appends a problem for every field with history values that cannot be converted and are not
     declared discarded, or are declared discarded with nowhere to leave an empty value. Returns
-    (field, column, new type) for the fields whose unconvertible values are to be emptied.
+    (field, new type) for the fields whose unconvertible values are to be emptied.
     """
     if target.history is None or connections[using].vendor != "postgresql":
         return []
-    discard: list[tuple[str, str, str]] = []
-    for name, (stored, new_type, can_be_empty) in sorted(_retyped_fields(target, to_version, using).items()):
-        count = _unconvertible(target.history, stored.column, new_type, using)
+    discard: list[tuple[str, str]] = []
+    for name, (_stored, new_type, can_be_empty) in sorted(_retyped_fields(target, to_version, using).items()):
+        count = _unconvertible(target.history, name, new_type, using)
         if not count:
             continue
         where = version_links.describe(to_version)
@@ -331,7 +348,7 @@ def _history_plan(
                 "cannot be empty yet. Make the field nullable in an operation before this one"
             )
         else:
-            discard.append((name, stored.column, new_type))
+            discard.append((name, new_type))
     return discard
 
 
@@ -445,14 +462,11 @@ def apply_version(
         raise VersionMigrationRefused(f"{type_slug!r}: no step is declared from {where}")
 
     with transaction.atomic(using=using):
-        applied = model_version.applied_version(type_slug, using=using)
         held = _held(target, using)
+        applied = _locked_applied_version(target, held, using)
         if applied is None:
-            if not held:
-                report.note = "the grid holds no rows of the type and has not catalogued it; nothing to carry"
-                return report
-            # Rows the catalog never recorded were written before versions were, at version 1.
-            applied = FIRST_VERSION
+            report.note = "the grid holds no rows of the type and has not catalogued it; nothing to carry"
+            return report
         if applied >= to_version:
             report.note = f"the rows are already at version {applied}"
             return report
@@ -481,15 +495,15 @@ def apply_version(
             actor = _actor()
             with authorized(CallerContext(user=actor), WRITE_CAPABILITY, operation="apply_version"):
                 _carry_rows(target, link, to_version, using, actor, report)
-                for name, column, new_type in discard:
-                    report.history_discarded[name] = _discard_unconvertible(target.history, column, new_type, using)
+                for name, new_type in discard:
+                    report.history_discarded[name] = _discard_unconvertible(target.history, name, new_type, using)
         if report.history_discarded and report.batch_id is None:
             logger.info(
                 "[5f1b] %s: history values discarded with no row changed: %s", type_slug, report.history_discarded
             )
         model_version.set_applied_version(type_slug, to_version, using=using)
         report.applied = True
-        _settle_deferred_checks(using)
+        _settle_deferred_checks(schema_editor, using)
     logger.info(
         "[5f1a] %s carried from %s: %s row(s) read, %s changed, batch %s",
         type_slug,
@@ -501,7 +515,38 @@ def apply_version(
     return report
 
 
-def _settle_deferred_checks(using: str) -> None:
+def _locked_applied_version(target: _Target, held: bool, using: str) -> int | None:
+    """The version applied to the type's rows, read under a lock on its catalog row.
+
+    The lock is held to the end of the transaction, so a second migration of the same type waits
+    here, and when the first commits it reads the version the first applied and does nothing. A
+    step is not run twice.
+
+    A type the grid holds rows of and has never catalogued gets its catalog row here, at version
+    1: rows written before versions were recorded are at version 1, which is what its first
+    registration would record. The slug is unique, so of two callers creating it one waits for
+    the other, and both then lock the same row. A type with no rows and no catalog row has
+    nothing to lock and nothing to carry: None.
+    """
+    from tap_grid.models import EntityType, EntityTypeKind
+
+    catalog = EntityType.objects.using(using)
+    if held and not catalog.filter(slug=target.slug).exists():
+        catalog.get_or_create(
+            slug=target.slug,
+            defaults={
+                "name": target.slug,
+                "kind": EntityTypeKind.EDGE if target.kind == EDGE else EntityTypeKind.NODE,
+                "model_version": FIRST_VERSION,
+            },
+        )
+    locked: int | None = (
+        catalog.select_for_update().filter(slug=target.slug).values_list("model_version", flat=True).first()
+    )
+    return locked
+
+
+def _settle_deferred_checks(schema_editor: Any, using: str) -> None:
     """Run the foreign-key checks the adapter's writes deferred, now.
 
     PostgreSQL refuses to alter a table that has deferred checks waiting ("pending trigger
@@ -512,9 +557,15 @@ def _settle_deferred_checks(using: str) -> None:
     connection = connections[using]
     if connection.vendor != "postgresql":
         return
+    # Two constant statements, with nothing put into them. Through the migration's own schema
+    # editor where there is one; a caller with none (a test) has only the connection.
+    if schema_editor is not None and getattr(schema_editor, "connection", None) is connection:
+        schema_editor.execute(_CHECK_NOW)
+        schema_editor.execute(_DEFER_AGAIN)
+        return
     with connection.cursor() as cursor:
-        cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
-        cursor.execute("SET CONSTRAINTS ALL DEFERRED")
+        cursor.execute(_CHECK_NOW)
+        cursor.execute(_DEFER_AGAIN)
 
 
 def _open_batch(target: _Target, to_version: int, actor: Any) -> Batch:
@@ -660,11 +711,15 @@ def _carry_rows(
             f"The migration of {target.slug!r} from {where} is refused: the step refused {len(refused)} "
             f"record(s), and nothing was changed.\n  {shown}{more}"
         )
-    if batch is not None:
-        if final and target.kind == NODE:
-            # The stored key on the spine, for every row of the type, by the catch-up a migration
-            # that rewrites key values is told to call (req-grid-entity-natural-key).
-            from tap_grid.spine_natural_key import resync_natural_keys
+    if final and target.kind == NODE:
+        # The stored key on the spine, for every row of the type, by the catch-up a migration that
+        # rewrites key values is told to call (req-grid-entity-natural-key). Always, and not only
+        # where a row changed: a version can change which fields make the key and leave every
+        # value as it was, and the stored keys are then stale with no row written. The catch-up
+        # derives from the installed class, so it runs in the migration that arrives at the
+        # version that class declares.
+        from tap_grid.spine_natural_key import resync_natural_keys
 
-            resync_natural_keys(target.slug, using=using)
+        resync_natural_keys(target.slug, using=using)
+    if batch is not None:
         close_batch(batch)

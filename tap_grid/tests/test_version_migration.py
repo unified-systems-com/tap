@@ -265,9 +265,7 @@ class TestMigrationGoesThroughTheAdapter:
             assert [e.event_type for e in events] == [BatchEventType.MAINTENANCE]
             assert str(events[0].batch.entity_id) == report.batch_id
             assert events[0].metadata["fields"] == ["size", "title"]
-        with connection.cursor() as cursor:
-            cursor.execute(f"SELECT count(*) FROM {history._meta.db_table}")  # noqa: S608
-            assert cursor.fetchone()[0] == 10
+        assert history._default_manager.count() == 10
 
     @AC[23]
     def test_an_unchanged_row_is_not_written(self, widget_v1: ProjectState) -> None:
@@ -485,10 +483,8 @@ def _history_row(state: ProjectState, entity_id: uuid.UUID, **values: Any) -> No
 
 
 def _history_values(state: ProjectState, column: str) -> list[Any]:
-    table = state.apps.get_model(APP, "HistoricalVmWidget")._meta.db_table
-    with connection.cursor() as cursor:
-        cursor.execute(f"SELECT {column} FROM {table} ORDER BY history_id")  # noqa: S608
-        return [row[0] for row in cursor.fetchall()]
+    history = state.apps.get_model(APP, "HistoricalVmWidget")
+    return list(history._default_manager.order_by("history_id").values_list(column, flat=True))
 
 
 class TestHistory:
@@ -757,3 +753,106 @@ class TestChainThroughFieldsTheClassNoLongerHas:
         through_the_steps = sorted((two_to_three(one_to_two(dict(r))) for r in version_1), key=lambda r: r["name"])
         stored = sorted(plain.all_objects.values("name", "note"), key=lambda r: r["name"])
         assert stored == through_the_steps
+
+
+# ---------------------------------------------------------------------------
+# What the review of the adapter found
+# ---------------------------------------------------------------------------
+
+
+class TestStoredKeysFollowAVersionThatChangesNoRow:
+    @AC[30]
+    def test_an_identity_valued_step_still_brings_the_stored_keys_in_step(self, plain: Any) -> None:
+        """A version can change which fields make the key and leave every value as it was. No row
+        is written and no batch is opened, and the stored keys are rebuilt all the same."""
+        from tap_grid import spine_natural_key
+
+        state = ProjectState.from_apps(apps)
+        _create_tables(state, "VmPlain")
+        _catalogue(PLAIN)
+        version_links.declare(PLAIN, {2: Step(lambda record: dict(record), key=lambda key: dict(key))})
+        entity_id = _row(state, "VmPlain", PLAIN, name="p", note="quiet")
+        before = Entity.objects.get(pk=entity_id)
+        # The row was written below the pipeline, so its spine key was never derived.
+        assert PLAIN in spine_natural_key.check([PLAIN]).drifted
+        seen: list[Any] = []
+
+        _apply(state, [_adapter(PLAIN, 2, seen)])
+
+        assert (seen[0].applied, seen[0].changed, seen[0].batch_id) == (True, 0, None)
+        assert Entity.objects.get(pk=entity_id).version == before.version
+        after = spine_natural_key.check([PLAIN])
+        assert PLAIN not in after.drifted and PLAIN not in after.stale_recipes
+        assert mv.applied_version(PLAIN) == 2
+
+
+class TestATrackedTypeIsNeverCarriedWithoutItsHistory:
+    @AC[30]
+    def test_a_missing_history_model_refuses_the_migration(self, widget_v1: ProjectState) -> None:
+        entity_id = _row(widget_v1, "VmWidget", WIDGET, name="n", label="L", size="4")
+        before = Entity.objects.get(pk=entity_id)
+        without = widget_v1.clone()
+        without.remove_model(APP, "historicalvmwidget")
+
+        with pytest.raises(version_migration.VersionMigrationRefused) as refused:
+            version_migration.apply_version(without.apps, None, WIDGET, to_version=2)
+
+        message = str(refused.value)
+        assert WIDGET in message and "HistoricalVmWidget" in message and "must depend on" in message
+        assert mv.applied_version(WIDGET) == 1
+        assert Entity.objects.get(pk=entity_id).version == before.version
+        assert not BatchEvent.objects.filter(entity_id=entity_id).exists()
+
+    @AC[31]
+    def test_a_type_that_keeps_no_history_is_not_asked_for_one(self, plain: Any) -> None:
+        state = ProjectState.from_apps(apps)
+        _create_tables(state, "VmPlain")
+        _catalogue(PLAIN)
+        version_links.declare(PLAIN, {2: Step(lambda record: dict(record))})
+        _row(state, "VmPlain", PLAIN, name="p", note="quiet")
+        report = version_migration.apply_version(state.apps, None, PLAIN, to_version=2)
+        assert report.applied and report.history_rows == 0
+
+
+class TestOneMigrationOfATypeAtATime:
+    @AC[29]
+    def test_the_applied_version_is_read_under_a_lock_on_the_catalog_row(self, widget_v1: ProjectState) -> None:
+        from django.test.utils import CaptureQueriesContext
+
+        _row(widget_v1, "VmWidget", WIDGET, name="n", label="L", size="4")
+        with CaptureQueriesContext(connection) as queries:
+            _apply(widget_v1, _widget_operations())
+        catalog = [q["sql"] for q in queries if '"tap_entity_type"' in q["sql"] and q["sql"].startswith("SELECT")]
+        locked = [sql for sql in catalog if "FOR UPDATE" in sql]
+        assert locked, catalog
+        # The lock is the read the adapter decides on: no unlocked read of the version comes first.
+        versions = [sql for sql in catalog if "model_version" in sql]
+        assert versions[0] in locked
+
+    @AC[29]
+    def test_a_second_run_after_the_first_finds_the_version_applied_and_runs_no_step(
+        self, widget_v1: ProjectState
+    ) -> None:
+        calls: list[int] = []
+
+        def counted(record: dict[str, Any]) -> dict[str, Any]:
+            calls.append(1)
+            return _widget_step(record)
+
+        version_links.declare(WIDGET, {2: Step(counted, renames={"title": "label"})})
+        _row(widget_v1, "VmWidget", WIDGET, name="n", label="L", size="4")
+        state = _apply(widget_v1, _widget_operations())
+        assert calls == [1]
+        again = version_migration.apply_version(state.apps, None, WIDGET, to_version=2)
+        assert calls == [1] and not again.applied
+
+    @AC[29]
+    def test_rows_the_catalog_never_recorded_are_catalogued_at_version_1_and_locked(
+        self, widget_v1: ProjectState
+    ) -> None:
+        EntityType.objects.filter(slug=WIDGET).delete()
+        _row(widget_v1, "VmWidget", WIDGET, name="n", label="L", size="4")
+        seen: list[Any] = []
+        _apply(widget_v1, _widget_operations(seen))
+        assert (seen[0].from_version, seen[0].applied) == (1, True)
+        assert mv.applied_version(WIDGET) == 2
