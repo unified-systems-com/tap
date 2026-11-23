@@ -1143,6 +1143,9 @@ v0 should define stable codes for common importer outcomes, including:
 - `timestamp_in_future`
 - `timestamp_order_invalid`
 - `collection_time_not_recorded`, `collection_time_older_read`, `collection_time_out_of_order` — warnings, never errors, about a collection window a document states (`req-grift-collection-window` rules 9 and 10 in `spec-grift-v0.md`; `req-grid-entity-collection-time` rules 5 to 7 in `spec-grid-entity.md`): a window not recorded and the row's pair left empty, an older read arriving late that moved the pair, and a window out of order with the event time or the time of the write. None refuses the document. Proposed: the write operation raises all three today, and the import result does not yet carry them
+- `batch_identity_mismatch` — a refusal: a write that joins an existing batch, or a force re-import that re-executes one, resolves to a write identity other than the one core recorded when it opened the batch; nothing is written (`req-grift-yield` rule 1 in `spec-grift-v0.md`). Proposed, not built
+- `tracked_field_whole_remove_under_yield` — a refusal: an `updates` record under `on_other_source: yield` lists a field tracked per key as a whole in `remove`; the remedy named is per-key paths (`req-grift-partial-update` rule 10 in `spec-grift-v0.md`). Proposed, not built
+- `tracked_field_whole_null_refused` — a refusal: a record in `nodes`, `updates` or `replaces` sends a field tracked per key as a whole `null`, under either `on_other_source`, nullable or not; the remedy named is a `null` per key, or `remove` of the field in `updates` under `overwrite` (`req-grift-partial-update` rule 10 in `spec-grift-v0.md`). Proposed, not built
 - `entity_type_mismatch`
 - `dangling_edge`
 - `batch_already_imported`
