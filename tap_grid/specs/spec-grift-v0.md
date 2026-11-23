@@ -601,6 +601,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-partial-update | [Updates Without Required Fields](#updates-without-required-fields) | Proposed | A record in `updates` writes the fields it carries, and an edge the keys it carries in `properties` |
 | req-grift-yield | [Yielding To Another Source](#yielding-to-another-source) | Proposed | Under `on_other_source: yield` a field another source asserted is skipped and reported |
 | req-grift-full-replace | [Full Replace](#full-replace) | Proposed | A record in `replaces` is the whole object; omitted fields reset |
+| req-grift-collection-window | [Collection Window](#collection-window) | Proposed | `collected`: when a collector read each object, stated per record or once per batch, kept apart from the record's fields; format `"1"` only; an export states each row's spine pair |
 | req-grift-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | Explicit exclusions for this version |
 
 ## Document Format
@@ -1423,7 +1424,7 @@ Prior art for putting the write's intent beside the record: a FHIR transaction `
 5. Order within a batch: every section's nodes before any section's edges, and within each kind `inserts`, then `nodes`/`edges`, then `updates`, then `replaces`; then `deletes`, then `purges`. Array order holds inside a section.
 6. Batch-local `ref`s and key endpoints work across the sections of one batch, and the identity locks a batch takes before its writes cover every section.
 7. `metadata.type_versions` names every type any section carries, and the upgrade (`req-grid-entity-model-version` rule 21) runs over the records of all sections before anything is validated or written. A step meets partial records in `updates`; a step that needs a field the record does not carry refuses that record, which refuses the document.
-8. A record in any write section may state a collection window in the form `req-grid-entity-collection-time` defines for a document.
+8. A record in any write section may state a collection window, and inherits its batch's, in the form `req-grift-collection-window` defines (rules 2 and 4 there); what the grid does with it is `req-grid-entity-collection-time`.
 9. A record addressed by `entity_id` whose target is tombstoned is refused with `entity_tombstoned`, in all three sections. Nothing here restores a retired entity. A record addressed by its natural key does not find a tombstoned row (identity resolution reads live rows) and is treated as having no target, as in `nodes` today; whether such a record should see the tombstone waits on Issue# 1170 - tap.
 10. Resolving whether a target exists is a read of the grid: the importer authorises `grid.read` in the import's scope before it, as it does for a `ref` (`req-grid-import-grift-identity-5`).
 11. `entity_expected_version` is allowed in `updates` and `replaces` and keeps its meaning. In `inserts` it is refused: the section already says what the sender expects.
@@ -1632,6 +1633,135 @@ Prior art: HTTP `PUT` replaces the representation whole (memory: RFC 9110, not f
 | req-grift-full-replace-2 | Required Still Required | Proposed | A `replaces` record lacking a required field is refused. | |
 | req-grift-full-replace-3 | Same Record In Nodes Keeps It | Proposed | The same record in `nodes` leaves the omitted field's value. | The difference from upsert |
 | req-grift-full-replace-4 | Edge Properties Replaced Whole | Proposed | An edge holding `{"a":1,"b":2}` sent in `replaces` with `{"b":3}` ends `{"b":3}`. | |
+
+## Collection Window
+----
+RID: `req-grift-collection-window`
+
+Status: `Proposed`
+
+A document says when the collector read each object it carries. The statement is a window, a start and an end on the collector's own clock, and it sits beside the record, never inside the fields the record writes. A batch may state one window for all its records, and a record may state its own in place of it. What the window means and what the grid does with it is `req-grid-entity-collection-time` (`spec-grid-entity.md`); this requirement specifies only how a document states it, and how an export writes it.
+
+#### Status Details
+Proposed; nothing is built. This is the GRIFT document form that `req-grid-entity-collection-time` rule 2 names, and that `req-grift-write-sections` rule 8 points at. The design was ruled by the owner on 2026-11-23, on Issue# 1284 - tap (Q50): all seven decisions (A to G, under Development) as recommended. Nothing in it is open.
+
+What exists today (read at tap main `34fbda8a` and this branch at `662dcde1` with `git show`; nothing was run):
+
+- The write-batch form is built. `WriteOperation.collected` (`tap_grid/service_types.py`) takes a `CollectionWindow(start, end)` beside the operation's `payload`, each bound a timezone-aware datetime or ISO 8601 text with a zone. `settle_window` (`tap_grid/collection_time.py`) turns it into the stored pair or into nothing and a `collection_time_not_recorded` warning (no zone, text that is not a time, end before start); `order_warnings` reports `collection_time_older_read` and `collection_time_out_of_order` and corrects nothing.
+- The database refuses a half-set pair and an end before its start, on `Entity` and on `BatchEvent` (`req-grid-entity-collection-time` rule 6).
+- The importer states no window. None of the `WriteOperation(...)` calls in `tap_grid/grift/importer.py` passes `collected`, so every row a GRIFT import names, collectors' included, leaves the import with an empty pair (`req-grid-entity-collection-time` rule 5 and its Status Details).
+- The import result does not carry an operation's warnings to its caller (`req-grid-entity-event-time`, Status Details, the same gap for `event_time_not_stored`): the three `collection_time_*` warnings are raised in the write operation's result and go no further. Building this requirement includes carrying them into the import result's `warnings` (rules 9 and 10).
+- The document has nowhere to put one. The schema's batch container admits `batch_entity`, `batch_node`, `nodes`, `edges`, `deletes`, `purges`, `contents` and `edge_cases`; a node or edge object admits `entity`, the payload and `retirement`; all refuse an unknown key (`tap_grid/schemas/grift-document.schema.json`). `GriftRemovalTarget` is one definition shared by the `deletes` and `purges` sections, so admitting `collected` on a delete target and refusing it on a purge target (rules 2 and 5) needs the purge section's items to name a target that does not admit it. The spine table in `spec-grid-entity.md` says the envelope does not carry `collected_start`, and it still does not.
+- The exporter writes no collection time. `_entity_envelope` (`tap_grid/grift/exporter.py`) emits `entity_id`, `entity_type`, `dimensions` and `name` only; `grep collected` over the exporter finds nothing but the word "collection" in prose.
+- The importer checks envelope times in code, not by the schema's `format` (no format checker is used): `_check_datetime` parses with Django's `parse_datetime`, and `_make_aware` gives a time with no zone the server's zone. A window must not take that path: a bound with no zone is not recorded (rule 9).
+
+The rulings this follows, on Issue# 1284 - tap: the spine pair belongs to the latest batch to name the object, empty included, and a late older read moves it and warns (third set, 2026-11-22, which reverses the "does not move backwards" of the second set); a value that cannot be stored truthfully is left off with a warning, where the design record proposed a hard stop (first set, 2026-11-21); and this form's seven decisions (Q50, 2026-11-23).
+
+Prior art read for the shape (each page opened on 2026-11-23):
+
+- STIX 2.1 `observed-data` states one window, `first_observed` and `last_observed`, for a group of objects it references by `object_refs`, apart from those objects' own properties, and requires `last_observed` to be "greater than or equal to" `first_observed`; its timestamps "MUST be represented in the UTC timezone" (https://docs.oasis-open.org/cti/stix/v2.1/os/stix-v2.1-os.html, sections 2.16.1 and 4.14). That is the batch-level window.
+- OpenTelemetry logs carry `ObservedTimestamp`, "Time when the event was observed by the collection system", on each record beside `Timestamp`, the source's time; the `Resource` shared by many records may be recorded "only once per batch" (https://opentelemetry.io/docs/specs/otel/logs/data-model/). That is the per-record window, with a batch-level shared part.
+- Elastic Common Schema keeps `event.created`, "when the event was first read by an agent, or by your pipeline", apart from `@timestamp`, the time extracted from the event (https://www.elastic.co/guide/en/ecs/current/ecs-event.html). OCSF keeps `metadata.logged_time`, "when the logging system collected and logged the event", inside a `metadata` object apart from the event's fields (https://schema.ocsf.io/1.3.0/objects/metadata).
+- FHIR keeps who-made-this-and-when in a separate `Provenance` resource that names its subjects by reference (`target`) and states `occurred[x]` as a period (https://hl7.org/fhir/R4/provenance.html). That is the keyed-map shape, set aside under Development. `meta.lastUpdated` is the receiving server's own time: "the server SHALL update this item to the current time on the server" (https://hl7.org/fhir/R4/resource.html), the same rule as the grid's `updated_at`, and not a collection time.
+- CycloneDX states one `metadata.timestamp`, "when the BOM was created", for the whole document, and no per-component read time was found in the part of the schema page read (https://cyclonedx.org/docs/1.6/json/). A document-level time only.
+
+#### Implementation
+
+```json
+{
+  "batch_entity": { "entity_id": "0196...", "entity_type": "batch", "dimensions": {} },
+  "batch_node": { "name": "aws inventory 2026-11-23", "source": "collector:aws_core" },
+  "collected": { "start": "2026-11-23T14:00:02Z", "end": "2026-11-23T14:03:41Z" },
+  "nodes": [
+    { "entity": { "ref": "i-1", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0abc", "state": "running" } },
+    { "entity": { "ref": "i-2", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0def", "state": "stopped" },
+      "collected": { "start": "2026-11-23T14:05:10Z", "end": "2026-11-23T14:05:10Z" } },
+    { "entity": { "ref": "i-3", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0fed", "state": "running" },
+      "collected": null }
+  ],
+  "edges": []
+}
+```
+
+Here `i-1` was read in the batch's window, `i-2` in a call of its own, and `i-3` states none (it came from a cache, say) and gets an empty pair.
+
+```json
+"GriftCollectionWindow": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["start", "end"],
+  "properties": {
+    "start": { "type": "string", "minLength": 1 },
+    "end": { "type": "string", "minLength": 1 }
+  }
+}
+```
+
+1. **The window.** A collection window is an object with exactly `start` and `end`, both required, each an RFC 3339 date-time text with a zone (`Z` or an offset). `end` equals `start` when the object was read in one call. It carries no precision: its width is the precision (`req-grid-entity-collection-time` rule 1).
+2. **Where it sits.** The key is `collected`. It may appear:
+   - on a batch container, as the batch's window;
+   - on a node object and an edge object, in `nodes`, `edges` and the `nodes` and `edges` of `inserts`, `updates` and `replaces` (`req-grift-write-sections`), beside `entity`, the payload and `retirement`;
+   - on a target in `deletes`, whether named by `entity_id` (`GriftRemovalTarget`) or by edge identity (`GriftEdgeRemovalByIdentity`).
+
+   It never appears inside `node`, inside an edge's `properties`, inside the entity envelope, or inside `batch_node`. A model field that happens to be called `collected` is that model's own field and unrelated.
+3. **Keyed by object through its record.** A record names one object, by `entity_id`, `ref`, natural key or edge identity, so a window on a record is keyed by that object, whichever way the record addresses it. This is the shape `WriteOperation.collected` has (`req-grid-entity-collection-time` Status Details) and the shape `retirement` already has in a document. There is no second map from object to window.
+4. **Which window a record states.** For each record, in this order: the record's own `collected` when the record has the key; otherwise the batch's `collected` when the batch has one; otherwise none. A record's `"collected": null` states none and the batch's window does not apply to it. `null` is refused on a batch container, where leaving the key out says the same.
+5. **Not on purges, not inferred.** `collected` on a `purges` target is refused: a purge removes the row and its batch events, so nothing would hold the window. The schema gives the purge section's items a target definition that does not admit the key, since `GriftRemovalTarget` is shared with `deletes` today. The batch's window does not apply to purge targets, to the edges a node's retirement ends (`req-grid-entity-collection-time`, Status Details, "As built"), to rows the dangling sweep tombstones, or to `edge_cases` claims, none of which is a record the batch stated a read for. A window is never taken from `batch_node.started_at` or `closed_at`, from the envelope's times, or from the import's reference time (`req-grid-entity-collection-time` rule 3).
+6. **What the importer does with it.** The window a record states is passed as `WriteOperation.collected` on every operation the importer makes for that record: the create or the replace, and, for a record carrying a `retirement` block, the retirement after it, so the pair the batch leaves on the row is the stated one. A record that states none passes nothing. Everything after that is the write-batch form's, unchanged: the settling, the pair on the batch event and on the spine, the late-older-read warning, the order warnings.
+7. **Every write that names the object.** The pair moves wherever the batch names the object, changed or not (`req-grid-entity-collection-time` rule 4). So the window is recorded for a record in `inserts` that finds its row and skips (`req-grift-insert-only` rule 7), for a record in `updates` all of whose fields are yielded (`req-grift-yield` rule 5), and for an unchanged record in `nodes`. A record that writes nothing and names no row records nothing and is not warned about: `updates` or `replaces` with `on_missing` `ignore` or `warn` and no target, a `deletes` target skipped under `on_missing` or `on_tombstoned`, a batch skipped as `batch_already_imported`, and every record of a batch that fails.
+8. **Validation of the shape.** These refuse the document at preflight with `schema_validation_failed`, naming the path, and write nothing: `collected` that is not an object (or `null` on a batch container); a missing `start` or `end`; any other key; a bound that is not a non-empty text; `collected` on a purge target, on `batch_node`, in the envelope, or anywhere rule 2 does not name; and `collected` anywhere in a document at format `"0"` (rule 12).
+9. **Validation of the values.** A bound that does not read as a date-time, a bound with no zone, and an end before its start are not refusals. The window is not recorded, the record's row gets an empty pair as if it stated none, and the import result carries the `collection_time_not_recorded` warning with the reason, naming the record's path and object (`req-grid-entity-collection-time` rule 6, and the 2026-11-21 ruling that chose a warning over a hard stop). A bound with no zone is never given the server's zone, as `_make_aware` does for envelope times. The batch's window is settled once at preflight: when it cannot be recorded, the result carries one warning naming the batch and the number of records that relied on it, not one per record, and those records state none.
+10. **Order is reported, not refused.** A window that ends after the time of the write, or before the object's event time starts, is written as stated and reported with `collection_time_out_of_order`; a window that ends before the one the row carries moves the pair and is reported with `collection_time_older_read`. Both reach the import result's warnings. Neither is a refusal: the import's reference time bounds the envelope's and the retirement block's times (`timestamp_in_future`), not collection time, which rule 7 of `req-grid-entity-collection-time` reports and never corrects. Two batches of one document that name one object are two writes in order, and the second's window is the one the row keeps.
+11. **Never a field, never FLIP.** A window writes no typed field, no FLIP entry, no history row and no revision; it does not change `updated_at`, `last_changed_batch_id`, the entity's `version`, the event-time columns or the `tap.time` dimension. It is not a field for `on_other_source: yield` to judge, `on_existing` to protect or `entity_expected_version` to guard, and it makes no record a change that would otherwise be unchanged (`req-grid-history-reobservation`). A version conflict aborts the batch, and with it every window the batch stated.
+12. **Format `"1"` only.** `collected` is part of format `"1"`, with the write sections (`req-grift-write-sections` rule 13). A document at format `"0"` that carries it is refused (rule 8), naming the key and that it needs format `"1"`. No released core reads format `"1"`, so adding the key now changes no reader in the field; adding it to `"0"` would make a released importer refuse a new document for an unknown key, not for the version it can name (`req-grift-header-versions` rule 10). It lands before 0.5.0, inside format `"1"`. Once a core that reads `"1"` is released, a key added after that needs format `"2"`; this one is not added to `"1"` after such a release without a new ruling.
+13. **No version moves.** The spine columns exist already, so this form raises neither `spine_version` nor any type's version, and `type_versions` gains no entry for it. `contents` gains no aspect: a window is part of a record, not a kind of record, and an importer that does not read it refuses the key.
+14. **The export states the spine pair.** The exporter writes `collected` on each node and edge object whose spine row has both `collected_start` and `collected_end`, from those two columns, in UTC; a row whose pair is empty gets no key, never `null`. It writes no `collected` on the batch it mints: that batch read nothing, and one window for rows read at many times would be false, which is the reason `req-tap-cares-collector-version` defers `metadata.collector` on an export. The per-pass pairs on batch events are not exported, as no other part of a batch's history is (`contents.history` is `included: false`). The pair is data about the row's values on the source grid, as a `retirement` block is data about its retirement: by `req-grid-entity-collection-time` rule 5 it describes the read whose values the row holds, and an export carries those values. Imported, it becomes the import batch's statement for that row, which stays true because the import writes the same values, and the batch's `source` still says it is a capture (`req-grift-export`, "Honest provenance").
+15. **Lands with its code.** The schema admits `collected` in the same change as the importer code that honours it and the exporter code that writes it, as `req-grift-edge-identity-surface-1` requires for its shapes: no window is accepted and dropped. The same change adds `GriftCollectionWindow` and the `collected` properties (on `GriftBatchContainer`, `GriftNodeObject`, `GriftEdgeObject`, the delete targets `GriftRemovalTarget` and `GriftEdgeRemovalByIdentity`, and not on a purge target) to this spec's JSON Schemas section; until then the fragment above is the definition.
+
+#### Development
+The owner ruled the seven decisions below on 2026-11-23 (Issue# 1284 - tap, Q50), each as it was recommended.
+
+**A. Where the window sits: a batch-level `collected`, a per-record `collected` that takes its place, and `null` on a record to state none** (rules 2 to 4). One key, keyed by object through the record that already addresses it however it does, as the built `WriteOperation.collected` is; the batch window spares a one-pass collector from repeating itself and expands at preflight, so the grid still stores per object. Two alternatives were set aside:
+
+- *A keyed map in the batch* (`"collection": {"default": {...}, "by_object": {"<entity_id>": {...}}}`), the FHIR `Provenance` shape and the one rule 2 of `req-grid-entity-collection-time` reads most literally. A record addressed by `ref`, natural key or edge identity has no `entity_id` in the document, so the map needs a second key form for each, resolved by its own lookup; a map key naming no record of the batch is a new failure to refuse; and the window sits away from the record it describes, which a reviewer of a diff has to join by hand. The per-record key is keyed by object through the record, which is how the built write-batch form already reads rule 2. FHIR's separation fits FHIR because a `Provenance` is a resource with a life of its own; a window is not.
+- *Per record only, no batch window*: simpler, one way to say it, and the OpenTelemetry and ECS precedent. Not chosen because the common collector reads a whole account in one pass and would repeat one window on every record, which costs bytes and invites a record stamped from a different clock read than its neighbours; and a document written by hand would rarely state one at all. STIX states the window once for a group. The batch window is a shorthand expanded at preflight into per-object statements, so what the grid stores is per object either way.
+
+Two other places were left out for the same reason, that the window must stay apart from what the record writes:
+
+- *In the envelope* (`collected_start` / `collected_end` beside `created_at`). The envelope carries the spine's own fields, `name` and `dimensions` among them, which the write applies to the row; rule 2 keeps the window apart from what the object writes, and `spec-grid-entity.md` says the spine columns are not accepted in the envelope. The envelope's times are also validated and dropped, a different contract from one the grid records.
+- *In `batch_node`* (the Batch model's fields, or a reserved key in its `metadata`). `batch_node` is the batch's typed payload; `started_at` and `closed_at` are the batch's own lifecycle, which rule 3 says a reader may use as a best estimate and the grid must never copy into the pair; and `metadata` is free-form, with `collector` its first reserved key, where a per-object fact has no place.
+
+**B. Format `"1"` only** (rule 12). No released core reads `"1"`, so the key reaches no old reader, and an old reader refuses a new document for its version, which it can name. The consequence, accepted: a collector can state a window only once it writes format `"1"`, which ties the collector sweep (Issue# 1289 - tap) to the fleet move (Issue# 1288 - tap). Allowing the key at `"0"` would not loosen that, because every released core refuses it there as an unknown key, so a plugin's floor must be raised either way.
+
+**C. A window whose values are wrong warns; only a malformed shape refuses** (rules 8 and 9). The window is dropped, the row gets an empty pair, and the document imports. It is the rule the grid already holds for the same value (`req-grid-entity-collection-time` rule 6), chosen by the owner on 2026-11-21 over the design record's hard stop, and one bad clock read should not cost a whole collection. Refusing at preflight, as GRIFT refuses `updated_at` before `created_at` (`timestamp_order_invalid`), was considered: it is stricter than the grid's own rule for the same value, and a collector with a broken clock is caught by the warning.
+
+**D. An export states windows, per object from the spine pair, never at batch level** (rule 14). The pair describes the read whose values the row holds, and the export carries those values; leaving it out would empty every pair on a replay (`req-grid-entity-collection-time` rule 5), a loss with nothing gained. The reason the collector-version spec deferred `metadata.collector` (one capture batch would claim one collector for many) does not apply to a per-object fact, and it is why the export writes no batch window.
+
+**E. Removals: a `deletes` target may state a window and inherits the batch's; a `purges` target may not** (rules 2 and 5). The write-batch form already records a window on a retirement, and a collector that deletes what it found gone read that absence in its pass; a purge erases the events that would hold it. The cost, accepted: a hand-written cleanup batch with a window stamps its deletes too; an author who does not mean that puts the deletes in a batch of their own.
+
+**F. Timing: this lands with the write sections, before 0.5.0, inside format `"1"`** (rule 12). After a core that reads `"1"` is released, a new key needs format `"2"`.
+
+**G. Cross-references, amended in the same change as this requirement:** `req-grid-entity-collection-time` rule 2 and its Status Details "Not built" bullet name this requirement as the document form; the Notes of `req-grid-entity-collection-time-3` no longer say a document cannot state one; `req-grift-write-sections` rule 8 cites this RID; and the issue-code list in `spec-grid-import-grift.md` admits the three `collection_time_*` warnings in an import result.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-collection-window-1 | A Record States Its Window | Proposed | A node in `nodes` with `collected` creates a row whose spine pair, and whose batch event's pair, are the stated window in UTC; the node's typed fields and `flip_map` are what they would be without the key. | |
+| req-grift-collection-window-2 | The Batch Window Applies | Proposed | In a batch with `collected` and three nodes, one with its own window, one with none and one with `"collected": null`, the rows' pairs are the record's window, the batch window and empty, in that order. | Rule 4 |
+| req-grift-collection-window-3 | No Window Is An Empty Pair | Proposed | A batch and records stating no window leave every row's pair empty, and neither bound equals the import's reference time or the batch's `started_at`. | Rule 5; `req-grid-entity-collection-time-2` |
+| req-grift-collection-window-4 | Every Section | Proposed | A node and an edge in each of `inserts`, `updates` and `replaces` with `collected` each record it; an `inserts` record that finds its row and skips, and an `updates` record all of whose fields are yielded, move the pair and write no history row. | Rule 7; needs the write sections |
+| req-grift-collection-window-5 | Edges And Retirements | Proposed | An edge object with `collected` records it on the edge's row; a `deletes` node target with `collected` records it on the retired node, and the edges the retirement ends have an empty pair; a record carrying a `retirement` block leaves the stated window on the retired row. | |
+| req-grift-collection-window-6 | Shape Refused | Proposed | `collected` with a missing `end`, an extra key, a number as a bound, on a purge target, inside `node`, inside the envelope, or `null` on a batch container refuses the document with `schema_validation_failed` naming the path, and writes nothing. | Rule 8 |
+| req-grift-collection-window-7 | Bad Values Warn | Proposed | A record whose window has an end before its start, a bound with no zone, or a bound that is not a time imports with an empty pair and a `collection_time_not_recorded` warning in the import result naming the path; a batch window with no zone gives one warning naming the batch and the count of records that relied on it. | Rule 9; Decision C |
+| req-grift-collection-window-8 | Late Older Read Warns | Proposed | A document whose window ends before the one the row carries moves the pair to it and the import result carries `collection_time_older_read` naming the object and both windows; a window ending after the time of the write is written and the import result carries `collection_time_out_of_order`. | Rule 10 |
+| req-grift-collection-window-9 | Never A Field | Proposed | Re-importing an unchanged record with a new window moves only the pair and `last_observed_*`: version, `updated_at`, `last_changed_batch_id`, history count, `flip_map`, the event-time columns and `tap.time` are unmoved. | Rule 11; `req-grid-entity-collection-time-3` through a document |
+| req-grift-collection-window-10 | Format 0 Refuses It | Proposed | A document at format `"0"` carrying `collected` anywhere is refused, naming the key and format `"1"`; the same document at `"1"` imports. | Rule 12 |
+| req-grift-collection-window-11 | Export Writes The Pair | Proposed | Exporting a grid with one row whose pair is set and one whose pair is empty writes `collected` with the pair in UTC on the first object, no key on the second, and no `collected` on the batch. | Rule 14 |
+| req-grift-collection-window-12 | Round Trip Keeps The Pair | Proposed | Importing that export into an empty grid gives each row the source's pair, and each of the import batch's events the same pair, with no warning. | Rule 14 |
 
 ## Stored Files
 ----

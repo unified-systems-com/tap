@@ -1142,6 +1142,7 @@ v0 should define stable codes for common importer outcomes, including:
 - `payload_validation_failed`
 - `timestamp_in_future`
 - `timestamp_order_invalid`
+- `collection_time_not_recorded`, `collection_time_older_read`, `collection_time_out_of_order` — warnings, never errors, about a collection window a document states (`req-grift-collection-window` rules 9 and 10 in `spec-grift-v0.md`; `req-grid-entity-collection-time` rules 5 to 7 in `spec-grid-entity.md`): a window not recorded and the row's pair left empty, an older read arriving late that moved the pair, and a window out of order with the event time or the time of the write. None refuses the document. Proposed: the write operation raises all three today, and the import result does not yet carry them
 - `entity_type_mismatch`
 - `dangling_edge`
 - `batch_already_imported`

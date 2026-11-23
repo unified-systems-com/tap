@@ -84,7 +84,7 @@ def settle_window(window: Any) -> Settled:
         window: ``None``, or an object with ``start`` and ``end`` (a ``CollectionWindow``), each
             a datetime or an ISO 8601 text.
 
-    TAP-IMPLEMENTS: req-grid-entity-collection-time@584f9f4de9ca/bf4ee132f6d1 (derivation) — rules 3 and 6: an unstated
+    TAP-IMPLEMENTS: req-grid-entity-collection-time@7efec7adb910/bf4ee132f6d1 (derivation) — rules 3 and 6: an unstated
         pair is empty, a stated one is stored in UTC, and one with no zone or an end before its
         start is left out with a warning.
     """
