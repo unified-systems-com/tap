@@ -16,10 +16,11 @@ the database.
 
 The unversioned format
 ----------------------
-Format ``"0"`` states no versions. ``req-grift-header-versions`` rule 10 has an importer at
-``"1"`` refuse it. Every committed bundle and every collector in the fleet still writes ``"0"``,
-so that refusal is staged: a ``"0"`` document is read as it always was, with no upgrade, until
-``TAP_REQUIRE_GRIFT_VERSIONS=1``, under which it is refused naming the version.
+Format ``"0"`` states no versions. It is read as it always was, with no upgrade, which is to
+read the spine and every type at version 1 (``req-grift-header-versions`` rule 11). It is
+refused, naming the version, under ``TAP_REQUIRE_GRIFT_VERSIONS=1``; that becomes the default
+with the release that moves the fleet's documents and collectors to ``"1"`` (rule 12,
+Issue# 1288 - tap).
 """
 
 from __future__ import annotations
@@ -37,18 +38,21 @@ from tap_grid.version_links import Break, RecordRefused, Step
 #: The format that states no versions, and the one that states them.
 UNVERSIONED_FORMAT = "0"
 VERSIONED_FORMAT = "1"
-#: Set to ``1`` to refuse a document at the unversioned format (rule 10, staged).
+#: Set to ``1`` to refuse a document at the unversioned format (rule 12).
 REQUIRE_VERSIONS_ENV = "TAP_REQUIRE_GRIFT_VERSIONS"
 
 SPINE_VERSION_KEY = "spine_version"
 TYPE_VERSIONS_KEY = "type_versions"
 
+#: A step or key function raised something other than a refusal. Distinct from
+#: ``record_refused_by_upgrade``, which is a step's own decision about a record.
+STEP_FAILED = "upgrade_step_failed"
+
 
 def formats_read() -> tuple[str, ...]:
     """The format versions this importer reads now."""
-    if os.environ.get(REQUIRE_VERSIONS_ENV, "") == "1":
-        return (VERSIONED_FORMAT,)
-    return (UNVERSIONED_FORMAT, VERSIONED_FORMAT)
+    refused = {UNVERSIONED_FORMAT} if os.environ.get(REQUIRE_VERSIONS_ENV, "") == "1" else set()
+    return tuple(version for version in (UNVERSIONED_FORMAT, VERSIONED_FORMAT) if version not in refused)
 
 
 @dataclass(frozen=True)
@@ -259,6 +263,11 @@ class _Upgrader:
             except RecordRefused as refusal:
                 self._refuse(slug, version, path, entity_id, str(refusal) or step.may_refuse or "no reason given")
                 return fields
+            except (
+                Exception
+            ) as failure:  # noqa: BLE001 — a step is an author's code run on a record nothing has validated yet
+                self._failed(slug, version, path, entity_id, "step", failure)
+                return fields
             if not isinstance(result, dict):
                 self._refuse(slug, version, path, entity_id, "the step did not return the record's fields")
                 return fields
@@ -289,6 +298,9 @@ class _Upgrader:
             except RecordRefused as refusal:
                 self._refuse(slug, version, path, None, str(refusal) or "the key was refused")
                 return
+            except Exception as failure:  # noqa: BLE001 — as for a step: an author's code on an unvalidated key
+                self._failed(slug, version, path, None, "key function", failure)
+                return
             if not isinstance(result, dict):
                 self._refuse(slug, version, path, None, "the step's key function did not return a key")
                 return
@@ -308,6 +320,26 @@ class _Upgrader:
             )
         )
 
+    def _failed(self, slug: str, version: int, path: str, entity_id: str | None, what: str, failure: Exception) -> None:
+        """A step or key function raised something other than a refusal: the document is refused.
+
+        The upgrade runs before validation, so a step meets records of any shape, and a step can
+        simply be wrong. Either way the import answers with an issue, not an exception. Only the
+        exception's class is named: its message may quote the record at any length.
+        """
+        label = "The spine" if slug == version_links.SPINE else f"Type {slug!r}"
+        self.outcome.refusals.append(
+            UpgradeIssue(
+                STEP_FAILED,
+                f"{label}: the {what} from {version_links.describe(version)} failed on this record "
+                f"({type(failure).__name__[:80]}). The record may be malformed, or the {what} may be wrong; "
+                "either way the document is refused and nothing is written",
+                path,
+                None if slug == version_links.SPINE else slug,
+                entity_id,
+            )
+        )
+
     def envelope(self, holder: dict[str, Any], name: str, path: str) -> None:
         """A record's envelope through the spine's steps; no type's fields are read (rule 6)."""
         envelope = holder.get(name)
@@ -320,7 +352,7 @@ class _Upgrader:
         if isinstance(batch.get("batch_node"), dict):
             entity = batch.get("batch_entity")
             batch_id = entity.get("entity_id") if isinstance(entity, dict) else None
-            batch["batch_node"] = self.record("batch", batch["batch_node"], f"{path}.batch_node", batch_id)
+            batch["batch_node"] = self.record("batch", batch["batch_node"], f"{path}.batch_node", _text(batch_id))
         for index, node in enumerate(_listed(batch.get("nodes"))):
             if not isinstance(node, dict):
                 continue
@@ -417,10 +449,12 @@ def upgrade_document(document: Any) -> UpgradeOutcome:
     header = upgraded["metadata"]
     if version_links.SPINE in plan:
         header[SPINE_VERSION_KEY] = installed_spine_version()
-    header[TYPE_VERSIONS_KEY] = {
-        **header[TYPE_VERSIONS_KEY],
-        **{slug: change["installed"] for slug, change in outcome.upgraded.items() if slug != version_links.SPINE},
-    }
+    stated_types = header.get(TYPE_VERSIONS_KEY)
+    if isinstance(stated_types, dict):
+        header[TYPE_VERSIONS_KEY] = {
+            **stated_types,
+            **{slug: change["installed"] for slug, change in outcome.upgraded.items() if slug != version_links.SPINE},
+        }
     outcome.document = upgraded
     outcome.dropped = {slug: sorted(names) for slug, names in sorted(worker.dropped.items())}
     return outcome
@@ -436,7 +470,7 @@ def build_header(document: Any, *, using: str = "default") -> dict[str, Any]:
 
     For the exporter, and for any producer in core or a plugin that builds a document in code.
 
-    TAP-IMPLEMENTS: req-grift-header-versions@c509d2825cf5/1244de1460d0 (derivation) — rules 1, 2, 4 and 6: the header a
+    TAP-IMPLEMENTS: req-grift-header-versions@3ea859bff2aa/1244de1460d0 (derivation) — rules 1, 2, 4 and 6: the header a
         document written by this grid carries, with an entry for every type the document carries
         or names.
     """

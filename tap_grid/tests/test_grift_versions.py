@@ -38,7 +38,7 @@ pytestmark = pytest.mark.django_db
 
 MV = {n: pytest.mark.spec(f"req-grid-entity-model-version-{n}") for n in range(1, 34)}
 SV = {n: pytest.mark.spec(f"req-grid-entity-spine-version-{n}") for n in range(1, 8)}
-HV = {n: pytest.mark.spec(f"req-grift-header-versions-{n}") for n in range(1, 7)}
+HV = {n: pytest.mark.spec(f"req-grift-header-versions-{n}") for n in range(1, 9)}
 
 NODE = "grid_fixtures__node"
 LINK = "SCHEMA_LINK__grid_fixtures"
@@ -238,6 +238,7 @@ class TestHeader:
         assert grift_import(document).success
 
     @HV[6]
+    @HV[7]
     def test_the_two_formats_and_what_refuses_each(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Format "0" is still read until the switch is set; an unknown format names what is read."""
         assert grift_upgrade.formats_read() == ("0", "1")
@@ -713,3 +714,151 @@ class TestRecordingARaisedVersion:
         assert definition.type_problems(second, entries), "check mode reports the unrecorded version"
         assert not definition.chain_problems(second.label, entries) and entries[-1]["version"] == second.version - 1
         assert definition.append_entry(record, second)
+
+
+# ---------------------------------------------------------------------------
+# A step meets records nothing has validated yet
+# ---------------------------------------------------------------------------
+
+_UPGRADE_CODES = {"record_refused_by_upgrade", "upgrade_step_failed"}
+
+
+class TestStepsOnUnvalidatedRecords:
+    """The upgrade runs before validation, so a step's own failure is answered with an issue."""
+
+    @MV[11]
+    def test_a_step_that_raises_refuses_the_document_naming_the_record(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def wrong(fields: dict[str, Any]) -> dict[str, Any]:
+            return {"description": fields["summary"] + 1}
+
+        _node_at_2(monkeypatch, Step(wrong, renames={"description": "summary"}))
+        good = _node("carried", summary=1)
+        bad = _node("not-carried", summary="a secret the message must not quote " * 20)
+        result = grift_import(_document(nodes=[good, bad]))
+        assert not result.success and _codes(result) == ["upgrade_step_failed"]
+        issue = result.errors[0]
+        assert issue.path == "$.batches[0].nodes[1].node"
+        assert issue.entity_type == NODE and issue.entity_id == bad["entity"]["entity_id"]
+        assert "TypeError" in issue.message and "version 1 to 2" in issue.message
+        assert "a secret" not in issue.message
+        assert not PgNode.objects.filter(entity__name__in=["carried", "not-carried"]).exists()
+
+    @MV[20]
+    def test_a_key_function_that_indexes_a_missing_key_refuses_the_document(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Panel, "MODEL_VERSION", 2)
+        version_links.declare("panel", {2: Step(lambda fields: fields, key=lambda key: {"slug": key["code"]})})
+        edge = {
+            "entity": {"entity_id": str(uuid.uuid7()), "entity_type": "edge", "dimensions": {}},
+            "edge": {
+                "edge_type": PLAIN_LINK,
+                "properties": {},
+                "from_key": {"entity_type": "panel", "key": {"not_code": "x"}},
+                "to_key": {"entity_type": "panel", "key": {"code": "target-panel"}},
+            },
+        }
+        result = grift_import(_document(edges=[edge]))
+        assert not result.success and _codes(result) == ["upgrade_step_failed"]
+        assert result.errors[0].path == "$.batches[0].edges[0].edge.from_key"
+        assert "KeyError" in result.errors[0].message and "key function" in result.errors[0].message
+        assert not Edge.objects.filter(edge_type=PLAIN_LINK).exists()
+
+    def test_a_refusal_and_a_failure_are_told_apart(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuses(fields: dict[str, Any]) -> dict[str, Any]:
+            raise RecordRefused("no place for it")
+
+        _node_at_2(monkeypatch, Step(refuses, may_refuse="some records have no place"))
+        result = grift_import(_document(nodes=[_node("refused")]))
+        assert _codes(result) == ["record_refused_by_upgrade"]
+
+    @pytest.mark.parametrize(
+        "spoil",
+        [
+            pytest.param(lambda batch: batch["nodes"].append("not an object"), id="record-not-an-object"),
+            pytest.param(lambda batch: batch["nodes"][0].pop("node"), id="no-fields-block"),
+            pytest.param(lambda batch: batch["nodes"][0].update(node=["a", "list"]), id="fields-not-an-object"),
+            pytest.param(lambda batch: batch["nodes"][0]["entity"].update(entity_type=7), id="type-not-a-string"),
+            pytest.param(lambda batch: batch["nodes"][0].update(entity="nope"), id="envelope-not-an-object"),
+            pytest.param(lambda batch: batch.update(nodes={"not": "a list"}), id="nodes-not-a-list"),
+            pytest.param(lambda batch: batch.update(edges=[{"edge": 3, "entity": None}]), id="edge-not-an-object"),
+        ],
+    )
+    def test_a_malformed_record_is_left_for_validation_to_report(
+        self, monkeypatch: pytest.MonkeyPatch, spoil: Any
+    ) -> None:
+        """With a step in play, the upgrader's own code raises on no shape and reports none itself."""
+        _node_at_2(monkeypatch, RENAME)
+        document = _document(nodes=[_node("shape", summary="x")])
+        spoil(document["batches"][0])
+        outcome = grift_upgrade.upgrade_document(copy.deepcopy(document))
+        assert not outcome.refused
+        result = grift_import(document)
+        assert not result.success
+        assert not _UPGRADE_CODES & set(_codes(result))
+        assert not PgNode.objects.filter(entity__name="shape").exists()
+
+    def test_a_header_that_is_not_an_object_of_versions_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(spine_version, "SPINE_VERSION", 2)
+        version_links.declare(version_links.SPINE, {2: Step(lambda envelope: envelope)})
+        document = _document(nodes=[_node("header")])
+        document["metadata"]["type_versions"] = ["not", "an", "object"]
+        outcome = grift_upgrade.upgrade_document(copy.deepcopy(document))
+        assert not outcome.refused
+        assert not grift_import(document).success
+
+
+class TestDeclarationsThatNameNoField:
+    """A rename or a derivation accounts for a removed field only where both of its fields are real."""
+
+    @MV[7]
+    def test_a_derivation_to_a_field_that_does_not_exist_hides_no_loss(self) -> None:
+        first = _state(1, {"name": TEXT, "legacy": TEXT})
+        second = _state(2, {"name": TEXT})
+        entries = _entries(first, second)
+        version_links.declare("synthetic", {2: Step(lambda fields: fields, derived={"nonexistent": "legacy"})})
+        problems = definition.link_problems(second, entries)
+        assert any("'nonexistent' is not a field of the new version" in problem for problem in problems)
+        assert any("'legacy'" in problem and "removed" in problem for problem in problems)
+
+    @MV[7]
+    def test_a_derivation_from_a_field_the_old_version_never_had_is_a_problem(self) -> None:
+        first = _state(1, {"name": TEXT})
+        second = _state(2, {"name": TEXT, "label": TEXT})
+        entries = _entries(first, second)
+        version_links.declare("synthetic", {2: Step(lambda fields: fields, derived={"label": "never_there"})})
+        problems = definition.link_problems(second, entries)
+        assert len(problems) == 1 and "'never_there' is not a field of the old version" in problems[0]
+
+    @MV[7]
+    def test_a_real_derivation_accounts_for_its_source(self) -> None:
+        first = _state(1, {"name": TEXT, "legacy": TEXT})
+        second = _state(2, {"name": TEXT, "label": TEXT})
+        entries = _entries(first, second)
+        version_links.declare("synthetic", {2: Step(lambda fields: fields, derived={"label": "legacy"})})
+        assert definition.link_problems(second, entries) == []
+
+    @MV[7]
+    def test_a_rename_to_a_field_that_does_not_exist_hides_no_loss(self) -> None:
+        first = _state(1, {"name": TEXT, "nickname": TEXT})
+        second = _state(2, {"name": TEXT})
+        entries = _entries(first, second)
+        version_links.declare("synthetic", {2: Step(lambda fields: fields, renames={"nowhere": "nickname"})})
+        problems = definition.link_problems(second, entries)
+        assert any("'nickname'" in problem and "removed" in problem for problem in problems)
+        assert any("renamed to 'nowhere'" in problem for problem in problems)
+
+    @MV[7]
+    def test_an_edge_type_s_declarations_are_held_to_the_same(self) -> None:
+        def edge_state(version: int, *properties: str) -> definition.TypeState:
+            body = {"property_rules": {"properties": {name: {"type": "string"} for name in properties}}}
+            return definition.TypeState(kind=mv.EDGE, slug="SYNTHETIC_EDGE", version=version, definition=body)
+
+        first, second = edge_state(1, "weight", "legacy"), edge_state(2, "weight")
+        entries = _entries(first, second)
+        version_links.declare("SYNTHETIC_EDGE", {2: Step(lambda fields: fields, derived={"nonexistent": "legacy"})})
+        problems = definition.link_problems(second, entries)
+        assert any("'legacy'" in problem and "removed" in problem for problem in problems)
+        assert any("'nonexistent' derived from" in problem for problem in problems)
+        version_links.declare("SYNTHETIC_EDGE", {2: Step(lambda fields: fields, drops=("legacy",))})
+        assert definition.link_problems(second, entries) == []

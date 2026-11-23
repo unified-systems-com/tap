@@ -1254,7 +1254,7 @@ Built:
 Not built, and why the requirement is not Implemented:
 
 - The history rules (27 and 28), the adapter with its edge check (rules 29 to 33), and rule 18, whose test needs the adapter. Until the adapter exists a plugin's migration converts its rows itself and calls `set_applied_version` last; such a migration writes no revision, no history and no batch event, which is what rule 29 is there to end. No type in core or in an installed plugin is above version 1, so no such migration exists yet.
-- Rule 20's refusal applies to a document at format `"1"`. A document at format `"0"`, which states no versions, is still read as it was, with no upgrade: `req-grift-header-versions` says why that refusal is staged and what switches it on.
+- Rule 20's refusal applies to a document at format `"1"`. A document at format `"0"`, which states no versions, is still read as it was, with no upgrade: it is read as every type at version 1 until the fleet is moved to format `"1"` (`req-grift-header-versions` rules 11 and 12).
 - Rule 21's "re-derive the envelope values that depend on what was upgraded" is not a separate step. The values the grid derives from a typed row (the event time, the grid-derived dimensions, the stored natural key) are derived when the row is written, from the upgraded record. An envelope's `name` and `dimensions` are what the sender stated and are left as stated.
 - Rule 15's "an edge rule tightened" is not compared yet. It is declared on the link by rule 32, with the check of stored edges, and is built with the adapter. A change to an edge type's endpoint rules, event-time declaration or identity declaration between two versions is not compared either.
 - The spine's chain is held to rule 16 (a link for every version) and not to rule 15's field comparison: its definition is three tables, and a change to it is core's own to review.
@@ -1398,7 +1398,7 @@ Built:
 
 Not built, and why the requirement is not Implemented:
 
-- Rule 4's refusal of a document that states no spine version applies at format `"1"`. A document at format `"0"` states none and is still read; `req-grift-header-versions` says why that is staged.
+- Rule 4's refusal of a document that states no spine version applies at format `"1"`. A document at format `"0"` states none and is still read; it is read as spine version 1 until the fleet is moved (`req-grift-header-versions` rules 11 and 12).
 - Lowering the record when a migration is reversed. The handler writes the record only while every `tap_grid` migration is applied, and never lowers one; with a single spine version there is nothing to lower to. It belongs with the chain.
 
 Also built (rules 3 to 6): an export states `metadata.spine_version`, the version the database records, in a field of its own beside `grift_version`. An import refuses a document at a greater spine version (`version_newer`) and one at format `"1"` that states none (`version_unstated`). The spine's chain is declared in the same form as a type's, under the key `spine` in `tap_grid`'s `model_links` module, and the import applies it to every envelope (a node's, an edge's and the batch's) apart from the type chains: a spine step is given an envelope and never a type's fields, and a type's step is never given an envelope. With the spine at version 1 the chain is empty, so it has run only where a test raised the spine's version.
