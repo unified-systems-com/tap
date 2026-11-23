@@ -238,12 +238,17 @@ def _recorded_definition(target: _Target, version: int) -> Mapping[str, Any] | N
     return None
 
 
+#: Django's field classes by name: what a recorded definition's ``type`` names.
+_FIELD_CLASSES: dict[str, Callable[..., models.Field[Any, Any]]] = {
+    name: value for name, value in vars(models).items() if isinstance(value, type) and issubclass(value, models.Field)
+}
+
+
 def _field_from_definition(definition: Mapping[str, Any]) -> models.Field[Any, Any] | None:
     """A field of the recorded type, enough of it to ask the database what column type it has."""
-    named = getattr(models, str(definition.get("type", "")), None)
-    if not isinstance(named, type) or not issubclass(named, models.Field):
+    field_class = _FIELD_CLASSES.get(str(definition.get("type", "")))
+    if field_class is None:
         return None
-    field_class: Callable[..., models.Field[Any, Any]] = named
     options: dict[str, Any] = {"null": bool(definition.get("null"))}
     for name in ("max_length", "max_digits", "decimal_places"):
         if definition.get(name) is not None:
