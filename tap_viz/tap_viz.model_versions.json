@@ -12,9 +12,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "36ae354dfde90d6915c0a1ef60b9e5c27c09d8387729ebb10843d32d53885dac",
+        "fingerprint": "94f1fcc32e4209b8ee794711e7cc3ed0bbfe7555f29e438badbe6beda1692fa8",
         "version": 1
       }
     ],
@@ -30,9 +33,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "eb3445fc205ceebb2f31f875bfdc24c75e82464c1c234ea9d9ae0144d7a0444c",
+        "fingerprint": "75dabe84911ba6a200c50044fbd71cb0298ddd91a38ef5c3ff6b29109596bce9",
         "version": 1
       }
     ],
@@ -48,9 +54,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "076c384082f7d8fb9e9d08fc7203c1fe6da04044474fa9436221fac0c16ad8f6",
+        "fingerprint": "62e7cc28bc6494e50930cff4e9529109faa761de743c7517e891d28e0ba153dc",
         "version": 1
       }
     ],
@@ -66,9 +75,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "076c384082f7d8fb9e9d08fc7203c1fe6da04044474fa9436221fac0c16ad8f6",
+        "fingerprint": "62e7cc28bc6494e50930cff4e9529109faa761de743c7517e891d28e0ba153dc",
         "version": 1
       }
     ],
@@ -85,9 +97,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "16cbc6b99cad2193390248598a7cf168ac40acefa34a891617fad07d78f0f6aa",
+        "fingerprint": "393094e070ba160fff1339692c0faff72fe70eda08abe2dcf85857eb84d04c51",
         "version": 1
       }
     ],
@@ -103,9 +118,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "c7bee5ed0fb2f25860334d8a98843b537199e2d065546713d80083371828c011",
+        "fingerprint": "7ba63d103dc1a628018cf3b422e68fa270b3d890540e898621c4f9b06a752498",
         "version": 1
       }
     ]
@@ -119,6 +137,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "definition": {
@@ -222,7 +243,7 @@
             }
           }
         },
-        "fingerprint": "2a03e3300c9a3ee3a95a241331910265164a32c973ad29a0ce5bfb1824d89b8a",
+        "fingerprint": "2063fbcdffda2ecf2a1c851667c1029b3e287b79e25b01ebd3bf220a8f2fb25a",
         "version": 1
       }
     ],
@@ -233,6 +254,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "definition": {
@@ -322,7 +346,7 @@
             }
           }
         },
-        "fingerprint": "0cfd50130203939f00ebfd550113f3f2a3e5619596e3c500cc56d88dcb55a0dd",
+        "fingerprint": "8148125b798371fee501481483fe6380f9ee56a0270f1060d095c4acbce510a5",
         "version": 1
       }
     ],
@@ -333,6 +357,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "definition": {
@@ -408,7 +435,7 @@
             }
           }
         },
-        "fingerprint": "d2edd383a8ff0c8b227298d6ae3dd257ddf4074aa3bc4b475747a551ea099afb",
+        "fingerprint": "6d461878df2b437ad32bd03a7a687755274acf027de82b97d5d095c3454bd53a",
         "version": 1
       }
     ],
@@ -419,6 +446,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "definition": {
@@ -754,7 +784,7 @@
             }
           }
         },
-        "fingerprint": "415aed37bd8a88bc0951d13ae3156ec523f051ef19322304412ed146db1885dc",
+        "fingerprint": "541fc6efd863a2a6a2887ba8256fc8443543f9b2594121d39e32c5366f08b294",
         "version": 1
       }
     ]

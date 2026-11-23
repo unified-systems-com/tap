@@ -73,7 +73,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/07c6a5f9e5bb (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/2c77cca1d3f9 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -298,6 +298,11 @@ class TapPluginConfig(AppConfig):
 
         except OperationalError, ProgrammingError:
             logger.debug("[26a8] EntityType table not ready; skipping type registration.")
+            # Not compared, so the comparison is owed before this process writes anything
+            # (req-grid-entity-model-version rule 4).
+            from tap_grid.model_version import mark_start_incomplete
+
+            mark_start_incomplete(f"the types of {self.name} could not be registered")
 
     # ---------------------------------------------------------------------------
     # Editor registration

@@ -139,4 +139,7 @@ class TapCoreConfig(AppConfig):
             register_core_types()
         except OperationalError, ProgrammingError:
             # DB not ready yet (e.g. during initial migrate, or before the version column exists).
-            pass
+            # Not compared, so the comparison is owed before this process writes anything.
+            from tap_grid.model_version import mark_start_incomplete
+
+            mark_start_incomplete("core's types could not be registered")

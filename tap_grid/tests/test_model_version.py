@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import json
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -45,15 +46,23 @@ _TYPE = "grid_fixtures__node"
 LINK = "PG_LINKS__grid_fixtures"
 
 
+def _write_anywhere(path: Path, record: dict[str, Any]) -> None:
+    """A record file in a test's own directory. ``write_record`` itself writes only into an
+    installed app's package, so a test that needs a file elsewhere writes it plainly."""
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
 def _process_state() -> Iterator[None]:
     """What registration keeps per process, put back after each test."""
-    pending, edge_versions = dict(mv._pending), dict(mv._edge_versions)
+    pending, edge_versions, owed = dict(mv._pending), dict(mv._edge_versions), mv._start_incomplete
     # Whatever the process found at start belongs to the database it started against, not the test's.
     mv._pending.clear()
+    mv._start_incomplete = False
     try:
         yield
     finally:
+        mv._start_incomplete = owed
         mv._pending.clear()
         mv._pending.update(pending)
         mv._edge_versions.clear()
@@ -397,6 +406,136 @@ class TestAgreement:
             assert mv.disagreements([_TYPE, LINK, "batch"]) == []
 
 
+class TestAStartThatCouldNotCompare:
+    """A process whose start could not read the database owes the comparison, and makes it
+    before its first write (rule 4)."""
+
+    def test_each_place_a_start_skips_the_comparison_marks_it_owed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from django.db import OperationalError, ProgrammingError
+
+        from tap_grid import spine_version
+
+        def down(*args: Any, **kwargs: Any) -> None:
+            raise OperationalError("could not connect to server")
+
+        def unmigrated(*args: Any, **kwargs: Any) -> None:
+            raise ProgrammingError('column "model_version" does not exist')
+
+        core: Any = apps.get_app_config("tap_grid")
+        with monkeypatch.context() as patch:
+            patch.setattr(mv, "register_core_types", down)
+            core.compare_versions_at_start()
+        assert mv.start_incomplete()
+
+        mv._start_incomplete = False
+        plugin: Any = apps.get_app_config("grid_fixtures")
+        with monkeypatch.context() as patch:
+            patch.setattr(mv, "register_type", unmigrated)
+            plugin._register_types_from_manifest()
+        assert mv.start_incomplete()
+
+        mv._start_incomplete = False
+        with monkeypatch.context() as patch:
+            patch.setattr(spine_version, "recorded_version", down)
+            spine_version.refuse_newer_database()
+        assert mv.start_incomplete()
+
+    @AC[3]
+    def test_a_write_after_a_skipped_start_is_refused_where_the_rows_are_behind(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _never_held()
+        _start()
+        _declare(monkeypatch, 2)
+        # The start that would have found the type behind never compared it.
+        mv._start_incomplete = True
+        assert not mv._pending
+        refused = create_node(_TYPE, {"name": "after a skipped start"})
+        assert not refused.success and refused.errors[0].code == "model_version_pending"
+        assert not mv.start_incomplete() and set(mv._pending) == {_TYPE}
+        assert not Entity.objects.filter(name="after a skipped start").exists()
+
+    @AC[3]
+    def test_data_ahead_of_the_code_raises_at_the_first_write_and_at_every_later_one(self) -> None:
+        _never_held()
+        _start()
+        _migrate_to(3)
+        mv._start_incomplete = True
+        for _attempt in range(2):
+            with pytest.raises(mv.ModelVersionAhead) as raised:
+                mv.refuse_if_pending(_TYPE, "a write")
+            assert (raised.value.declared, raised.value.applied) == (1, 3)
+            assert mv.start_incomplete()
+        with pytest.raises(mv.ModelVersionAhead):
+            PgNode(name="saved directly").save()
+
+    def test_a_newer_spine_raises_at_the_first_write(self) -> None:
+        from tap_grid import spine_version
+        from tap_grid.models import SpineVersion
+
+        SpineVersion.objects.update(version=spine_version.SPINE_VERSION + 1)
+        mv._start_incomplete = True
+        with pytest.raises(spine_version.SpineVersionAhead):
+            mv.disagreements([_TYPE])
+        assert mv.start_incomplete()
+
+    def test_the_comparison_is_made_once_and_then_costs_nothing(self, django_assert_num_queries: Any) -> None:
+        mv._start_incomplete = True
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        # The spine record and the whole catalog: two reads, however many types are installed.
+        with CaptureQueriesContext(connection) as captured:
+            mv.refuse_if_pending(_TYPE, "a write")
+        statements = [query["sql"] for query in captured.captured_queries]
+        assert sum(1 for sql in statements if 'FROM "tap_spine_version"' in sql) == 1, statements
+        assert sum(1 for sql in statements if 'FROM "tap_entity_type"' in sql) == 1, statements
+        assert not mv.start_incomplete()
+        with django_assert_num_queries(0):
+            mv.refuse_if_pending(_TYPE, "a write")
+            assert mv.disagreements([_TYPE, LINK, "batch"]) == []
+
+    def test_a_comparison_that_cannot_be_made_stays_owed_and_leaves_the_transaction_usable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from django.db import connection
+
+        from tap_grid import spine_version
+
+        def unmigrated(**kwargs: Any) -> int | None:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT version FROM a_table_that_is_not_there")
+            return None
+
+        monkeypatch.setattr(spine_version, "recorded_version", unmigrated)
+        mv._start_incomplete = True
+        with transaction.atomic():
+            before = EntityType.objects.count()
+            mv.refuse_if_pending(_TYPE, "a write")
+            assert mv.disagreements([_TYPE]) == []
+            # The failed read was rolled back to its savepoint; this transaction still works.
+            assert EntityType.objects.count() == before
+        assert mv.start_incomplete()
+
+    def test_applying_migrations_makes_the_owed_comparison(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_grid import spine_version
+
+        _never_held()
+        _start()
+        _declare(monkeypatch, 2)
+        mv._start_incomplete = True
+        spine_version.record_after_migrate(sender=apps.get_app_config("tap_grid"))
+        assert not mv.start_incomplete() and set(mv._pending) == {_TYPE}
+
+    def test_an_uninstalled_types_row_is_not_compared(self) -> None:
+        """A catalog row of a type no installed code declares is not this code's to judge."""
+        with mv._writing_applied_version():
+            EntityType.objects.create(slug="gone__type", name="Gone", model_version=7)
+        mv._start_incomplete = True
+        mv.refuse_if_pending(_TYPE, "a write")
+        assert not mv.start_incomplete()
+
+
 class TestWhatADocumentCarries:
     def test_types_named_by_record_and_by_key_are_carried_and_ids_are_not(self) -> None:
         document = {
@@ -603,6 +742,7 @@ class TestTheFingerprintGuard:
             "targets": None,
             "property_schema": {"type": "object"},
             "event_time": None,
+            "identity": None,
         }
         base = definition.edge_definition(**declared)
         record = _recorded(definition.TypeState(mv.EDGE, "LINKS", 1, base))
@@ -611,12 +751,56 @@ class TestTheFingerprintGuard:
             ("targets", ["c"]),
             ("property_schema", {"type": "object", "required": ["since"]}),
             ("event_time", {"shape": "moment", "kind": "occurred", "field": "since"}),
+            ("identity", {"discriminators": []}),
+            ("identity", {"discriminators": ["since"]}),
         ):
             moved = definition.edge_definition(**{**declared, key: value})
             assert _problems(definition.TypeState(mv.EDGE, "LINKS", 1, moved), record), key
         # The two ways of writing the same endpoint rule are one definition.
         same = definition.edge_definition(**{**declared, "sources": [{"type": "a"}]})
         assert _problems(definition.TypeState(mv.EDGE, "LINKS", 1, same), record) == []
+
+    def test_an_event_time_declaration_is_covered_and_its_three_statements_differ(self) -> None:
+        from tap_grid.event_time import NO_EVENT_TIME, Interval, Moment
+
+        written = [
+            definition.event_time_definition(declared)
+            for declared in (
+                None,
+                NO_EVENT_TIME,
+                Moment("seen_at", "occurred"),
+                Moment("made_at", "occurred"),
+                Moment("seen_at", "created"),
+                Interval("began", "occurred"),
+                Interval("began", "occurred", end="ended"),
+            )
+        ]
+        assert written[0] is None and written[1] == {"shape": "none"}
+        assert len({definition._sort_key(item) for item in written}) == len(written)
+        assert all("0x" not in str(item) and "NO_EVENT_TIME" not in str(item) for item in written)
+        with pytest.raises(TypeError):
+            definition.event_time_definition("seen_at")
+
+        base = definition.node_definition(PgNode)
+        record = _recorded(definition.TypeState(mv.NODE, _TYPE, 1, base))
+        moved = {**base, "event_time": definition.event_time_definition(Moment("name", "occurred"))}
+        assert moved != base
+        assert _problems(definition.TypeState(mv.NODE, _TYPE, 1, moved), record)
+
+    def test_a_record_is_written_only_into_an_installed_apps_package(self, tmp_path: Path) -> None:
+        record: dict[str, Any] = {"format": definition.RECORD_FORMAT}
+        outside = tmp_path / definition.record_file_name("tap_grid")
+        with pytest.raises(ValueError, match="not the version record of an installed app"):
+            definition.write_record(outside, record)
+        assert not outside.exists()
+        # Inside an installed app's package, under any name but that app's record name.
+        misnamed = definition.app_record_path("tap_grid").with_name("tap_web.model_versions.json")
+        with pytest.raises(ValueError, match="not the version record of an installed app"):
+            definition.write_record(misnamed, record)
+        assert not misnamed.exists()
+        assert (
+            definition._owned_record_path(definition.app_record_path("tap_grid")).name == "tap_grid.model_versions.json"
+        )
 
     def test_what_bears_on_no_stored_row_is_not_covered(self) -> None:
         field = models.CharField(max_length=40, help_text="one", db_index=False, default="a")
@@ -625,7 +809,9 @@ class TestTheFingerprintGuard:
         assert definition._field_definition(models.CharField(max_length=41)) != definition._field_definition(field)
 
     def test_a_definition_is_the_same_on_every_run(self) -> None:
-        assert definition.node_definition(PgNode) == definition.node_definition(PgNode)
+        first = definition.node_definition(PgNode)
+        again = definition.node_definition(PgNode)
+        assert first == again
         assert definition.canonical({"b": {2, 1}, "a": (1, 2)}) == {"a": [1, 2], "b": [1, 2]}
         assert "0x" not in str(definition.spine_definition())
 
@@ -766,7 +952,7 @@ class TestPluginValidation:
         record: dict[str, Any] = {"format": definition.RECORD_FORMAT}
         for state in definition.plugin_states(loaded._manifest):
             definition.append_entry(record, state)
-        definition.write_record(root / definition.record_file_name("grid_fixtures"), record)
+        _write_anywhere(root / definition.record_file_name("grid_fixtures"), record)
         return record
 
     def test_a_plugin_with_no_record_is_told_and_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -802,7 +988,7 @@ class TestPluginValidation:
     def test_an_edited_plugin_record_fails(self, tmp_path: Path) -> None:
         record = self._record(tmp_path)
         record["edges"][LINK][0]["definition"]["endpoint_rules"]["sources"] = ["rewritten"]
-        definition.write_record(tmp_path / definition.record_file_name("grid_fixtures"), record)
+        _write_anywhere(tmp_path / definition.record_file_name("grid_fixtures"), record)
         check = self._run(tmp_path)
         assert check.status == "fail"
         assert any(

@@ -12,9 +12,14 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per collection run, written by run_collection beside the job it creates; it records an act of this grid, not an observed relationship."
+            }
+          },
           "property_rules": null
         },
-        "fingerprint": "28f1e119a6e3456f8c82bdf73748f59b3bfa1efc0a10a07e86be875c4c79119b",
+        "fingerprint": "fe53099676c4a257d105e1253500678db1733a4cac4d2529887136e74db4f20d",
         "version": 1
       }
     ],
@@ -30,9 +35,14 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per scheduler fire, written with the fire it records; it is the fire history of this grid, not an observed relationship."
+            }
+          },
           "property_rules": null
         },
-        "fingerprint": "3c6879058e789366036e8894da248f9beb0a436a24c5e574e3d2a64600da2664",
+        "fingerprint": "2c9e26a3ea22895763263763b83bb048aac3d4b32ae55c2839c9b024f8a5bcfe",
         "version": 1
       }
     ],
@@ -48,9 +58,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "748143234f6683cc1da0bfa1f439ac4a6cad0e63250e049af95f8406cb54ca73",
+        "fingerprint": "f351ebfc91057b892b5ecf52a07d7f1e321300cbad72497e188c0e2eb4137627",
         "version": 1
       }
     ],
@@ -66,9 +79,14 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per fire that starts a run, written when the job is created; it records an act of this grid, not an observed relationship."
+            }
+          },
           "property_rules": null
         },
-        "fingerprint": "54f8e3350ad0b0d1b1fc14a52c9035a2b5c18c61e7b62a912bc5f150698d1110",
+        "fingerprint": "3e95f6003c56a2e49979289b3192073c16842bda8db7b542af90ecce7757acce",
         "version": 1
       }
     ]
@@ -108,6 +126,7 @@
             ],
             "outbound": null
           },
+          "event_time": null,
           "fields": {
             "description": {
               "null": false,
@@ -298,7 +317,7 @@
             }
           }
         },
-        "fingerprint": "da7c54fcf2992692e8e1b727a3d25213ea58d6e5b0a923fbf9407c81719c9ae9",
+        "fingerprint": "6e5194a385eb44468debf2068272af54ae2f8a89aa7ae910e60b4bbd0756101c",
         "version": 1
       }
     ],
@@ -335,6 +354,9 @@
                 ]
               }
             ]
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "collector_registry": {
@@ -419,7 +441,7 @@
             }
           }
         },
-        "fingerprint": "7eb2b110a12a1fa2b8cbd038de51d28141c17359b4cc5492f0d3fd8b92f49227",
+        "fingerprint": "6a785d3ce9339d63a7e23ab828af2e2908f635b306b52e64fac517883ec6a610",
         "version": 1
       }
     ],
@@ -456,6 +478,7 @@
               }
             ]
           },
+          "event_time": null,
           "fields": {
             "cron_expression": {
               "max_length": 255,
@@ -544,7 +567,7 @@
             }
           }
         },
-        "fingerprint": "311f9538b8f7d87821a095e2c5c31a9f7a5fbfea7b455bf1746d935e436074ae",
+        "fingerprint": "63ac03205f1f5094f903b5269515781f4c31a2bf09cc0ce736f85b647e65507a",
         "version": 1
       }
     ],
@@ -582,6 +605,7 @@
               }
             ]
           },
+          "event_time": null,
           "fields": {
             "description": {
               "null": false,
@@ -695,7 +719,7 @@
             }
           }
         },
-        "fingerprint": "63786027fc1ba9aa7840340cab089e95b2bef32b61e2b2767e7d8ce5c9bed949",
+        "fingerprint": "22bf49efdd325d1f03471270fedd03ba8a44530efa21bc2a9973594995ec3e5a",
         "version": 1
       }
     ]

@@ -12,13 +12,16 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": {
             "additionalProperties": false,
             "properties": {},
             "type": "object"
           }
         },
-        "fingerprint": "d2f080da4fbe1e0567327af805165e81055e1e78cb9d4d0bd86798e0fa67a424",
+        "fingerprint": "bf100eed3eb5be4aeee6375c718d3d3f6e0c1db4890e9573b05b33f9c14ab163",
         "version": 1
       }
     ],
@@ -34,6 +37,9 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": {
             "properties": {
               "inputs": {
@@ -63,7 +69,7 @@
             "type": "object"
           }
         },
-        "fingerprint": "aee547255727e0cb676256d5671672714258f00c264ed71a64cb6e40a9334718",
+        "fingerprint": "1f43243db4b2c5ad221a297411095536c4107febc15528962348b88372f5910a",
         "version": 1
       }
     ],
@@ -79,9 +85,12 @@
             ]
           },
           "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
           "property_rules": null
         },
-        "fingerprint": "a0fdf9c43b00955fa74eff429b508511c409e2df59de29fb7bb240dd4e2c66e9",
+        "fingerprint": "9b7a733a04263e6b425db3fec4db10eb4705331989ff414694e89b9b1a3608c5",
         "version": 1
       }
     ]
@@ -95,6 +104,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "description": {
@@ -167,7 +179,7 @@
             }
           }
         },
-        "fingerprint": "446a2b7ba5abadd3ec5bc3a05da5262d9e7f3c5db021b061f9d0ed40a3e2d0a1",
+        "fingerprint": "09ad063ddc60290a102a3c26ad2b72436520a5d4ba8ed97dd80a4b6cfbd954ec",
         "version": 1
       }
     ],
@@ -178,6 +190,9 @@
           "edge_rules": {
             "inbound": null,
             "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
           },
           "fields": {
             "config": {
@@ -259,7 +274,7 @@
             "validation": {}
           }
         },
-        "fingerprint": "80a12b61e980cf820f0386beee6c64c6566ac74bc40ad3ffaec004ca9c8f4fcc",
+        "fingerprint": "a3f3b58963e3bdad832719c30947dccd7a321c4323f04bbdc0f6d983990cb6aa",
         "version": 1
       }
     ]

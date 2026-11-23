@@ -887,26 +887,29 @@ class EntityType(models.Model):
     def __str__(self) -> str:
         return self.name
 
-    @classmethod
-    def from_db(cls, db: Any, field_names: Any, values: Any) -> EntityType:
-        row = super().from_db(db, field_names, values)
-        # What the row held when it was read, so a save can tell a change from a rewrite.
-        if "model_version" in field_names:
-            row._loaded_model_version = values[list(field_names).index("model_version")]
-        return row
-
     def save(self, *args: Any, **kwargs: Any) -> None:
-        """Save the catalog row; a change to the applied version needs one of its two writers."""
+        """Save the catalog row; a change to the applied version needs one of its two writers.
+
+        A save of an existing row that would write ``model_version`` reads the stored value and
+        is refused where it differs, unless an applied-version writer is active. One query, on a
+        table written a handful of times per start.
+        """
         fields = kwargs.get("update_fields")
         writes_version = fields is None or "model_version" in fields
-        loaded = getattr(self, "_loaded_model_version", None)
-        if writes_version and loaded is not None and loaded != self.model_version:
-            from tap_grid.model_version import require_applied_version_writer
+        if writes_version and not self._state.adding:
+            from tap_grid.model_version import applied_version_writer_active, require_applied_version_writer
 
-            require_applied_version_writer("EntityType.save")
+            if not applied_version_writer_active():
+                stored = (
+                    type(self)
+                    .objects.using(kwargs.get("using") or self._state.db or "default")
+                    .filter(pk=self.pk)
+                    .values_list("model_version", flat=True)
+                    .first()
+                )
+                if stored is not None and stored != self.model_version:
+                    require_applied_version_writer("EntityType.save")
         super().save(*args, **kwargs)
-        if writes_version:
-            self._loaded_model_version = self.model_version
 
 
 # ---------------------------------------------------------------------------

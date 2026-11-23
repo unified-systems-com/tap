@@ -50,6 +50,7 @@ CORE_EDGE_DEFINITIONS: tuple[dict[str, Any], ...] = (
         "sources": None,
         "targets": [{"type": "batch"}],
         "property_schema": PRODUCED_BATCH_PROPERTY_SCHEMA,
+        "identity": PRODUCED_BATCH_IDENTITY,
     },
 )
 

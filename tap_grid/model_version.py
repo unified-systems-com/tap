@@ -11,6 +11,10 @@ different facts:
   never held (:func:`register_type`). Nothing else writes it, and the catalog refuses any other
   writer (``EntityType.save`` and its queryset).
 
+A process whose start could not read the database (unreachable, or not migrated yet) owes the
+comparison: it is made before that process's first write, import or export
+(:func:`complete_start_checks`), and again when migrations are applied.
+
 Registration runs when the process starts, which is before migrations run, so it never advances the
 applied version: it compares. Applied greater than declared means the code is older than the data
 and registration fails (:class:`ModelVersionAhead`). Declared greater than applied means the rows
@@ -144,6 +148,11 @@ def require_applied_version_writer(operation: str) -> None:
         )
 
 
+def applied_version_writer_active() -> bool:
+    """Whether one of the two rule 3 writers is running in this context."""
+    return _applied_writer.get()
+
+
 def _holds_rows(type_slug: str, kind: str, using: str) -> bool:
     """Whether the grid holds any row of the type, retired ones included."""
     from tap_grid.models import Edge, Entity
@@ -197,6 +206,76 @@ def set_applied_version(type_slug: str, version: int, *, using: str = DEFAULT_DB
 _pending: dict[str, tuple[int, int]] = {}
 
 
+# ---------------------------------------------------------------------------
+# A start that could not compare
+# ---------------------------------------------------------------------------
+
+#: True while this process's start-up comparison did not complete: the database was unreachable
+#: or not yet migrated when the apps were made ready. The start cannot simply fail then, because
+#: an image build and ``collectstatic`` run with no database at all. So the comparison is owed,
+#: and it is made before the first write, import or export this process would otherwise allow.
+_start_incomplete = False
+
+
+def mark_start_incomplete(where: str) -> None:
+    """Record that the comparison made at start was skipped at ``where``."""
+    global _start_incomplete
+    if not _start_incomplete:
+        logger.warning(
+            "[e61f] the version comparison made at start did not complete (%s): it is made before the "
+            "first write, import or export instead",
+            where,
+        )
+    _start_incomplete = True
+
+
+def start_incomplete() -> bool:
+    return _start_incomplete
+
+
+def complete_start_checks(*, using: str = DEFAULT_DB_ALIAS) -> bool:
+    """Make the comparison a start skipped, once. True when it was made.
+
+    Reads the spine record and the whole catalog, in a savepoint so a query that fails (the
+    database is still down, or still not migrated) cannot break the caller's transaction; the
+    comparison then stays owed and the caller goes on. Every installed type the catalog has a
+    row for is compared as :func:`register_type` would have compared it. Data ahead of the code
+    raises, and the comparison stays owed so every later write raises too. It writes nothing:
+    a type with no catalog row gets one when the process next starts.
+
+    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/44ff2f08ea08 (derivation) — rule 4: a process
+        whose start could not read the database does not go on to write unchecked; the
+        comparison is made before its first write, import or export.
+    """
+    global _start_incomplete
+    from django.db import DatabaseError, transaction
+
+    from tap_grid import spine_version
+    from tap_grid.constraints import list_registered_edge_types
+    from tap_grid.models import EntityType
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    try:
+        with transaction.atomic(using=using):
+            recorded = spine_version.recorded_version(using=using)
+            catalog = dict(EntityType.objects.using(using).values_list("slug", "model_version"))
+    except DatabaseError:
+        return False
+    if recorded is not None and recorded > spine_version.SPINE_VERSION:
+        raise spine_version.SpineVersionAhead(spine_version.SPINE_VERSION, recorded)
+    declared: dict[str, int] = {slug: declared_edge_version(slug) for slug in list_registered_edge_types()}
+    for slug in list_entity_types():
+        if slug != EDGE:
+            declared[slug] = declared_version(get_model_class(slug))
+    for slug in sorted(declared):
+        applied = catalog.get(slug)
+        if applied is not None:
+            _compare(slug, declared[slug], applied)
+    _start_incomplete = False
+    logger.info("[e620] the version comparison skipped at start was made: %s type(s) behind", len(_pending))
+    return True
+
+
 def register_type(
     type_slug: str,
     *,
@@ -215,7 +294,7 @@ def register_type(
 
     Raises :class:`ModelVersionAhead` where the applied version is greater than the declared one.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@0c5289e528b4/7ea4bb9b2d49 (derivation) — rules 3 and 4: the one
+    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/7ea4bb9b2d49 (derivation) — rules 3 and 4: the one
         place a type's declared version meets the version applied to the grid's rows. It records
         the applied version only for a type the catalog has never held, and otherwise compares.
     """
@@ -258,6 +337,8 @@ def disagreement(type_slug: str, *, using: str = DEFAULT_DB_ALIAS) -> Disagreeme
     operation. For one it found behind, the catalog is read again: a migration applied since
     clears it. A database whose catalog has no row for the type records nothing to disagree with.
     """
+    if _start_incomplete:
+        complete_start_checks(using=using)
     held = _pending.get(type_slug)
     if held is None:
         return None
@@ -274,6 +355,8 @@ def disagreement(type_slug: str, *, using: str = DEFAULT_DB_ALIAS) -> Disagreeme
 
 def disagreements(type_slugs: Iterable[str], *, using: str = DEFAULT_DB_ALIAS) -> list[Disagreement]:
     """Every disagreement among ``type_slugs``, in slug order."""
+    if _start_incomplete:
+        complete_start_checks(using=using)
     if not _pending:
         return []
     found = (disagreement(slug, using=using) for slug in sorted(set(type_slugs)))
@@ -282,6 +365,8 @@ def disagreements(type_slugs: Iterable[str], *, using: str = DEFAULT_DB_ALIAS) -
 
 def refuse_if_pending(type_slug: str, what: str, *, using: str = DEFAULT_DB_ALIAS) -> None:
     """Raise :class:`ModelVersionPending` where ``type_slug``'s rows are behind its code."""
+    if _start_incomplete:
+        complete_start_checks(using=using)
     if not _pending:
         return
     found = disagreement(type_slug, using=using)

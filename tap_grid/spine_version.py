@@ -18,7 +18,6 @@ migration is reversed (rules 3 to 6). With one spine version there is nothing to
 from __future__ import annotations
 
 import logging
-import pkgutil
 from typing import Any
 
 from django.core.exceptions import ImproperlyConfigured
@@ -55,11 +54,16 @@ def refuse_newer_database(*, using: str = DEFAULT_DB_ALIAS) -> None:
     """Raise :class:`SpineVersionAhead` where the database is at a greater spine version than the code.
 
     Called at start. A database with no record yet (not migrated to 0022, or empty) has nothing
-    to compare, and ``migrate`` is what brings it up.
+    to compare, and ``migrate`` is what brings it up. A database that could not be read at all is
+    not passed: the check is marked as owed (``tap_grid.model_version.complete_start_checks``).
     """
     try:
         recorded = recorded_version(using=using)
     except OperationalError, ProgrammingError:
+        # Not read, so not checked: the check is owed before this process writes anything.
+        from tap_grid.model_version import mark_start_incomplete
+
+        mark_start_incomplete("the spine version record could not be read")
         return
     if recorded is not None and recorded > SPINE_VERSION:
         raise SpineVersionAhead(SPINE_VERSION, recorded)
@@ -78,10 +82,10 @@ def _schema_is_current(using: str) -> bool:
     module_name, _explicit = MigrationLoader.migrations_module(_APP_LABEL)
     if module_name is None:
         return True
-    import importlib
-
-    module = importlib.import_module(module_name)
-    carried = {info.name for info in pkgutil.iter_modules(module.__path__) if not info.name.startswith("_")}
+    # What this code carries, read from disk by Django's own loader; no connection, so nothing
+    # here depends on what the database says is applied.
+    loader = MigrationLoader(None, ignore_no_migrations=True)
+    carried = {name for app, name in loader.disk_migrations if app == _APP_LABEL}
     recorder = MigrationRecorder(connections[using])
     if not recorder.has_table():
         return False
@@ -99,17 +103,22 @@ def record_after_migrate(sender: Any, *, using: str = DEFAULT_DB_ALIAS, **kwargs
     put back. A record greater than this code declares is left alone: this code did not write
     that spine and must not claim it.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-version@cf43a85b9421/c3d2d6edc887 (derivation) — rule 2: the one writer
+    TAP-IMPLEMENTS: req-grid-entity-spine-version@cf43a85b9421/20f966f690b5 (derivation) — rule 2: the one writer
         of the grid's record of its spine version, run when migrations are applied.
     """
     from django.db import router
 
     from tap_grid.models import SpineVersion
 
-    if not router.allow_migrate_model(using, SpineVersion) or not _schema_is_current(using):
-        return
-    recorded = recorded_version(using=using)
-    if recorded is not None and recorded >= SPINE_VERSION:
-        return
-    SpineVersion.objects.using(using).update_or_create(id=1, defaults={"version": SPINE_VERSION})
-    logger.info("[4d2a] spine version %s recorded on %s", SPINE_VERSION, using)
+    if router.allow_migrate_model(using, SpineVersion) and _schema_is_current(using):
+        recorded = recorded_version(using=using)
+        if recorded is None or recorded < SPINE_VERSION:
+            SpineVersion.objects.using(using).update_or_create(id=1, defaults={"version": SPINE_VERSION})
+            logger.info("[4d2a] spine version %s recorded on %s", SPINE_VERSION, using)
+
+    # A process whose start could not read the database (the usual case for the first migrate of
+    # an empty one) makes the comparison it skipped now that the tables exist.
+    from tap_grid.model_version import complete_start_checks, start_incomplete
+
+    if start_incomplete():
+        complete_start_checks(using=using)

@@ -8,9 +8,11 @@ repository that owns the type.
 **What a definition covers.** What the type's owner declares, and only what bears on stored data:
 
 - a node type: the fields the class itself adds (name, type, nullability, uniqueness, length,
-  precision, choices, relation target), its model constraints, its natural key, its service schema
-  and the edge rules it declares (``OUTBOUND_EDGES`` and ``INBOUND_EDGES``);
-- an edge type: its property rules, its endpoint rules and its event-time declaration;
+  precision, choices, relation target), its model constraints, its natural key, its service schema,
+  the edge rules it declares (``OUTBOUND_EDGES`` and ``INBOUND_EDGES``) and its event-time
+  declaration (``EVENT_TIME``);
+- an edge type: its property rules, its endpoint rules, its event-time declaration and its
+  identity declaration;
 - the spine: every column of ``Entity``, the columns every typed row inherits from core's base
   model, and the columns core defines on the edge table, with their constraints.
 
@@ -153,6 +155,23 @@ def _declared_key(model_cls: type) -> Any:
     return "keyless"
 
 
+def event_time_definition(declaration: Any) -> Any:
+    """A node type's ``EVENT_TIME`` in plain data. Three statements stay three values: none
+    declared is None, the explicit "this type has no event time" is ``{"shape": "none"}``, and a
+    moment or an interval is its fields by name. No ``repr`` of the declaration is used."""
+    from tap_grid.event_time import Interval, Moment, NoEventTime
+
+    if declaration is None:
+        return None
+    if isinstance(declaration, NoEventTime):
+        return {"shape": "none"}
+    if isinstance(declaration, Moment):
+        return {"shape": "moment", "field": declaration.field, "kind": declaration.kind}
+    if isinstance(declaration, Interval):
+        return {"shape": "interval", "start": declaration.start, "end": declaration.end, "kind": declaration.kind}
+    raise TypeError(f"EVENT_TIME of type {type(declaration).__qualname__} is not an event-time declaration")
+
+
 def node_definition(model_cls: type[models.Model], *, base: type[models.Model] | None = None) -> dict[str, Any]:
     """The definition of a node type: what its class declares, without what it inherits from ``base``.
 
@@ -175,6 +194,7 @@ def node_definition(model_cls: type[models.Model], *, base: type[models.Model] |
             "outbound": _unordered(getattr(model_cls, "OUTBOUND_EDGES", None)),
             "inbound": _unordered(getattr(model_cls, "INBOUND_EDGES", None)),
         },
+        "event_time": event_time_definition(getattr(model_cls, "EVENT_TIME", None)),
     }
 
 
@@ -187,12 +207,17 @@ def _endpoints(declared: Any) -> Any:
     return _unordered(plain)
 
 
-def edge_definition(*, sources: Any, targets: Any, property_schema: Any, event_time: Any) -> dict[str, Any]:
-    """The definition of an edge type: its property rules, endpoint rules and event-time declaration."""
+def edge_definition(
+    *, sources: Any, targets: Any, property_schema: Any, event_time: Any, identity: Any
+) -> dict[str, Any]:
+    """The definition of an edge type: its property rules, endpoint rules, event-time declaration
+    and identity declaration (``req-grid-edge-identity-declaration``). ``identity`` is the
+    declaration as authored, None where the type declares none."""
     return {
         "property_rules": canonical(property_schema),
         "endpoint_rules": {"sources": _endpoints(sources), "targets": _endpoints(targets)},
         "event_time": canonical(event_time),
+        "identity": canonical(identity),
     }
 
 
@@ -390,7 +415,24 @@ def load_record(path: Path) -> dict[str, Any]:
     return record
 
 
+def _owned_record_path(path: Path) -> Path:
+    """``path`` resolved, where it is an installed app's own record file; else ``ValueError``.
+
+    A record is written in one place only: ``<app label>.model_versions.json`` at the root of an
+    installed app's package. Any other path is refused, so no caller can make this write elsewhere.
+    """
+    from django.apps import apps
+
+    resolved = path.resolve()
+    for config in apps.get_app_configs():
+        if resolved.parent == Path(config.path).resolve() and resolved.name == record_file_name(config.label):
+            return resolved
+    raise ValueError(f"{path} is not the version record of an installed app; nothing was written")
+
+
 def write_record(path: Path, record: Mapping[str, Any]) -> None:
+    """Write ``record`` to an installed app's record file; any other path is refused."""
+    path = _owned_record_path(path)
     path.write_text(json.dumps(record, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
@@ -410,6 +452,7 @@ def _edge_state(slug: str, definition: Mapping[str, Any]) -> TypeState:
             targets=definition.get("targets"),
             property_schema=definition.get("property_schema"),
             event_time=definition.get("event_time"),
+            identity=definition.get("identity"),
         ),
     )
 
@@ -459,6 +502,7 @@ def plugin_states(manifest: Any) -> list[TypeState]:
                     "targets": edge.targets,
                     "property_schema": edge.property_schema,
                     "event_time": edge.event_time,
+                    "identity": edge.identity,
                     **({EDGE_VERSION_KEY: edge.version} if edge.version is not None else {}),
                 },
             )

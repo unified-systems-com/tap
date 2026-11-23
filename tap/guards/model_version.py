@@ -66,8 +66,8 @@ class ModelVersionGuard(Guard):
 
     def check(self) -> None:
         problems = core_problems()
-        assert (
-            not problems
-        ), f"{len(problems)} type definition(s) out of step with their committed version record:\n  " + "\n  ".join(
-            problems
-        )
+        if problems:
+            raise AssertionError(
+                f"{len(problems)} type definition(s) out of step with their committed version record:\n  "
+                + "\n  ".join(problems)
+            )
