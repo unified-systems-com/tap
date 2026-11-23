@@ -1,0 +1,675 @@
+{
+  "edges": {
+    "PRODUCED_BATCH": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": "*",
+            "targets": [
+              "batch"
+            ]
+          },
+          "event_time": null,
+          "property_rules": {
+            "properties": {
+              "disposition": {
+                "enum": [
+                  "imported",
+                  "skipped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition"
+            ],
+            "type": "object"
+          }
+        },
+        "fingerprint": "21ca86cf684a6864f28c6239b08cfff2c1d7bfb20afe7f13949f841adce0b55f",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "batch": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "actor": {
+              "null": true,
+              "to": "tap_auth.user",
+              "type": "ForeignKey"
+            },
+            "closed_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "description_json": {
+              "null": true,
+              "type": "JSONField"
+            },
+            "error_message": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "metadata": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "source": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "started_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "status": {
+              "choices": [
+                "closed",
+                "failed",
+                "open"
+              ],
+              "max_length": 20,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "description_json": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "validation": {
+              "description_json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "data": {
+                          "type": "object"
+                        },
+                        "format": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "format",
+                        "data"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "ed9911bc89726a86ff16ecbde12cebdb88eb46d8bc75453b68a7adbfc11c6fa1",
+        "version": 1
+      }
+    ],
+    "dimension": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "empty_is_meaningful": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "usable_in_keys": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "values": {
+              "null": true,
+              "type": "JSONField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name"
+            ],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "empty_is_meaningful": {
+                "type": "boolean"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "usable_in_keys": {
+                "type": "boolean"
+              },
+              "values": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "uniqueItems": true
+              }
+            },
+            "validation": {}
+          }
+        },
+        "fingerprint": "0e744ba38574ad18e37d0be058303000fd232b7207aa1fbbdc0c106348ee39b1",
+        "version": 1
+      }
+    ],
+    "keystone": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "context_json": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "context_schema_json": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name"
+            ],
+            "fields": {
+              "context_json": {
+                "type": "object"
+              },
+              "context_schema_json": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "context_json": {
+                "schema": {
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              },
+              "context_schema_json": {
+                "schema": {
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              },
+              "description": {
+                "schema": {
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "name": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "96e3f234a5abdc284f1880240b7e1d88599723709d55be3dafc1acc3f421d707",
+        "version": 1
+      }
+    ],
+    "search": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "default_limit": {
+              "null": true,
+              "type": "IntegerField"
+            },
+            "definition": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "input_schema": {
+              "null": true,
+              "type": "JSONField"
+            },
+            "max_limit": {
+              "null": true,
+              "type": "IntegerField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "returns": {
+              "null": true,
+              "type": "JSONField"
+            },
+            "root": {
+              "max_length": 50,
+              "null": false,
+              "type": "CharField"
+            },
+            "search_type": {
+              "max_length": 50,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name",
+              "root",
+              "search_type"
+            ],
+            "fields": {
+              "default_limit": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "definition": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "input_schema": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "max_limit": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "returns": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "root": {
+                "enum": [
+                  "node",
+                  "edge",
+                  ""
+                ],
+                "type": "string"
+              },
+              "search_type": {
+                "enum": [
+                  "module",
+                  "orm",
+                  "gryphon"
+                ],
+                "type": "string"
+              }
+            },
+            "validation": {
+              "definition": {
+                "schema": {
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              },
+              "name": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "root": {
+                "schema": {
+                  "enum": [
+                    "node",
+                    "edge",
+                    ""
+                  ],
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "search_type": {
+                "schema": {
+                  "enum": [
+                    "module",
+                    "orm",
+                    "gryphon"
+                  ],
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "4f29aa0633c75dc02d7d1c55709b8a95175a5c9b237956b136a2aab58c6b57f5",
+        "version": 1
+      }
+    ]
+  },
+  "spine": [
+    {
+      "definition": {
+        "base_model": {
+          "batch_id": {
+            "max_length": 36,
+            "null": false,
+            "type": "CharField"
+          },
+          "entity": {
+            "null": false,
+            "to": "tap_grid.entity",
+            "type": "OneToOneField",
+            "unique": true
+          },
+          "flip_map": {
+            "null": false,
+            "type": "JSONField"
+          }
+        },
+        "edge": {
+          "constraints": [],
+          "fields": {
+            "edge_type": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "from_entity": {
+              "null": false,
+              "to": "tap_grid.entity",
+              "type": "ForeignKey"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "properties": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "to_entity": {
+              "null": false,
+              "to": "tap_grid.entity",
+              "type": "ForeignKey"
+            }
+          }
+        },
+        "entity": {
+          "constraints": [
+            {
+              "args": [],
+              "class": "django.db.models.CheckConstraint",
+              "kwargs": {
+                "condition": {
+                  "children": [
+                    {
+                      "children": [
+                        [
+                          "collected_end__isnull",
+                          true
+                        ],
+                        [
+                          "collected_start__isnull",
+                          true
+                        ]
+                      ],
+                      "negated": false,
+                      "q": "AND"
+                    },
+                    {
+                      "children": [
+                        [
+                          "collected_end__gte",
+                          {
+                            "args": [
+                              "collected_start"
+                            ],
+                            "class": "django.db.models.F",
+                            "kwargs": {}
+                          }
+                        ],
+                        [
+                          "collected_end__isnull",
+                          false
+                        ],
+                        [
+                          "collected_start__isnull",
+                          false
+                        ]
+                      ],
+                      "negated": false,
+                      "q": "AND"
+                    }
+                  ],
+                  "negated": false,
+                  "q": "OR"
+                },
+                "name": "entity_collected_pair"
+              }
+            }
+          ],
+          "fields": {
+            "collected_end": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "collected_start": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "created_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "deleted_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "dimensions": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "entity_type": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "event_end": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "event_precision": {
+              "choices": [
+                "day",
+                "month",
+                "second",
+                "year"
+              ],
+              "max_length": 8,
+              "null": true,
+              "type": "CharField"
+            },
+            "event_start": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "id": {
+              "max_length": 32,
+              "null": false,
+              "primary_key": true,
+              "type": "UUIDField"
+            },
+            "last_changed_batch_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "last_observed_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "last_observed_batch_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "natural_key": {
+              "null": true,
+              "type": "TextField"
+            },
+            "originating_grid_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "updated_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "version": {
+              "null": false,
+              "type": "PositiveIntegerField"
+            }
+          }
+        }
+      },
+      "fingerprint": "76de269d918a0e404ffea3429aa637b66d35af7381b21539881c056609e67033",
+      "version": 1
+    }
+  ]
+}

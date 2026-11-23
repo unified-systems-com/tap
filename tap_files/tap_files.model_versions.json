@@ -1,0 +1,270 @@
+{
+  "edges": {
+    "CONTAINS_TAP_DIRECTORY": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "tap_directory"
+            ],
+            "targets": [
+              "tap_directory"
+            ]
+          },
+          "event_time": null,
+          "property_rules": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "fingerprint": "434d365fce2c6a3113d4ebc8066b90abb8d79a4b3ba2bf8197fdb972cefd16eb",
+        "version": 1
+      }
+    ],
+    "CONTAINS_TAP_FILE": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "tap_directory"
+            ],
+            "targets": [
+              "tap_file"
+            ]
+          },
+          "event_time": null,
+          "property_rules": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "fingerprint": "9a2a604f869d1df8efb95fba272696b64ccbceb8b6696f0bf7bbefd1680304f7",
+        "version": 1
+      }
+    ],
+    "FILE_CONTENTS": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "tap_file"
+            ],
+            "targets": "*"
+          },
+          "event_time": null,
+          "property_rules": {
+            "additionalProperties": false,
+            "properties": {
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sha256"
+            ],
+            "type": "object"
+          }
+        },
+        "fingerprint": "356babe7710824e7458745bfe9d8f51de03df3574e791dbc8aba2e9a93af4fd9",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "tap_directory": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": [
+              {
+                "edges": [
+                  {
+                    "type": "CONTAINS_TAP_DIRECTORY"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "tap_directory"
+                  }
+                ]
+              },
+              {
+                "edges": [
+                  {
+                    "type": "CONTAINS_TAP_FILE"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "tap_file"
+                  }
+                ]
+              }
+            ]
+          },
+          "fields": {
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "path": {
+              "max_length": 4096,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": [
+            "path"
+          ],
+          "service_schema": {
+            "create_required": [
+              "name",
+              "path"
+            ],
+            "fields": {
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "maxLength": 4096,
+                "minLength": 2,
+                "type": "string"
+              }
+            },
+            "validation": {}
+          }
+        },
+        "fingerprint": "d4d36bc86282b6467a6c12298e7fec3e40c103edddd1d810461929b0854b8e80",
+        "version": 1
+      }
+    ],
+    "tap_file": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "file_version": {
+              "null": false,
+              "type": "PositiveIntegerField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "media_type": {
+              "max_length": 255,
+              "null": true,
+              "type": "CharField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "path": {
+              "max_length": 4096,
+              "null": false,
+              "type": "CharField"
+            },
+            "sha256": {
+              "max_length": 64,
+              "null": false,
+              "type": "CharField"
+            },
+            "size_bytes": {
+              "null": false,
+              "type": "BigIntegerField"
+            }
+          },
+          "key": [
+            "path"
+          ],
+          "service_schema": {
+            "create_required": [
+              "file_version",
+              "name",
+              "path",
+              "sha256",
+              "size_bytes"
+            ],
+            "fields": {
+              "file_version": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "media_type": {
+                "maxLength": 255,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "maxLength": 4096,
+                "minLength": 2,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "size_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "validation": {
+              "file_version": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "validation": "jsonschema"
+              },
+              "sha256": {
+                "schema": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "size_bytes": {
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "50349820e272c99d36cc1faccbf3a3e05b295dd2ef75d58940aff31d54ad9d6e",
+        "version": 1
+      }
+    ]
+  }
+}

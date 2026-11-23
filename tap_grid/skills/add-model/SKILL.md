@@ -196,6 +196,10 @@ Review the generated migration before applying. Confirm:
 - A `historical<entity_slug>` table is created (django-simple-history).
 - Indexes match what your `db_index=True` fields requested.
 
+### The model's version
+
+A new model states no version and is at version 1. When you later change an existing model's definition (a field added, removed or retyped, a constraint, the natural key, the service schema, the edge rules it declares), raise `MODEL_VERSION` on the class by one, ship the migration that moves the stored rows and ends by calling `tap_grid.model_version.set_applied_version("<slug>", <new version>)` in the same transaction, and record the new version with `manage.py model_versions --record --app <plugin>` so `<plugin>.model_versions.json` gains its entry; plugin validation fails a recorded type whose definition changed while its version did not. The check cannot see a change of meaning that leaves the definition alone, such as a field that now holds seconds where it held milliseconds or a new convention inside a JSON field: raise the version by hand for that too, because a document written under the old meaning must not be read as the new one. A migration that removes a field also removes that column from the type's history table, so its old values are gone from the grid. See `req-grid-entity-model-version` in `tap_grid/specs/spec-grid-entity.md`.
+
 ## Step 6: Update or Add the Spec
 
 Specs are authoritative. Either:

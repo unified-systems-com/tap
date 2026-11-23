@@ -778,6 +778,8 @@ def export_grid(
     Raises:
         ValueError: when ``captured_at`` is in the future, or a selector names
             no batch, several batches, or no node.
+        tap_grid.model_version.ModelVersionPending: when a type the export carries is
+            declared at a greater version than this grid's rows are at.
 
     Returns:
         A :class:`GriftExportResult`. Read ``issues`` before shipping the
@@ -822,6 +824,14 @@ def export_grid(
         if not include:
             _count_tombstones(ledger)
         _attach_retirements(retired)
+    # An export states the version of each type it carries, read from the catalog. A type whose
+    # rows are behind its code would be stated at a version the code does not write, so the
+    # export is refused, naming the type and both versions (req-grid-entity-model-version rule 4).
+    from tap_grid.model_version import disagreements
+
+    for behind in disagreements({"batch", *node_counts, *edge_counts}):
+        raise behind.refusal("an export that carries it")
+
     retired_counts = {
         "nodes": sum(1 for node in nodes if "retirement" in node),
         "edges": sum(1 for edge in edges if "retirement" in edge),

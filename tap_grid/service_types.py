@@ -156,6 +156,9 @@ class ServiceError:
         "absent_not_allowed",
         # The batch's record of the operation could not be written (req-grid-service-batch-evidence).
         "evidence_not_recorded",
+        # The type's rows are behind its code; migrations are not applied yet
+        # (req-grid-entity-model-version rule 4).
+        "model_version_pending",
     ]
     message: str
     field: str | None = None

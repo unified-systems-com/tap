@@ -121,6 +121,10 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
 - `property_schema` is a JSON Schema object; the service layer validates edge properties against it on create/update (net of the system-owned `hotlink` key, which it must not declare). Required whenever the edge carries properties; a schema-less type may only ever write empty properties.
 - `default_dimensions` is a flat string-to-string map applied at edge creation when the caller doesn't specify dimensions.
 
+### The edge type's version
+
+A new edge type states no `version` and is at version 1. When you later change an existing edge type's property rules, endpoint rules or event-time declaration, raise `version` in its `.edge.json` by one (it sits beside `property_schema`), ship the migration that moves the stored edges and ends by calling `tap_grid.model_version.set_applied_version("<SLUG>", <new version>)` in the same transaction, and record the new version with `manage.py model_versions --record --app <plugin>`; plugin validation fails a recorded type whose definition changed while its version did not. The check cannot see a change of meaning that leaves the definition alone, such as a property that now holds a different unit: raise the version by hand for that too. See `req-grid-entity-model-version` in `tap_grid/specs/spec-grid-entity.md`.
+
 ### Cross-plugin endpoints (read before naming a foreign type)
 
 An endpoint list is a **vocabulary dependency**. Before writing another plugin's type slug into

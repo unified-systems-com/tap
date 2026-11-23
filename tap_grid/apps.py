@@ -9,7 +9,6 @@ class TapCoreConfig(AppConfig):
     def ready(self) -> None:
         # Registers the deployment-configuration checks by import (no DB access here —
         # the checks run later, so this does not breach the no-DB-in-ready() rule).
-        from django.db import OperationalError, ProgrammingError
         from django.db.backends.signals import connection_created
 
         from tap_grid import checks  # noqa: F401
@@ -108,20 +107,36 @@ class TapCoreConfig(AppConfig):
             critical=False,
         )
 
-        try:
-            from tap_grid.models import EntityType, EntityTypeKind, Search
+        # The spine version the database is at is recorded each time migrations are applied
+        # (req-grid-entity-spine-version rule 2). Signal wiring only, no DB.
+        from tap_grid.spine_version import record_after_migrate
 
-            EntityType.objects.update_or_create(
-                slug=Search.ENTITY_TYPE,
-                defaults={
-                    "name": "Search",
-                    "plugin_name": "tap_grid",
-                    "icon": "search",
-                    "kind": EntityTypeKind.NODE,
-                    # Stamped from the class like a manifest model (req-grid-history-optout-8).
-                    "track_history": Search.TRACK_HISTORY,
-                },
-            )
+        post_migrate.connect(record_after_migrate, sender=self, dispatch_uid="tap_grid.spine_version_record")
+
+        self.compare_versions_at_start()
+
+    def compare_versions_at_start(self) -> None:
+        """The version checks a process makes as it starts, before it serves anything.
+
+        Reads the database, as the type catalog's registration always has here.
+        """
+        from django.db import OperationalError, ProgrammingError
+
+        from tap_grid.spine_version import refuse_newer_database
+
+        # A database at a greater spine version than this code declares was written by a newer
+        # core: refuse to start against it (req-grid-entity-spine-version rule 2). A database
+        # with no record yet passes; migrate is what brings it up.
+        refuse_newer_database()
+
+        try:
+            # Core's own node and edge types get a catalog row and an applied version, as a
+            # plugin's types do from its manifest (req-grid-entity-model-version rule 6). The
+            # comparison of declared and applied versions happens here too, and a type whose
+            # rows are at a greater version than its class declares stops the start (rule 4).
+            from tap_grid.model_version import register_core_types
+
+            register_core_types()
         except OperationalError, ProgrammingError:
-            # DB not ready yet (e.g. during initial migrate).
+            # DB not ready yet (e.g. during initial migrate, or before the version column exists).
             pass

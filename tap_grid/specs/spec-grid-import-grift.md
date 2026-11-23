@@ -1133,6 +1133,7 @@ v0 should define stable codes for common importer outcomes, including:
 - `duplicate_json_key` — an object repeated a key (`req-grid-import-grift-preflight-3`)
 - `non_finite_number` — `NaN`, `Infinity`, `-Infinity` or a literal overflowing to infinity
 - `unsupported_grift_version` — `metadata.grift_version` is not `"0"` (`req-grid-import-grift-preflight-4`)
+- `model_version_pending` — the document carries a type whose class declares a greater version than this grid's rows are at; nothing is imported until migrations are applied (`req-grid-entity-model-version` rule 4)
 - `schema_validation_failed`
 - `duplicate_entity_id`
 - `duplicate_batch_id`

@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/75b7dedb028f (enforcement)
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/d23a6319a407 (enforcement)
     — the strict raise-on-unknown parse discipline is module-wide here.
 
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
@@ -105,6 +105,7 @@ class EdgeEntry:
     identity: dict[str, Any] | None = None  # req-tap-plugin-manifest-v0-edge-identity
     internal_only: bool = False  # req-grid-edge-internal
     event_time: dict[str, Any] | None = None  # req-grid-entity-event-time rule 20
+    version: int | None = None  # req-grid-entity-model-version rule 1; None means none stated, which is 1
 
 
 @dataclass
@@ -447,7 +448,7 @@ def _load_edge_file(
     manifest_path: Path,
 ) -> EdgeEntry:
     """
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edge-file@4c553bbe6f5c/7a62dc082b9b (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edge-file@9402d4b10521/4e08cf155019 (derivation) —
         the one-edge-type strict JSON object loads here.
     """
     try:
@@ -474,6 +475,7 @@ def _load_edge_file(
         identity=data.get("identity"),
         internal_only=bool(data.get("internal_only", False)),
         event_time=data.get("event_time"),
+        version=data.get("version"),
     )
 
 

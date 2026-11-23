@@ -1,0 +1,267 @@
+{
+  "edges": {
+    "NESTS_UNDER": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "page"
+            ],
+            "targets": [
+              "page"
+            ]
+          },
+          "event_time": null,
+          "property_rules": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "fingerprint": "d2f080da4fbe1e0567327af805165e81055e1e78cb9d4d0bd86798e0fa67a424",
+        "version": 1
+      }
+    ],
+    "USES_PANEL": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "page"
+            ],
+            "targets": [
+              "panel"
+            ]
+          },
+          "event_time": null,
+          "property_rules": {
+            "properties": {
+              "inputs": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "variable_map": {
+                "properties": {
+                  "tap_page_persistent_vars": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "tap_page_vars": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "fingerprint": "aee547255727e0cb676256d5671672714258f00c264ed71a64cb6e40a9334718",
+        "version": 1
+      }
+    ],
+    "USES_SEARCH": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "panel"
+            ],
+            "targets": [
+              "search"
+            ]
+          },
+          "event_time": null,
+          "property_rules": null
+        },
+        "fingerprint": "a0fdf9c43b00955fa74eff429b508511c409e2df59de29fb7bb240dd4e2c66e9",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "page": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "discoverable": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "layout": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "nav_weight": {
+              "null": false,
+              "type": "IntegerField"
+            },
+            "slug": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField",
+              "unique": true
+            }
+          },
+          "key": [
+            "slug"
+          ],
+          "service_schema": {
+            "create_required": [
+              "name",
+              "slug"
+            ],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "discoverable": {
+                "type": "boolean"
+              },
+              "layout": {
+                "type": "object"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "nav_weight": {
+                "type": "integer"
+              },
+              "slug": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "layout": {
+                "validation": "function"
+              }
+            }
+          }
+        },
+        "fingerprint": "446a2b7ba5abadd3ec5bc3a05da5262d9e7f3c5db021b061f9d0ed40a3e2d0a1",
+        "version": 1
+      }
+    ],
+    "panel": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "fields": {
+            "config": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "editor_view": {
+              "max_length": 500,
+              "null": false,
+              "type": "CharField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "input_vars": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "slug": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "view": {
+              "max_length": 500,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": [
+            "slug"
+          ],
+          "service_schema": {
+            "create_required": [
+              "name",
+              "slug",
+              "view"
+            ],
+            "fields": {
+              "config": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "editor_view": {
+                "type": "string"
+              },
+              "input_vars": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "slug": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "view": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {}
+          }
+        },
+        "fingerprint": "80a12b61e980cf820f0386beee6c64c6566ac74bc40ad3ffaec004ca9c8f4fcc",
+        "version": 1
+      }
+    ]
+  }
+}

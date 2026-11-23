@@ -799,6 +799,33 @@ class EntityTypeKind(models.TextChoices):
     EDGE = "edge", "Edge"
 
 
+class EntityTypeQuerySet(models.QuerySet["EntityType"]):
+    """The catalog's queryset. It holds one lock: ``model_version`` is the version applied to this
+    grid's rows, written by the migration that moves them and by a type's first registration, and
+    by nothing else (req-grid-entity-model-version rule 3)."""
+
+    def update(self, **kwargs: Any) -> int:
+        if "model_version" in kwargs:
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType queryset update")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs: Any, fields: Any, *args: Any, **kwargs: Any) -> int:
+        if "model_version" in set(fields):
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType bulk_update")
+        return super().bulk_update(objs, fields, *args, **kwargs)
+
+    def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("update_conflicts") and "model_version" in set(kwargs.get("update_fields") or ()):
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType bulk_create with update_conflicts")
+        return super().bulk_create(objs, *args, **kwargs)
+
+
 class EntityType(models.Model):
     """Registry of entity types — node types AND edge types.
 
@@ -840,12 +867,46 @@ class EntityType(models.Model):
         ),
     )
 
+    # req-grid-entity-model-version rule 3. The version APPLIED to this grid's rows of the type,
+    # which is a different fact from the version the class declares. Registration compares the
+    # two and never copies one onto the other: start-up runs before migrations do.
+    model_version = models.PositiveIntegerField(
+        default=1,
+        help_text=(
+            "The version this grid's stored rows of the type are at. Written by the migration that "
+            "moves the rows and by the type's first registration; never by a restart."
+        ),
+    )
+
+    objects = EntityTypeQuerySet.as_manager()
+
     class Meta:
         db_table = "tap_entity_type"
         ordering = ["slug"]
 
     def __str__(self) -> str:
         return self.name
+
+    @classmethod
+    def from_db(cls, db: Any, field_names: Any, values: Any) -> EntityType:
+        row = super().from_db(db, field_names, values)
+        # What the row held when it was read, so a save can tell a change from a rewrite.
+        if "model_version" in field_names:
+            row._loaded_model_version = values[list(field_names).index("model_version")]
+        return row
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Save the catalog row; a change to the applied version needs one of its two writers."""
+        fields = kwargs.get("update_fields")
+        writes_version = fields is None or "model_version" in fields
+        loaded = getattr(self, "_loaded_model_version", None)
+        if writes_version and loaded is not None and loaded != self.model_version:
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType.save")
+        super().save(*args, **kwargs)
+        if writes_version:
+            self._loaded_model_version = self.model_version
 
 
 # ---------------------------------------------------------------------------
@@ -1217,6 +1278,7 @@ class BaseModel(models.Model):
         Changing a type's rule changes its stored keys: ship it as a re-key with a migration.
         """
         return values
+
     # Containment (req-grid-service-delete-cascade): the edge types through which THIS
     # node contains children, so `delete_node(..., cascade="contained")` retires them
     # with it. A dedicated declaration, deliberately not a flag inside OUTBOUND_EDGES —
@@ -1249,6 +1311,13 @@ class BaseModel(models.Model):
     # subtree. Flipping it on an existing type drops (False) or creates an empty (True)
     # history table in the owning app's next migration: recorded history is lost.
     TRACK_HISTORY: ClassVar[bool] = True
+
+    # The version of this type's definition, set by its author (req-grid-entity-model-version
+    # rule 1). A type that states none is at version 1. Raise it with the migration that moves
+    # the stored rows, and by hand for a change of meaning the fingerprint guard cannot see
+    # (rule 8). It is the DECLARED version; the one applied to a grid's rows is
+    # EntityType.model_version (tap_grid.model_version).
+    MODEL_VERSION: ClassVar[int] = 1
 
     objects = LiveManager()
     all_objects = AllObjectsManager()
@@ -1304,6 +1373,16 @@ class BaseModel(models.Model):
                 f"{cls.__name__}.TRACK_HISTORY must be True or False, got "
                 f"{cls.TRACK_HISTORY!r} (req-grid-history-optout)."
             )
+
+        # MODEL_VERSION must be a whole number, 1 or greater (req-grid-entity-model-version
+        # rule 1): it is compared and ordered, so a string or a float must not pass silently.
+        if "MODEL_VERSION" in cls.__dict__:
+            from tap_grid.model_version import ModelVersionError, declared_version
+
+            try:
+                declared_version(cls)
+            except ModelVersionError as error:
+                raise ImproperlyConfigured(f"{error} (req-grid-entity-model-version).") from error
 
         # FIELD_VALIDATION_SCHEMA invariants run first — before any registry side effects.
         # If these raise, nothing has been registered and the failure is clean.
@@ -1621,6 +1700,14 @@ class BaseModel(models.Model):
             may_insert=_save_may_insert(self, kwargs),
             may_update=_save_may_update(kwargs),
         )
+
+        # A type whose rows are behind its code takes no write until migrations are applied
+        # (req-grid-entity-model-version rule 4). One dictionary test where every type agrees.
+        from tap_grid.model_version import refuse_if_pending, row_type_slug
+
+        versioned_type = row_type_slug(self)
+        if versioned_type is not None:
+            refuse_if_pending(versioned_type, "a write to it", using=self._state.db or "default")
 
         skip_validation: bool = kwargs.pop("skip_validation", False)
         spine_just_created: bool = kwargs.pop("_spine_just_created", False)
@@ -2366,6 +2453,28 @@ class NaturalKeyRecipe(models.Model):
 
     def __str__(self) -> str:
         return f"{self.entity_type} {self.fingerprint[:12]}"
+
+
+class SpineVersion(models.Model):
+    """The spine version this database is at (req-grid-entity-spine-version rule 2).
+
+    One row for the grid, written when migrations are applied (``tap_grid.spine_version``).
+    Standalone bookkeeping, like ``NaturalKeyRecipe``, and deliberately not a node: a node is
+    read through the spine this row describes, is written through the pipeline with a batch and
+    an actor that a migration does not have, and travels in a GRIFT export, where it would carry
+    one grid's spine version into another.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    version = models.PositiveIntegerField()
+    recorded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "tap_spine_version"
+        constraints = [models.CheckConstraint(condition=models.Q(id=1), name="tap_spine_version_one_row")]
+
+    def __str__(self) -> str:
+        return f"spine version {self.version}"
 
 
 class BatchEvent(models.Model):
