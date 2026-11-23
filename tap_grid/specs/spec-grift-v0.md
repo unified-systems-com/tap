@@ -1528,7 +1528,7 @@ Prior art: JSON Merge Patch. A member absent from the patch is left alone; a mem
 5. The envelope's `name` and `dimensions` are applied as for a record in `nodes`, except under `on_other_source: yield` (`req-grift-yield` rule 8).
 6. `on_other_source: overwrite` is the behaviour above. `yield` is `req-grift-yield`.
 7. A record that changes nothing is an observation, as for any write (`req-grid-flip-change`).
-8. An edge in `updates` writes the keys it carries inside `properties` and leaves the others, by `req-grid-flip-nested` rules 4 to 6: an edge's `properties` is tracked per key for every edge type, with no opt-in. The keys the edge type's identity declaration names locate the edge and are not changed by an update; a record that would change one is refused naming it. Endpoints are not changed by an update.
+8. An edge in `updates` writes the keys it carries inside `properties` and leaves the others, absent keys included whoever owns them, by `req-grid-flip-nested` rules 4 to 6: an edge's `properties` is tracked per key for every edge type, with no opt-in. The keys the edge type's identity declaration names locate the edge and are not changed by an update; a record that would change one is refused naming it. Endpoints are not changed by an update.
 
 #### Development
 Making required fields required-on-create-only for every record in `nodes` was the other shape Issue# 1173 - tap names. It needs no new section, and it leaves the sender unable to say what should happen when the row is not there: the create would fail on the missing fields and abort the batch. The section's `on_missing` is that answer. Calling `patch_node` was not chosen as the contract because `PATCH_EXTRA_FIELDS` are excluded from GRIFT payloads.

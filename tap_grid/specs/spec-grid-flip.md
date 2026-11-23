@@ -210,8 +210,11 @@ Prior art: Server-Side Apply tracks ownership per map key, and an applier remove
 2. An edge's `properties` is tracked per key for every edge type, with no opt-in, because it is the edge's only writeable object. The keys its identity declaration names are tracked like any other key and are never changed by an update.
 3. The entry for a tracked field is an object mapping each key, verbatim, to its entry. It is not a set of dotted paths: real keys contain dots, colons and slashes (`kubernetes.io/name`, `aws:cloudformation:stack-name`), which a dotted path cannot hold.
 4. A write of a tracked field is judged per key. A key whose value changed, or that has no entry, is stamped; an unchanged key with an entry keeps it (`req-grid-flip-change`, applied per key).
-5. In `nodes` and in `updates`, a write of a tracked field sets the keys it carries and removes only those absent keys whose entry is the writer's source or that have no entry. Another source's keys stay. This replaces "present replaces whole" for tracked fields only.
-6. In `updates`, a key sent as `null` is removed under the same rule as a key sent with a value: under `on_other_source: overwrite` it is removed whoever owns it, as JSON Merge Patch removes a member; under `yield` it is removed only where rule 5 would let the writer remove it, its own key or one with no entry.
+5. A tracked field is written key by key, and what an absent key means depends on the section.
+   - In `updates` an absent key is left as it is, whoever owns it, as JSON Merge Patch leaves an absent member. A key is removed only by sending it as `null` (rule 6).
+   - In `nodes` and `edges` of a format "1" document, a present tracked field is the writer's whole view of its own keys: it sets the keys it carries and removes the absent keys whose entry is the writer's source or that have no entry. Another source's keys stay. This replaces "present replaces whole" (`req-grid-import-grift-ordering-9`, `-10`) for tracked fields in format "1" only.
+   - In a format "0" document nothing changes: `nodes` and `edges` replace a present field whole, edge `properties` included, as today.
+6. In `updates`, a key sent as `null` is removed under the same rule as a key sent with a value: under `on_other_source: overwrite` it is removed whoever owns it, as JSON Merge Patch removes a member; under `yield` it is removed only where its entry is the writer's source or it has no entry.
 7. Under `yield`, a key whose entry names another source is skipped and reported as the field with the key.
 8. In `replaces` a tracked field is replaced whole, every key, and every key is stamped by the writer.
 9. A removed key's entry is removed with it.
@@ -237,6 +240,7 @@ The yielded flag could have been read from the batch instead of stored on the en
 | req-grid-flip-nested-8 | Repeat Moves Nothing | Proposed | Re-sending an identical object moves no key's entry. | Issue# 322 - tap |
 | req-grid-flip-nested-9 | Yielded Entry Recorded | Proposed | A field first written under `yield` has the entry `{"batch": ..., "yielded": true}`; a plain id is read as not yielded. | |
 | req-grid-flip-nested-10 | Null Removes Under Overwrite, Own Keys Under Yield | Proposed | B owns key `env` of a tracked field. A sends `env: null` in `updates` with `overwrite`: the key is removed. A sends `env: null` with `yield`: the key and its entry stay. | |
+| req-grid-flip-nested-11 | An Update Keeps Absent Keys | Proposed | Source B owns keys `a` and `b` of a tracked field. B sends only `a` in `updates`: `a` is written and `b` survives with its entry. B sends the field with only `a` in `nodes` of a format "1" document: `b` is removed. The same in a format "0" document replaces the field whole. | |
 
 ### FLIP and History Separation
 ----
@@ -313,6 +317,8 @@ Status: `Implemented`
 A FLIP entry names the batch that last **changed** the value at a field path, or first asserted it. A write that repeats what is already stored does not move the entry.
 
 #### Status Details
+Pending amendment, Proposed and not built: `req-grift-yield` rule 7 and `req-grid-flip-nested` rule 10 add one exception to rule 3 below. A write by a different source that repeats the stored value moves an entry written by a yielding write. When that is built, rule 3 is amended in the same change.
+
 Implemented for the service write pipeline and the GRIFT importer (Issue# 322 - tap). `tap_grid/write_classification.py` takes the snapshot, makes the comparison and yields the stamped set; `_execute_write_pipeline` in `tap_grid/services/_impl.py` takes the snapshot before it applies a payload, classifies after validation has cleaned the values to their stored types, and hands the stamped set to `BaseModel.save()` as `flip_changed_fields`. A create is unchanged: it stamps the fields its payload sent. Issue# 323 - tap holds the ruling; the design record is `docs/misc/doc-grid-batch-provenance-and-grift-patch-semantics.md`.
 
 Before this, the touched set was taken from the shape of the payload: a patch stamped every field it named, a full replace the whole service-writeable surface, and a keep-absent replace every field the document sent, so a collector that re-sent an unchanged object re-pointed every sent field at the new batch.
