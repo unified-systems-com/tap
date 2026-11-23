@@ -3,7 +3,7 @@
 # hostname the browser will actually use and admits the person who opened it.
 #
 # Usage:
-#   scripts/codespace-env [--output PATH] [--force]
+#   scripts/codespace-env [--output PATH] [--force] [--no-secret-key]
 #
 # Writes KEY=value lines. Default output is `.env.local`, which `scripts/dc`
 # cascades on top of `.env` — that is the path for a developer driving the stack
@@ -13,6 +13,10 @@
 #
 # It is a no-op outside a Codespace, and refuses to clobber an existing output
 # file unless --force is given.
+#
+# --no-secret-key leaves SECRET_KEY out and creates no key file: an installation the
+# initializer activates (req-tap-bake-installation-identity) already has its key, minted into
+# its own volume, and `docker/entrypoint.sh` passes this flag there.
 #
 # WHY THIS EXISTS (gs#101)
 # ------------------------
@@ -103,10 +107,12 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 output=".env.local"
 force=false
+secret=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output="${2:?--output needs a path}"; shift 2 ;;
     --force)  force=true; shift ;;
+    --no-secret-key) secret=false; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -262,11 +268,14 @@ fi
 # Codespace's own durable storage, because a key regenerated on every container
 # start invalidates every session cookie — the visitor would be logged out by a
 # restart with no explanation. 0600, and gitignored.
-key_file=".codespace-secret-key"
-if [[ ! -s "$key_file" ]]; then
-  ( umask 077; scripts/py -c 'import secrets; print(secrets.token_urlsafe(64))' > "$key_file" )
+secret_line=""
+if [[ "$secret" == true ]]; then
+  key_file=".codespace-secret-key"
+  if [[ ! -s "$key_file" ]]; then
+    ( umask 077; scripts/py -c 'import secrets; print(secrets.token_urlsafe(64))' > "$key_file" )
+  fi
+  secret_line="SECRET_KEY=$(cat "$key_file")"
 fi
-secret_key="$(cat "$key_file")"
 
 umask 077
 cat > "$output" <<ENVFILE
@@ -329,8 +338,9 @@ TAP_SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
 # This instance's public identity, used to derive provider callback URLs.
 TAP_BASE_URL=${forwarded_origin}
 
-# Per-Codespace signing key, persisted so a restart does not log everyone out.
-SECRET_KEY=${secret_key}
+# Per-Codespace signing key, persisted so a restart does not log everyone out. Empty under
+# --no-secret-key, where the initializer supplies it.
+${secret_line}
 
 # The account that opened this Codespace. Empty means unresolved, which DENIES.
 TAP_AUTH_INSTANCE_OWNER=${owner_json}

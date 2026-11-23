@@ -354,7 +354,7 @@ def run(
 ) -> str:
     """Classify the stores, activate if needed, and write the hand-off; return the road taken.
 
-    TAP-IMPLEMENTS: req-tap-bake-initializer@0119b11722e9/0e2d215781bf (derivation) — the one place an installation
+    TAP-IMPLEMENTS: req-tap-bake-initializer@59b6c8617552/0e2d215781bf (derivation) — the one place an installation
         is classified and its road chosen, under the installation lock.
     TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/0e2d215781bf (enforcement) — values are stored pending
         before any is applied, applied from the stored values, and never minted twice.
@@ -452,6 +452,14 @@ def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], i
                 "[i1a8] initializer: a first admin link may already have been issued by an interrupted start; "
                 "if you have none, run: manage.py enroll_admin --email <you> --print-token"
             )
+            return
+        if identity.get("first_login") == "owner" or os.environ.get("TAP_AUTH_INSTANCE_OWNER"):
+            # A named instance owner (a Codespace's opener, req-tap-serving-codespace-7) is the first
+            # admin, granted on their first sign-in; a passkey link beside it would be a second way in
+            # that nobody asked for. An unresolved owner leaves this empty, and the link is issued.
+            if identity.get("first_login") != "owner":
+                store.write({**identity, "first_login": "owner"})
+                logger.info("[i1a9] initializer: the instance owner is the first admin; no enrolment link issued")
             return
         # Recorded before the link is minted, so a crash in between can never issue a second one.
         identity = {**identity, "first_login": "issuing"}

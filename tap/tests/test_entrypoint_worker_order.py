@@ -34,7 +34,7 @@ def _first(prefix: str) -> int:
 @pytest.mark.spec("req-tap-serving-codespace-8")
 def test_the_workers_start_before_the_codespace_boot_and_the_server_after_it() -> None:
     supervisor = _first("uv run python manage.py steady_queue &")
-    codespace_boot = _first('if [ "${CODESPACES:-}" = "true" ]; then')
+    codespace_boot = _first('if [ "${CODESPACES:-}" = "true" ] && [ -z "${TAP_INITIALIZED}" ]; then')
     gunicorn = _first('echo "==> Starting gunicorn')
     assert supervisor < codespace_boot < gunicorn
 
