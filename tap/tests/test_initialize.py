@@ -98,6 +98,9 @@ def _handoff(path: Path) -> dict[str, str]:
             {"status": "active", "activation_id": "A", "progress": {"finish": "done"}},
             50, True, "tap-installation:A", initialize.ROAD_FINISH,
         ),
+        # A concurrent start in flight: the cache table exists, migrate has not run yet.
+        ({"status": "active", "activation_id": "A", "progress": {}}, 1, False, "tap-installation:A", initialize.ROAD_FINISH),
+        ({"status": "pending", "activation_id": "A", "progress": {}}, 0, False, "tap-installation:A", initialize.ROAD_RESUME),
     ],
 )  # fmt: skip
 def test_each_store_state_has_one_road(identity: Any, relations: int, tap_schema: bool, stamp: str, road: str) -> None:
@@ -117,8 +120,10 @@ def test_each_store_state_has_one_road(identity: Any, relations: int, tap_schema
         ({"status": "active", "activation_id": "A", "progress": {}}, 50, True, "tap-installation:B",
          "different installations"),
         ({"status": "active", "activation_id": "A", "progress": {}}, 50, True, "", "no stamp from this installation"),
-        ({"status": "active", "activation_id": "A", "progress": {}}, 40, False, "tap-installation:A", "not TAP's"),
-        ({"status": "pending", "activation_id": "A", "progress": {}}, 40, False, "", "not TAP's"),
+        ({"status": "active", "activation_id": "A", "progress": {"finish": "done"}}, 40, False, "tap-installation:A",
+         "not TAP's"),
+        ({"status": "pending", "activation_id": "A", "progress": {}}, 40, False, "", "no stamp of its own"),
+        ({"status": "pending", "activation_id": "A", "progress": {}}, 50, True, "", "no stamp of its own"),
     ],
 )  # fmt: skip
 def test_unknown_or_mismatched_stores_are_refused(
@@ -346,3 +351,23 @@ def test_schema_steps_run_under_the_lock(store: initialize.StateStore, cluster: 
     for step in ("manage.py createcachetable", 'manage.py "$MIGRATE_COMMAND"'):
         line = next(ln for ln in text.splitlines() if step in ln and not ln.lstrip().startswith(("#", "echo")))
         assert line.startswith('"${TAP_LOCKED[@]}" uv run python'), line
+
+
+@pytest.mark.spec("req-tap-bake-initializer-2")
+def test_a_failed_link_mint_is_never_retried_automatically(
+    store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path
+) -> None:
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    minted: list[int] = []
+
+    def enroll_fails(argv: list[str]) -> int:
+        if argv[2] == "enroll_admin":
+            minted.append(1)
+            return 1
+        return 0
+
+    initialize.finish(store, initialize.Target(URL), runner=enroll_fails)
+    initialize.finish(store, initialize.Target(URL), runner=enroll_fails)
+    identity = store.read()
+    assert identity is not None and identity["first_login"] == "issuing"
+    assert minted == [1], "a failed enroll_admin may have printed a link, so it is not run again"

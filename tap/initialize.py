@@ -275,24 +275,34 @@ def classify(identity: dict[str, Any] | None, relations: int, has_tap_schema: bo
             f"this installation volume belongs to activation {identity['activation_id']} but the database is "
             f"stamped {stamp}: the volume and the database are from different installations"
         )
-    if relations and not has_tap_schema:
-        raise InitializeError(
-            f"the database holds {relations} relation(s) that are not TAP's: refusing to boot over them"
-        )
     if identity["status"] == PENDING:
+        # A pending activation was minted over an empty database. Until its stamp lands the database
+        # may hold nothing, or a stamp of its own; anything else is not this installation's to claim.
+        if relations and stamp != ours:
+            raise InitializeError(
+                "a pending activation found a database with relations and no stamp of its own: refusing to "
+                "claim and re-key it"
+            )
         return ROAD_RESUME
     if identity["status"] != ACTIVE:
         raise InitializeError(f"identity status {identity['status']!r} is not one this initializer knows")
-    # Activation creates no tables; migrate does, during Finish. Until Finish has completed once, an
-    # empty database is this installation still being built, by a concurrent start or by one that was
-    # interrupted, not stores that disagree.
-    if relations == 0 and identity["progress"].get("finish") == "done":
+    finished = identity["progress"].get("finish") == "done"
+    if relations and stamp != ours:
+        raise InitializeError("the database holds relations but no stamp from this installation")
+    # Under this installation's own stamp and before Finish has completed once, the database is being
+    # built: by a concurrent start, or one that was interrupted. It may be empty (activation creates no
+    # tables) or hold only what the schema steps made so far (the cache table comes before migrate).
+    if not finished:
+        return ROAD_FINISH
+    if relations == 0:
         raise InitializeError(
             "the installation's identity is active but its database is empty: the stores disagree. "
             "If the database was deliberately reset, remove the installation volume too and start again"
         )
-    if relations and stamp != ours:
-        raise InitializeError("the database holds a TAP schema but no stamp from this installation")
+    if not has_tap_schema:
+        raise InitializeError(
+            f"the database holds {relations} relation(s) that are not TAP's: refusing to boot over them"
+        )
     return ROAD_FINISH
 
 
@@ -451,7 +461,8 @@ def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], i
             store.write({**identity, "first_login": "issued"})
             logger.info("[i1a6] initializer: open the link above within an hour to enroll the first admin's passkey")
         else:
-            store.write({**identity, "first_login": "pending"})
+            # Left as `issuing`: a failed enroll_admin may already have printed a link, and at most
+            # one is ever issued automatically.
             logger.warning(
                 "[i1a7] initializer: could not mint the first admin link; run manage.py enroll_admin by hand"
             )
