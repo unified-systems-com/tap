@@ -191,7 +191,9 @@ def test_unresolvable_targets_are_allowed(repos: dict[str, Path]) -> None:
 def test_settings_hold_only_a_pointer_to_the_hook() -> None:
     settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
     assert set(settings) == {"hooks"}
-    assert set(settings["hooks"]) == {"PreToolUse"}, "the PostToolUse triage nudge is retired"
+    # PostToolUse holds the review-watch prompt (tap/tests/test_pr_watch_prompt.py), not the retired nudge.
+    assert set(settings["hooks"]) == {"PreToolUse", "PostToolUse"}
+    assert "pr-triage-nudge" not in SETTINGS.read_text(encoding="utf-8")
     (group,) = settings["hooks"]["PreToolUse"]
     assert group["matcher"] == "Bash"
     (handler,) = group["hooks"]

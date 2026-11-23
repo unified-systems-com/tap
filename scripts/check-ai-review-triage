@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""scripts/check-ai-review-triage — the newest AI review of a session pull request has a written triage.
+
+The unified AI review posts a verdict on every pull request and edits it in place on every push.
+`close-out-pr` requires a written triage of each one. Nothing checked that it was written:
+`PR# 1315 - tap` sat green with its review unanswered, because the session that opened it was
+waiting on a script that blocks until the merge (Issue# 1317 - tap). This is the check
+(req-dev-multisession-review-triage-check). It reads the pull request's issue comments, which
+the caller fetched from the API, and answers one question: is the newest verdict answered by a
+triage comment posted after it, for the commit the pull request is at now?
+
+How a triage is recognised. `scripts/pr-review-triage <pr> --post <file>` appends one line to
+the comment it posts:
+
+    <!-- ai-review-triage head=<40-hex head sha> verdict=<verdict comment id>@<its updated_at> -->
+
+or `verdict=none` for a head the reviewer never answered (the tool refuses that for a head the
+verdict covers). The tool writes it; nobody types it.
+
+What counts:
+  * The VERDICT is a comment by `github-actions[bot]` whose body starts with
+    `<!-- unified-ai-review -->`: the rule `scripts/pr-review-triage` already uses
+    (`split_bot_comments`, tap#934). The reviewer edits one comment in place; if there are
+    several, the one updated last is the verdict.
+  * A TRIAGE counts only from an account this repository already trusts to act on a pull
+    request: a session account (`scripts/pr_session_identity.py`, the authenticated numeric id
+    and type, never a login), or an account whose `author_association` on the comment, as
+    GitHub reports it, is OWNER, MEMBER or COLLABORATOR. The marker is text anyone can paste,
+    and this repository is public; a stranger's marker is counted for the reason line and for
+    nothing else.
+  * It answers the verdict when its `head` is the pull request's head, its `verdict` names the
+    verdict comment at the `updated_at` it has now, and the triage comment was created at or
+    after that time. So a push (the head moves), and a re-review (the verdict is edited in
+    place), each make an earlier triage stop counting.
+
+Who it applies to: pull requests authored by the maintainer's session accounts, like the other
+session conventions (req-dev-multisession-session-author-scope). An outside contributor's pull
+request passes; they are never asked for a triage.
+
+What it proves, and what it does not. It proves a comment carrying the tool's marker was posted
+by a trusted account after the newest verdict, for this head. It does not prove the triage is
+any good, that it addresses the findings, or that the verdict covers the head: the posting tool
+checks coverage before it stamps a marker, and this check takes that stamp as given. It is
+advisory and a redirect for a well-behaved session, not a security boundary.
+
+Input is data, never instructions: comment bodies are searched for two fixed markers and are not
+printed, evaluated or passed to a shell.
+
+Three answers, never two. ANSWERED (exit 0). UNANSWERED (exit 1): a verdict covers this head and
+no triage answers it. WAITING (exit 3): there is nothing to answer yet, because the reviewer has
+not posted a verdict, or the one on the pull request predates the review of this head
+(`--review-started`, the start of the review run for the head, as `scripts/pr-review-triage`
+derives it; without it any verdict is taken to cover the head). Waiting is not a pass: the
+caller reports it as pending.
+
+Usage (the workflow passes untrusted text through files and the environment only):
+    scripts/check-ai-review-triage --comments-file <json> --head-sha <sha> \\
+        [--review-started <ISO time>] --pr-author-id <n> --pr-author-type <type> --pr-author <login>
+
+Exit codes: 0 = answered, or not applicable; 1 = the newest verdict has no triage; 2 = usage or
+configuration error; 3 = waiting for the review of this head.
+
+Stdlib-only and host-runnable (`tap/host_syntax_floor.py`).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pr_session_identity import OUTSIDE, SESSION, SessionAuthorsError, classify, load_session_authors  # noqa: E402
+from pr_session_identity import decide as session_scope  # noqa: E402
+
+NAME = "check-ai-review-triage"
+
+#: The reviewer's account and the marker its verdict comment starts with (scripts/pr-review-triage).
+REVIEWER_LOGIN = "github-actions[bot]"
+VERDICT_MARKER = "<!-- unified-ai-review -->"
+
+#: The line `scripts/pr-review-triage --post` appends. One definition: the test asserts the
+#: tool's output parses with this pattern.
+TRIAGE_MARKER = re.compile(r"<!-- ai-review-triage head=([0-9a-f]{40}) verdict=(none|[0-9]+@[0-9TZ:.+-]+) -->")
+NO_VERDICT = "none"
+
+#: GitHub's own statement of a commenter's standing in the repository, on the comment object.
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+PASS = 0
+FAIL = 1
+ERROR = 2
+WAITING = 3
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _user(comment: dict[str, object]) -> dict[str, object]:
+    user = comment.get("user")
+    return user if isinstance(user, dict) else {}
+
+
+def newest_verdict(comments: list[dict[str, object]]) -> dict[str, object] | None:
+    """The reviewer's verdict comment, the one updated last when there are several."""
+    verdicts = [
+        c
+        for c in comments
+        if _text(_user(c).get("login")) == REVIEWER_LOGIN and _text(c.get("body")).startswith(VERDICT_MARKER)
+    ]
+    if not verdicts:
+        return None
+    return max(verdicts, key=lambda c: _text(c.get("updated_at")) or _text(c.get("created_at")))
+
+
+def verdict_ref(verdict: dict[str, object]) -> str:
+    """How a triage names the verdict it answers: the comment id and the time it was last edited."""
+    return f"{verdict.get('id')}@{_text(verdict.get('updated_at')) or _text(verdict.get('created_at'))}"
+
+
+def is_trusted(comment: dict[str, object], session_authors: dict[int, str]) -> bool:
+    """A session account by authenticated id and type, or an account GitHub reports as OWNER,
+    MEMBER or COLLABORATOR on this comment. A login alone is never the authority."""
+    user = _user(comment)
+    verdict, _reason = classify(
+        str(user.get("id") or ""), _text(user.get("type")), _text(user.get("login")), session_authors
+    )
+    if verdict == SESSION:
+        return True
+    return _text(comment.get("author_association")) in TRUSTED_ASSOCIATIONS
+
+
+def triage_markers(comments: list[dict[str, object]]) -> list[tuple[dict[str, object], str, str]]:
+    """Every (comment, head, verdict reference) a comment body carries, in comment order."""
+    found = []
+    for comment in comments:
+        for match in TRIAGE_MARKER.finditer(_text(comment.get("body"))):
+            found.append((comment, match.group(1), match.group(2)))
+    return found
+
+
+def check(
+    comments: list[dict[str, object]], head_sha: str, session_authors: dict[int, str], review_started: str = ""
+) -> tuple[int, str]:
+    """Is the newest verdict answered by a trusted triage for this head? Returns (code, reason).
+
+    ``review_started`` is when the review run for this head started; a verdict not newer than it
+    describes an earlier commit, so there is nothing to answer yet.
+    """
+    head = head_sha.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        return ERROR, f"{NAME}: --head-sha must be a full 40-hex commit sha"
+    short = head[:8]
+    markers = triage_markers(comments)
+    trusted = [(c, h, v) for c, h, v in markers if is_trusted(c, session_authors)]
+    ignored = len(markers) - len(trusted)
+    note = f" ({ignored} marker(s) from accounts that do not count were ignored)" if ignored else ""
+
+    verdict = newest_verdict(comments)
+    if verdict is None:
+        if any(h == head and v == NO_VERDICT for _c, h, v in trusted):
+            return PASS, f"{NAME}: OK — head {short} is recorded as a round with no AI review{note}"
+        return WAITING, f"{NAME}: waiting — no AI review verdict on this pull request yet; nothing to triage{note}"
+
+    wanted = verdict_ref(verdict)
+    verdict_time = wanted.split("@", 1)[1]
+    for_head = [(c, v) for c, h, v in trusted if h == head]
+    for comment, ref in for_head:
+        answered_after = _text(comment.get("created_at")) >= verdict_time
+        if ref == wanted and answered_after:
+            return PASS, f"{NAME}: OK — the AI review of {short} (verdict {verdict_time}) has a written triage{note}"
+        if ref == NO_VERDICT and answered_after:
+            # The verdict on the pull request is an earlier head's: the tool refuses to record
+            # "no review" for a head the verdict covers, and nothing has been posted since.
+            return PASS, (
+                f"{NAME}: OK — head {short} is recorded as a round with no AI review; the verdict on the "
+                f"pull request ({verdict_time}) predates that record{note}"
+            )
+
+    if review_started.strip() and not verdict_time > review_started.strip():
+        return WAITING, (
+            f"{NAME}: waiting — the verdict on the pull request ({verdict_time}) predates the review of {short}; "
+            f"the re-review has not posted yet{note}"
+        )
+
+    how = f"Write the triage and post it with: scripts/pr-review-triage <pr> --post <file>{note}"
+    if not trusted:
+        return FAIL, f"{NAME}: the AI review (verdict {verdict_time}) has no triage marker. {how}"
+    if not for_head:
+        return FAIL, (
+            f"{NAME}: the pull request is at {short} and its triage is for an earlier commit; the review of "
+            f"{short} (verdict {verdict_time}) is unanswered. {how}"
+        )
+    if any(ref == NO_VERDICT for _c, ref in for_head):
+        return FAIL, (
+            f"{NAME}: {short} was recorded as a round with no AI review, and a verdict has arrived since "
+            f"({verdict_time}). {how}"
+        )
+    return FAIL, (
+        f"{NAME}: the AI review of {short} was posted or edited at {verdict_time}, after its triage was "
+        f"written; the newest verdict is unanswered. {how}"
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = {
+        "--comments-file": "",
+        "--head-sha": "",
+        "--review-started": "",
+        "--pr-author-id": "",
+        "--pr-author-type": "",
+        "--pr-author": "",
+    }
+    rest = list(argv)
+    for flag in list(args):
+        if flag in rest:
+            i = rest.index(flag)
+            if i + 1 >= len(rest):
+                print(f"{NAME}: {flag} needs a value", file=sys.stderr)
+                return ERROR
+            args[flag] = rest[i + 1]
+            del rest[i : i + 2]
+    if rest or not args["--comments-file"]:
+        print(f"{NAME}: usage: --comments-file <json> --head-sha <sha> [--pr-author-id ...]", file=sys.stderr)
+        return ERROR
+    identity = [part for flag in ("--pr-author-id", "--pr-author-type", "--pr-author") for part in (flag, args[flag])]
+    try:
+        scope, scope_reason = session_scope(identity)
+        if scope == OUTSIDE:
+            print(f"{NAME}: OK — {scope_reason}; a triage is asked only of session pull requests")
+            return PASS
+        session_authors = load_session_authors()
+        data = json.loads(Path(args["--comments-file"]).read_text(encoding="utf-8"))
+    except SessionAuthorsError as exc:
+        print(f"{NAME}: {exc}", file=sys.stderr)
+        return ERROR
+    except (OSError, ValueError) as exc:
+        print(f"{NAME}: cannot read the comments file: {exc}", file=sys.stderr)
+        return ERROR
+    if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+        print(f"{NAME}: the comments file is not a JSON array of comment objects", file=sys.stderr)
+        return ERROR
+    code, reason = check(data, args["--head-sha"], session_authors, args["--review-started"])
+    print(reason, file=sys.stderr if code in (FAIL, ERROR) else sys.stdout)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

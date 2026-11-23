@@ -43,10 +43,22 @@
 #       reviewer commentary, not only its checks — every emitted REVIEW/
 #       COMMENT line is a triage obligation for whoever armed the watch.
 #
+#   scripts/pr-review-triage <pr-number> --post <file> [--no-review]
+#       Post the WRITTEN TRIAGE of the newest AI review, read from <file>, as a PR
+#       comment, and append the marker the triage check looks for
+#       (scripts/check-ai-review-triage, req-dev-multisession-review-triage-check):
+#         <!-- ai-review-triage head=<head sha> verdict=<verdict comment id>@<updated_at> -->
+#       The marker is written here and never typed by hand: a file that already carries
+#       one is refused. The file is posted as written; nothing else is added to it.
+#       Refused when there is nothing to answer: no unified-ai-review verdict yet, or one
+#       that predates the review of the current head (wait for the re-review). A head the
+#       reviewer never answered is recorded with --no-review, which is refused in turn
+#       when a verdict does cover the head.
+#
 # Exit codes: 0 = printed at least one review, inline comment or bot issue
 # comment (--watch: terminal
-# state reached); 1 = nothing arrived (within the wait window, if any);
-# 2 = usage error.
+# state reached; --post: the triage was posted); 1 = nothing arrived (within the wait
+# window, if any; --post: refused, nothing to answer); 2 = usage error.
 
 set -euo pipefail
 
@@ -57,8 +69,59 @@ done
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$(basename "$0"): run from inside the repo worktree (gh resolves {owner}/{repo} from it)" >&2; exit 2; }
 
 PR="${1:-}"
-[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds]]" >&2; exit 2; }
+[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds] | --post <file> [--no-review]]" >&2; exit 2; }
 shift
+
+POST_FILE=""; NO_REVIEW=0
+if [[ "${1:-}" == "--post" ]]; then
+  POST_FILE="${2:-}"
+  [[ -n "$POST_FILE" && -f "$POST_FILE" && -r "$POST_FILE" && -s "$POST_FILE" ]] || { echo "$(basename "$0"): --post takes a readable, non-empty file holding the written triage" >&2; exit 2; }
+  case "${3:-}" in
+    "") ;;
+    --no-review) NO_REVIEW=1 ;;
+    *) echo "$(basename "$0"): unexpected argument after --post <file>: ${3}" >&2; exit 2 ;;
+  esac
+fi
+
+# The line the triage check looks for (scripts/check-ai-review-triage, TRIAGE_MARKER).
+#   triage_marker <head sha> <verdict comment id>@<verdict updated_at> | none
+triage_marker() {
+  printf '<!-- ai-review-triage head=%s verdict=%s -->' "$1" "$2"
+}
+
+# The comment --post sends: the file as written, then the marker on a line of its own. A file
+# that already carries a marker is refused (status 3): the marker says which head and which
+# verdict the tool checked, so a pasted one would claim a check that did not happen.
+#   compose_triage_body <file> <head sha> <verdict reference>
+compose_triage_body() {
+  local text
+  text="$(cat "$1")"
+  if [[ "$text" == *"<!-- ai-review-triage"* ]]; then
+    echo "pr-review-triage: ${1} already carries an ai-review-triage marker. The marker is written by --post, never by hand: remove it." >&2
+    return 3
+  fi
+  printf '%s\n\n%s\n' "$text" "$(triage_marker "$2" "$3")"
+}
+
+# Why --post must not post, or nothing when it may. Status 1 with the reason on stdout.
+#   post_refusal <covers|stale|unknown|none> <0|1: --no-review given>
+# `covers`: the verdict is newer than the review run of the current head. `stale`: it predates
+# that run. `unknown`: no review run was found for the head. `none`: no verdict comment at all.
+post_refusal() {
+  local state="$1" no_review="$2"
+  if [[ "$no_review" -eq 1 ]]; then
+    case "$state" in
+      covers) echo "an AI review verdict covers this head: triage it, do not record the round as having none"; return 1 ;;
+      unknown) echo "cannot tell whether the AI review verdict covers this head (no review run found for it); not recording the round as having none"; return 1 ;;
+    esac
+    return 0
+  fi
+  case "$state" in
+    none) echo "no unified-ai-review verdict on this pull request yet: nothing to triage. If the reviewer never answered this head, record that with --no-review"; return 1 ;;
+    stale) echo "the AI review verdict predates the review of the current head: it describes an earlier commit. Wait for the re-review, then post"; return 1 ;;
+  esac
+  return 0
+}
 
 # One line for a change in GitHub's `mergeable` (MERGEABLE | CONFLICTING | UNKNOWN), or
 # nothing. A PR goes CONFLICTING after it opens, when its base moves under it: every
@@ -211,6 +274,51 @@ split_bot_comments() {
         forged: map(select(.marked and (.unified | not)) | del(.marked))
       }'
 }
+
+# --post: answer the newest verdict in writing, stamped with the head and the verdict it answers.
+post_triage() {
+  local head_sha bots verdict_id verdict_updated branch cap_started state reason ref body
+  head_sha="$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" || { echo "$(basename "$0"): cannot fetch PR #${PR} — check number/auth/repo" >&2; exit 2; }
+  bots="$(gh api --paginate "repos/{owner}/{repo}/issues/${PR}/comments" | jq -s 'add' | split_bot_comments | jq '.bots')"
+  # The verdict is the reviewer's comment updated last; its id and that time name it.
+  verdict_id="$(jq -r '[.[] | select(.unified)] | sort_by(.updated_at // .created_at) | last | .id // empty' <<<"$bots")"
+  verdict_updated="$(jq -r '[.[] | select(.unified)] | sort_by(.updated_at // .created_at) | last | (.updated_at // .created_at) // empty' <<<"$bots")"
+  state="none"
+  if [[ -n "$verdict_id" ]]; then
+    branch="$(gh pr view "$PR" --json headRefName --jq .headRefName 2>/dev/null)" || branch=""
+    # jq --arg, never interpolation: the sha comes from an API response.
+    cap_started="$(gh run list --branch "$branch" --workflow "AI review capture" --limit 10 \
+                     --json headSha,createdAt 2>/dev/null \
+                   | jq -r --arg sha "$head_sha" '[.[] | select(.headSha == $sha)] | first | .createdAt // empty')" || cap_started=""
+    if [[ -z "$cap_started" ]]; then
+      state="unknown"
+    elif [[ "$verdict_updated" > "$cap_started" ]]; then
+      state="covers"
+    else
+      state="stale"
+    fi
+  fi
+  if ! reason="$(post_refusal "$state" "$NO_REVIEW")"; then
+    echo "$(basename "$0"): not posted — ${reason}." >&2
+    exit 1
+  fi
+  if [[ "$NO_REVIEW" -eq 1 ]]; then
+    ref="none"
+  else
+    ref="${verdict_id}@${verdict_updated}"
+    if [[ "$state" == "unknown" ]]; then
+      echo "$(basename "$0"): no review run found for head ${head_sha:0:8}; cannot confirm the verdict covers it. Posting, stamped with the verdict as it stands." >&2
+    fi
+  fi
+  body="$(compose_triage_body "$POST_FILE" "$head_sha" "$ref")" || exit 2
+  gh pr comment "$PR" --body-file - <<<"$body"
+  echo "Posted the triage of PR #${PR} for head ${head_sha:0:8} (verdict ${ref})."
+}
+
+if [[ -n "$POST_FILE" ]]; then
+  post_triage
+  exit 0
+fi
 
 fetch_counts
 if [[ "$N_ARRIVALS" -eq 0 && "$WAIT" -gt 0 ]]; then

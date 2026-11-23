@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 4 |
+| mapped | 5 |
 | excluded | 10 |
 | unbuilt | 4 |
 | unaccounted | 1 |
@@ -34,4 +34,5 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-dev-multisession-bind-loopback` | Proposed | Tested | — | `req-dev-multisession-bind-loopback-1`, `req-dev-multisession-bind-loopback-2` |
 | `req-dev-multisession-container-engine` | Implemented | Tested | — | `req-dev-multisession-container-engine-1`, `req-dev-multisession-container-engine-10`, `req-dev-multisession-container-engine-2`, `req-dev-multisession-container-engine-3`, `req-dev-multisession-container-engine-4`, `req-dev-multisession-container-engine-5`, `req-dev-multisession-container-engine-6`, `req-dev-multisession-container-engine-7`, `req-dev-multisession-container-engine-8`, `req-dev-multisession-container-engine-9` |
 | `req-dev-multisession-pr-open-redirect` | Implemented | Tested | — | `req-dev-multisession-pr-open-redirect-1`, `req-dev-multisession-pr-open-redirect-2`, `req-dev-multisession-pr-open-redirect-3`, `req-dev-multisession-pr-open-redirect-4`, `req-dev-multisession-pr-open-redirect-5`, `req-dev-multisession-pr-open-redirect-6` |
+| `req-dev-multisession-review-triage-check` | Implemented | Tested | — | `req-dev-multisession-review-triage-check-10`, `req-dev-multisession-review-triage-check-11`, `req-dev-multisession-review-triage-check-9` |
 | `req-dev-multisession-session-author-scope` | Implemented | Tested | — | `req-dev-multisession-session-author-scope-1`, `req-dev-multisession-session-author-scope-2`, `req-dev-multisession-session-author-scope-3` |

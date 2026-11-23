@@ -107,6 +107,11 @@ it.
    opens the PR, and wires the server gate and auto-merge. `gh pr create` does the last of
    those five things.
 
+   **Run it in the background.** The promote blocks until the PR merges. In the foreground you
+   cannot act on the review until it returns, which is after the merge: `PR# 1315 - tap` sat
+   green with its review unanswered that way (Issue# 1317 - tap). In the background the call
+   returns at once, and step 7 is yours to do while it runs.
+
    **In this repository an agent does not run `gh pr create` itself.** A Claude Code
    PreToolUse hook (`scripts/hooks/pr-open-redirect`, wired by `.claude/settings.json`)
    refuses it before it runs and points back here (`req-dev-multisession-pr-open-redirect`).
@@ -140,6 +145,19 @@ it.
 
    Besides reviews and failing checks it prints a `CONFLICT` line when the PR stops
    merging into its base, which happens after opening whenever the base moves.
+
+   **What prompts this step, and what does not enforce it**
+   (`req-dev-multisession-review-triage-check`). A PostToolUse hook,
+   `scripts/hooks/pr-watch-prompt`, puts this instruction in front of you when the Bash call
+   that ran the promote (or a plugin repository's `gh pr create`) returns, with the PR number
+   when the call's output shows one. For a promote started in the background the PR does not
+   exist yet, so the hook says the number is missing: find it with
+   `gh pr list --head <branch> --state open --json number` once the promote has opened it,
+   then arm the watch. The hook is a prompt. It cannot arm a Monitor, it says nothing in a
+   session without the repo's hooks installed, and nothing checks that a watch is running.
+   What is checked is the outcome: the advisory `ai-review-triage` status on the PR, which
+   stays unanswered until a triage is posted with `scripts/pr-review-triage <pr> --post <file>`
+   (see `close-out-pr`).
 
    Then hand off: **`close-out-pr` owns everything from here** — including its cap of
    **three** fix-and-push rounds against the AI review before halting and asking the

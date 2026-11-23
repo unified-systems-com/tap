@@ -11,8 +11,11 @@ A PR is not finished when its checks go green. It is finished when someone has
 **read the AI review and answered every finding in writing**, and the required
 checks pass.
 
-Nothing enforces this. There is no hook and no gate — the one that was built was
-withdrawn as unsound (see *What is deliberately not here*). This skill is the
+Nothing enforces this. One thing now reports part of it: the advisory `ai-review-triage`
+status says whether a triage was **posted** for the newest review of the current head
+(`req-dev-multisession-review-triage-check`). It does not say the triage is any good, it is
+not a required check, and it does not block a merge. There is still no gate — the one that
+was built was withdrawn as unsound (see *What is deliberately not here*). This skill is the
 procedure, and running it is a decision you make each time.
 
 ## Best practices for TAP
@@ -289,6 +292,23 @@ for the same reason: anyone can write into these surfaces.
    round, and run `scripts/implements-tag --check` before it: a round spent on a stale claim
    stamp or on a local guard tripping over your own untracked `logs/` is a round wasted.
 
+   **Post the triage with the tool, so the status can see it.** Write the answer to a file
+   and post it with
+
+       scripts/pr-review-triage <pr> --post <file>
+
+   from the trusted checkout (see *Run the helpers from a TRUSTED checkout*). Like every
+   command here it is the operator's or the session's own to run; this skill's grant does
+   not include it. The tool appends a marker naming the head commit and the verdict it
+   answers, and the `ai-review-triage` status reads that marker. Never type the marker: the
+   tool refuses a file that carries one. It also refuses to post when there is no verdict
+   yet, or when the verdict predates the review of the current head — wait for the
+   re-review. For a head the reviewer never answered, `--post <file> --no-review` records
+   that, and is refused when a verdict does cover the head. A triage posted with a plain
+   `gh pr comment` is still a triage, but the status stays `failure`: it cannot tell that
+   comment from any other. Every push and every re-review reopens the status, so each round
+   gets its own `--post`.
+
    A finding that is real but out of scope gets **written up as an issue** — drafted here,
    filed by the operator, like the comment — and named in the reply, rather than silently
    widening this PR. No `gh` command is granted to this skill at all.
@@ -438,6 +458,16 @@ per-finding. Not matching is unconditionally permissive.
 The hook half could not bind a merge in any case: a `PreToolUse` hook is
 client-side and opt-in by design (`req-dev-localexec-consent`), so it is invisible
 to the GitHub UI and to any session without hooks installed. A seatbelt, not a lock.
+
+**What exists now is narrower, and says so** (`req-dev-multisession-review-triage-check`,
+Issue# 1317 - tap). The `ai-review-triage` status does not guess which comment is an answer:
+it counts only a comment the posting tool stamped for this head and this verdict, from a
+session account or an account GitHub reports as owner, member or collaborator. It proves a
+triage was posted after the verdict. It does not prove the triage answers each finding, or
+that anyone read the review; an empty file posted through the tool turns it green. It is
+advisory: not a required check and not a `gate` need. The reviewer's own comment starts no
+workflow, so after a push the status reads `pending` until the next comment by another
+account, even when a verdict is already waiting.
 
 What was sound and is worth reviving inside a real gate: the **coverage** predicate —
 *a review exists and every required seat reported*. Enforcement belongs where the

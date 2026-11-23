@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Claude Code PostToolUse hook — after a pull request is opened, tell the session to arm the review watch.
+
+Wired by .claude/settings.json, which holds ONLY a pointer to this file
+(req-dev-localexec-config-not-logic): the logic lives here, where it can be read in a diff,
+linted and tested (tap/tests/test_pr_watch_prompt.py).
+
+What it is for (req-dev-multisession-review-triage-check). `scripts/promote-to-main.sh` opens
+the pull request, prints the AI review once, and then blocks until the merge. A session that
+runs it in the background hears nothing until then, and a session that runs it in the
+foreground cannot act until it returns. `PR# 1315 - tap` sat green with its review unanswered
+for that reason. A shell script cannot arm a watcher inside an agent's session; the agent has to
+make that call. This hook puts the instruction in front of it at the moment the Bash call that
+started the promote (or a plugin repository's `gh pr create`) comes back.
+
+How it differs from `pr-triage-nudge`, the PostToolUse reminder retired on 2026-10-08. That one
+was the only answer to a hand-run `gh pr create` in this repository, which it could not stop.
+`pr-open-redirect` now refuses that call before it runs. This hook does not guard anything: it
+follows the sanctioned path and says what to do next.
+
+Its limits, stated so they can be checked:
+  1. It reads its stdin payload, the sibling hook file `pr-open-redirect` (whose command parser
+     and session test it reuses, so the two cannot disagree about what a command is), and the
+     files that hook reads: `.git` entries, the project's `.env.local` and this repository's git
+     config. It also checks whether a `main` directory sits beside the project directory. It
+     never runs a command, writes a file, opens a socket or touches a credential store.
+  2. It speaks on two shapes only, each a command in its own right in the agent's own Bash
+     call: `scripts/promote-to-main.sh` (by any path, directly or as `bash <path>`), unless it
+     carries `--dry-run` or `--help`; and `gh pr create` aimed at a repository other than this
+     one, as `pr-open-redirect` decides it. A mention inside quotes, a comment or a heredoc is
+     not an invocation.
+  3. Its whole effect is one PostToolUse `additionalContext` string that Claude reads beside the
+     tool result. It makes no permission decision and cannot block, undo or change anything.
+  4. It reports the pull request number when the call's own output shows one (`/pull/<n>` or
+     `PR #<n>`). When it does not, as with a promote started in the background, it says so and
+     gives the command that finds it, and still delivers the instruction.
+  5. Any error — no payload, malformed JSON, a command the tokenizer cannot split, a missing
+     sibling — outputs nothing. It runs after every Bash call and must never disturb one.
+  6. It acts only inside a spawned TAP session, by the same test `pr-open-redirect` uses
+     (limit 6 there): the project's `.env.local` names a `tap_` compose project, or its HEAD is
+     on a `session/<name>` branch. Anywhere else it outputs nothing. That test describes a
+     session and does not prove one. This is a prompt for a well-behaved session, not a
+     control: what must hold for every pull request is the `ai-review-triage` status, which
+     runs in CI.
+
+Input: the PostToolUse payload as JSON on stdin (tool_name, tool_input.command, tool_response,
+cwd). Output: a hookSpecificOutput JSON object on stdout, or nothing. Exit code is always 0.
+
+Spec: specs/spec-dev-local-execution.md, specs/spec-dev-multisession.md
+"""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import sys
+from types import ModuleType
+
+PROMOTE = "promote-to-main.sh"
+_SHELLS = ("bash", "sh")
+_QUIET_FLAGS = ("--dry-run", "-n", "--help", "-h")
+_PR_NUMBER = re.compile(r"(?:/pull/|PR #)([0-9]+)")
+
+
+def _sibling() -> ModuleType:
+    """`pr-open-redirect`, loaded by path: one command parser and one session test for both hooks."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pr-open-redirect")
+    loader = importlib.machinery.SourceFileLoader("pr_open_redirect", path)
+    spec = importlib.util.spec_from_loader("pr_open_redirect", loader)
+    if spec is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def ran_promote(command: str, redirect: ModuleType) -> bool:
+    """True when `command` runs the promote as a command in its own right, and not as a dry run."""
+    if PROMOTE not in command:
+        return False
+    tokens = redirect._tokens(command)
+    at_start = True
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if redirect._SEPARATOR.match(token):
+            at_start = True
+            i += 1
+            continue
+        if at_start:
+            word = token.lstrip("`")
+            if token == "$" or redirect._ASSIGNMENT.match(word):
+                i += 1
+                continue
+            j = i
+            if os.path.basename(word) in _SHELLS and j + 1 < len(tokens):
+                j += 1
+                word = tokens[j]
+            if os.path.basename(word) == PROMOTE:
+                rest = []
+                k = j + 1
+                while k < len(tokens) and not redirect._SEPARATOR.match(tokens[k]):
+                    rest.append(tokens[k])
+                    k += 1
+                if not any(flag in rest for flag in _QUIET_FLAGS):
+                    return True
+        at_start = False
+        i += 1
+    return False
+
+
+def _response_text(response: object) -> str:
+    """The call's own output, whatever shape the payload gives it."""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        return "\n".join(str(response.get(key) or "") for key in ("stdout", "stderr", "output"))
+    return ""
+
+
+def _branch(project_root: str, redirect: ModuleType) -> str:
+    head_file = os.path.join(redirect._gitdir(project_root), "HEAD")
+    with open(head_file, encoding="utf-8") as fh:
+        head = fh.read().strip()
+    return head.removeprefix("ref: refs/heads/") if head.startswith("ref: refs/heads/") else ""
+
+
+def prompt(kind: str, pr_number: str, branch: str, trusted: str) -> str:
+    """The instruction Claude reads. `kind` is "promote" or "plugin"."""
+    where = f"`{trusted}`" if trusted else "a trusted checkout of the default branch"
+    if pr_number:
+        number = f"The pull request is #{pr_number}."
+        target = pr_number
+    else:
+        find = f"`gh pr list --head {branch} --state open --json number`" if branch else "`gh pr list --state open`"
+        number = (
+            "The pull request number is not in this call's output (a promote started in the background "
+            f"has not opened it yet). Find it with {find}, then arm the watch."
+        )
+        target = "<pr>"
+    if kind == "promote":
+        opened = (
+            "scripts/promote-to-main.sh opens the pull request and then BLOCKS until it merges, so the AI "
+            "review it prints reaches nobody while it runs. Do not wait for it to return."
+        )
+        arm = f"from {where}, never from this worktree: `scripts/pr-review-triage {target} --watch`"
+    else:
+        opened = "This command opened a pull request outside this repository's promote, so nothing else watches it."
+        arm = (
+            f"with the script from {where}, run from inside the plugin checkout so `gh` resolves its "
+            f"repository: `<trusted>/scripts/pr-review-triage {target} --watch`"
+        )
+    return (
+        "REVIEW WATCH (req-dev-multisession-review-triage-check): "
+        f"{opened} {number} Arm the standard watcher NOW, as a Monitor, {arm}. Every REVIEW or COMMENT line "
+        "it emits is a triage to write. Answer each review round with "
+        f"`scripts/pr-review-triage {target} --post <file>`, which stamps the comment so the "
+        "`ai-review-triage` status on the pull request can see it; until then that status stays unanswered."
+    )
+
+
+def decide(payload: dict[str, object], project_dir: str, redirect: ModuleType) -> str | None:
+    """The prompt for this call, or None when the call opened no pull request."""
+    if payload.get("tool_name") != "Bash":
+        return None
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str) or not project_dir:
+        return None
+    project_root = os.path.realpath(project_dir)
+    if not redirect.in_session_worktree(project_root):
+        return None
+    if ran_promote(command, redirect):
+        kind = "promote"
+    else:
+        cwd = payload.get("cwd")
+        where = cwd if isinstance(cwd, str) and cwd else os.getcwd()
+        if redirect.pr_create_decision(command, where, project_dir) != redirect.REMIND:
+            return None
+        kind = "plugin"
+    match = _PR_NUMBER.search(_response_text(payload.get("tool_response")))
+    trusted = os.path.join(os.path.dirname(project_root), "main")
+    return prompt(
+        kind,
+        match.group(1) if match else "",
+        _branch(project_root, redirect) if kind == "promote" else "",
+        trusted if os.path.isdir(trusted) and trusted != project_root else "",
+    )
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            return 0
+        text = decide(payload, os.environ.get("CLAUDE_PROJECT_DIR") or "", _sibling())
+    except Exception:  # noqa: BLE001 — fail quiet: never disturb an unrelated Bash call
+        return 0
+    if text:
+        json.dump({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

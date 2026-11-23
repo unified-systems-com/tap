@@ -1,0 +1,98 @@
+# AI review triage — reports whether the newest AI review of a pull request has a written triage.
+# Spec: specs/spec-dev-multisession.md (req-dev-multisession-review-triage-check). Issue# 1317 - tap.
+#
+# ADVISORY. It publishes one commit status, `ai-review-triage`, on the pull request's head. That
+# context is in no required-check list and is not one of the `gate` job's needs; this job itself
+# always succeeds, so nothing here can block a merge.
+#
+# A thin caller: every decision is in scripts/check-ai-review-triage, which is tested
+# (tap/tests/test_check_ai_review_triage.py). This file fetches the inputs and maps the answer.
+#
+# Untrusted input. Comment bodies, the branch name and the author's login are text an outsider
+# controls. None of it is interpolated into a script: values reach the shell through `env:` and
+# are quoted, comments are written to a file and only read as JSON, and the pull request's code is
+# never checked out (the checkout pins the default branch). No `pull_request_target`.
+#
+# What re-evaluates it: a push (the head moves) and any comment by an account whose events start
+# workflows. The reviewer's own verdict is posted with the workflow token, which starts no
+# workflow, so the status is `pending` after a push and turns to `failure` or `success` at the
+# next comment event: a scanner's summary, or the triage itself.
+name: AI review triage
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created, edited, deleted]
+
+concurrency:
+  group: ai-review-triage-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  report:
+    # A comment on an issue that is not a pull request is not ours.
+    if: github.event_name == 'pull_request' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    # statuses: write is the one write: the advisory status on the head commit. actions: read
+    # finds the review run for the head; pull-requests: read reads the comments.
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The default branch's copy of the check, never the pull request's.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Report whether the newest AI review has a written triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [[ ! -x scripts/check-ai-review-triage ]]; then
+            echo "scripts/check-ai-review-triage is not on the default branch yet; nothing to report."
+            exit 0
+          fi
+          pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"
+          if [[ "$(jq -r '.state' <<<"$pr_json")" != "open" ]]; then
+            echo "Pull request #$PR_NUMBER is not open; nothing to report."
+            exit 0
+          fi
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          head_ref="$(jq -r '.head.ref' <<<"$pr_json")"
+          author_id="$(jq -r '.user.id' <<<"$pr_json")"
+          author_type="$(jq -r '.user.type' <<<"$pr_json")"
+          author_login="$(jq -r '.user.login' <<<"$pr_json")"
+          gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" | jq -s 'add // []' > "$RUNNER_TEMP/comments.json"
+          # When the review of this head started: the capture run for the head sha, as
+          # scripts/pr-review-triage derives it. Empty when none is found.
+          review_started="$(gh run list --repo "$REPO" --branch "$head_ref" --workflow "AI review capture" --limit 10 \
+              --json headSha,createdAt 2>/dev/null \
+            | jq -r --arg sha "$head_sha" '[.[] | select(.headSha == $sha)] | first | .createdAt // empty' || true)"
+          set +e
+          reason="$(scripts/check-ai-review-triage --comments-file "$RUNNER_TEMP/comments.json" \
+            --head-sha "$head_sha" --review-started "$review_started" \
+            --pr-author-id "$author_id" --pr-author-type "$author_type" --pr-author "$author_login" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$reason"
+          case "$code" in
+            0) state="success" ;;
+            1) state="failure" ;;
+            3) state="pending" ;;
+            *) state="error" ;;
+          esac
+          # A status description holds 140 characters; the full reason is in this log.
+          gh api --method POST "repos/$REPO/statuses/$head_sha" \
+            -f state="$state" -f context="ai-review-triage" -f description="${reason:0:140}" >/dev/null \
+            || echo "Could not publish the status (a fork's token is read-only); the answer is in this log."

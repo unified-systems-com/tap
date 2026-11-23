@@ -25,5 +25,6 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | --- | --- | --- | --- | --- |
 | `req-dev-localexec-config-not-logic` | In Force | Tested | — | `req-dev-localexec-config-not-logic-1`, `req-dev-localexec-config-not-logic-2` |
 | `req-dev-localexec-host-syntax-floor` | Implemented | Tested | — | `req-dev-localexec-host-syntax-floor-1`, `req-dev-localexec-host-syntax-floor-2`, `req-dev-localexec-host-syntax-floor-3`, `req-dev-localexec-host-syntax-floor-4`, `req-dev-localexec-host-syntax-floor-5`, `req-dev-localexec-host-syntax-floor-6` |
+| `req-dev-localexec-owned` | In Force | Tested | — | `req-dev-localexec-owned-1` |
 | `req-dev-localexec-prepush` | Implemented | Implemented | `test_the_hook_exists_and_is_executable` | — |
 | `req-dev-localexec-runner-interpreter` | Implemented | Verified | `scan_workflow` | `req-dev-localexec-runner-interpreter-1`, `req-dev-localexec-runner-interpreter-2`, `req-dev-localexec-runner-interpreter-3`, `req-dev-localexec-runner-interpreter-4`, `req-dev-localexec-runner-interpreter-5`, `req-dev-localexec-runner-interpreter-6` |

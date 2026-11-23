@@ -108,6 +108,9 @@
 /scripts/pr_session_identity.py          @notgeorge @criticalsec
 /scripts/check-pr-title                  @notgeorge @criticalsec
 /scripts/check-pr-opened-by              @notgeorge @criticalsec
+# Decides whose triage marker counts on a pull request (req-dev-multisession-review-triage-check).
+# Widening that rule lets a stranger's comment turn the advisory status green.
+/scripts/check-ai-review-triage          @notgeorge @criticalsec
 /tap/tap.pr-session-authors.json         @notgeorge @criticalsec
 
 # every guards/ package — core, per-app, and per-plugin

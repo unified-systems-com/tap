@@ -11,6 +11,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/hooks/pr-watch-prompt\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
