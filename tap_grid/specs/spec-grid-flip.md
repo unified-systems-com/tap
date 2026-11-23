@@ -211,7 +211,7 @@ Prior art: Server-Side Apply tracks ownership per map key, and an applier remove
 3. The entry for a tracked field is an object mapping each key, verbatim, to its entry. It is not a set of dotted paths: real keys contain dots, colons and slashes (`kubernetes.io/name`, `aws:cloudformation:stack-name`), which a dotted path cannot hold.
 4. A write of a tracked field is judged per key. A key whose value changed, or that has no entry, is stamped; an unchanged key with an entry keeps it (`req-grid-flip-change`, applied per key).
 5. In `nodes` and in `updates`, a write of a tracked field sets the keys it carries and removes only those absent keys whose entry is the writer's source or that have no entry. Another source's keys stay. This replaces "present replaces whole" for tracked fields only.
-6. In `updates`, a key sent as `null` is removed if rule 5 would let the writer remove it.
+6. In `updates`, a key sent as `null` is removed under the same rule as a key sent with a value: under `on_other_source: overwrite` it is removed whoever owns it, as JSON Merge Patch removes a member; under `yield` it is removed only where rule 5 would let the writer remove it, its own key or one with no entry.
 7. Under `yield`, a key whose entry names another source is skipped and reported as the field with the key.
 8. In `replaces` a tracked field is replaced whole, every key, and every key is stamped by the writer.
 9. A removed key's entry is removed with it.
@@ -236,6 +236,7 @@ The yielded flag could have been read from the batch instead of stored on the en
 | req-grid-flip-nested-7 | Edge Properties Tracked By Key | Proposed | An edge type with no declaration of its own keeps a per-key entry for each key of `properties`. | Owner ruling, Issue# 1284 - tap |
 | req-grid-flip-nested-8 | Repeat Moves Nothing | Proposed | Re-sending an identical object moves no key's entry. | Issue# 322 - tap |
 | req-grid-flip-nested-9 | Yielded Entry Recorded | Proposed | A field first written under `yield` has the entry `{"batch": ..., "yielded": true}`; a plain id is read as not yielded. | |
+| req-grid-flip-nested-10 | Null Removes Under Overwrite, Own Keys Under Yield | Proposed | B owns key `env` of a tracked field. A sends `env: null` in `updates` with `overwrite`: the key is removed. A sends `env: null` with `yield`: the key and its entry stay. | |
 
 ### FLIP and History Separation
 ----

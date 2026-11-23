@@ -1562,6 +1562,7 @@ Prior art: Kubernetes Server-Side Apply. Each field has managers; an apply that 
 
 #### Implementation
 1. A **source** is the `source` of the batch a FLIP entry points at. Two batches are the same source when their `source` values are equal and not empty.
+   A batch whose `source` is empty cannot write under `yield`: an `updates` section with `on_other_source: yield` in such a batch refuses the document, naming the batch. Without a source a yielding writer would yield to its own earlier writes, which count as another source's, and could never correct a value it wrote.
 2. Under `yield`, a field the record carries is written when the field has no FLIP entry, or its entry points at a batch of the same source as the writing batch. Otherwise the field is skipped: its value, its entry and nothing else about it change.
 3. Each skipped field is reported in the result as a warning naming the entity, the field and the other source. It is never dropped silently.
 4. The judgement is made inside the write, on the row as locked for the write. There is no read-then-write gap.
@@ -1591,6 +1592,7 @@ Which source has the final say on a value, and whether a ranking of sources, kin
 | req-grift-yield-5 | Confirming Takes A Yielded Field | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`: the entry is B's and not yielded, no history row is written, the revision is unchanged; A's later different `name` under `yield` is skipped. | Rule 7 |
 | req-grift-yield-6 | Confirming Does Not Take An Overwritten Field | Proposed | A wrote `name` with `overwrite`; B sends the same `name` with `overwrite`: the entry stays A's, and nothing is written. | Rule 7; Issue# 322 - tap |
 | req-grift-yield-7 | No Gap | Proposed | The judgement uses the row as locked for the write. | Needs two connections |
+| req-grift-yield-8 | A Yielding Write Needs A Source | Proposed | A document whose batch has an empty `source` and an `updates` section with `on_other_source: yield` is refused, naming the batch, and writes nothing. | |
 
 ## Full Replace
 ----
@@ -1616,7 +1618,7 @@ Prior art: HTTP `PUT` replaces the representation whole (memory: RFC 9110, not f
 
 #### Implementation
 1. `node` is validated as a full object: required fields required (`req-grift-node`, "Node Validation").
-2. A field the record omits is reset to its model default. A field it carries replaces whole, a per-key tracked field included (`req-grid-flip-nested` rule 7), and an edge's `properties` included.
+2. A field the record omits is reset to its model default. A field it carries replaces whole, a per-key tracked field included (`req-grid-flip-nested` rule 8), and an edge's `properties` included.
 3. FLIP moves on the fields whose value changed, including a reset that changed the value (`req-grid-flip-change` rule 5). Entries it writes are not yielded.
 4. `on_missing` is `error`, `warn`, `ignore` or `create`.
 5. There is no `on_other_source`. A full replace is a statement of the whole object and does not yield.
