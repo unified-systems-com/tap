@@ -1,6 +1,6 @@
 """Re-derive the spine's event time from the typed rows (req-grid-entity-event-time rule 17).
 
-``BaseModel.save`` keeps the three event columns and the row's ``time`` dimension current on every changing write. A change to
+``BaseModel.save`` keeps the three event columns and the row's ``tap.time`` dimension current on every changing write. A change to
 a model's declaration reaches the rows already stored through this pass. It writes no history and
 no version, because no typed value changed. It runs as a batch of its own and records, for every
 row whose spine values it changes, a batch event of the ``maintenance`` type: the change has a
@@ -69,7 +69,7 @@ def rederive_event_time(
 ) -> RederiveReport:
     """Re-derive ``Entity.event_*`` for every row of the named types (else every registered type).
 
-    Writes only the rows whose three event columns or ``time`` dimension differ from what their
+    Writes only the rows whose three event columns or ``tap.time`` dimension differ from what their
     declaration now derives; a type that declares none has the columns emptied and the dimension
     removed. Retired rows are included: a retirement does not
     change when the thing happened. One transaction: the spine values, the batch and its events
@@ -98,7 +98,7 @@ def rederive_event_time(
                 if new_dims != stored_dims:
                     time_update = grid_derived_update(derived.as_dimensions())
                     if time_update is not None:
-                        # A key-level expression: it sets or removes the `time` entry and touches
+                        # A key-level expression: it sets or removes the `tap.time` entry and touches
                         # no other dimension, which is all this writer is allowed (write_guard).
                         columns["dimensions"] = time_update
                         moved.append(f"dimensions[{TIME_DIMENSION}]")
@@ -119,7 +119,7 @@ def rederive_event_time(
                     report.batch_id = str(batch.entity_id)
                 with below_pipeline_write("event_time_rederive"):
                     # The named writer may write the three event columns and `dimensions` (for the
-                    # `time` dimension) and nothing else; no typed value changes.
+                    # `tap.time` dimension) and nothing else; no typed value changes.
                     # Only while the row is at the version it was read at: a save that changed it
                     # since has bumped `version` and written its own event time in that statement,
                     # which is newer than what this pass derived, and must not be overwritten.

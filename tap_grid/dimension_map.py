@@ -17,7 +17,7 @@ Every writer goes through :func:`stamp`, which is the whole provenance rule (#71
   row, so an edit to them is enforced on the next write;
 - null is never stored (Q46a);
 - a dimension named in :data:`GRID_DERIVED` is written by the grid alone, ``src: derived``, from a
-  fact the grid holds (the ``time`` dimension, from a model's event-time declaration,
+  fact the grid holds (the ``tap.time`` dimension, from a model's event-time declaration,
   req-grid-entity-event-time). No caller, payload, envelope or declared default may supply it;
   :func:`settle` is the one place the stored map for a create or a replace is built with it.
 """
@@ -32,7 +32,7 @@ from django.db.models import Func
 
 from tap_grid.dimension_names import UnknownDimension, declared
 
-TIME_DIMENSION = "time"
+TIME_DIMENSION = "tap.time"
 """The dimension whose value says what a row's event time means (req-grid-entity-event-time)."""
 
 GRID_DERIVED: frozenset[str] = frozenset({TIME_DIMENSION})

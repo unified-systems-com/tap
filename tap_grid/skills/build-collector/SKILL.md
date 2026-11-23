@@ -279,6 +279,12 @@ def edge_entity_id(edge_type: str, from_key: str, to_key: str) -> uuid.UUID:   #
 
 Three rules keep the interim retirable: the `natural_key` string you hash is **exactly the declared `NATURAL_KEY` values** in declared order (so the gate's search finds the same rows); **never** put a discriminator, a timestamp or a positional index into an id (multi-edge is `EDGE_KEY`, tap#458, and a step that needs its own identity is a node); and name the helpers `# interim, superseded` so the phase-3 sweep finds them. The namespace is frozen for as long as it exists: changing it re-identifies every node the collector has ever emitted. (`req-grid-uuid-v5-namespace-contract` is deprecated, so a new namespace is not "allowed by the menu" — it is allowed only by the issue you filed.)
 
+### Times: send them as the source sent them
+
+A collector never converts a source's time. Put the value in the typed field in the form the source gave it (an epoch count, a house text form, a partial date), and never pad a year to a January date (`req-grid-entity-event-time` rule 22). The spine's event time is not a collector's to write either: an envelope that supplies `event_start`, `event_end` or `event_precision` is refused. The model's `EVENT_TIME` declaration names the field and, where the form is not one the grid reads, a reader function that the grid calls (`add-model`, *The model's event time*). A source's "last seen" is an ordinary field and never an interval's end; your own clock at the moment you ran is collection time, not the source's time, and is not stored as either.
+
+**A time inside a JSON field needs no column and no copy.** Leave it where the source put it and let the model's declaration name the member (`member=` on `Moment` / `Interval`); do not lift it into a field of its own in the collector, and do not rewrite its form (`req-grid-entity-event-time` rules 22, 29 and 30).
+
 ## Step 5: Decomposition / Projection
 
 The function(s) that turn source data (an API response row, a parsed artifact) into GRIFT envelopes. Per-envelope shapes:

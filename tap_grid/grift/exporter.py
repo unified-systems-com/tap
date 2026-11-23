@@ -282,7 +282,7 @@ def _entity_envelope(entity: Entity) -> dict[str, Any]:
     envelope: dict[str, Any] = {
         "entity_id": str(entity.id),
         "entity_type": entity.entity_type,
-        # Without the entries the grid derives itself (the `time` dimension): the receiving grid
+        # Without the entries the grid derives itself (the `tap.time` dimension): the receiving grid
         # derives its own from the record's fields and refuses one from a document.
         "dimensions": without_grid_derived(entity.dimensions),
     }

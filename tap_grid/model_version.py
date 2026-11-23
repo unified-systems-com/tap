@@ -248,7 +248,7 @@ def complete_start_checks(*, using: str = DEFAULT_DB_ALIAS) -> bool:
     raises, and the comparison stays owed so every later write raises too. It writes nothing:
     a type with no catalog row gets one when the process next starts.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@24d3c4c47c8d/03409ba39d66 (derivation) — rule 4: a process
+    TAP-IMPLEMENTS: req-grid-entity-model-version@9a71e8c91f1d/03409ba39d66 (derivation) — rule 4: a process
         whose start could not read the database does not go on to write unchecked; the
         comparison is made before its first write, import or export.
     """
@@ -315,7 +315,7 @@ def register_type(
 
     Raises :class:`ModelVersionAhead` where the applied version is greater than the declared one.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@24d3c4c47c8d/5c34838bcadb (derivation) — rules 3 and 4: the one
+    TAP-IMPLEMENTS: req-grid-entity-model-version@9a71e8c91f1d/5c34838bcadb (derivation) — rules 3 and 4: the one
         place a type's declared version meets the version applied to the grid's rows. It records
         the applied version only for a type the catalog has never held, and otherwise compares.
     """

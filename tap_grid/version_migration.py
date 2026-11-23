@@ -218,6 +218,10 @@ def _edge_violations(target: _Target, using: str) -> list[str]:
     return found
 
 
+#: What reading a committed record can raise: no such app, a malformed file, or one that cannot be read.
+_RECORD_UNREADABLE = (LookupError, ValueError, OSError)
+
+
 def _recorded_definition(target: _Target, version: int) -> Mapping[str, Any] | None:
     """The committed definition of the type at ``version``, where its owner has recorded one."""
     from django.apps import apps as installed
@@ -229,7 +233,7 @@ def _recorded_definition(target: _Target, version: int) -> Mapping[str, Any] | N
         return None
     try:
         record = definition.load_record(definition.app_record_path(owner.name))
-    except LookupError, ValueError, OSError:
+    except _RECORD_UNREADABLE:
         return None
     for entry in (record.get(definition._SECTIONS[NODE]) or {}).get(target.slug) or []:
         if isinstance(entry, Mapping) and entry.get("version") == version:

@@ -1064,7 +1064,7 @@ def _execute_write_pipeline(
 
             caller_dims: Any = getattr(instance, "_initial_dimensions", {}) or {}
             # Derived once and written twice below: the three event columns, and the kind as the
-            # row's `time` dimension (req-grid-entity-event-time rule 3).
+            # row's `tap.time` dimension (req-grid-entity-event-time rule 3).
             created_event_time = derive_for_instance(instance)
             try:
                 merged_dims = settle(

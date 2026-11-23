@@ -196,6 +196,28 @@ Review the generated migration before applying. Confirm:
 - A `historical<entity_slug>` table is created (django-simple-history).
 - Indexes match what your `db_index=True` fields requested.
 
+### The model's event time
+
+Every node model declares `EVENT_TIME`, beside `NATURAL_KEY`: when the thing happened or held in the world, as its source states it (`req-grid-entity-event-time`). The grid derives the spine's `event_start`, `event_end` and `event_precision` from the field you name, on every save; nothing a collector or a caller supplies reaches those columns.
+
+```python
+from tap_grid.event_time import NO_EVENT_TIME, Interval, Moment, from_epoch_seconds
+
+EVENT_TIME = Moment("published_at", "published")                      # it happened at one time
+EVENT_TIME = Interval("created_at", "created")                        # it holds from then on; the source states no end
+EVENT_TIME = Interval("created_at", "created", end="deleted_at")      # the source states an end
+EVENT_TIME = Moment("first_seen", "first_seen", reader=from_epoch_seconds)   # the source sends a count of seconds
+EVENT_TIME = NO_EVENT_TIME                                            # this type has no such time, on purpose
+```
+
+- **The kind** is one of `occurred`, `created`, `first_seen`, `published`. It becomes the row's `tap.time` dimension, which is the grid's to write: never define or write a dimension named `tap.time`. The bare name `time` is not reserved and is a plugin's to use.
+- **Keep the field as the source sent it.** The typed field holds the source's value in the source's own form (rule 22). Do not convert a time in the collector, and do not change a field's type to suit the spine. A field that already holds a date, a date-time with a zone, or text in a FHIR `dateTime` form (`2026`, `2026-12`, `2026-12-01`, `2026-12-01T18:30:00Z`) needs nothing more.
+- **Any other form needs a reader.** Name a function with `reader=` (and `end_reader=` for an interval's end; each end has its own). The grid calls it with the stored value and reads what it returns: a date, a date-time **with a zone**, FHIR text, or `None` for "no time". Core ships `from_epoch_seconds` and `from_epoch_milliseconds`. For anything else, and for a source's "unset" marker such as `-1`, write your own: a plain function at module level (not a lambda, a nested function, a method or a `functools.partial`), or name it by path, `"package.module:function"`. It must be pure; if it raises, the grid stores no event time for that row, warns, and the write goes on. With a reader the field may be of any type, a JSON field included, and the function receives the value as the model holds it.
+- **A last sighting is not an end.** An interval's end is only a time the source states as the end (deleted, terminated, expires). `last_seen` stays an ordinary field, as every other time the source gives does (rules 7 and 14). The grid never closes an interval because a collector stopped seeing the object.
+- **Changing a reader changes meaning.** The version record keeps the function's name, not its code. If you change what it returns, raise `MODEL_VERSION` by hand and run `manage.py rederive_event_time --as <user>` (rule 28).
+
+**A time inside a JSON field.** Where the source's time sits inside a JSON field and has no column of its own, name the member: `EVENT_TIME = Moment("configuration", "created", member="CreationDate")`, or `member=("Status", "StartedAt")` for a nested one, and `end_member=` for an interval's end. Keys are text; a list position is not a member. An absent or null member is "no time" and warns of nothing. Add `reader=` only where the member holds a form the grid does not read (a count, text with no zone); the reader is then given the member's value, not the whole field (`req-grid-entity-event-time` rules 29 and 30).
+
 ### The model's version
 
 A new model states no version and is at version 1. When you later change an existing model's definition (a field added, removed or retyped, a constraint, the natural key, the service schema, the edge rules it declares, its `EVENT_TIME` declaration), raise `MODEL_VERSION` on the class by one, ship the migration that moves the stored rows and ends by calling `tap_grid.model_version.set_applied_version("<slug>", <new version>)` in the same transaction, and record the new version with `manage.py model_versions --record --app <plugin>` so `<plugin>.model_versions.json` gains its entry; plugin validation fails a recorded type whose definition changed while its version did not. The check cannot see a change of meaning that leaves the definition alone, such as a field that now holds seconds where it held milliseconds or a new convention inside a JSON field: raise the version by hand for that too, because a document written under the old meaning must not be read as the new one. A migration that removes a field also removes that column from the type's history table, so its old values are gone from the grid. See `req-grid-entity-model-version` in `tap_grid/specs/spec-grid-entity.md`.

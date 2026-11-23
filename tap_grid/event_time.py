@@ -3,25 +3,32 @@
 ``req-grid-entity-event-time`` (spec-grid-entity.md). A model says which of its own fields state
 when the thing happened or held in the world; the grid copies them into ``Entity.event_start``,
 ``event_end`` and ``event_precision`` on every save, and stamps what the start means as the row's
-``time`` dimension. This module holds:
+``tap.time`` dimension. This module holds:
 
 - the declaration a node model carries beside ``NATURAL_KEY`` (:class:`Moment`, :class:`Interval`,
   :data:`NO_EVENT_TIME`) and the registry of what edge types declare in their definitions;
 - :func:`read_value`, the one reader that turns a declared value into a start, an end and a level.
   No plugin writes its own (rule 21);
+- the reader function a declaration may name beside a field (rules 23 to 28): a plugin's own
+  function from its source's form to a value :func:`read_value` reads, and core's two for epoch
+  seconds and milliseconds (:func:`from_epoch_seconds`, :func:`from_epoch_milliseconds`);
 - :func:`derive`, which applies a declaration to a row's values;
 - :func:`overlapping`, the overlap test the grid publishes (rule 6).
 
 The forms a value may take are those of the FHIR R4 ``dateTime`` type, as published, with nothing
-added (rule 10). Nothing here reads the database or imports a model at module scope.
+added (rule 10). A reader function does not add a form: what it returns is read by the same one
+reader. Nothing here reads the database or imports a model at module scope.
 """
 
 from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
+from types import FunctionType
 from typing import Any, Final
 
 __all__ = [
@@ -46,15 +53,19 @@ __all__ = [
     "derive",
     "edge_declaration_problems",
     "derive_for_instance",
+    "from_epoch_milliseconds",
+    "from_epoch_seconds",
     "get_edge_event_time",
     "kind_problem",
     "overlapping",
     "overlaps",
     "read_value",
+    "reader_name",
     "register_edge_event_time",
+    "resolve_reader",
 ]
 
-# What `event_start` means: the values of the `time` dimension core seeds
+# What `event_start` means: the values of the `tap.time` dimension core seeds
 # (tap_grid/data/dimensions.grift.json). This tuple is the copy a declaration is checked against
 # where no grid is loaded (a class body, a static scan); a test holds it equal to the seed's
 # `values`, and where the live vocabulary is available the dimension's own list decides.
@@ -65,7 +76,7 @@ EVENT_PRECISIONS: Final[tuple[str, ...]] = ("year", "month", "day", "second")
 SPINE_EVENT_FIELDS: Final[tuple[str, ...]] = ("event_start", "event_end", "event_precision")
 # The dimension that carries the kind on the row (rule 3). The name is dimension_map's; it is
 # repeated here as a literal so this module still imports nothing from the grid at module scope.
-TIME_DIMENSION: Final[str] = "time"
+TIME_DIMENSION: Final[str] = "tap.time"
 
 # The pattern FHIR R4 publishes for `dateTime` (https://hl7.org/fhir/R4/datatypes.html#dateTime),
 # copied from that page on 2026-11-22 and printed in the requirement. Not to be edited by hand.
@@ -95,27 +106,88 @@ class Unreadable(Exception):
     """A value the grid cannot store truthfully as an event time (rule 12). The message says why."""
 
 
+# A reader function (rules 23 to 28): given the value a declared field holds, in whatever form the
+# source sent it, it returns a value :func:`read_value` reads (a date, a date-time with a zone, or
+# FHIR ``dateTime`` text) or None for "no time". A declaration names one as the function itself or
+# as its import path, ``package.module:function``; an edge type's definition can only use the path.
+Reader = Callable[[Any], Any] | str | None
+_READER_PATH: Final[re.Pattern[str]] = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*")
+
+
+# A member path (rule 29): the keys that lead from a JSON field's value to the member that holds
+# the time. Given as one key or a sequence of keys; kept as a tuple of text keys.
+Member = tuple[str, ...] | None
+
+
+def _member_path(member: Any, label: str) -> Member:
+    """A declared member path as a tuple of keys, or None where none is declared.
+
+    Keys are text. A position in a list is not accepted: it is not a name, and the member it
+    reaches changes when the source reorders or prepends.
+    """
+    if member is None:
+        return None
+    keys = (member,) if isinstance(member, str) else member
+    if not isinstance(keys, (list, tuple)) or not keys or not all(isinstance(key, str) and key for key in keys):
+        raise EventTimeDeclarationError(
+            f"{label} is a key or a sequence of keys, each a non-empty text key of a JSON object; "
+            f"got {str(member)[:80]!r}. A position in a list is not a member"
+        )
+    return tuple(keys)
+
+
+def member_label(name: str, member: Member) -> str:
+    """How a declared value is named in a message: the field, and the member path inside it."""
+    return name + "".join(f"[{key[:80]!r}]" for key in member or ())
+
+
 @dataclass(frozen=True)
 class Moment:
-    """The thing happened at one time: ``field`` holds it, ``kind`` says what it means."""
+    """The thing happened at one time: ``field`` holds it, ``kind`` says what it means.
+
+    ``reader`` names the function that turns the field's stored value into a form the grid reads,
+    for a field the source fills in a form of its own (rule 23). ``member`` names the member of a
+    JSON field that holds the time (rule 29); a reader is then given that member's value.
+    """
 
     field: str
     kind: str
+    reader: Reader = None
+    member: Any = None
 
     def __post_init__(self) -> None:
         _check_kind(self.kind)
+        _check_reader(self.reader, "reader")
+        object.__setattr__(self, "member", _member_path(self.member, "member"))
 
 
 @dataclass(frozen=True)
 class Interval:
-    """The thing began to hold at ``start`` and held until ``end``, when the source states an end."""
+    """The thing began to hold at ``start`` and held until ``end``, when the source states an end.
+
+    ``reader`` reads the start and ``end_reader`` reads the end, each on its own: a source's two
+    times do not always share a form, and an end often has an "unset" marker the start has not.
+    """
 
     start: str
     kind: str
     end: str | None = None
+    reader: Reader = None
+    end_reader: Reader = None
+    member: Any = None
+    end_member: Any = None
 
     def __post_init__(self) -> None:
         _check_kind(self.kind)
+        _check_reader(self.reader, "reader")
+        _check_reader(self.end_reader, "end_reader")
+        if self.end_reader is not None and self.end is None:
+            raise EventTimeDeclarationError("end_reader reads the end, and this interval names no end")
+        # ``member`` is the start's and ``end_member`` the end's, each on its own, as the readers are.
+        object.__setattr__(self, "member", _member_path(self.member, "member"))
+        object.__setattr__(self, "end_member", _member_path(self.end_member, "end_member"))
+        if self.end_member is not None and self.end is None:
+            raise EventTimeDeclarationError("end_member is inside the end, and this interval names no end")
 
 
 class NoEventTime:
@@ -137,10 +209,144 @@ def _check_kind(kind: str) -> None:
         raise EventTimeDeclarationError(f"event kind {kind!r} is not one of {', '.join(EVENT_KINDS)}")
 
 
-def kind_problem(kind: str) -> str | None:
-    """Why a kind is not a value of the ``time`` dimension, or None.
+def _check_reader(reader: Any, label: str) -> None:
+    """A reader is a module-level function or the import path of one (rule 26).
 
-    Where the grid's vocabulary is loaded and declares ``time``, the dimension's own ``values``
+    A function given directly must be one its own ``module:name`` reaches again: the version
+    record keeps that name, and a process that imports the declaration afresh must find the same
+    function under it. So a lambda, a function made inside another, a bound method and a
+    ``functools.partial`` are refused here, when the declaration is written. Whether a path
+    resolves is checked when it is first needed and by plugin validation.
+    """
+    if reader is None:
+        return
+    if isinstance(reader, str):
+        if _READER_PATH.fullmatch(reader) is None:
+            raise EventTimeDeclarationError(
+                f"{label} is a function or its import path, 'package.module:function'; got {reader[:80]!r}"
+            )
+        return
+    qualified = getattr(reader, "__qualname__", "")
+    if not isinstance(reader, FunctionType) or not qualified or "<" in qualified or "." in qualified:
+        raise EventTimeDeclarationError(
+            f"{label} must be a function defined at module level, or its import path "
+            f"'package.module:function'; got {_callable_label(reader)}. A lambda, a function made inside "
+            "another, a bound method and a functools.partial have no name an import can reach: write a "
+            "module-level function that does the same and name that"
+        )
+
+
+def _callable_label(reader: Any) -> str:
+    """What an unusable reader is, for a message: its type and whatever name it has."""
+    name = getattr(reader, "__qualname__", None) or getattr(reader, "__name__", None)
+    return f"a {type(reader).__name__}" + (f" ({str(name)[:80]})" if name else "")
+
+
+# Import paths already resolved, so a path is imported once per process.
+_resolved_readers: dict[Reader, Callable[[Any], Any]] = {}
+
+
+def resolve_reader(reader: Reader) -> Callable[[Any], Any] | None:
+    """The function a declaration names, or None where it names none.
+
+    A path is ``package.module:function``, a function at module level. It is imported the first
+    time it is needed and kept. :class:`EventTimeDeclarationError` where it does not resolve or
+    does not name something callable.
+    """
+    if reader is None:
+        return None
+    found = _resolved_readers.get(reader)
+    if found is None:
+        target: Any = reader
+        if isinstance(reader, str):
+            from django.utils.module_loading import import_string
+
+            try:
+                target = import_string(reader.replace(":", "."))
+            except Exception as error:  # noqa: BLE001 — whatever the import raised, the path did not resolve
+                raise EventTimeDeclarationError(
+                    f"reader {reader!r} does not resolve to a function ({type(error).__name__})"
+                ) from error
+        _check_resolved_reader(reader, target)
+        _resolved_readers[reader] = found = target
+    return found
+
+
+def _check_resolved_reader(reader: Reader, target: Any) -> None:
+    """What a reader resolves to is a plain module-level function of an installed app (rule 26).
+
+    A path is checked against the same bar as a function given directly, and one more: the
+    function's module must belong to an app this process has installed, core or a plugin. So a
+    path cannot name ``builtins:eval``, ``os:system`` or any other callable outside the code the
+    operator installed, to be called with a stored value.
+    """
+    from django.apps import apps
+
+    label = f"reader {reader!r}" if isinstance(reader, str) else f"reader {_callable_label(reader)}"
+    qualified = getattr(target, "__qualname__", "")
+    if not isinstance(target, FunctionType) or not qualified or "<" in qualified or "." in qualified:
+        raise EventTimeDeclarationError(f"{label} names a {type(target).__name__}, not a function at module level")
+    module = getattr(target, "__module__", "") or ""
+    if apps.get_containing_app_config(module) is None:
+        raise EventTimeDeclarationError(
+            f"{label} is defined in {module!r}, which is not part of an installed app: a reader must be a "
+            "function in core or in a plugin"
+        )
+
+
+def reader_name(reader: Reader) -> str | None:
+    """The name a version record keeps for a reader: its import path. Never its code (rule 28)."""
+    if reader is None:
+        return None
+    if isinstance(reader, str):
+        return reader
+    return f"{getattr(reader, '__module__', '?')}:{getattr(reader, '__qualname__', type(reader).__qualname__)}"
+
+
+def _readers(declaration: Declaration) -> tuple[tuple[str, Reader], ...]:
+    """Each reader a declaration names, with the argument that names it."""
+    if isinstance(declaration, Moment):
+        return (("reader", declaration.reader),)
+    if isinstance(declaration, Interval):
+        return (("reader", declaration.reader), ("end_reader", declaration.end_reader))
+    return ()
+
+
+def reader_problems(declaration: Declaration) -> list[str]:
+    """What is wrong with the reader functions a declaration names; empty when they are sound.
+
+    A path must resolve to a function. A function given directly is already known to be at module
+    level (:func:`_check_reader`); here its own ``module:name`` must reach that same function,
+    because the version record keeps the name (rule 28).
+    """
+    problems: list[str] = []
+    for label, reader in _readers(declaration):
+        if reader is None:
+            continue
+        if isinstance(reader, str):
+            try:
+                resolve_reader(reader)
+            except EventTimeDeclarationError as error:
+                problems.append(f"{label}: {error}")
+            continue
+        # Refused at declaration time unless it is a module-level function; what is left to check
+        # is that its own name reaches it, which a function rebound or deleted after it was
+        # declared would not.
+        name = reader_name(reader)
+        try:
+            reached = resolve_reader(name)
+        except EventTimeDeclarationError as error:
+            problems.append(f"{label}: {error}")
+            continue
+        if reached is not reader:
+            problems.append(f"{label}: {name} names a different function from the one declared")
+    return problems
+
+
+def kind_problem(kind: str) -> str | None:
+    """Why a kind is not a value of the ``tap.time`` dimension, or None.
+
+    Where the grid's vocabulary is loaded and declares ``tap.time``, the dimension's own ``values``
     decide, so a term added to the dimension is accepted without a change here. Where it is not
     (a static scan, a grid whose core vocabulary has not landed), :data:`EVENT_KINDS` decides.
     """
@@ -180,19 +386,40 @@ def declaration_from_definition(definition: Any) -> Moment | Interval:
     kind = definition.get("kind")
     if not isinstance(kind, str):
         raise EventTimeDeclarationError("event_time needs a kind")
+    # A definition is JSON, so a reader is named by its import path and never given as a function.
+    for key in ("reader", "end_reader"):
+        if key in definition and not isinstance(definition[key], str):
+            raise EventTimeDeclarationError(f"{key} is an import path, 'package.module:function'")
+    # A member path has one spelling in a definition, a list of keys, so one path has one record.
+    for key in ("member", "end_member"):
+        if key in definition and not isinstance(definition[key], list):
+            raise EventTimeDeclarationError(f"{key} is a list of keys")
     if shape == "moment":
-        unknown = set(definition) - {"shape", "field", "kind"}
+        unknown = set(definition) - {"shape", "field", "kind", "reader", "member"}
         name = definition.get("field")
         if unknown or not isinstance(name, str) or not name:
-            raise EventTimeDeclarationError("a moment names one field and a kind, and nothing else")
-        return Moment(field=name, kind=kind)
+            raise EventTimeDeclarationError(
+                "a moment names one field, a kind and at most a reader and a member, and nothing else"
+            )
+        return Moment(field=name, kind=kind, reader=definition.get("reader"), member=definition.get("member"))
     if shape == "interval":
-        unknown = set(definition) - {"shape", "start", "end", "kind"}
+        unknown = set(definition) - {"shape", "start", "end", "kind", "reader", "end_reader", "member", "end_member"}
         start = definition.get("start")
         end = definition.get("end")
         if unknown or not isinstance(start, str) or not start or not (end is None or (isinstance(end, str) and end)):
-            raise EventTimeDeclarationError("an interval names a start, an optional end and a kind, and nothing else")
-        return Interval(start=start, end=end, kind=kind)
+            raise EventTimeDeclarationError(
+                "an interval names a start, an optional end, a kind and at most a reader and a member "
+                "for each, and nothing else"
+            )
+        return Interval(
+            start=start,
+            end=end,
+            kind=kind,
+            reader=definition.get("reader"),
+            end_reader=definition.get("end_reader"),
+            member=definition.get("member"),
+            end_member=definition.get("end_member"),
+        )
     raise EventTimeDeclarationError(f"event_time shape {shape!r} is not 'moment' or 'interval'")
 
 
@@ -216,16 +443,54 @@ def edge_declaration_problems(definition: Any, property_schema: Any) -> list[str
     if not isinstance(properties, dict):
         return ["event_time names edge properties, and the edge type has no property_schema that defines any"]
     wrong_kind = kind_problem(declaration.kind)
-    return ([f"event_time: {wrong_kind}"] if wrong_kind else []) + [
-        f"event_time names {name!r}, which the edge type's property_schema does not define"
-        for name in declared_fields(declaration)
-        if name not in properties
-    ]
+    return (
+        ([f"event_time: {wrong_kind}"] if wrong_kind else [])
+        + [
+            f"event_time names {name!r}, which the edge type's property_schema does not define"
+            for name in declared_fields(declaration)
+            if name not in properties
+        ]
+        + [
+            f"event_time names a member of {name!r}, which the edge type's property_schema does not define "
+            "as an object"
+            for name, member in _members(declaration)
+            if member is not None and name in properties and not _may_be_object(properties[name])
+        ]
+        + [f"event_time {problem}" for problem in reader_problems(declaration)]
+    )
+
+
+def _members(declaration: Declaration) -> tuple[tuple[str, Member], ...]:
+    """Each declared name with the member path inside it, None where the value is the name's own."""
+    if isinstance(declaration, Moment):
+        return ((declaration.field, declaration.member),)
+    if isinstance(declaration, Interval):
+        start = ((declaration.start, declaration.member),)
+        return start if declaration.end is None else (*start, (declaration.end, declaration.end_member))
+    return ()
+
+
+def _may_be_object(schema: Any) -> bool:
+    """Whether a property's JSON Schema lets it hold an object: it says so, or states no type."""
+    stated = schema.get("type") if isinstance(schema, dict) else None
+    if stated is None:
+        return True
+    return "object" in (stated if isinstance(stated, list) else [stated])
 
 
 def register_edge_event_time(edge_type: str, definition: Any) -> None:
-    """Record an edge type's ``event_time`` declaration at startup."""
-    _edge_event_time[edge_type] = declaration_from_definition(definition)
+    """Record an edge type's ``event_time`` declaration at startup.
+
+    A reader the definition names by path is imported here, once, so a path that does not resolve
+    stops the load naming the edge type, and no edge of the type is ever written without it.
+    """
+    declaration = declaration_from_definition(definition)
+    for label, reader in _readers(declaration):
+        try:
+            resolve_reader(reader)
+        except EventTimeDeclarationError as error:
+            raise EventTimeDeclarationError(f"edge type {edge_type!r} event_time {label}: {error}") from error
+    _edge_event_time[edge_type] = declaration
 
 
 def get_edge_event_time(edge_type: str) -> Moment | Interval | None:
@@ -330,6 +595,11 @@ def read_value(value: Any) -> Reading | None:
     return Reading(moment, moment, "second")
 
 
+def _shown(text: str) -> str:
+    """A text value as a message quotes it: whole when short, cut when long."""
+    return repr(text) if len(text) <= 80 else f"{text[:77]!r}... ({len(text)} characters)"
+
+
 def _moment(text: str) -> datetime:
     """A matched full date-time as an aware UTC datetime, its fraction cut to microseconds."""
     head, zone = (text[:-1], "+00:00") if text.endswith("Z") else (text[:-6], text[-6:])
@@ -338,7 +608,7 @@ def _moment(text: str) -> datetime:
         parsed = datetime.fromisoformat(f"{whole}.{(fraction + '000000')[:6]}{zone}")
         return parsed.astimezone(UTC)
     except (ValueError, OverflowError) as error:
-        raise Unreadable(f"{text!r} is not a time the grid can store") from error
+        raise Unreadable(f"{_shown(text)} is not a time the grid can store") from error
 
 
 def _why_not(text: str) -> str:
@@ -346,8 +616,110 @@ def _why_not(text: str) -> str:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}(:\d{2})?", text):
         return f"{text!r} stops at the hour or the minute; a time is given to the second, with a zone"
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?", text):
-        return f"{text!r} has a time of day and no time zone"
-    return f"{text!r} is not a year, a year and month, a date, or a date and time with a zone"
+        return f"{_shown(text)} has a time of day and no time zone"
+    return f"{_shown(text)} is not a year, a year and month, a date, or a date and time with a zone"
+
+
+# ---------------------------------------------------------------------------
+# Reader functions
+# ---------------------------------------------------------------------------
+
+_EPOCH: Final[datetime] = datetime(1970, 1, 1, tzinfo=UTC)
+_EPOCH_TEXT: Final[re.Pattern[str]] = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
+
+
+def _from_epoch(value: Any, microseconds_per_unit: int, unit: str) -> datetime:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        raise TypeError(f"an epoch count is a number or numeric text, not a {type(value).__name__}")
+    # Text is digits, with an optional sign and an optional fraction, and nothing else: no
+    # exponent, no separators, and no space before or after. Padding is not stripped, because the
+    # field holds what the source sent and a padded count is not what this function was told to
+    # expect; a plugin whose source pads strips in a reader of its own.
+    if isinstance(value, str) and _EPOCH_TEXT.fullmatch(value) is None:
+        raise ValueError(f"not a count of {unit}: text must be digits, with an optional sign and fraction")
+    try:
+        number = Decimal(value) if isinstance(value, (str, Decimal)) else Decimal(str(value))
+    except InvalidOperation as error:
+        raise ValueError(f"not a count of {unit}") from error
+    # A count with more than twenty digits is past year 9999 in either unit; refuse it before
+    # turning an exponent like 1e999999 into an integer.
+    if not number.is_finite() or number.adjusted() > 20:
+        raise ValueError(f"not a count of {unit} the grid can store")
+    try:
+        return _EPOCH + timedelta(microseconds=int((number * microseconds_per_unit).to_integral_value(ROUND_FLOOR)))
+    except OverflowError as error:
+        raise ValueError(f"a count of {unit} outside the years 0001 to 9999") from error
+
+
+def from_epoch_seconds(value: Any) -> datetime:
+    """A reader for a field that holds seconds since 1970-01-01T00:00:00Z (rule 27).
+
+    Takes a whole number, a float, or numeric text (``1763805600``, ``"1763805600"``,
+    ``"1763805600.25"``) and returns that instant in UTC, to the microsecond. Text is digits with
+    an optional sign and fraction; text with a space before or after it, an exponent or a
+    separator raises, as anything that is not a number does, so the grid reports the value and
+    stores no event time. The result must fall in the years 0001 to 9999; a count outside them
+    raises.
+
+    It reads a number as a number and guesses nothing: a negative count is an instant before
+    1970, so ``-1`` is ``1969-12-31T23:59:59Z`` and ``0`` is the epoch itself. A source that uses
+    such a value to mean "unset" needs a reader of the plugin's own that returns None for it and
+    calls this for the rest.
+    """
+    return _from_epoch(value, 1_000_000, "seconds")
+
+
+def from_epoch_milliseconds(value: Any) -> datetime:
+    """A reader for a field that holds milliseconds since 1970-01-01T00:00:00Z (rule 27).
+
+    As :func:`from_epoch_seconds`, in milliseconds.
+    """
+    return _from_epoch(value, 1_000, "milliseconds")
+
+
+def _member_value(value: Any, member: Member) -> Any:
+    """The member a path names inside a JSON value, or None where it is not there (rule 30).
+
+    A key that is absent, a value on the way that is not an object, and a member that is null all
+    mean the source stated no time: nothing is read and nothing is reported.
+    """
+    for key in member or ():
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+        if value is None:
+            return None
+    return value
+
+
+def _through(reader: Reader, value: Any) -> Any:
+    """A declared field's stored value as its reader function gives it (rules 23 to 25).
+
+    With no reader the value is returned as it is. An empty value is not passed to the function:
+    nothing in, nothing out, and a function need not handle None. The function's failure, or a
+    return the grid cannot read as a time, is :class:`Unreadable`, which the derivation turns into
+    a warning and an empty event time while the write goes on. Only the exception's class is
+    named; its message may quote the value at any length.
+    """
+    if reader is None or value is None or value == "":
+        return value
+    try:
+        function = resolve_reader(reader)
+    except EventTimeDeclarationError as error:
+        raise Unreadable(f"its reader function cannot be loaded ({error})") from error
+    if function is None:
+        return value
+    try:
+        read = function(value)
+    except Exception as error:  # noqa: BLE001 — a reader is an author's code, run on a value nothing has checked
+        raise Unreadable(f"its reader function failed ({type(error).__name__[:80]})") from error
+    if read is None or read == "":
+        return None
+    if isinstance(read, bool) or not isinstance(read, (date, str)):
+        raise Unreadable(
+            f"its reader function returned a {type(read).__name__[:80]}, " "not a date, a date-time with a zone or text"
+        )
+    return read
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +742,9 @@ class Derived:
         return {name: getattr(self, name) for name in SPINE_EVENT_FIELDS}
 
     def as_dimensions(self) -> dict[str, str | None]:
-        """The row's ``time`` dimension: the kind where an event time was derived, else removed.
+        """The row's ``tap.time`` dimension: the kind where an event time was derived, else removed.
 
-        A row with no event time carries no ``time`` value (rule 9): the kind says what the start
+        A row with no event time carries no ``tap.time`` value (rule 9): the kind says what the start
         means, and there is no start.
         """
         return {TIME_DIMENSION: self.kind if self.event_start is not None else None}
@@ -396,32 +768,37 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     ``values`` is called with a declared name and returns that field's (or property's) value.
     Nothing is defaulted (rule 9): an empty declared value gives no event time. A value that
     cannot be stored truthfully gives none either, and a warning naming the field (rule 12).
+    Where the declaration names a reader function, the stored value goes through it first and
+    what it returns is read as any declared value is (rules 23 to 25).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@e406b27b8a93/6afe3b99178a (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@57aa1083f3bf/12c3b961652c (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
     if isinstance(declaration, Moment):
         try:
-            reading = read_value(values(declaration.field))
+            stored = _member_value(values(declaration.field), declaration.member)
+            reading = read_value(_through(declaration.reader, stored))
         except Unreadable as error:
-            return _empty(declaration.field, str(error))
+            return _empty(member_label(declaration.field, declaration.member), str(error))
         if reading is None:
             return _EMPTY
         return Derived(reading.start, reading.end_exclusive, declaration.kind, reading.level)
     if isinstance(declaration, Interval):
         try:
-            start = read_value(values(declaration.start))
+            stored = _member_value(values(declaration.start), declaration.member)
+            start = read_value(_through(declaration.reader, stored))
         except Unreadable as error:
-            return _empty(declaration.start, str(error))
+            return _empty(member_label(declaration.start, declaration.member), str(error))
         if start is None:
             return _EMPTY
         if declaration.end is None:
             return Derived(start.start, None, declaration.kind, start.level)
         try:
-            end = read_value(values(declaration.end))
+            stored = _member_value(values(declaration.end), declaration.end_member)
+            end = read_value(_through(declaration.end_reader, stored))
         except Unreadable as error:
-            return _empty(declaration.end, str(error))
+            return _empty(member_label(declaration.end, declaration.end_member), str(error))
         if end is None:
             return Derived(start.start, None, declaration.kind, start.level)
         # The end is before the start when its unit is over by the time the start's begins. Equal
@@ -430,7 +807,10 @@ def derive(declaration: Declaration, values: Any) -> Derived:
         # storing them equal would read as a moment.
         both_moments = start.level == "second" and end.level == "second"
         if end.end_exclusive < start.start or (end.end_exclusive == start.start and not both_moments):
-            return _empty(declaration.end, f"the end is before the start in {declaration.start}")
+            return _empty(
+                member_label(declaration.end, declaration.end_member),
+                f"the end is before the start in {member_label(declaration.start, declaration.member)}",
+            )
         return Derived(start.start, end.end_exclusive, declaration.kind, _coarser(start.level, end.level))
     return _EMPTY
 
@@ -457,7 +837,8 @@ def declaration_problems(model_cls: Any) -> list[str]:
     """What is wrong with a node model's ``EVENT_TIME``; empty when it is sound or absent.
 
     A declared name must be a concrete field of the model that holds a date, a date-time or text
-    (rules 2 and 21).
+    (rules 2 and 21). A field read through a reader function may hold anything the source sends,
+    a number included, since the function is what turns it into one of those (rule 23).
     """
     from django.core.exceptions import FieldDoesNotExist
     from django.db import models
@@ -471,11 +852,32 @@ def declaration_problems(model_cls: Any) -> list[str]:
     wrong_kind = kind_problem(declaration.kind)
     if wrong_kind:
         problems.append(f"EVENT_TIME: {wrong_kind}")
-    for name in declared_fields(declaration):
+    through_reader = {
+        name
+        for name, reader in (
+            ((declaration.field, declaration.reader),)
+            if isinstance(declaration, Moment)
+            else ((declaration.start, declaration.reader), (declaration.end, declaration.end_reader))
+        )
+        if name is not None and reader is not None
+    }
+    problems.extend(f"EVENT_TIME {problem}" for problem in reader_problems(declaration))
+    for name, member in _members(declaration):
         try:
             model_field = model_cls._meta.get_field(name)
         except FieldDoesNotExist:
             problems.append(f"EVENT_TIME names {name!r}, which is not a field of {model_cls.__name__}")
+            continue
+        if member is not None:
+            # A member is inside a JSON value, so the field that holds it is a JSON field (rule 29).
+            # What the member holds is read as a field's value is, or through the reader named.
+            if not isinstance(model_field, models.JSONField):
+                problems.append(
+                    f"EVENT_TIME names a member of {name!r}, a {type(model_field).__name__}; "
+                    "a member is named inside a JSON field"
+                )
+            continue
+        if name in through_reader:
             continue
         if not isinstance(model_field, (models.DateField, models.CharField, models.TextField)):
             problems.append(

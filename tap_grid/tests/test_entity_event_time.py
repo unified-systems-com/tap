@@ -54,7 +54,7 @@ _TYPE = "grid_fixtures__node"
 _HUB = "grid_fixtures__hub"
 LINK = "PG_LINKS__grid_fixtures"
 THREE = ("event_start", "event_end", "event_precision")
-TIME = "time"
+TIME = "tap.time"
 CORE_SEED = Path(__file__).resolve().parents[1] / "data" / "dimensions.grift.json"
 SPEC = Path(__file__).resolve().parents[1] / "specs" / "spec-grid-entity.md"
 
@@ -78,12 +78,12 @@ def _row(entity_id: Any) -> Entity:
 
 
 def _kind(entity_id: Any) -> Any:
-    """The row's `time` dimension value, by name, or None when it carries none."""
+    """The row's `tap.time` dimension value, by name, or None when it carries none."""
     return view(_row(entity_id).dimensions).get(TIME)
 
 
 def _four(entity_id: Any) -> tuple[Any, ...]:
-    """Start, end, kind and precision: the three columns and the `time` dimension, in the old order."""
+    """Start, end, kind and precision: the three columns and the `tap.time` dimension, in the old order."""
     row = _row(entity_id)
     return (row.event_start, row.event_end, _kind(entity_id), row.event_precision)
 
@@ -129,7 +129,7 @@ class TestTheReader:
         seed = json.loads(CORE_SEED.read_text(encoding="utf-8"))
         nodes = {n["node"]["name"]: n["node"] for batch in seed["batches"] for n in batch["nodes"]}
         assert tuple(nodes[TIME]["values"]) == EVENT_KINDS
-        assert {name for name in nodes if name.startswith("time.")} == {f"time.{kind}" for kind in EVENT_KINDS}
+        assert {name for name in nodes if name.startswith("tap.time.")} == {f"tap.time.{kind}" for kind in EVENT_KINDS}
 
     @AC[15]
     @pytest.mark.parametrize(
@@ -692,7 +692,7 @@ class TestRederive:
 
 @pytest.mark.django_db
 class TestTheTimeDimension:
-    """The kind is the row's `time` dimension, written by the grid alone (rule 3)."""
+    """The kind is the row's `tap.time` dimension, written by the grid alone (rule 3)."""
 
     def _panel(self, entity_id: str, description: str, *, dimensions: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -730,7 +730,7 @@ class TestTheTimeDimension:
     def test_a_kind_is_checked_against_the_dimensions_own_values(self) -> None:
         assert event_time.kind_problem("occurred") is None
         problem = event_time.kind_problem("resolved")
-        assert problem is not None and "'time' dimension" in problem and "first_seen" in problem
+        assert problem is not None and "'tap.time' dimension" in problem and "first_seen" in problem
 
     @AC[20]
     def test_a_row_with_no_event_time_carries_no_time_value(self, moment_on_observed_at: None) -> None:
@@ -740,6 +740,35 @@ class TestTheTimeDimension:
         assert _kind(pk) == "occurred"
         assert patch_node(pk, {"observed_at": None}, caller_context=_ctx()).success
         assert TIME not in view(_row(pk).dimensions)
+
+    @AC[21]
+    def test_only_tap_time_is_the_grids_and_a_plain_time_dimension_is_a_plugins_to_use(
+        self, moment_on_observed_at: None
+    ) -> None:
+        """The grid-derived name is `tap.time`; the bare word `time` is not reserved (Issue# 1284 - tap)."""
+        from tap_grid.dimension_map import GRID_DERIVED, TIME_DIMENSION
+        from tap_grid.models import Dimension
+
+        assert TIME == TIME_DIMENSION == event_time.TIME_DIMENSION == "tap.time"
+        assert GRID_DERIVED == frozenset({"tap.time"})
+        Dimension.objects.create(name="time")
+        made = write_batch(
+            [
+                WriteOperation(
+                    verb="create_node",
+                    type_slug=_TYPE,
+                    payload={"name": "plain-time", "observed_at": "2026-12-01T18:30:00Z"},
+                    dimensions={"time": "morning"},
+                )
+            ],
+            caller_context=_ctx(),
+        )
+        assert made.success, [r.errors for r in made.results]
+        names = view(_row(made.results[0].entity_id).dimensions)
+        # The plugin's own value under its own name, beside the grid's under `tap.time`.
+        assert (names["time"], names[TIME]) == ("morning", "occurred")
+        assert declared("time").id != declared(TIME).id
+        assert declared("time").id not in grid_derived_ids()
 
     @AC[21]
     def test_a_writer_may_not_supply_it(self, moment_on_observed_at: None) -> None:
@@ -769,7 +798,7 @@ class TestTheTimeDimension:
 
     @AC[22]
     def test_an_unchanged_reimport_is_unchanged_and_keeps_it(self, timed_panels: None) -> None:
-        """The hazard: an envelope never carries `time`, and the stored map does."""
+        """The hazard: an envelope never carries `tap.time`, and the stored map does."""
         from tap_web.models import Panel
 
         entity_id = str(uuid.uuid4())
@@ -844,7 +873,7 @@ class TestSpineSurface:
         assert sorted(added) == sorted([*THREE, "event_kind"])
         assert {op.model_name for op in migration.operations} == {"entity", "batchevent"}
         assert migration.dependencies == [("tap_grid", "0017_entity_batch_pointers")]
-        # The kind left the row for the `time` dimension: the next migration drops that one column.
+        # The kind left the row for the `tap.time` dimension: the next migration drops that one column.
         follow_up = importlib.import_module("tap_grid.migrations.0019_entity_event_kind_to_time_dimension").Migration
         assert [(type(op).__name__, op.model_name, op.name) for op in follow_up.operations] == [
             ("RemoveField", "entity", "event_kind")
@@ -898,7 +927,7 @@ class TestGryphonReadsThem:
         def found(label: str, kind: str) -> set[str]:
             rows = execute_gryphon_raw(
                 f"MATCH (n:{label}) WHERE n.event_start >= $from AND n.event_start < $to "
-                f'AND n.dimensions["time"] = "{kind}" RETURN n.entity_id AS id',
+                f'AND n.dimensions["tap.time"] = "{kind}" RETURN n.entity_id AS id',
                 {"from": "2026-12-01T12:00:00+00:00", "to": "2026-12-01T13:00:00+00:00"},
             )
             # A query that matches nothing returns no `rows` key.
