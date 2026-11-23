@@ -819,10 +819,16 @@ class EntityTypeQuerySet(models.QuerySet["EntityType"]):
         return super().bulk_update(objs, fields, *args, **kwargs)
 
     def bulk_create(self, objs: Any, *args: Any, **kwargs: Any) -> Any:
+        objs = list(objs)
         if kwargs.get("update_conflicts") and "model_version" in set(kwargs.get("update_fields") or ()):
             from tap_grid.model_version import require_applied_version_writer
 
             require_applied_version_writer("EntityType bulk_create with update_conflicts")
+        # A new row above version 1 states that rows are migrated, which only a writer may say.
+        if any(obj.model_version != 1 for obj in objs):
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType bulk_create above version 1")
         return super().bulk_create(objs, *args, **kwargs)
 
 
@@ -896,6 +902,11 @@ class EntityType(models.Model):
         """
         fields = kwargs.get("update_fields")
         writes_version = fields is None or "model_version" in fields
+        if self._state.adding and self.model_version != 1:
+            # A new row above version 1 states that rows are migrated; only a writer may say so.
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType.save of a new row above version 1")
         if writes_version and not self._state.adding:
             from tap_grid.model_version import applied_version_writer_active, require_applied_version_writer
 

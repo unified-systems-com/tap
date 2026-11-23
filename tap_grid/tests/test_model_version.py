@@ -1002,3 +1002,54 @@ class TestPluginValidation:
         owners = set(definition.core_states())
         assert not any(owner.startswith("tap_plugin") for owner in owners)
         assert core_problems() == []
+
+
+class TestReviewRoundTwo:
+    """What the second review of the slice found."""
+
+    def test_rows_moved_past_the_code_while_it_waited_are_refused(self) -> None:
+        """A process that was behind does not resume when the rows pass what it declares."""
+        with mv._writing_applied_version():
+            EntityType.objects.create(slug="rr2_ahead", name="rr2", model_version=3)
+        mv._pending["rr2_ahead"] = (2, 1)
+        with pytest.raises(mv.ModelVersionAhead) as raised:
+            mv.refuse_if_pending("rr2_ahead", "a write")
+        assert (raised.value.declared, raised.value.applied) == (2, 3)
+        assert "rr2_ahead" in mv._pending
+
+    def test_equal_versions_clear_the_refusal(self) -> None:
+        with mv._writing_applied_version():
+            EntityType.objects.create(slug="rr2_equal", name="rr2", model_version=2)
+        mv._pending["rr2_equal"] = (2, 1)
+        mv.refuse_if_pending("rr2_equal", "a write")
+        assert "rr2_equal" not in mv._pending
+
+    def test_a_new_catalog_row_above_version_1_needs_a_writer(self) -> None:
+        with pytest.raises(mv.ModelVersionError):
+            EntityType.objects.create(slug="rr2_planted", name="rr2", model_version=2)
+        with pytest.raises(mv.ModelVersionError):
+            EntityType.objects.bulk_create([EntityType(slug="rr2_bulk", name="rr2", model_version=5)])
+        EntityType.objects.create(slug="rr2_first", name="rr2")
+        assert not EntityType.objects.filter(slug__in=["rr2_planted", "rr2_bulk"]).exists()
+
+    def test_an_unmigrated_schema_refuses_a_type_declared_above_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no version column every stored row is at version 1, so a type declared at 2 is behind."""
+        from django.db import ProgrammingError, connection
+
+        from tap_grid import spine_version
+
+        def missing(**kwargs: Any) -> int | None:
+            with connection.cursor() as cursor:
+                cursor.execute("select no_such_column from tap_entity_type")
+            raise ProgrammingError("unreachable")
+
+        monkeypatch.setattr(spine_version, "recorded_version", missing)
+        monkeypatch.setattr(mv, "declared_edge_version", lambda slug: 2 if slug == "PRODUCED_BATCH" else 1)
+        monkeypatch.setattr(mv, "applied_version", lambda slug, **kwargs: missing())
+        mv._start_incomplete = True
+        with pytest.raises(mv.ModelVersionPending):
+            mv.refuse_if_pending("PRODUCED_BATCH", "a write")
+        assert mv._start_incomplete
+        # A type declared at 1 cannot be behind version 1, and the surrounding transaction still works.
+        mv.refuse_if_pending("batch", "a write")
+        assert EntityType.objects.count() >= 0

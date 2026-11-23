@@ -243,30 +243,39 @@ def complete_start_checks(*, using: str = DEFAULT_DB_ALIAS) -> bool:
     raises, and the comparison stays owed so every later write raises too. It writes nothing:
     a type with no catalog row gets one when the process next starts.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/44ff2f08ea08 (derivation) — rule 4: a process
+    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/54ccffa58876 (derivation) — rule 4: a process
         whose start could not read the database does not go on to write unchecked; the
         comparison is made before its first write, import or export.
     """
     global _start_incomplete
-    from django.db import DatabaseError, transaction
+    from django.db import DatabaseError, ProgrammingError, transaction
 
     from tap_grid import spine_version
     from tap_grid.constraints import list_registered_edge_types
     from tap_grid.models import EntityType
     from tap_grid.registry import get_model_class, list_entity_types
 
-    try:
-        with transaction.atomic(using=using):
-            recorded = spine_version.recorded_version(using=using)
-            catalog = dict(EntityType.objects.using(using).values_list("slug", "model_version"))
-    except DatabaseError:
-        return False
-    if recorded is not None and recorded > spine_version.SPINE_VERSION:
-        raise spine_version.SpineVersionAhead(spine_version.SPINE_VERSION, recorded)
     declared: dict[str, int] = {slug: declared_edge_version(slug) for slug in list_registered_edge_types()}
     for slug in list_entity_types():
         if slug != EDGE:
             declared[slug] = declared_version(get_model_class(slug))
+    try:
+        with transaction.atomic(using=using):
+            recorded = spine_version.recorded_version(using=using)
+            catalog = dict(EntityType.objects.using(using).values_list("slug", "model_version"))
+    except ProgrammingError:
+        # The version table or column is not there: the database has not been migrated to it,
+        # so every row it holds was written before versions existed and is at version 1. A
+        # type this code declares above 1 is therefore behind, and is refused; the comparison
+        # stays owed until it can be read.
+        for slug in sorted(declared):
+            if declared[slug] > FIRST_VERSION:
+                _pending[slug] = (declared[slug], FIRST_VERSION)
+        return False
+    except DatabaseError:
+        return False
+    if recorded is not None and recorded > spine_version.SPINE_VERSION:
+        raise spine_version.SpineVersionAhead(spine_version.SPINE_VERSION, recorded)
     for slug in sorted(declared):
         applied = catalog.get(slug)
         if applied is not None:
@@ -294,7 +303,7 @@ def register_type(
 
     Raises :class:`ModelVersionAhead` where the applied version is greater than the declared one.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/7ea4bb9b2d49 (derivation) — rules 3 and 4: the one
+    TAP-IMPLEMENTS: req-grid-entity-model-version@a6baeffebbe0/5c34838bcadb (derivation) — rules 3 and 4: the one
         place a type's declared version meets the version applied to the grid's rows. It records
         the applied version only for a type the catalog has never held, and otherwise compares.
     """
@@ -305,7 +314,8 @@ def register_type(
     applied = applied_version(type_slug, using=using)
     if applied is None:
         first = FIRST_VERSION if _holds_rows(type_slug, kind, using) else declared
-        row, created = catalog.get_or_create(slug=type_slug, defaults={**defaults, "model_version": first})
+        with _writing_applied_version():
+            row, created = catalog.get_or_create(slug=type_slug, defaults={**defaults, "model_version": first})
         applied = row.model_version
         if not created:
             catalog.filter(slug=type_slug).update(**defaults)
@@ -343,14 +353,34 @@ def disagreement(type_slug: str, *, using: str = DEFAULT_DB_ALIAS) -> Disagreeme
     if held is None:
         return None
     declared = held[0]
-    applied = applied_version(type_slug, using=using)
+    applied = _applied_or_unversioned(type_slug, using)
     if applied is None:
         return None
-    if applied >= declared:
+    if applied > declared:
+        # Another deployment moved the rows past what this code declares. Only equality is
+        # agreement: older code must not go on to write newer data (rule 4).
+        raise ModelVersionAhead(type_slug, declared, applied)
+    if applied == declared:
         _pending.pop(type_slug, None)
         return None
     _pending[type_slug] = (declared, applied)
     return Disagreement(type_slug, declared, applied)
+
+
+def _applied_or_unversioned(type_slug: str, using: str) -> int | None:
+    """The applied version, read in a savepoint; version 1 where the schema has no version column yet.
+
+    A database not yet migrated to the version column holds rows written before versions
+    existed, which are at version 1 by definition. The savepoint keeps the failed read from
+    breaking the caller's transaction.
+    """
+    from django.db import ProgrammingError, transaction
+
+    try:
+        with transaction.atomic(using=using):
+            return applied_version(type_slug, using=using)
+    except ProgrammingError:
+        return FIRST_VERSION
 
 
 def disagreements(type_slugs: Iterable[str], *, using: str = DEFAULT_DB_ALIAS) -> list[Disagreement]:
