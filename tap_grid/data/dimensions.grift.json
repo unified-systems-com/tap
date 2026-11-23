@@ -72,20 +72,20 @@
       "batch_node": {
         "source": "tap_grid",
         "name": "Core dimension vocabulary v0.2.0: time",
-        "description": "The `time` dimension and a description node for each of its four values (req-grid-dimension-core-vocabulary, req-grid-entity-event-time). A batch of its own with its own fixed id, so a grid that already imported the first batch still receives these."
+        "description": "The `tap.time` dimension and a description node for each of its four values (req-grid-dimension-core-vocabulary, req-grid-entity-event-time). A batch of its own with its own fixed id, so a grid that already imported the first batch still receives these."
       },
       "nodes": [
         {
           "entity": {
             "entity_id": "01a204b6-0849-7423-abd9-057751147689",
             "entity_type": "dimension",
-            "name": "time",
+            "name": "tap.time",
             "dimensions": {
               "tap.meta": "dimension"
             }
           },
           "node": {
-            "name": "time",
+            "name": "tap.time",
             "description": "What a row's event time means: the kind of time its `event_start` states (req-grid-entity-event-time). The grid stamps it on every node and edge that has an event time, derived from the type's declaration (`src: derived`); no writer may set it. Bounded: each value has a description node named `time.<value>`. The start and end themselves are the typed columns `event_start` and `event_end`, never a value of this dimension.",
             "values": [
               "occurred",
@@ -99,56 +99,56 @@
           "entity": {
             "entity_id": "01a204b6-0849-7423-abd9-057808fc29d4",
             "entity_type": "dimension",
-            "name": "time.occurred",
+            "name": "tap.time.occurred",
             "dimensions": {
               "tap.meta": "dimension"
             }
           },
           "node": {
-            "name": "time.occurred",
-            "description": "The `occurred` value of the `time` dimension: the event time is when the thing happened in the world, as its source states it (a log entry, a run, a sign-in). No counterpart in a formal code list: ISO 19115-1 `CI_DateTypeCode`, Dublin Core and DataCite have no term for an event occurring. Security and event schemas carry the idea as their default time field (OCSF `time`, the normalized event occurrence time; Elastic Common Schema `@timestamp`; CloudEvents `time`; W3C PROV-O `atTime`)."
+            "name": "tap.time.occurred",
+            "description": "The `occurred` value of the `tap.time` dimension: the event time is when the thing happened in the world, as its source states it (a log entry, a run, a sign-in). No counterpart in a formal code list: ISO 19115-1 `CI_DateTypeCode`, Dublin Core and DataCite have no term for an event occurring. Security and event schemas carry the idea as their default time field (OCSF `time`, the normalized event occurrence time; Elastic Common Schema `@timestamp`; CloudEvents `time`; W3C PROV-O `atTime`)."
           }
         },
         {
           "entity": {
             "entity_id": "01a204b6-0849-7423-abd9-057982f73384",
             "entity_type": "dimension",
-            "name": "time.created",
+            "name": "tap.time.created",
             "dimensions": {
               "tap.meta": "dimension"
             }
           },
           "node": {
-            "name": "time.created",
-            "description": "The `created` value of the `time` dimension: the event time is when the thing came to exist, as its source states it (a repository, an instance, an account). Counterparts: ISO 19115-1 `CI_DateTypeCode` `creation`; Dublin Core `created` (ISO 15836-2); DataCite `Created`; STIX `created`; OCSF `created_time`."
+            "name": "tap.time.created",
+            "description": "The `created` value of the `tap.time` dimension: the event time is when the thing came to exist, as its source states it (a repository, an instance, an account). Counterparts: ISO 19115-1 `CI_DateTypeCode` `creation`; Dublin Core `created` (ISO 15836-2); DataCite `Created`; STIX `created`; OCSF `created_time`."
           }
         },
         {
           "entity": {
             "entity_id": "01a204b6-0849-7423-abd9-057a95944063",
             "entity_type": "dimension",
-            "name": "time.first_seen",
+            "name": "tap.time.first_seen",
             "dimensions": {
               "tap.meta": "dimension"
             }
           },
           "node": {
-            "name": "time.first_seen",
-            "description": "The `first_seen` value of the `time` dimension: the event time is when a source first observed the thing, where the source states that and not when the thing itself began (a finding, an indicator). No counterpart in a formal code list. Security schemas carry it as a field name: STIX `first_seen` and `first_observed`, OCSF `first_seen_time`."
+            "name": "tap.time.first_seen",
+            "description": "The `first_seen` value of the `tap.time` dimension: the event time is when a source first observed the thing, where the source states that and not when the thing itself began (a finding, an indicator). No counterpart in a formal code list. Security schemas carry it as a field name: STIX `first_seen` and `first_observed`, OCSF `first_seen_time`."
           }
         },
         {
           "entity": {
             "entity_id": "01a204b6-0849-7423-abd9-057b1c525f3c",
             "entity_type": "dimension",
-            "name": "time.published",
+            "name": "tap.time.published",
             "dimensions": {
               "tap.meta": "dimension"
             }
           },
           "node": {
-            "name": "time.published",
-            "description": "The `published` value of the `time` dimension: the event time is when the thing was issued or made public by its author (an advisory, a release, a report). Counterparts: ISO 19115-1 `CI_DateTypeCode` `publication`; Dublin Core `issued` (ISO 15836-2); DataCite `Issued`; STIX and OSV `published`; CVE `datePublished`."
+            "name": "tap.time.published",
+            "description": "The `published` value of the `tap.time` dimension: the event time is when the thing was issued or made public by its author (an advisory, a release, a report). Counterparts: ISO 19115-1 `CI_DateTypeCode` `publication`; Dublin Core `issued` (ISO 15836-2); DataCite `Issued`; STIX and OSV `published`; CVE `datePublished`."
           }
         }
       ],

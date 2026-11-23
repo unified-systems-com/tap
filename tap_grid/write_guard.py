@@ -104,7 +104,7 @@ BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
     "spine_sync": {("queryset update", "tap_grid.Entity"): frozenset({"name", "dimensions", "updated_at"})},
     "scheduler_cursor": {("queryset update", "tap_cares.Schedule"): frozenset({"last_schedule_fired", "enabled_at"})},
     "event_time_rederive": {
-        # The three event columns, and `dimensions` for the `time` dimension the kind is stamped as.
+        # The three event columns, and `dimensions` for the `tap.time` dimension the kind is stamped as.
         ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_precision", "dimensions"})
     },
     "version_migration": {
@@ -316,7 +316,7 @@ def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
     """Hold a named writer to WHAT it writes where a field name is too coarse a lock.
 
     A field lock cannot name a key inside a JSON column. The ``event_time_rederive`` writer is
-    allowed the ``dimensions`` field only to set or remove the grid-derived entries (the ``time``
+    allowed the ``dimensions`` field only to set or remove the grid-derived entries (the ``tap.time``
     dimension, req-grid-entity-event-time rule 17). So the only ``dimensions`` value it may write
     is the key-level expression ``dimension_map.grid_derived_update`` builds, which touches no
     other key and whose entry is ``src: derived`` with a value the dimension accepts. A map, or

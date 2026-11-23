@@ -121,6 +121,20 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
 - `property_schema` is a JSON Schema object; the service layer validates edge properties against it on create/update (net of the system-owned `hotlink` key, which it must not declare). Required whenever the edge carries properties; a schema-less type may only ever write empty properties.
 - `default_dimensions` is a flat string-to-string map applied at edge creation when the caller doesn't specify dimensions.
 
+### The edge type's event time
+
+An edge type may state when the relationship happened or held, in its definition beside `property_schema`. None is the default and needs no statement (`req-grid-entity-event-time` rule 20).
+
+```json
+"event_time": { "shape": "moment", "field": "since", "kind": "first_seen" }
+"event_time": { "shape": "interval", "start": "from", "end": "until", "kind": "created",
+                "reader": "tap_grid.event_time:from_epoch_seconds", "end_reader": "tap_plugin.mine.times:until_or_unset" }
+```
+
+`field`, `start` and `end` are keys of the edge's properties, and each must be defined by `property_schema`. Keep the property as the source sent it; do not convert a time in the collector. Where a property is not already a date and time with a zone or text in a FHIR `dateTime` form, name a reader function by its import path, `package.module:function` (an edge type has no class, so it cannot hold the function itself). The function is at module level and pure; it returns a date, a date-time with a zone, FHIR text, or `None` for "no time". Core's two are `tap_grid.event_time:from_epoch_seconds` and `tap_grid.event_time:from_epoch_milliseconds`. A path that does not resolve stops the plugin loading and fails validation. An interval's `end` is only a time the source states as the end; a last sighting is not one.
+
+**A time inside an object property.** Where the time sits inside a property that is an object, add `"member": ["key", ...]` (and `"end_member"` for an interval's end) to `event_time`: a list of text keys from the property's value to the member. A reader named beside it is given the member's value (`req-grid-entity-event-time` rules 29 and 30).
+
 ### The edge type's version
 
 A new edge type states no `version` and is at version 1. When you later change an existing edge type's property rules, endpoint rules, event-time declaration or identity declaration, raise `version` in its `.edge.json` by one (it sits beside `property_schema`), ship the migration that moves the stored edges and ends by calling `tap_grid.model_version.set_applied_version("<SLUG>", <new version>)` in the same transaction, and record the new version with `manage.py model_versions --record --app <plugin>`; plugin validation fails a recorded type whose definition changed while its version did not. The check cannot see a change of meaning that leaves the definition alone, such as a property that now holds a different unit: raise the version by hand for that too. See `req-grid-entity-model-version` in `tap_grid/specs/spec-grid-entity.md`.

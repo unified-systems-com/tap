@@ -68,13 +68,43 @@
         "kind": { "enum": ["occurred", "created", "first_seen", "published"] },
         "field": { "type": "string", "minLength": 1 },
         "start": { "type": "string", "minLength": 1 },
-        "end": { "type": "string", "minLength": 1 }
+        "end": { "type": "string", "minLength": 1 },
+        "reader": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "The import path, package.module:function, of the function that turns the stored value of field (or of start) into a form the grid reads: a date, a date-time with a zone or FHIR dateTime text, or nothing for no time (req-grid-entity-event-time rules 23 to 26). Omit where the property already holds one of those forms."
+        },
+        "end_reader": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "As reader, for the value of end. An interval names a reader for each end on its own."
+        },
+        "member": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "The keys that lead from the value of field (or of start), an object, to the member inside it that holds the time (req-grid-entity-event-time rules 29 and 30). A reader, where one is named, is given that member's value. Omit where the property itself holds the time."
+        },
+        "end_member": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "As member, inside the value of end."
+        }
       },
+      "dependentRequired": { "end_reader": ["end"], "end_member": ["end"] },
       "oneOf": [
         {
           "properties": { "shape": { "const": "moment" } },
           "required": ["field"],
-          "not": { "anyOf": [{ "required": ["start"] }, { "required": ["end"] }] }
+          "not": {
+            "anyOf": [
+              { "required": ["start"] },
+              { "required": ["end"] },
+              { "required": ["end_reader"] },
+              { "required": ["end_member"] }
+            ]
+          }
         },
         {
           "properties": { "shape": { "const": "interval" } },

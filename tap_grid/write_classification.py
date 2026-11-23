@@ -192,7 +192,7 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     except Entity.DoesNotExist:
         return {}
     # The expected map is built where every stored map is (dimension_map.settle): defaults, the
-    # envelope over them, and the grid's own derived entries (the `time` dimension) carried from
+    # envelope over them, and the grid's own derived entries (the `tap.time` dimension) carried from
     # the stored row. An envelope never carries those, so leaving them out would make every
     # re-import of a row that has one differ from the spine, be classified changed, and have the
     # post-pass strip the entry it just compared against.

@@ -642,7 +642,7 @@ RID: `req-grid-dimension-core-vocabulary`
 
 Core stamps four dimension keys of its own: `tap.meta` (on every Dimension node and on the keystone),
 `tap.graph` (core's web records, `tap_web/dimensions.py`), `tap_cares` (the collection machinery's
-own models) and `time` (what a row's event time means, `req-grid-entity-event-time` in
+own models) and `tap.time` (what a row's event time means, `req-grid-entity-event-time` in
 `spec-grid-entity.md`). Dimensions are declared, never created on demand (aws-build Q48a), so core
 declares these in `tap_grid/data/dimensions.grift.json`, with ids fixed once and the same on every grid:
 
@@ -651,18 +651,20 @@ declares these in `tap_grid/data/dimensions.grift.json`, with ids fixed once and
 | `tap.meta` | `01a1d14c-d80b-725d-8002-eb0b3e272f1d` |
 | `tap.graph` | `01a1d14c-d80b-725d-8002-eb0c8e7f34c6` |
 | `tap_cares` | `01a1d14c-d80b-725d-8002-eb0d87d7f8e5` |
-| `time` | `01a204b6-0849-7423-abd9-057751147689` |
+| `tap.time` | `01a204b6-0849-7423-abd9-057751147689` |
 
 `tap_cares` keeps its undotted current name (aws-build Q50c); a rename later is one field update.
 
-#### The `time` dimension
+#### The `tap.time` dimension
 
-`time` says what a row's event time means. Its value is the kind of time the row's `event_start`
+`tap.time` says what a row's event time means. Its value is the kind of time the row's `event_start`
 states, never a timestamp: the start and the end are typed columns on the entity row. It is
 **bounded**: `values` lists `occurred`, `created`, `first_seen` and `published`. It is the first
 dimension the **grid itself derives**: the save writes it, source `derived`, from the type's
 event-time declaration, and a value for it from any writer is refused (`dimension_map.GRID_DERIVED`;
 `req-grid-entity-event-time` rule 3). Ruled 2026-11-22 by the owner, recorded on Issue# 1284 - tap.
+
+It was first named `time`. On 2026-11-23 the owner ruled it renamed `tap.time`, its value nodes `tap.time.<value>`, with every node id kept (Issue# 1284 - tap), which puts it under the prefix core's other dotted keys carry. The name changed before any grid was created on it, so there is no upgrade path: the seed batch is skipped by its id on a database that already imported it, and such a developer database is reloaded. Only `tap.time` is the grid-derived, writer-refused name. The bare name `time` is not reserved: a plugin may declare a dimension called `time` and write it like any other.
 
 Each value has a description node of its own, named `<dimension>.<value>`, the form the `dcom`
 plugin's bundle already uses (`dcom.design`, `dcom.configuration`, `dcom.operation`). A description
@@ -670,10 +672,10 @@ node is published documentation of one value. It is not a key any entity carries
 
 | Node | Dimension node id | Meaning | Counterpart in a published vocabulary |
 | --- | --- | --- | --- |
-| `time.occurred` | `01a204b6-0849-7423-abd9-057808fc29d4` | When the thing happened in the world | None in a formal code list. The default time field of event schemas: OCSF `time`, Elastic Common Schema `@timestamp`, CloudEvents `time`, W3C PROV-O `atTime` |
-| `time.created` | `01a204b6-0849-7423-abd9-057982f73384` | When the thing came to exist | ISO 19115-1 `CI_DateTypeCode` `creation`; Dublin Core `created` (ISO 15836-2); DataCite `Created` |
-| `time.first_seen` | `01a204b6-0849-7423-abd9-057a95944063` | When a source first observed the thing | None in a formal code list. A field name in security schemas: STIX `first_seen` and `first_observed`, OCSF `first_seen_time` |
-| `time.published` | `01a204b6-0849-7423-abd9-057b1c525f3c` | When its author issued it or made it public | ISO 19115-1 `CI_DateTypeCode` `publication`; Dublin Core `issued` (ISO 15836-2); DataCite `Issued` |
+| `tap.time.occurred` | `01a204b6-0849-7423-abd9-057808fc29d4` | When the thing happened in the world | None in a formal code list. The default time field of event schemas: OCSF `time`, Elastic Common Schema `@timestamp`, CloudEvents `time`, W3C PROV-O `atTime` |
+| `tap.time.created` | `01a204b6-0849-7423-abd9-057982f73384` | When the thing came to exist | ISO 19115-1 `CI_DateTypeCode` `creation`; Dublin Core `created` (ISO 15836-2); DataCite `Created` |
+| `tap.time.first_seen` | `01a204b6-0849-7423-abd9-057a95944063` | When a source first observed the thing | None in a formal code list. A field name in security schemas: STIX `first_seen` and `first_observed`, OCSF `first_seen_time` |
+| `tap.time.published` | `01a204b6-0849-7423-abd9-057b1c525f3c` | When its author issued it or made it public | ISO 19115-1 `CI_DateTypeCode` `publication`; Dublin Core `issued` (ISO 15836-2); DataCite `Issued` |
 
 The five nodes are a second batch in core's seed with its own fixed id, because a seed batch a
 grid has already imported is skipped: adding them to the first batch would never reach an existing
@@ -690,14 +692,14 @@ follows. A small list that is declared, with each addition a declared node, is w
 | RID | Name | Status | Notes | Trace |
 | --- | --- | :---: | --- | --- |
 | req-grid-dimension-core-vocabulary-1 | Core Declares Its Keys | Implemented | Every dimension key a core module stamps has a node in core's seed with a fixed UUIDv7, and every node in the seed names a key core stamps or describes one value of such a key (`<key>.<value>`, for a bounded key). Names resolve from the live rows boot imports from it (`req-grid-dimension-reference-9`). |
-| req-grid-dimension-core-vocabulary-2 | Core's Nodes Land at Every Boot | Implemented | Every boot imports the seed as its first grid write, before every installed plugin's dimension bundle and any other population step, once per grid (the seed batch's id), so a grid carries Dimension rows for `time` and its four value descriptions as well as for `tap.meta`, `tap.graph` and `tap_cares` (aws-build Q63; amended by unified-systems-com/tap#1188, aws-build Q67c, to lead the plugins' dimension bundles in the same phase; `req-boot-phases-5` in `spec-tap-boot-v0.md`). | `tap_boot/orchestrator.py::_phase_core_vocabulary`; `tap_boot/tests/test_orchestrator.py::TestCoreVocabulary`. | `tap_grid/data/dimensions.grift.json`; `tap_grid/tests/test_dimension_knobs.py::TestCoreVocabularySeed`. |
+| req-grid-dimension-core-vocabulary-2 | Core's Nodes Land at Every Boot | Implemented | Every boot imports the seed as its first grid write, before every installed plugin's dimension bundle and any other population step, once per grid (the seed batch's id), so a grid carries Dimension rows for `tap.time` and its four value descriptions as well as for `tap.meta`, `tap.graph` and `tap_cares` (aws-build Q63; amended by unified-systems-com/tap#1188, aws-build Q67c, to lead the plugins' dimension bundles in the same phase; `req-boot-phases-5` in `spec-tap-boot-v0.md`). | `tap_boot/orchestrator.py::_phase_core_vocabulary`; `tap_boot/tests/test_orchestrator.py::TestCoreVocabulary`. | `tap_grid/data/dimensions.grift.json`; `tap_grid/tests/test_dimension_knobs.py::TestCoreVocabularySeed`. |
 
 #### Future
 
 Undecided, and not needed until a term beyond the four is:
 
 - **How a plugin adds a value to a bounded list another bundle owns.** `values` is one field on one
-  node, and core owns the `time` node; a plugin's bundle may not redeclare a node core declares
+  node, and core owns the `tap.time` node; a plugin's bundle may not redeclare a node core declares
   (aws-build Q85a). Nothing today lets a second bundle extend the list.
 - **A `time_core` plugin**, started when a fifth term is needed, as the home for the wider
   vocabulary and its mapping to the ISO 19115-1 and Dublin Core terms. The dimension and the four

@@ -1799,7 +1799,7 @@ class BaseModel(models.Model):
         if self.entity_id is None:
             with transaction.atomic():
                 # Defaults stamped src: default, the caller's values over them
-                # (req-grid-dimension-reference-3), then the grid's own `time` dimension from
+                # (req-grid-dimension-reference-3), then the grid's own `tap.time` dimension from
                 # the event time just derived (req-grid-entity-event-time rule 3).
                 from tap_grid.dimension_map import settle
 
@@ -1880,7 +1880,7 @@ class BaseModel(models.Model):
                     for name, value in event_time.as_columns().items()
                     if getattr(self.entity, name) != value
                 }
-                # The kind, as the row's `time` dimension, in this same statement: set where an
+                # The kind, as the row's `tap.time` dimension, in this same statement: set where an
                 # event time was derived, removed where none was. Written only when it differs.
                 # Written as a key-level database expression, not a whole map from this instance's
                 # copy, so a dimension another writer changed since the row was read is not lost.

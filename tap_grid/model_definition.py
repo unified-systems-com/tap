@@ -158,17 +158,40 @@ def _declared_key(model_cls: type) -> Any:
 def event_time_definition(declaration: Any) -> Any:
     """A node type's ``EVENT_TIME`` in plain data. Three statements stay three values: none
     declared is None, the explicit "this type has no event time" is ``{"shape": "none"}``, and a
-    moment or an interval is its fields by name. No ``repr`` of the declaration is used."""
-    from tap_grid.event_time import Interval, Moment, NoEventTime
+    moment or an interval is its fields by name. No ``repr`` of the declaration is used.
+
+    A reader function is recorded by its name, the import path that reaches it, and only where
+    the declaration names one: a type that names none has the definition it had before readers
+    existed. The function's code is not part of the definition (req-grid-entity-event-time rule 28)."""
+    from tap_grid.event_time import Interval, Moment, NoEventTime, reader_name
 
     if declaration is None:
         return None
     if isinstance(declaration, NoEventTime):
         return {"shape": "none"}
     if isinstance(declaration, Moment):
-        return {"shape": "moment", "field": declaration.field, "kind": declaration.kind}
+        moment: dict[str, Any] = {"shape": "moment", "field": declaration.field, "kind": declaration.kind}
+        if declaration.reader is not None:
+            moment["reader"] = reader_name(declaration.reader)
+        if declaration.member is not None:
+            moment["member"] = list(declaration.member)
+        return moment
     if isinstance(declaration, Interval):
-        return {"shape": "interval", "start": declaration.start, "end": declaration.end, "kind": declaration.kind}
+        interval: dict[str, Any] = {
+            "shape": "interval",
+            "start": declaration.start,
+            "end": declaration.end,
+            "kind": declaration.kind,
+        }
+        if declaration.reader is not None:
+            interval["reader"] = reader_name(declaration.reader)
+        if declaration.end_reader is not None:
+            interval["end_reader"] = reader_name(declaration.end_reader)
+        if declaration.member is not None:
+            interval["member"] = list(declaration.member)
+        if declaration.end_member is not None:
+            interval["end_member"] = list(declaration.end_member)
+        return interval
     raise TypeError(f"EVENT_TIME of type {type(declaration).__qualname__} is not an event-time declaration")
 
 

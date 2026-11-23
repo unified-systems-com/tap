@@ -19,7 +19,7 @@ import tap_grid
 from tap_grid.models import Dimension
 
 SEED = Path(tap_grid.__file__).resolve().parent / "data" / "dimensions.grift.json"
-CORE_KEYS = {"tap.meta", "tap.graph", "tap_cares", "time"}
+CORE_KEYS = {"tap.meta", "tap.graph", "tap_cares", "tap.time"}
 
 
 @pytest.mark.spec("req-grid-dimension-knobs-1")
@@ -68,7 +68,7 @@ class TestCoreVocabularySeed:
             f"{key}.{value}" for key in CORE_KEYS for value in (nodes[key].get("values") or ()) if key in nodes
         }
         assert set(nodes) == CORE_KEYS | described
-        assert described == {"time.occurred", "time.created", "time.first_seen", "time.published"}
+        assert described == {"tap.time.occurred", "tap.time.created", "tap.time.first_seen", "tap.time.published"}
 
     def test_a_seed_batch_is_never_edited_once_shipped(self) -> None:
         """A batch a grid has imported is skipped by id, so new nodes go in a new batch."""
