@@ -279,7 +279,9 @@ def test_the_store_must_be_an_absolute_writable_directory(monkeypatch: pytest.Mo
 def test_the_entrypoint_runs_the_initializer_before_any_setting_and_finish_fails_closed() -> None:
     text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
     init = text.index("python -m tap.initialize run")
-    assert init < text.index("scripts/codespace-env") and init < text.index("python -m tap.preboot")
+    assert init < text.index("python -m tap.preboot")
+    # The Codespace derivation reads no setting and runs first: it is the prebuild guard (req-tap-bake-hosts-5).
+    assert text.index("/app/scripts/codespace-env") < init
     assert "mounted, durable volume; the installation's identity must outlive the container" in text
     block = text[text.index("==> Installation: Finish") :]
     block = block[: block.index("\nfi\n")]
@@ -371,3 +373,34 @@ def test_a_failed_link_mint_is_never_retried_automatically(
     identity = store.read()
     assert identity is not None and identity["first_login"] == "issuing"
     assert minted == [1], "a failed enroll_admin may have printed a link, so it is not run again"
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+def test_a_named_owner_is_the_first_admin_and_no_link_is_issued(
+    store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TAP_AUTH_INSTANCE_OWNER", '{"login": "visitor", "user_id": "42"}')
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    calls: list[str] = []
+
+    def runner(argv: list[str]) -> int:
+        calls.append(argv[2])
+        return 0
+
+    initialize.finish(store, initialize.Target(URL), runner=runner)
+    initialize.finish(store, initialize.Target(URL), runner=runner)
+    assert calls == ["boot", "boot"], "boot runs each time; enroll_admin never"
+    identity = store.read()
+    assert identity is not None and identity["first_login"] == "owner"
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+def test_a_codespace_on_the_initializers_road_is_guarded_keyed_and_booted_once() -> None:
+    text = (Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh").read_text()
+    derive = text[text.index("# Codespaces derivation (gs#101)") : text.index("# Initializer (req-tap-bake-initializer")]
+    # A prebuild has no name: the derivation aborts, and exits, before the initializer can mint anything.
+    assert 'emit_abort codespace-derive' in derive and "exit 1" in derive
+    # The initializer owns the key wherever it runs.
+    assert '[[ -n "${TAP_PRODUCT_IMAGE}" && -n "${TAP_INSTALLATION_DIR:-}" ]]' in derive and "--no-secret-key" in derive
+    # Finish boots an initialized installation; the Codespace's own boot stands aside.
+    assert 'if [ "${CODESPACES:-}" = "true" ] && [ -z "${TAP_INITIALIZED}" ]; then' in text

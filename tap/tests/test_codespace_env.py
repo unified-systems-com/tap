@@ -15,7 +15,9 @@ REPO = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
 
-def _derive(tmp_path: Path, identity: str | None, wait: int | str = 3, **env: str) -> subprocess.CompletedProcess[str]:
+def _derive(
+    tmp_path: Path, identity: str | None, wait: int | str = 3, args: tuple[str, ...] = (), **env: str
+) -> subprocess.CompletedProcess[str]:
     # A copy of the script, so the signing key it generates lands in the throwaway tree, not the repository.
     tree = tmp_path / "tree"
     (tree / "scripts").mkdir(parents=True, exist_ok=True)
@@ -33,7 +35,7 @@ def _derive(tmp_path: Path, identity: str | None, wait: int | str = 3, **env: st
     if identity is not None:
         base["TAP_CODESPACE_IDENTITY"] = identity
     return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — running the committed script IS the test; argv list of fixed strings, no shell  # nosec B603  # noqa: S603
-        ["bash", str(tree / "scripts" / "codespace-env"), "--output", str(tmp_path / "out.env"), "--force"],
+        ["bash", str(tree / "scripts" / "codespace-env"), "--output", str(tmp_path / "out.env"), "--force", *args],
         env={**base, **env}, capture_output=True, text=True, check=False, timeout=60,
     )
 
@@ -172,3 +174,26 @@ def test_the_template_holds_no_command_syntax() -> None:
     template = text[start : text.index("\nENVFILE\n", start)]
     assert "`" not in template
     assert "$(" not in template
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+def test_an_installation_takes_no_key_from_the_derivation(tmp_path: Path) -> None:
+    """The initializer mints the key into the installation's volume; the workspace gets none."""
+    ident = tmp_path / "identity.env"
+    ident.write_text(_full("cs-one"))
+    proc = _derive(tmp_path, str(ident), args=("--no-secret-key",))
+    assert proc.returncode == 0, proc.stderr
+    out = (tmp_path / "out.env").read_text()
+    assert "SECRET_KEY" not in "\n".join(line for line in out.splitlines() if not line.startswith("#"))
+    assert not (tmp_path / "tree" / ".codespace-secret-key").exists()
+    assert _hosts(tmp_path) == "cs-one-8000.app.github.dev"
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+def test_without_the_flag_the_workspace_key_is_kept(tmp_path: Path) -> None:
+    ident = tmp_path / "identity.env"
+    ident.write_text(_full("cs-two"))
+    proc = _derive(tmp_path, str(ident))
+    assert proc.returncode == 0, proc.stderr
+    key = (tmp_path / "tree" / ".codespace-secret-key").read_text().strip()
+    assert f"SECRET_KEY={key}" in (tmp_path / "out.env").read_text().splitlines()
