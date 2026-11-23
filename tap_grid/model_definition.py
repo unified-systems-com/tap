@@ -553,6 +553,77 @@ def _narrowed(before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
     return ""
 
 
+def _allowed_edges(rules: Any) -> dict[str, Any] | None:
+    """A node type's edge rules in one direction as edge type -> the endpoint types it allows.
+
+    None where the type states no rule (any edge is allowed); ``"*"`` for an edge type allowed to
+    any endpoint type. The recorded form is the declared list of ``{"edges": [...], "nodes":
+    [...]}`` entries, read the way ``tap_grid.constraints`` reads it.
+    """
+    if rules is None:
+        return None
+    allowed: dict[str, Any] = {}
+    for entry in rules if isinstance(rules, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        edge_types = [str(item.get("type")) for item in entry.get("edges") or [] if isinstance(item, Mapping)]
+        nodes = entry.get("nodes")
+        for edge_type in edge_types:
+            if nodes is None or allowed.get(edge_type) == "*":
+                allowed[edge_type] = "*"
+            else:
+                held = allowed.setdefault(edge_type, set())
+                held |= {item.get("type") for item in nodes if isinstance(item, Mapping)}
+    return allowed
+
+
+def _tightened_node_rules(before: Any, after: Any) -> list[str]:
+    """What a node type allowed in one direction before and no longer allows (rule 32)."""
+    old, new = _allowed_edges(before), _allowed_edges(after)
+    if new is None:
+        return []
+    if old is None:
+        return ["a rule is stated where none was, so only the listed edges are allowed"]
+    found: list[str] = []
+    for edge_type in sorted(old):
+        if edge_type not in new:
+            found.append(f"{edge_type} is no longer allowed")
+        elif new[edge_type] != "*":
+            lost = "any type" if old[edge_type] == "*" else ", ".join(sorted(old[edge_type] - new[edge_type]))
+            if lost:
+                found.append(f"{edge_type} is no longer allowed with {lost}")
+    return found
+
+
+def _tightened_endpoints(before: Any, after: Any) -> str:
+    """What an edge type's endpoint rule on one side allowed before and no longer allows."""
+    if after == "*" or before == after:
+        return ""
+    if before == "*":
+        return "any type was allowed and now only the listed ones are"
+    lost = sorted(set(before or ()) - set(after or ()))
+    return f"{', '.join(map(str, lost))} no longer allowed" if lost else ""
+
+
+def _history_discard_problems(label: str, where: str, new_fields: Mapping[str, Any], step: Any) -> list[str]:
+    """Rule 27: history values may be declared discarded only for a field that can be empty."""
+    problems: list[str] = []
+    for name in sorted(getattr(step, "discards_history", ()) or ()):
+        spec = new_fields.get(name)
+        if not isinstance(spec, Mapping):
+            problems.append(
+                f"{label}: the step from {where} declares history values of {name!r} discarded, and that is "
+                "not a field of the new version"
+            )
+        elif not spec.get("null"):
+            problems.append(
+                f"{label}: the step from {where} declares history values of {name!r} that cannot be converted "
+                "discarded, and the new field cannot be empty. There is no truthful value to leave in its "
+                "place: make the field nullable, convert every value, or declare a break"
+            )
+    return problems
+
+
 def _node_step_problems(
     label: str, where: str, before: Mapping[str, Any], after: Mapping[str, Any], step: Any
 ) -> list[str]:
@@ -615,6 +686,22 @@ def _node_step_problems(
             f"{label}: the natural key changes from {where} ({before.get('key')} to {after.get('key')}) and the "
             "step declares neither how a key is carried across (key) nor that it cannot be (key_refused)"
         )
+    # Rule 32: a version that allows fewer edges says so on its link, because edges written under
+    # the old rules stay on the grid and a migration to it must look for them first.
+    old_rules: Mapping[str, Any] = before.get("edge_rules") or {}
+    new_rules: Mapping[str, Any] = after.get("edge_rules") or {}
+    tightened = [
+        f"{direction}: {found}"
+        for direction in ("outbound", "inbound")
+        for found in _tightened_node_rules(old_rules.get(direction), new_rules.get(direction))
+    ]
+    if tightened and not getattr(step, "tightens_edges", ""):
+        problems.extend(
+            f"{label}: from {where} the edge rules are tightened ({found}) and the step does not declare it "
+            "(tightens_edges, with the reason), nor is a break declared"
+            for found in tightened
+        )
+    problems.extend(_history_discard_problems(label, where, new_fields, step))
     return problems
 
 
@@ -656,6 +743,32 @@ def _edge_step_problems(
             f"{label}: from {where} the properties {named} are made required and the step does not say it may "
             "refuse records (may_refuse)"
         )
+    # Rule 32 for an edge type: its own endpoint rules narrowed.
+    old_ends: Mapping[str, Any] = before.get("endpoint_rules") or {}
+    new_ends: Mapping[str, Any] = after.get("endpoint_rules") or {}
+    narrowed = [
+        f"{side}: {found}"
+        for side in ("sources", "targets")
+        if (found := _tightened_endpoints(old_ends.get(side, "*"), new_ends.get(side, "*")))
+    ]
+    if narrowed and not getattr(step, "tightens_edges", ""):
+        problems.extend(
+            f"{label}: from {where} the endpoint rules are narrowed ({found}) and the step does not declare it "
+            "(tightens_edges, with the reason), nor is a break declared"
+            for found in narrowed
+        )
+    # How an edge of the type is found again is its key (rule 15): a change is declared like a
+    # node type's key change, as a function that carries a key across or as a refusal.
+    if before.get("identity") != after.get("identity") and step.key is None and not step.key_refused:
+        problems.append(
+            f"{label}: the identity declaration changes from {where} and the step declares neither how a key is "
+            "carried across (key) nor that it cannot be (key_refused)"
+        )
+    if getattr(step, "discards_history", ()):
+        problems.append(
+            f"{label}: the step from {where} declares history values discarded, which applies to a node type's "
+            "fields; an edge type's properties are one JSON column whose type does not change"
+        )
     return problems
 
 
@@ -667,8 +780,9 @@ def link_problems(state: TypeState, entries: list[dict[str, Any]]) -> list[str]:
     them is a step, a field removed, a type narrowed, a field made required and a natural key
     changed must each be declared on the step. A declared break excuses any difference. The
     spine's chain is checked for its links only: its definition is three tables, not one list of
-    fields, and a change to it is core's own to review. An edge rule a version tightens is
-    declared on the link by the rule that checks stored edges for it, which is not built yet.
+    fields, and a change to it is core's own to review. An edge rule a version tightens (rule 32)
+    and history values declared discarded (rule 27) are checked here too; what the declarations
+    then do to stored rows is ``tap_grid.version_migration``'s.
     """
     from tap_grid import version_links
 

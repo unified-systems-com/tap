@@ -60,7 +60,12 @@ class Step:
       fields is refused by the guard: a FLIP entry names one source for a field (rule 31);
     - ``may_refuse``: why some records may be refused, where they may;
     - ``key``: the natural key at version N to the key at N+1, where the version changes it
-      (rule 12); ``key_refused`` is the reason no such function exists.
+      (rule 12); ``key_refused`` is the reason no such function exists;
+    - ``tightens_edges``: why the version allows fewer edges than the one before it, where it
+      does. A migration to it is refused while a live edge the new rules refuse exists (rule 32);
+    - ``discards_history``: fields whose type the version changes, whose history values that
+      cannot be converted are left empty and reported, not refused (rule 27). Only for a field
+      the new version lets be empty.
     """
 
     upgrade: Callable[[dict[str, Any]], dict[str, Any]]
@@ -70,6 +75,8 @@ class Step:
     may_refuse: str = ""
     key: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     key_refused: str = ""
+    tightens_edges: str = ""
+    discards_history: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
