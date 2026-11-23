@@ -5,6 +5,8 @@
 
 ### Features
 
+* **bake:** the initializer, first slice — identity minted once, boot, first login ([0b3014c](https://github.com/unified-systems-com/tap/commit/0b3014c630dbb306b7a3034140133b89aa1762c5))
+* **bake:** the initializer, first slice — identity minted once, boot, first login [via make-it-fast] ([1acc7c3](https://github.com/unified-systems-com/tap/commit/1acc7c307af3d0bfd1f1418215b2a709a5944513))
 * **bake:** the product image — a record's whole environment baked, nothing installed at start ([f4f839d](https://github.com/unified-systems-com/tap/commit/f4f839d653214fab2cd38b1690d7a6c19279064e))
 * **bake:** the product image — a record's whole environment baked, nothing installed at start [via make-it-fast] ([79792a9](https://github.com/unified-systems-com/tap/commit/79792a94e8662e57a6cf903961e4fd30e77a7093))
 * **grid:** a re-observation that changes nothing writes no history (+ time and model-version specs) [via hard-things] ([183d709](https://github.com/unified-systems-com/tap/commit/183d709bd6bb9364a84bb7cfb54ef74bec0afef8))
@@ -12,6 +14,8 @@
 * **grid:** a type states its natural key's spelling once, and core applies it wherever a key is resolved (+1 more) [via aws-build] ([2914ff5](https://github.com/unified-systems-com/tap/commit/2914ff53b6f5d61d293e60673fc575496f7f7554))
 * **grid:** batch pointers on the entity row ([bd8a8d5](https://github.com/unified-systems-com/tap/commit/bd8a8d530debfa1c63eddb2b01c701b4af08c9e1))
 * **grid:** batch pointers on the entity row [via hard-things] ([6da5c68](https://github.com/unified-systems-com/tap/commit/6da5c68912c8441b5f6a34a72ab6654ea47a6c07))
+* **grid:** collection time on the entity row and on each batch event ([83eaa16](https://github.com/unified-systems-com/tap/commit/83eaa16f137437d0d3dbc49836d96e86b9addffd))
+* **grid:** collection time on the entity row and on each batch event [via hard-things] ([1d77c31](https://github.com/unified-systems-com/tap/commit/1d77c31762ebf035880bfb62057e628d203ba88d))
 * **grid:** event time on the entity row ([b2c177f](https://github.com/unified-systems-com/tap/commit/b2c177f2073a5d8e418a7eba1294cf1ada8ed414))
 * **grid:** event time on the entity row [via hard-things] ([6dbc686](https://github.com/unified-systems-com/tap/commit/6dbc68633e8b43e02e38559f37c64bbc5f316ea6))
 * **grid:** the kind of event time is the grid-derived `time` dimension ([5416383](https://github.com/unified-systems-com/tap/commit/54163836cc26ea610d9346843a2aefd34b925550))
@@ -20,9 +24,14 @@
 
 ### Bug Fixes
 
+* **bake:** a start in flight is not refused; a pending identity claims nothing ([4e94b24](https://github.com/unified-systems-com/tap/commit/4e94b24ac251df4d83d3c916240b4b1ed65fd12d))
+* **bake:** a start in flight is not refused; a pending identity claims nothing [via make-it-fast] ([c65649c](https://github.com/unified-systems-com/tap/commit/c65649ce793cef0eb3162f3d4bf0436108afd115))
 * **bake:** default-branch publishing only; Sonar's sanitizers at the line ([bd1883c](https://github.com/unified-systems-com/tap/commit/bd1883c6450ef4a3bb685eb5e625dbe93f69886e))
+* **bake:** no asserts in the initializer; mark the composed ALTER ROLE ([e594e9a](https://github.com/unified-systems-com/tap/commit/e594e9a1e0d6edbca97c7955176312f7f62aa8a6))
 * **bake:** no setuid or setgid bit reaches the root-owned venv ([970d0b7](https://github.com/unified-systems-com/tap/commit/970d0b7154ebd52b05102039060d3583140a737c))
+* **bake:** refuse unadopted TAP databases, durable volumes only, one link ever ([b7e797e](https://github.com/unified-systems-com/tap/commit/b7e797ed058aeb4fba01bbdbc56630e1fe35f3f6))
 * **bake:** the inputs digest covers the profile; say what start checks ([686acd0](https://github.com/unified-systems-com/tap/commit/686acd002bfaa6b1cac233fc34461a83fc973147))
+* **bake:** the whole first start runs under the installation lock ([7a6fbe7](https://github.com/unified-systems-com/tap/commit/7a6fbe75aa3b8e2d317bdf4f90a0b72cfb3fede1))
 * **bake:** treat the record and the base as untrusted inputs ([be6b9c7](https://github.com/unified-systems-com/tap/commit/be6b9c79f9391d64aae77c71d5dda664b92c6433))
 * **bake:** verify the index before any public tag; only tap-web as a base ([60cdb6a](https://github.com/unified-systems-com/tap/commit/60cdb6a4111b932f52a963d71ec44bb56eada6c2))
 * **bake:** verify the index before any public tag; only tap-web as a base [via make-it-fast] ([3fb391f](https://github.com/unified-systems-com/tap/commit/3fb391f671f9b6ceb5758609ff9e9ba95115c3da))
@@ -31,6 +40,7 @@
 * **grid:** check edge event-time keys against the schema; refuse an empty window ([390fd06](https://github.com/unified-systems-com/tap/commit/390fd0658f6c59931b1c439681f7bb7341b99af0))
 * **grid:** hold the re-derive writer to grid-derived dimension entries ([f940145](https://github.com/unified-systems-com/tap/commit/f9401450cafe6f264ea0f5353a7448901dabb9ed))
 * **grid:** re-derive leaves a row a newer save changed; touching coarse units are reversed ([6fde8e4](https://github.com/unified-systems-com/tap/commit/6fde8e46cfcf68eb9eb390c7c7e54f48f728a7a7))
+* **grid:** the database holds the collection window's two rules ([4f1855b](https://github.com/unified-systems-com/tap/commit/4f1855b24f2311761b8563f2e5924e3061ca824b))
 * **grid:** the natural-key hook reads only a complete key; an incomplete one keeps its refusal ([7830614](https://github.com/unified-systems-com/tap/commit/7830614b2f92e52727383d2d082d6a01c25d03f0))
 * **grid:** write the time dimension as a key-level update, and admit only that ([a342dd1](https://github.com/unified-systems-com/tap/commit/a342dd126fde62391d00ada887b14f7a769c8b85))
 * **plugins:** a cancelled migrations row leaves the owner issue as it was ([95f89c7](https://github.com/unified-systems-com/tap/commit/95f89c77fef917e5247cd482821e49211e158782))
@@ -44,6 +54,12 @@
 * **misc:** a refusal is a stop, not a workaround cue [via make-it-fast] ([cb10df4](https://github.com/unified-systems-com/tap/commit/cb10df42d395aadf62533df761d86744e409d785))
 * **misc:** lessons learned from the make-it-fast session ([c226515](https://github.com/unified-systems-com/tap/commit/c2265157ab2fc61a25a2248ba1fdad14f514b5fb))
 * **misc:** lessons learned from the make-it-fast session [via make-it-fast] ([4db28a0](https://github.com/unified-systems-com/tap/commit/4db28a024ee1f531585616d2e70c6830be568bef))
+* **spec:** a boot-time drift check is not enough once a policy reads the copies ([3bb3886](https://github.com/unified-systems-com/tap/commit/3bb388686bf310c27d28c9612d1c49b55931bb3f))
+* **spec:** a policy on the spine copies fails closed on drift ([fbe3779](https://github.com/unified-systems-com/tap/commit/fbe3779ce86805343ceae3016141954f5970ffc7))
+* **spec:** a policy on the spine copies fails closed on drift [via hard-things] ([16c236f](https://github.com/unified-systems-com/tap/commit/16c236fcd68ab719b657f97dcce93b693645860c))
+* **spec:** spine copies on typed rows ([3797d3c](https://github.com/unified-systems-com/tap/commit/3797d3c662280e4f164013a66a3b068ff5ab771d))
+* **spec:** spine copies on typed rows [via hard-things] ([94bb533](https://github.com/unified-systems-com/tap/commit/94bb53390c4c53dd997d4b31049a79b1bfece0ea))
+* **spec:** the spine copies must agree under concurrent writers ([ff70476](https://github.com/unified-systems-com/tap/commit/ff70476f9720ba93c70822bd419b986a77630969))
 
 ## [0.4.5](https://github.com/unified-systems-com/tap/compare/v0.4.4...v0.4.5) (2026-11-22)
 
