@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.8](https://github.com/unified-systems-com/tap/compare/v0.4.7...v0.4.8) (2026-11-23)
+
+
+### Features
+
+* **initialize:** a Codespace takes the initializer's road and a prebuild mints nothing ([3cde866](https://github.com/unified-systems-com/tap/commit/3cde866b1eaf3c486349cd8b8547a81112dbcdfe))
+* **initialize:** a Codespace takes the initializer's road and a prebuild mints nothing [via make-it-fast] ([9222a97](https://github.com/unified-systems-com/tap/commit/9222a97e528f42048400092253e3dc9f2ab0990d))
+
+
+### Bug Fixes
+
+* **initialize:** only an owner a sign-in can match stands in for the first admin link ([ef579ac](https://github.com/unified-systems-com/tap/commit/ef579ac3934d3e66035086cc6633c3f24dd6dab4))
+* **initialize:** only an owner a sign-in can match stands in for the first admin link [via make-it-fast] ([da874d4](https://github.com/unified-systems-com/tap/commit/da874d4efa7bd87b69e46d6e092084aeb5387c45))
+
 ## [0.4.7](https://github.com/unified-systems-com/tap/compare/v0.4.6...v0.4.7) (2026-11-23)
 
 
