@@ -559,9 +559,27 @@ def _node_step_problems(
     problems: list[str] = []
     old_fields: Mapping[str, Any] = before.get("fields") or {}
     new_fields: Mapping[str, Any] = after.get("fields") or {}
-    accounted = set(step.drops) | set(step.renames.values())
-    for source in step.derived.values():
-        accounted |= {source} if isinstance(source, str) else set(source)
+    # A rename or a derivation accounts for a removed field only where it is real: the old field
+    # is one the old version had and the new field is one the new version has. A declaration
+    # naming a field that does not exist accounts for nothing, and is itself a problem below.
+    accounted = set(step.drops)
+    accounted |= {old for new, old in step.renames.items() if old in old_fields and new in new_fields}
+    for new_name, source in sorted(step.derived.items()):
+        sources = [source] if isinstance(source, str) else list(source)
+        missing = sorted(str(name) for name in sources if name not in old_fields)
+        if new_name not in new_fields or missing:
+            reasons = []
+            if new_name not in new_fields:
+                reasons.append(f"{new_name!r} is not a field of the new version")
+            if missing:
+                reasons.append(f"{', '.join(map(repr, missing))} is not a field of the old version")
+            problems.append(
+                f"{label}: the step from {where} declares {new_name!r} derived from "
+                f"{', '.join(map(repr, sources))}, and {' and '.join(reasons)}. A derivation that names no "
+                "real field accounts for nothing"
+            )
+            continue
+        accounted |= set(sources)
     for name in sorted(set(old_fields) - set(new_fields) - accounted):
         problems.append(
             f"{label}: field {name!r} is removed from {where} and the step does not declare it. Name it in "
@@ -607,7 +625,25 @@ def _edge_step_problems(
     old_rules, new_rules = before.get("property_rules"), after.get("property_rules")
     old_properties = set((old_rules or {}).get("properties") or ()) if isinstance(old_rules, Mapping) else set()
     new_properties = set((new_rules or {}).get("properties") or ()) if isinstance(new_rules, Mapping) else set()
-    accounted = set(step.drops) | set(step.renames.values())
+    accounted = set(step.drops)
+    for new_name, old_name in sorted(step.renames.items()):
+        if old_name in old_properties and new_name in new_properties:
+            accounted.add(old_name)
+        else:
+            problems.append(
+                f"{label}: the step from {where} declares {old_name!r} renamed to {new_name!r}, and that is not "
+                "a property of the old version becoming a property of the new one"
+            )
+    for new_name, source in sorted(step.derived.items()):
+        sources = [source] if isinstance(source, str) else list(source)
+        if new_name in new_properties and all(name in old_properties for name in sources):
+            accounted |= set(sources)
+        else:
+            problems.append(
+                f"{label}: the step from {where} declares {new_name!r} derived from "
+                f"{', '.join(map(repr, sources))}, and that is not a property of the new version built from "
+                "properties of the old one"
+            )
     for name in sorted(old_properties - new_properties - accounted):
         problems.append(
             f"{label}: property {name!r} is removed from {where} and the step does not declare it dropped or renamed"

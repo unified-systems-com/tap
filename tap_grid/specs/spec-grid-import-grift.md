@@ -1133,7 +1133,7 @@ v0 should define stable codes for common importer outcomes, including:
 - `duplicate_json_key` — an object repeated a key (`req-grid-import-grift-preflight-3`)
 - `non_finite_number` — `NaN`, `Infinity`, `-Infinity` or a literal overflowing to infinity
 - `unsupported_grift_version` — `metadata.grift_version` is not a format this importer reads (`req-grid-import-grift-preflight-4`)
-- `version_unstated`, `version_newer`, `version_too_old`, `version_break`, `version_no_link`, `record_refused_by_upgrade` — what a document's stated versions refuse, before validation (`req-grid-entity-model-version` rules 20, 23 and 24 in `spec-grid-entity.md`). `field_dropped_by_upgrade` is the warning for a field a step dropped (rule 25)
+- `version_unstated`, `version_newer`, `version_too_old`, `version_break`, `version_no_link`, `record_refused_by_upgrade`, `upgrade_step_failed` — what a document's stated versions refuse, before validation (`req-grid-entity-model-version` rules 20, 23 and 24 in `spec-grid-entity.md`). `field_dropped_by_upgrade` is the warning for a field a step dropped (rule 25)
 - `model_version_pending` — the document carries a type whose class declares a greater version than this grid's rows are at; nothing is imported until migrations are applied (`req-grid-entity-model-version` rule 4)
 - `schema_validation_failed`
 - `duplicate_entity_id`

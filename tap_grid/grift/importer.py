@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f5a38a0d928c (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/15ec9cd9dd07 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -384,6 +384,9 @@ _ERROR_CODES = frozenset(
         "version_break",
         "version_no_link",
         "record_refused_by_upgrade",
+        # A step or key function raised on a record: a malformed record or a wrong step, told
+        # apart from a step's own refusal above.
+        "upgrade_step_failed",
         "schema_validation_failed",
         "duplicate_entity_id",
         "duplicate_batch_id",
@@ -1895,7 +1898,7 @@ def _run_preflight(
         elif gv not in formats_read():
             # req-grid-import-grift-preflight-4: an unknown version refuses the file rather than
             # guessing at its meaning (Issue# 630 - tap). The refusal names the version it was
-            # given and the versions it reads (req-grift-header-versions rule 10).
+            # given and the versions it reads (req-grift-header-versions rules 10 and 12).
             reads = " and ".join(repr(version) for version in formats_read())
             issues.append(
                 _issue(

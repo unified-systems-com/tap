@@ -103,7 +103,7 @@ def record_after_migrate(sender: Any, *, using: str = DEFAULT_DB_ALIAS, **kwargs
     put back. A record greater than this code declares is left alone: this code did not write
     that spine and must not claim it.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-version@bc7e37846a3f/20f966f690b5 (derivation) — rule 2: the one writer
+    TAP-IMPLEMENTS: req-grid-entity-spine-version@d2cf7b3722f1/20f966f690b5 (derivation) — rule 2: the one writer
         of the grid's record of its spine version, run when migrations are applied.
     """
     from django.db import router
