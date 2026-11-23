@@ -5,7 +5,7 @@
 | Bucket | Count |
 | --- | ---: |
 | mapped | 5 |
-| unbuilt | 3 |
+| unbuilt | 8 |
 | retired | 1 |
 | unaccounted | 8 |
 | 0-ACID (payable) | 8 |

@@ -4,7 +4,7 @@
 
 GRIFT, the Grid Interchange Format, is TAP's JSON-based interchange format for moving graph data between files and grids. GRIFT v0 is intentionally small, strict, and practical: it should be easy to validate, easy to diff, and sufficient to refactor plugin seed data such as the LOTR dataset into portable JSON files.
 
-GRIFT's node and edge lanes are full-object interchange: they do not describe patches, history replay, or FLIP state. They carry enough canonical information for an importer to choose its own create, replace, upsert, or skip behavior while preserving universal entity identity through `entity_id`. GRIFT's removal lanes are explicit identity-targeted operations, declared separately from node and edge upserts.
+GRIFT's node and edge lanes are full-object interchange: they do not describe patches, history replay, or FLIP state. The write sections (`req-grift-write-sections`, Proposed) add three more ways to write a record: insert only, update the fields sent, and replace whole. They carry enough canonical information for an importer to choose its own create, replace, upsert, or skip behavior while preserving universal entity identity through `entity_id`. GRIFT's removal lanes are explicit identity-targeted operations, declared separately from node and edge upserts.
 
 GRIFT also carries an optional **optimistic concurrency** contract. Any mutating target — an upsert envelope or a removal target — may declare the version of the local entity it expects to act on. The importer enforces that expectation atomically: if the local version has moved on, the conflicting batch fails loud rather than overwriting state the author did not see. This is the same model Kubernetes uses with `resourceVersion`, Postgres SERIALIZABLE uses with `40001 serialization_failure`, and event-sourcing frameworks use with `entity_expected_version` on aggregate writes. The author's mental model is "apply if the grid still matches my plan, else tell me." Senders that need to recover from a conflict re-read, re-plan, and resubmit.
 
@@ -596,6 +596,11 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-contents | [Contents Declaration](#contents-declaration) | Implemented | A batch declares what kinds of record it carries; the importer verifies the declaration against the batch and decides whether it accepts each kind |
 | req-grift-export | [Grid Export](#grid-export) | Implemented | `manage.py export_grift` serialises a grid, retired rows included, optionally narrowed by dimension, batch or reachability |
 | req-grift-header-versions | [Version Declarations In The Header](#version-declarations-in-the-header) | In Development | `metadata.spine_version` and `metadata.type_versions`: the spine version and the version of each type the document carries, beside `grift_version` |
+| req-grift-write-sections | [Write Sections](#write-sections) | Proposed | Optional `inserts`, `updates` and `replaces` sections beside `nodes` and `edges`, for nodes and edges |
+| req-grift-insert-only | [Insert-Only Records](#insert-only-records) | Proposed | A record in `inserts` is created if absent and leaves an existing row untouched |
+| req-grift-partial-update | [Updates Without Required Fields](#updates-without-required-fields) | Proposed | A record in `updates` writes the fields it carries, and an edge the keys it carries in `properties` |
+| req-grift-yield | [Yielding To Another Source](#yielding-to-another-source) | Proposed | Under `on_other_source: yield` a field another source asserted is skipped and reported |
+| req-grift-full-replace | [Full Replace](#full-replace) | Proposed | A record in `replaces` is the whole object; omitted fields reset |
 | req-grift-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | Explicit exclusions for this version |
 
 ## Document Format
@@ -1392,6 +1397,239 @@ Staged by ruling, and why the requirement is not Implemented:
 | req-grift-header-versions-6 | Format Version Moves To 1 | Implemented | An export states `grift_version` `"1"`. An importer refuses a format it does not read, naming the version given and the versions it reads. | An importer that reads only `"0"` is the released one, not run here |
 | req-grift-header-versions-7 | Format 0 Is Read Until The Fleet Moves | Implemented | A document stating `"0"` imports with no upgrade and no version refusal; with `TAP_REQUIRE_GRIFT_VERSIONS=1` it is refused, naming the version, and writes nothing. |  |
 | req-grift-header-versions-8 | The Fleet States Its Versions | Proposed | No committed GRIFT document in core states `"0"`, `GRIFT_VERSION` is `"1"`, and a document stating `"0"` is refused with no switch set. | Issue# 1288 - tap |
+
+## Write Sections
+----
+RID: `req-grift-write-sections`
+
+Status: `Proposed`
+
+A batch states how each record is to be written by the section it puts the record in. `nodes` and `edges` stay what they are, an upsert that keeps absent fields. Three optional sections sit beside them, each shaped like the removal sections a batch already has: `inserts` (create only if absent), `updates` (write the fields sent to a row that may already exist, optionally yielding to another source) and `replaces` (replace the whole object). Nodes and edges are both in scope in all three.
+
+#### Status Details
+Proposed; nothing is built. The five items it serves were ruled in by the owner as one decision set on Issue# 1284 - tap (Q5 a to e), with the open points of the first draft ruled on 2026-11-23 on the same issue: edges are in scope for all three sections, and the narrow ownership rule of `req-grift-yield` rule 7. This is Phase 2's "GRIFT write semantics" track of the time and observation epic, Issue# 886 - tap.
+
+Today (read) a batch container has `batch_entity`, `batch_node`, `nodes`, `edges` and the optional `deletes`, `purges` and `contents`, and refuses unknown keys (`req-grift-batch`). A record in `nodes` or `edges` whose target exists is applied through `replace_node` / `replace_edge` with `absent="keep"`, the ruling of Issue# 1128 - tap; one whose target does not exist is created (`spec-grid-import-grift.md`, "Per-Entity Last-Write-Wins"). There is no way to say "only if absent", "only the fields I send, without the required ones", "unless another source owns it", or "the whole object, omissions included".
+
+Two things about targets found while writing this (read): identity resolution searches live rows only (`resolve_identity`, `tap_grid/services/__init__.py`), so a record addressed by its natural key does not see a tombstoned row with the same key; Issue# 1170 - tap tracks a lookup that would. And the identity locks a batch takes up front are collected from `nodes` only (`_ref_node_lock_keys`, `tap_grid/grift/importer.py`); the new sections must be added to that collection.
+
+Prior art for putting the write's intent beside the record: a FHIR transaction `Bundle` carries a `request` per entry with its method and an `ifNoneExist` condition (searched: https://hl7.org/fhir/R4/bundle.html, https://hl7.org/fhir/R4/http.html). GRIFT already has its own idiom for the same thing, a section per intent with section-level knobs (`deletes`, `purges`), so this follows GRIFT's idiom and takes only the semantics from the published formats.
+
+#### Implementation
+1. A batch container may carry `inserts`, `updates` and `replaces`. Each is an object with `nodes` and `edges`, both always present even when empty, and its knobs, all required: the schema applies no default, as for `deletes` (`req-grift-import-deletes`, "Section Knobs").
+2. A member of a section's `nodes` is a node object and a member of its `edges` an edge object, in the shapes `req-grift-node` and `req-grift-edge` define. A `retirement` block is refused in all three sections.
+3. Section knobs apply to every record in the section. There is no per-record override, as in the removal sections.
+4. An entity appears in at most one write section of a batch (`nodes`/`edges`, `inserts`, `updates`, `replaces`). A second appearance is refused with `duplicate_entity_id`.
+5. Order within a batch: every section's nodes before any section's edges, and within each kind `inserts`, then `nodes`/`edges`, then `updates`, then `replaces`; then `deletes`, then `purges`. Array order holds inside a section.
+6. Batch-local `ref`s and key endpoints work across the sections of one batch, and the identity locks a batch takes before its writes cover every section.
+7. `metadata.type_versions` names every type any section carries, and the upgrade (`req-grid-entity-model-version` rule 21) runs over the records of all sections before anything is validated or written. A step meets partial records in `updates`; a step that needs a field the record does not carry refuses that record, which refuses the document.
+8. A record in any write section may state a collection window in the form `req-grid-entity-collection-time` defines for a document.
+9. A record addressed by `entity_id` whose target is tombstoned is refused with `entity_tombstoned`, in all three sections. Nothing here restores a retired entity. A record addressed by its natural key does not find a tombstoned row (identity resolution reads live rows) and is treated as having no target, as in `nodes` today; whether such a record should see the tombstone waits on Issue# 1170 - tap.
+10. Resolving whether a target exists is a read of the grid: the importer authorises `grid.read` in the import's scope before it, as it does for a `ref` (`req-grid-import-grift-identity-5`).
+11. `entity_expected_version` is allowed in `updates` and `replaces` and keeps its meaning. In `inserts` it is refused: the section already says what the sender expects.
+12. The import result counts records per section and outcome (created, written, unchanged, skipped) and carries one issue per skipped record and per yielded field or key.
+13. The sections are part of format `"1"`. No released core reads format `"1"`, so adding them before 0.5.0 changes no reader in the field.
+
+#### Development
+A per-record `request` block, as FHIR has, was considered and left out: GRIFT's section knobs have no per-record override, and one section per intent keeps a document diffable. Overloading `entity_expected_version` with `0` for "must not exist" was considered for insert-only and left out: the field's minimum is 1, and a version conflict aborts the batch (`req-grift-concurrency-version-5`), where an insert that finds its row must skip.
+
+Edges were considered for exclusion, since every ticket speaks of nodes. The owner ruled them in, including key-level updates inside an edge's `properties` (`req-grift-partial-update` rule 8), so the shape does not change again when edges need it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-write-sections-1 | Three Optional Sections | Proposed | The schema admits `inserts`, `updates` and `replaces` on a batch container, each requiring `nodes`, `edges` and its knobs, and still refuses any other key. | |
+| req-grift-write-sections-2 | One Section Per Entity | Proposed | A batch naming one entity in two write sections is refused with `duplicate_entity_id` and writes nothing. | |
+| req-grift-write-sections-3 | Order | Proposed | An edge in `edges` whose endpoint is a node created by `inserts` of the same batch is written. | |
+| req-grift-write-sections-4 | Upgrade Covers Every Section | Proposed | A version-1 record in `updates` of a document stating version 1, imported where the type is at version 2, is written as the step returns it. | |
+| req-grift-write-sections-5 | Tombstoned Target Refused By Id | Proposed | A record in any of the three sections addressed by the `entity_id` of a tombstoned entity fails with `entity_tombstoned`. | |
+| req-grift-write-sections-6 | Locks Cover Every Section | Proposed | A batch whose `inserts` and `updates` name keyed nodes takes their identity locks before any write, in the one sorted order. | |
+
+## Insert-Only Records
+----
+RID: `req-grift-insert-only`
+
+Status: `Proposed`
+
+A record in `inserts` is created when no row exists for it and leaves an existing row exactly as it is. Issue# 1071 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read in Issue# 1071 - tap, run on 2026-10-19 before keep-absent landed) a node sent under an existing identity replaces the row; since Issue# 1128 - tap an omitted field is kept, but every field sent still replaces, and a sender cannot say "leave it if it is there". A collector must read first and write after, with a gap.
+
+Rule 4 for a record addressed by a natural key is verified by reading the code, not by a test: `resolve_identity` takes a transaction-scoped advisory lock on the type and key values and then searches, inside the batch's transaction, so a second writer of the same key waits and finds the first one's row (`tap_grid/services/__init__.py`, the `pg_advisory_xact_lock` in `resolve_identity`; `_take_identity_locks` in `tap_grid/grift/importer.py`). Rule 4 for a record addressed by `entity_id` is an assumption: no code was read that settles what a concurrent create of the same id does.
+
+Prior art: FHIR conditional create. With no match the server creates; with one match it ignores the request; with several it answers 412 (searched: https://hl7.org/fhir/R4/http.html). HTTP's `If-None-Match: *` on a `PUT` is the same intent (memory, RFC 9110, not fetched).
+
+```json
+"inserts": {
+  "on_existing": "skip",
+  "nodes": [
+    { "entity": { "ref": "task-1", "entity_type": "ecs_task", "dimensions": {} },
+      "node": { "arn": "arn:aws:ecs:...:task/abc", "name": "abc" } }
+  ],
+  "edges": []
+}
+```
+
+#### Implementation
+1. `on_existing` is `skip`, `warn` or `error`. `skip` leaves the row and reports the record as skipped at info severity; `warn` does the same at warning severity; `error` fails the batch.
+2. A record whose target does not exist is created exactly as a record in `nodes` or `edges` would be: full validation, required fields required.
+3. A record whose target exists writes nothing to it: no field, no envelope `name` or `dimensions`, no FLIP entry, no revision, no history row.
+4. The check and the create are one step inside the batch transaction. For a record addressed by natural key, both happen under the identity lock for that type and key. For a record addressed by `entity_id`, a create that loses to a concurrent create of the same id is treated as "exists".
+5. A natural key that matches more than one live row fails the batch, as it does today (FHIR's 412).
+6. A keyless type has nothing to find: a record of it addressed by `ref` is always created.
+7. A skipped record counts as an observation of the row by this batch: the last-observed pointers move and no history is written.
+8. An edge in `inserts` follows the same rules, its target found by `entity_id` or by its type's identity declaration.
+
+#### Development
+`on_exists: skip` on the plain `nodes` array, the first shape the issue suggested, has nowhere to live: `nodes` is an array, and a per-record flag is the override GRIFT rules out.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-insert-only-1 | Absent Is Created | Proposed | An `inserts` record for an identity with no row creates the row. | |
+| req-grift-insert-only-2 | Existing Is Untouched | Proposed | An `inserts` record for an identity with a live row leaves every field, the name, the dimensions, `flip_map` and the revision as they were, and the result reports it skipped. | The issue's done-test |
+| req-grift-insert-only-3 | No Gap | Proposed | Two imports inserting the same keyed identity at once create one row; the other reports a skip. | Needs two connections |
+| req-grift-insert-only-4 | Error Policy | Proposed | With `on_existing: error` an existing target fails the batch and nothing is written. | |
+| req-grift-insert-only-5 | Edges Too | Proposed | An edge in `inserts` whose identity matches a live edge leaves its `properties` and `flip_map` unchanged. | |
+
+## Updates Without Required Fields
+----
+RID: `req-grift-partial-update`
+
+Status: `Proposed`
+
+A record in `updates` writes the fields it carries to an existing row and need not carry the type's required fields. For an edge, it writes the keys it carries inside `properties`. Issue# 1173 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read) required fields stay required under keep-absent: "validation is unchanged, so a keep-absent payload must still carry them" (`req-grid-service-write-keepabsent`, the ruling of Issue# 1128 - tap), and `req-grift-node` validates every `node` as a full object. A sender adding one fact to a node it did not create must send every required field, and each replaces the stored value. `patch_node` has no such requirement and the importer never calls it (read in Issue# 1173 - tap, not re-read here).
+
+Prior art: JSON Merge Patch. A member absent from the patch is left alone; a member present replaces; `null` removes (searched: https://www.rfc-editor.org/rfc/rfc7396.html). GRIFT's keep-absent rules are these already, with one local difference kept from Issue# 1128 - tap: `null` on a field that cannot be null resets it to its default. Rule 3 below narrows that for `updates`.
+
+```json
+"updates": {
+  "on_missing": "ignore",
+  "on_other_source": "overwrite",
+  "nodes": [
+    { "entity": { "ref": "c-1", "entity_type": "ecs_container", "dimensions": {} },
+      "node": { "arn": "arn:aws:ecs:...:container/xyz", "image_digest": "sha256:..." } }
+  ],
+  "edges": []
+}
+```
+
+#### Implementation
+1. Where the target exists, `node` is validated field by field against `FIELD_CRUD_SCHEMA` and the required list is not applied. The fields a natural key needs to find the row are still needed, because without them there is no target.
+2. The write follows the keep-absent rules as they stand (`req-grid-service-write-keepabsent-2` to `-4`, `-6`): absent kept, present replaces whole, FLIP on what changed or was first asserted. A field tracked per key (`req-grid-flip-nested`) is written key by key instead.
+3. An explicit `null` on a required field is refused with the field named, where keep-absent in `nodes` resets it to its default.
+4. `on_missing` is `error`, `warn`, `ignore` or `create`. The first three are the removal sections' values with the same meaning. `create` creates the row, and then the required fields are required; a record that lacks them fails the batch naming them.
+5. The envelope's `name` and `dimensions` are applied as for a record in `nodes`, except under `on_other_source: yield` (`req-grift-yield` rule 8).
+6. `on_other_source: overwrite` is the behaviour above. `yield` is `req-grift-yield`.
+7. A record that changes nothing is an observation, as for any write (`req-grid-flip-change`).
+8. An edge in `updates` writes the keys it carries inside `properties` and leaves the others, by `req-grid-flip-nested` rules 4 to 6: an edge's `properties` is tracked per key for every edge type, with no opt-in. The keys the edge type's identity declaration names locate the edge and are not changed by an update; a record that would change one is refused naming it. Endpoints are not changed by an update.
+
+#### Development
+Making required fields required-on-create-only for every record in `nodes` was the other shape Issue# 1173 - tap names. It needs no new section, and it leaves the sender unable to say what should happen when the row is not there: the create would fail on the missing fields and abort the batch. The section's `on_missing` is that answer. Calling `patch_node` was not chosen as the contract because `PATCH_EXTRA_FIELDS` are excluded from GRIFT payloads.
+
+An edge's `properties` is per-key for every edge type because it is the edge's only writeable object, so an update that replaced it whole would not be partial at all; the cost the per-key opt-in guards against on nodes, large `configuration` objects, does not arise for edge properties in the fleet today (designed, not measured).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-partial-update-1 | No Required Re-Send | Proposed | An `updates` record carrying one optional field and none of the type's required fields writes that field to an existing row and leaves the required fields' values and FLIP entries as they were. | The issue's case |
+| req-grift-partial-update-2 | Missing Target Policy | Proposed | With `on_missing: ignore` a record whose target does not exist writes nothing and is reported; with `error` the batch fails; with `create` and the required fields present the row is created; with `create` and one missing the batch fails naming it. | |
+| req-grift-partial-update-3 | Null On Required Refused | Proposed | An explicit `null` on a required field in `updates` is refused, naming the field. | |
+| req-grift-partial-update-4 | Edge Properties By Key | Proposed | An edge holding `{"a":1,"b":2}` in `properties`, sent in `updates` with `{"b":3}`, ends `{"a":1,"b":3}` with `a`'s entry unchanged. | Owner ruling, Issue# 1284 - tap |
+| req-grift-partial-update-5 | Edge Identity Unchanged | Proposed | An `updates` record that would change a property the edge type's identity names is refused naming it. | |
+
+## Yielding To Another Source
+----
+RID: `req-grift-yield`
+
+Status: `Proposed`
+
+Under `on_other_source: yield`, a record in `updates` writes a field only where no other source has asserted the field's current value. Issue# 1172 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read, Issue# 1172 - tap) a sender can send a field, which replaces it whoever wrote it, or omit it, which leaves a stale value of its own in place, or read `flip_map` first and decide, with a gap. FLIP already names the batch that set each field's current value, and the batch carries `source` and `actor` (`req-grid-flip-map-2`, `req-grid-flip-batch-1`; `Batch.source` read in `tap_grid/models.py`). Not verified: that every collector sets `Batch.source`, and distinctly from every other collector.
+
+Which source has the final say on a value is **not decided** here. Yield lets a second-hand source step aside and lets a closer source take a value from it; it does not rank two sources that both write with `overwrite`, or a source against an operator's edit. That needs a hierarchy of provenance, which the owner has deferred: Issue# 1341 - tap.
+
+Prior art: Kubernetes Server-Side Apply. Each field has managers; an apply that would change a field another manager owns is a conflict; the applier may force it, omit the field, or match the value and share it (searched: https://kubernetes.io/docs/reference/using-api/server-side-apply/). The mapping: a manager is a source, `overwrite` is a forced apply, `yield` is an apply that drops the conflicting field in place of failing. The issue asks for a skip that is reported, not an error, so that either collector can run first.
+
+#### Implementation
+1. A **source** is the `source` of the batch a FLIP entry points at. Two batches are the same source when their `source` values are equal and not empty.
+2. Under `yield`, a field the record carries is written when the field has no FLIP entry, or its entry points at a batch of the same source as the writing batch. Otherwise the field is skipped: its value, its entry and nothing else about it change.
+3. Each skipped field is reported in the result as a warning naming the entity, the field and the other source. It is never dropped silently.
+4. The judgement is made inside the write, on the row as locked for the write. There is no read-then-write gap.
+5. A record all of whose fields are skipped writes no field and is an observation.
+6. `yield` on a field of a type with FLIP off (`req-grid-flip-default`) is refused: there is nothing to judge by.
+7. An entry written by a yielding write records that it was yielded (`req-grid-flip-nested` rule 10 gives the form). A later write by a **different** source in `nodes`, or in `updates` with `overwrite`, that carries the **same** value moves the entry to the writing batch **only when the entry was yielded**; the moved entry is not yielded. An entry not written by a yielding write never moves on a confirming write, whoever sends it. This is the one exception to `req-grid-flip-change` rule 3, ruled by the owner on Issue# 1284 - tap (2026-11-23).
+8. A change of owner under rule 7 with no change of value is an observation, not an update: it writes no history row and does not change the revision (`req-grid-history-reobservation`).
+9. Under `yield` the envelope's `name` and `dimensions` are not applied to a row that exists. They are applied on a create.
+10. No precedence between sources is declared anywhere. The closer source writes with `overwrite`; a second-hand source writes with `yield`. Which is which is the collector author's statement, made by the section and knob it uses.
+
+#### Development
+Fill-only (write only where the stored value is null) was set aside in the issue: a source could never refresh its own value. A declared precedence table between sources was considered and left out for 0.5.0; it belongs to Issue# 1341 - tap. Failing the batch on a conflict, as Server-Side Apply does, was left out for the reason in the issue.
+
+Without rule 7 the design has a hole (designed, not observed): a provider that writes the same value a second-hand source already wrote does not move the entry, by `req-grid-flip-change`, so the field stays the second-hand source's, which can later overwrite a value the provider confirmed. A wider rule was considered, that any different source confirming a value takes it. It was not chosen: two sources that both write with `overwrite` and agree would then take the field from each other on every pass, a write on every unchanged pass, which is what Issue# 322 - tap removed. The narrow rule costs one flag on a yielded entry.
+
+#### Future
+Which source has the final say on a value, and whether a ranking of sources, kinds of source, operators or a per-field declaration decides it: Issue# 1341 - tap.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-yield-1 | Other Source's Field Is Left | Proposed | Source B writes `name`; source A sends `name` under `yield`: value and entry are B's, and the result names the field as yielded to B. | |
+| req-grift-yield-2 | Own Field Is Refreshed | Proposed | Source A wrote `image`; A sends a new `image` under `yield`: it is written and stamped. | |
+| req-grift-yield-3 | Unstamped Field Is Written | Proposed | A field with no FLIP entry is written under `yield`, and its entry records that it was yielded. | |
+| req-grift-yield-4 | Either Runs First | Proposed | A then B (overwrite) then A (yield), and B then A (yield), end with the same values for the fields B sends. | The owner's ruling in the issue |
+| req-grift-yield-5 | Confirming Takes A Yielded Field | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`: the entry is B's and not yielded, no history row is written, the revision is unchanged; A's later different `name` under `yield` is skipped. | Rule 7 |
+| req-grift-yield-6 | Confirming Does Not Take An Overwritten Field | Proposed | A wrote `name` with `overwrite`; B sends the same `name` with `overwrite`: the entry stays A's, and nothing is written. | Rule 7; Issue# 322 - tap |
+| req-grift-yield-7 | No Gap | Proposed | The judgement uses the row as locked for the write. | Needs two connections |
+
+## Full Replace
+----
+RID: `req-grift-full-replace`
+
+Status: `Proposed`
+
+A record in `replaces` is the whole object: a field it omits is reset, not kept.
+
+#### Status Details
+Proposed; nothing is built. Since Issue# 1128 - tap an omitted field in `nodes` is kept (read: `spec-grid-import-grift.md`, "Absent Fields On Upsert"). A sender that holds the whole truth of an object can clear a field only by sending `null` for each one by name, and an object key only by re-sending the field. The service verb already has the behaviour: `replace_node` with `absent="reset"`, its default (`req-grid-service-write-keepabsent-1`).
+
+Prior art: HTTP `PUT` replaces the representation whole (memory: RFC 9110, not fetched).
+
+```json
+"replaces": {
+  "on_missing": "create",
+  "nodes": [ { "entity": { "entity_id": "0196...", "entity_type": "panel", "dimensions": {} },
+               "node": { "title": "Inventory", "config": {} } } ],
+  "edges": []
+}
+```
+
+#### Implementation
+1. `node` is validated as a full object: required fields required (`req-grift-node`, "Node Validation").
+2. A field the record omits is reset to its model default. A field it carries replaces whole, a per-key tracked field included (`req-grid-flip-nested` rule 7), and an edge's `properties` included.
+3. FLIP moves on the fields whose value changed, including a reset that changed the value (`req-grid-flip-change` rule 5). Entries it writes are not yielded.
+4. `on_missing` is `error`, `warn`, `ignore` or `create`.
+5. There is no `on_other_source`. A full replace is a statement of the whole object and does not yield.
+6. The envelope's `name` and `dimensions` are applied as for a record in `nodes`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-full-replace-1 | Omitted Is Reset | Proposed | A `replaces` record omitting an optional field that holds a value leaves it at the model default with a FLIP entry for the writing batch. | |
+| req-grift-full-replace-2 | Required Still Required | Proposed | A `replaces` record lacking a required field is refused. | |
+| req-grift-full-replace-3 | Same Record In Nodes Keeps It | Proposed | The same record in `nodes` leaves the omitted field's value. | The difference from upsert |
+| req-grift-full-replace-4 | Edge Properties Replaced Whole | Proposed | An edge holding `{"a":1,"b":2}` sent in `replaces` with `{"b":3}` ends `{"b":3}`. | |
 
 ## Stored Files
 ----

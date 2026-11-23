@@ -21,7 +21,7 @@ FLIP (Field-Level Information Provenance) explains the auditable sources of the 
 | req-grid-flip-batch | [FLIP Batch Anchoring](#flip-batch-anchoring) | Implemented | FLIP points to immutable batch ids rather than duplicating source metadata |
 | req-grid-flip-default | [FLIP Default-On Coverage](#flip-default-on-coverage) | Implemented | FLIP applies by default to all service-writeable fields on service-writeable model types |
 | req-grid-flip-config-depr | [FLIP Config Deprecation](#flip-config-deprecation) | Implemented | Legacy FLIP enablement and field-selection config is deprecated until needed again |
-| req-grid-flip-nested | [Nested Field-Path FLIP](#nested-field-path-flip) | Proposed | Nested JSON field-path provenance is reserved as a future capability |
+| req-grid-flip-nested | [Nested Field-Path FLIP](#nested-field-path-flip) | Proposed | Per-key provenance in listed node object fields and in every edge's `properties`; an entry records whether a yielding write made it |
 | req-grid-flip-separation | [FLIP and History Separation](#flip-and-history-separation) | Implemented | FLIP answers present-state provenance only; historical provenance lives in history |
 | req-grid-flip-retirement | [Retirement Is A FLIP-Tracked State Change](#retirement-is-a-flip-tracked-state-change) | Implemented | A tombstone records the batch that retired the object, on the object and on every edge it ends |
 | req-grid-flip-change | [FLIP Moves Only On Change](#flip-moves-only-on-change) | Implemented | An entry moves when a write changes the value or first asserts the field; a write that repeats the stored value leaves it alone |
@@ -194,27 +194,48 @@ RID: `req-grid-flip-nested`
 
 Status: `Proposed`
 
-FLIP should eventually support nested field-path provenance inside structured JSON payloads, but this is not required for the first default-on implementation.
+A model may ask for provenance per key inside an object field, and an edge's `properties` always has it. FLIP then records which batch set each key, a write of the object removes only the keys the writer's source owns, and yielding is judged per key. An entry also records whether it was written by a yielding write. Issue# 1171 - tap.
 
 #### Status Details
-Proposed future capability. Current first-pass behavior may treat structured fields such as `properties` as a single top-level FLIP-tracked field path.
+Proposed; nothing is built. Today (read) an object field is one FLIP entry (rule 2 of the earlier text of this requirement) and a present field replaces whole (`req-grid-import-grift-ordering-9`), so whoever writes `tags` last replaces every key and a key only a second source reports is lost. `flip_map` keys are described as dot-delimited paths (`req-grid-flip-map-1`); nothing writes below the top level.
+
+This revision replaces the earlier placeholder, which reserved nested provenance "the day it becomes a real problem". Issue# 1171 - tap is that day: Anchore's tags must survive a provider's write. It is written together with the GRIFT write sections in `spec-grift-v0.md` (`req-grift-write-sections`, `req-grift-partial-update`, `req-grift-yield`), ruled by the owner on Issue# 1284 - tap: edges are in scope, with key-level updates inside `properties`, and ownership moves on a confirming write only from a yielded entry.
+
+Which source has the final say on a key is not decided here; see Issue# 1341 - tap.
+
+Prior art: Server-Side Apply tracks ownership per map key, and an applier removes only keys it owned (searched: https://kubernetes.io/docs/reference/using-api/server-side-apply/). JSON Merge Patch is the wire form for "these keys, and `null` to remove" (searched: https://www.rfc-editor.org/rfc/rfc7396.html).
 
 #### Implementation
-Future nested FLIP should support:
-
-1. Addressing nested JSON paths within service-writeable structured fields.
-2. Updating nested provenance paths during patch/replace semantics.
-3. Preserving the same batch-anchored current-state semantics as top-level FLIP fields.
+1. Opt-in per field for nodes: a model lists the object fields tracked per key. Depth is one: the top-level keys of that object. A field not listed behaves as before.
+2. An edge's `properties` is tracked per key for every edge type, with no opt-in, because it is the edge's only writeable object. The keys its identity declaration names are tracked like any other key and are never changed by an update.
+3. The entry for a tracked field is an object mapping each key, verbatim, to its entry. It is not a set of dotted paths: real keys contain dots, colons and slashes (`kubernetes.io/name`, `aws:cloudformation:stack-name`), which a dotted path cannot hold.
+4. A write of a tracked field is judged per key. A key whose value changed, or that has no entry, is stamped; an unchanged key with an entry keeps it (`req-grid-flip-change`, applied per key).
+5. In `nodes` and in `updates`, a write of a tracked field sets the keys it carries and removes only those absent keys whose entry is the writer's source or that have no entry. Another source's keys stay. This replaces "present replaces whole" for tracked fields only.
+6. In `updates`, a key sent as `null` is removed if rule 5 would let the writer remove it.
+7. Under `yield`, a key whose entry names another source is skipped and reported as the field with the key.
+8. In `replaces` a tracked field is replaced whole, every key, and every key is stamped by the writer.
+9. A removed key's entry is removed with it.
+10. An entry, whole-field or per-key, is the writing batch's id as before. An entry written by a yielding write (`req-grift-yield`) is instead the object `{"batch": "<id>", "yielded": true}`. A reader treats a plain id as not yielded. A confirming write by a different source moves a yielded entry and only a yielded one (`req-grift-yield` rule 7).
+11. Existing rows carry one batch id for a field. On the first write after a field becomes tracked, that batch id becomes the entry of every key present.
 
 #### Development
-This should be implemented the day it becomes a real problem, not before.
+Per-key stamping for every object field on nodes was left out for cost on large `configuration` objects, as the issue asks. Dotted or JSON Pointer paths (RFC 6901, memory) were considered for rule 3: a pointer would be unambiguous with escaping, and every reader of `flip_map` would have to parse it.
+
+The yielded flag could have been read from the batch instead of stored on the entry. It cannot: one batch may write some fields through `nodes` and others through `updates` under `yield`, so "was this entry yielded" is a fact about the entry, not the batch.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-flip-nested-1 | Nested JSON Paths Reserved | Proposed | The FLIP spec explicitly reserves support for nested field-path provenance inside structured JSON fields. | |
-| req-grid-flip-nested-2 | Top-Level Structured Field Fallback Allowed | Proposed | Until nested FLIP is implemented, structured fields may be treated as a single top-level FLIP-tracked field path. | |
+| req-grid-flip-nested-1 | Nested JSON Paths Reserved | Superseded | The earlier placeholder; replaced by the criteria below. | |
+| req-grid-flip-nested-2 | Top-Level Structured Field Fallback Allowed | Proposed | A node object field not listed keeps one entry and replaces whole. | Was the fallback; now the rule for unlisted fields |
+| req-grid-flip-nested-3 | Per-Key Entries | Proposed | After two sources each write one key of a tracked field, the field's entry maps each key to its writer's batch. | |
+| req-grid-flip-nested-4 | Other Source's Keys Survive | Proposed | Source B writes `{"a":1}`, source A adds `{"x":9}` through `updates`; B writes `{"a":2}` in `nodes`: the field is `{"a":2,"x":9}`. | The issue's third bullet |
+| req-grid-flip-nested-5 | Own Keys Are Removed | Proposed | B wrote `{"a":1,"b":2}`; B writes `{"a":1}`: `b` and its entry are gone. | |
+| req-grid-flip-nested-6 | Yield Per Key | Proposed | A sends `{"a":7,"x":10}` under `yield` where `a` is B's and `x` is A's: `x` is written, `a` is skipped and reported. | |
+| req-grid-flip-nested-7 | Edge Properties Tracked By Key | Proposed | An edge type with no declaration of its own keeps a per-key entry for each key of `properties`. | Owner ruling, Issue# 1284 - tap |
+| req-grid-flip-nested-8 | Repeat Moves Nothing | Proposed | Re-sending an identical object moves no key's entry. | Issue# 322 - tap |
+| req-grid-flip-nested-9 | Yielded Entry Recorded | Proposed | A field first written under `yield` has the entry `{"batch": ..., "yielded": true}`; a plain id is read as not yielded. | |
 
 ### FLIP and History Separation
 ----
