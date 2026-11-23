@@ -345,10 +345,11 @@ def _check_row(scenario: Scenario, built: Built, name: str, row: model_oracle.Ro
         if got_ends != want_ends:
             failures.append(f"{name} endpoints {tuple(map(built.ref_of, got_ends or ()))}, expected {row.ends}")
         if edge is not None:
-            failures.extend(_check_stamp(built, name, row, edge.batch_id))
+            failures.extend(_check_stamp(built, name, row, _content_batch(Edge, eid)))
         return failures
-    # The typed row, live or tombstoned: a tombstone keeps the stamp of the batch that last wrote
-    # its content (the delete's batch is on the delete event, checked with the records).
+    # The typed row, live or tombstoned: the batch that last wrote its content is on its latest
+    # history row before any retirement (the delete's batch is on the delete event and on the
+    # retirement's own history row, checked with the records).
     typed = (
         get_node(eid)
         if row.live
@@ -359,8 +360,24 @@ def _check_row(scenario: Scenario, built: Built, name: str, row: model_oracle.Ro
             got_value = getattr(typed, field_name, None)
             if got_value != value:
                 failures.append(f"{name}.{field_name} is {got_value!r}, expected {value!r}")
-    failures.extend(_check_stamp(built, name, row, typed.batch_id))
+    failures.extend(_check_stamp(built, name, row, _content_batch(type(typed), eid)))
     return failures
+
+
+def _content_batch(model_cls: Any, eid: Any) -> str:
+    """The batch that last wrote a row's content: its latest history row written while it was live.
+
+    The typed row's own ``batch_id`` was removed (Issue# 1288 - tap); each history row names the batch
+    that produced it, and a retirement adds a final row naming the retiring batch with the retirement
+    copy set (req-grid-entity-spine-copies rule 13), which is left out here.
+    """
+    stamped = (
+        model_cls.history.filter(entity_id=eid, spine_deleted_at__isnull=True)
+        .order_by("-history_date", "-history_id")
+        .values_list("batch_id", flat=True)
+        .first()
+    )
+    return stamped or ""
 
 
 def _check_stamp(built: Built, name: str, row: model_oracle.Row, batch_id: str) -> list[str]:

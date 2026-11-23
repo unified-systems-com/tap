@@ -232,7 +232,7 @@ def test_create_patch_delete_through_the_service_layer(untracked_table: Any) -> 
     entity = Entity.objects.get(pk=entity_id)
     assert entity.version == 2
     assert entity.created_at <= entity.updated_at
-    assert row.batch_id == patched.batch_id
+    assert str(entity.last_changed_batch_id) == patched.batch_id
     assert row.flip_map.get("status") == patched.batch_id
     events = list(BatchEvent.objects.filter(entity_id=entity_id).order_by("timestamp"))
     assert [e.batch_id for e in events] == [

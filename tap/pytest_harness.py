@@ -202,7 +202,15 @@ def _install_test_db_seed_hook() -> None:
 def _seed_test_baseline() -> None:
     """The committed baseline every DB test inherits: the auth bootstrap, then the dimension vocabulary."""
     from tap_auth.sync import sync_auth
+    from tap_grid.model_version import register_core_types
 
+    # Core's catalog rows at the versions core declares, as a process start gives a grid
+    # (req-grid-entity-model-version rule 6), before any batch exists. A test database is built after
+    # the apps were made ready, so the start found no table; without a row, the first registration
+    # after a test has written a batch reads the type as version 1, the version of rows written
+    # before versions existed, and refuses every write of a core type declared above it (``batch``
+    # at version 2 since Issue# 1288 - tap).
+    register_core_types()
     sync_auth()
     _seed_test_dimensions()
 

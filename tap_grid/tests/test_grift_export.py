@@ -383,13 +383,15 @@ def test_replayed_rows_are_attributed_to_the_capture_batch() -> None:
     """
     _populate()
     source_model = _model(SOURCE)
-    original_batch_ids = set(source_model.objects.values_list("batch_id", flat=True))
+    # The batch that last changed each row is the spine's pointer since the typed batch_id was
+    # removed (Issue# 1288 - tap).
+    original_batch_ids = set(source_model.objects.values_list("entity__last_changed_batch_id", flat=True))
     export = export_grid()
     _empty_the_grid()
     assert grift_import(export.document).success
 
-    replayed_batch_ids = set(source_model.objects.values_list("batch_id", flat=True))
-    assert replayed_batch_ids == {export.batch_entity_id}
+    replayed_batch_ids = {str(b) for b in source_model.objects.values_list("entity__last_changed_batch_id", flat=True)}
+    assert replayed_batch_ids == {str(export.batch_entity_id)}
     assert replayed_batch_ids != original_batch_ids
 
 

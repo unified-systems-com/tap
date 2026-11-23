@@ -57,7 +57,10 @@ SubgraphLayer = Literal["lite", "full", "extended"]
 # Universal BaseModel-row fields that ride alongside per-model
 # FIELD_CRUD_SCHEMA fields in the data lane. These are inherited by every
 # concrete BaseModel and don't need to be redeclared per-model.
-_BASEMODEL_UNIVERSAL_FIELDS: tuple[str, ...] = ("description", "batch_id", "flip_map")
+# The spine copies are not here and never are (req-grid-entity-spine-copies rule 15): the spine
+# surface reads deleted_at and dimensions from the entity row. The typed batch_id was removed with
+# them (Issue# 1288 - tap); the batch that last changed a row is the spine's last_changed_batch_id.
+_BASEMODEL_UNIVERSAL_FIELDS: tuple[str, ...] = ("description", "flip_map")
 
 
 def json_safe(value: Any) -> Any:

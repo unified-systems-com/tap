@@ -47,7 +47,7 @@ Re-import semantics (the ruling, stated rather than accidental)
       entity. It never mints a duplicate, because the ids are carried, not
       derived.
     * What a replay does NOT restore: per-row attribution to the original
-      collector batch. ``BaseModel.batch_id`` is framework-managed and is not on
+      collector batch. The batch that last changed a row (``Entity.last_changed_batch_id``) is not on
       any model's write surface, so every replayed row is attributed to the
       capture batch. That is the honest answer — the row arrived in this grid via
       the capture — but it means the original run ids do not survive the trip.

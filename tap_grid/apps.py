@@ -66,6 +66,16 @@ class TapCoreConfig(AppConfig):
 
         post_migrate.connect(sync_after_migrate, sender=self, dispatch_uid="tap_grid.spine_natural_key_sync")
 
+        # The spine copies on every typed row (req-grid-entity-spine-copies): the triggers that keep
+        # them, installed after every migrate for core's tables and every plugin's (rule 8), and the
+        # values each history row records (rule 12). Signal wiring only, no DB.
+        from simple_history.signals import pre_create_historical_record
+
+        from tap_grid.spine_copies import fill_history_row, install_after_migrate
+
+        post_migrate.connect(install_after_migrate, sender=self, dispatch_uid="tap_grid.spine_copies_install")
+        pre_create_historical_record.connect(fill_history_row, dispatch_uid="tap_grid.spine_copies_history")
+
         # The live dimension vocabulary (req-grid-dimension-reference-9) forgets its per-process table
         # the moment a Dimension node is written, retired or purged here, so the next resolution reads
         # the change (a tombstone is a queryset update, so the delete path invalidates explicitly too).
@@ -82,7 +92,7 @@ class TapCoreConfig(AppConfig):
         # Register the grid-population probe from tap_grid's own boundary
         # (req-tap-health-probe-registry-3). Registration only appends a callable —
         # no DB here; the probe body runs later at run_health() time.
-        from tap_grid.health import probe_grid_tables, probe_history_agreement
+        from tap_grid.health import probe_grid_tables, probe_history_agreement, probe_spine_copies
         from tap_health.registry import register_health_probe
         from tap_health.selection import READINESS
 
@@ -102,6 +112,16 @@ class TapCoreConfig(AppConfig):
         register_health_probe(
             "grid.history_agreement",
             probe_history_agreement,
+            sets=(READINESS,),
+            group="tap_grid",
+            critical=False,
+        )
+
+        # Not critical (req-grid-entity-spine-copies rule 10): a copy that differs from its entity row
+        # is reported at boot and misleads no reader while no policy reads the copies.
+        register_health_probe(
+            "grid.spine_copies",
+            probe_spine_copies,
             sets=(READINESS,),
             group="tap_grid",
             critical=False,

@@ -235,8 +235,8 @@ def _job_in_its_own_lifecycle_batch(status: str) -> tuple[Any, str]:
     finally:
         set_caller_context(prior)
     assert result.success, result.errors
-    job = CollectionJob.objects.get(entity_id=result.entity_id)
-    assert str(job.batch_id) == str(batch.entity_id)
+    job = CollectionJob.objects.select_related("entity").get(entity_id=str(result.entity_id))
+    assert str(job.entity.last_changed_batch_id) == str(batch.entity_id)
     return batch, str(result.entity_id)
 
 

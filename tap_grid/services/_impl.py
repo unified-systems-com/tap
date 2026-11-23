@@ -57,7 +57,14 @@ from tap_grid.service_types import (
     WriteOperation,
     WriteResult,
 )
-from tap_grid.write_classification import WriteClassification, classify, snapshot, spine_delta
+from tap_grid.spine_copies import write_retirement_history
+from tap_grid.write_classification import (
+    SYSTEM_MANAGED_FIELDS,
+    WriteClassification,
+    classify,
+    snapshot,
+    spine_delta,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +371,15 @@ def _refuse_internal_edge_type(edge_type: str, verb: str, internal_only_bypass: 
 
 
 def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
-    """Take FOR UPDATE on the given Entity rows in ascending id order, and return the ids found.
+    """Take FOR NO KEY UPDATE on the given Entity rows in ascending id order, and return the ids found.
+
+    NO KEY: core never changes an entity's id, and the stronger FOR UPDATE also blocks the foreign-key
+    check (FOR KEY SHARE) another writer's typed row makes at commit. Since the spine copies
+    (req-grid-entity-spine-copies) a retirement updates each typed row twice in one transaction (the
+    trigger's copy, then the FLIP stamp), and PostgreSQL re-checks a row's foreign keys on a second
+    update; with FOR UPDATE, a retirement ending an edge whose other endpoint a concurrent delete held
+    deadlocked at commit (req-grid-flip-retirement-2). Every writer still excludes every other: NO KEY
+    UPDATE conflicts with itself, with FOR UPDATE and with the FOR SHARE a typed insert takes.
 
     Every delete — plain or cascade — acquires its row locks in one global order: every
     node it will retire, ascending by id, then every edge it will end, ascending by id.
@@ -376,7 +391,8 @@ def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
     ids = sorted(set(entity_ids))
     if not ids:
         return []
-    return list(Entity.objects.select_for_update().filter(pk__in=ids).order_by("pk").values_list("pk", flat=True))
+    locking = Entity.objects.select_for_update(no_key=True).filter(pk__in=ids).order_by("pk")
+    return list(locking.values_list("pk", flat=True))
 
 
 def _closure_cap() -> int:
@@ -852,7 +868,10 @@ def _execute_write_pipeline(
             # conflict matrix.
             if op.entity_expected_version is not None:
                 locked_row = (
-                    Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type", "version").first()
+                    Entity.objects.select_for_update(no_key=True)
+                    .filter(pk=target_uuid)
+                    .only("entity_type", "version")
+                    .first()
                 )
                 if locked_row is None:
                     raise ServiceVersionConflictError(
@@ -877,7 +896,9 @@ def _execute_write_pipeline(
                 # Issue# 590). The lock serialises them: the second waits, then reads the
                 # committed tombstone and refuses (or no-ops, for a delete). Held to the end
                 # of write_batch's transaction, like OCC's.
-                locked_row = Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type").first()
+                locked_row = (
+                    Entity.objects.select_for_update(no_key=True).filter(pk=target_uuid).only("entity_type").first()
+                )
                 if locked_row is None:
                     raise ServiceNotFoundError(f"Entity {target_uuid} not found.")
                 target_entity = locked_row
@@ -1016,7 +1037,7 @@ def _execute_write_pipeline(
                 return WriteResult(success=False, batch_id=batch_id, operation=op.verb, errors=errors)
 
             try:
-                instance.full_clean(exclude=["entity", "batch_id", "flip_map"])
+                instance.full_clean(exclude=sorted(SYSTEM_MANAGED_FIELDS))
             except DjangoValidationError as exc:
                 errors = _django_errors_to_service_errors(exc)
                 return WriteResult(success=False, batch_id=batch_id, operation=op.verb, errors=errors)
@@ -1228,6 +1249,10 @@ def _execute_write_pipeline(
 
                 invalidate()
             _flip_record_retirement(model_cls, [instance.entity_id], batch_id)
+            # The retirement's final history row (req-grid-entity-spine-copies rule 13): it holds the
+            # retirement copy and the reason. Written after the entity row, which the trigger has
+            # copied to the typed row by now.
+            write_retirement_history(model_cls, [instance.entity_id], reason=reason, batch_id=batch_id)
             # Edges to end, gathered under this node's lock. A plain delete locks them now,
             # in id order (a cascade already holds every edge of its closure); the ending
             # is conditional on the row still being live, so an edge another writer ended
@@ -1270,6 +1295,11 @@ def _execute_write_pipeline(
                 collected_end=None,
             )
             _flip_record_retirement(Edge, edge_entity_ids, batch_id)
+            # And one for every edge this retirement ended, with the reason its own record carries:
+            # `cascaded` in a cascade, the node's reason where the endpoint rule ended it (rule 13).
+            write_retirement_history(
+                Edge, edge_entity_ids, reason=CASCADED_REASON if state is not None else reason, batch_id=batch_id
+            )
 
             # The walk: a queue of (child, parent). Each child goes through this same
             # pipeline — the same load, INTERNAL_ONLY and authority checks as any delete —
@@ -1335,6 +1365,7 @@ def _execute_write_pipeline(
                         _spine_just_created=spine_just_created,
                         flip_changed_fields=_flip_stamped(payload, classification),
                         _collected=collected.as_columns(),
+                        _spine_intent=op.spine_intent,
                     )
                 # A re-observed-unchanged operation does not save the typed row, so it writes
                 # no history row, no version and no FLIP entry, and leaves updated_at alone
