@@ -804,6 +804,15 @@ class EntityTypeQuerySet(models.QuerySet["EntityType"]):
     grid's rows, written by the migration that moves them and by a type's first registration, and
     by nothing else (req-grid-entity-model-version rule 3)."""
 
+    def delete(self) -> tuple[int, dict[str, int]]:
+        # Deleting a row above version 1 forgets that its rows were migrated: the next start
+        # would record the type at version 1 again. Only an applied-version writer may.
+        if self.filter(model_version__gt=1).exists():
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType queryset delete of a row above version 1")
+        return super().delete()
+
     def update(self, **kwargs: Any) -> int:
         if "model_version" in kwargs:
             from tap_grid.model_version import require_applied_version_writer
@@ -892,6 +901,14 @@ class EntityType(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        """Delete the catalog row; one above version 1 needs an applied-version writer."""
+        if self.model_version != 1:
+            from tap_grid.model_version import require_applied_version_writer
+
+            require_applied_version_writer("EntityType.delete of a row above version 1")
+        return super().delete(*args, **kwargs)
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         """Save the catalog row; a change to the applied version needs one of its two writers.
