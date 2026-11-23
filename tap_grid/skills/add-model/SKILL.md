@@ -216,6 +216,28 @@ LINKS = {"myplugin__thing": TypeLinks(links={2: Step(_to_2, renames={"descriptio
 
 A step is plain code over the mapping it is given. It never imports the model class, reads no other record and no database, and adds no default: a record may be partial, and a field the sender did not send stays unsent. Declare what the step costs, because the guard compares the two versions and fails what is not declared: `drops` for a removed field, `renames` for a field that changed its name, `derived` for a new field built from one old field (never from two), `may_refuse` where a field is narrowed or made required and some old records cannot be carried (raise `RecordRefused` for those), and `key` or `key_refused` where the natural key changes. Where no step can exist, declare `Break("the reason")`; an import that would cross it is refused. An import upgrades an older document through these links before it validates it (`req-grid-entity-model-version` rules 9 to 26).
 
+**The migration that ships a version.** Stored rows reach the new version through core's adapter, never by writing the table from the migration yourself: the adapter gives each changed row a new revision, a history row and a maintenance batch event, keeps each field's source attribution with the source that asserted it, and writes the applied version last. Call it once per version from a `RunPython`, after the operations that add the columns your step writes and before the ones that remove a column it reads or change a column's type:
+
+```python
+from django.db import migrations, models
+from tap_grid.version_migration import apply_version
+
+def to_version_2(apps, schema_editor):
+    apply_version(apps, schema_editor, "<your type slug>", to_version=2)
+
+class Migration(migrations.Migration):
+    dependencies = [("<your app>", "0003_previous"), ("tap_grid", "0022_model_and_spine_versions")]
+    operations = [
+        migrations.AddField("widget", "title", models.CharField(max_length=64, null=True)),
+        migrations.AddField("historicalwidget", "title", models.CharField(max_length=64, null=True)),
+        migrations.RunPython(to_version_2, migrations.RunPython.noop),
+        migrations.RemoveField("widget", "label"),
+        migrations.RemoveField("historicalwidget", "label"),
+    ]
+```
+
+`makemigrations` writes the schema operations, for the model and for its history model; you add the `RunPython` and put it in that order. Keep the migration atomic (the default): a refused or failed migration then changes nothing and leaves the applied version where it was. The adapter refuses, naming what it found, when the step refuses a record; when the step declares `tightens_edges` and a live edge breaks the new rules (retire or correct those edges through an ordinary batch and migrate again; retirement by id works while the versions disagree); and when a field changes type and a history value cannot be converted. For that last case you may name the field in the step's `discards_history`, which leaves such history values empty and reports how many, and is allowed only where the new field can be empty. A field you remove takes its history column with it: its old values are then gone from the grid, so say so in your release notes. A field built from more than one old field is refused; keep the old fields beside the new one, or declare a break.
+
 ## Step 6: Update or Add the Spec
 
 Specs are authoritative. Either:

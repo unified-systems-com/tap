@@ -649,3 +649,59 @@ def test_only_its_two_writers_change_a_types_applied_version():
     with transaction.atomic():
         model_version.set_applied_version(slug, 2)
     assert EntityType.objects.get(slug=slug).model_version == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-entity-model-version-23")
+def test_the_version_migration_writer_moves_the_revision_and_not_the_observation() -> None:
+    """The adapter that carries a type's rows to its next version writes the spine as a named
+    writer. It may move the revision, name its batch as the last to change the row and write the
+    values the grid derives from a typed row. It may not write the observation pointers, the
+    collection pair or the tombstone, and it may not write a ``dimensions`` map
+    (req-grid-entity-model-version rule 30)."""
+    from django.db.models import F
+    from django.utils import timezone
+
+    from tap_grid.dimension_map import grid_derived_update
+    from tap_grid.write_guard import BELOW_PIPELINE_WRITES
+
+    spine = _batch_spine(f"version-migration-{uuid.uuid4()}")
+    one = Entity.objects.filter(pk=spine.pk)
+    batch = uuid.uuid7()
+    _under_grid_write(
+        "version_migration",
+        lambda: one.update(
+            version=F("version") + 1,
+            updated_at=timezone.now(),
+            last_changed_batch_id=batch,
+            name="renamed",
+            event_start=None,
+            event_end=None,
+            event_precision=None,
+        ),
+    )
+    after = Entity.objects.get(pk=spine.pk)
+    assert (after.version, after.name, after.last_changed_batch_id) == (spine.version + 1, "renamed", batch)
+    _under_grid_write("version_migration", lambda: one.update(dimensions=grid_derived_update({"time": None})))
+
+    def write(values: Mapping[str, object]) -> Callable[[], object]:
+        return lambda: one.update(**values)
+
+    for forbidden in (
+        {"last_observed_batch_id": batch},
+        {"last_observed_at": timezone.now()},
+        {"collected_start": timezone.now()},
+        {"deleted_at": timezone.now()},
+        {"entity_type": "other"},
+        {"natural" + "_key": "forged"},
+    ):
+        with pytest.raises(UnguardedOperation, match="queryset update tap_grid.Entity"):
+            _under_grid_write("version_migration", write(forbidden))
+    with pytest.raises(UnguardedOperation, match="may set or remove grid-derived"):
+        _under_grid_write("version_migration", lambda: one.update(dimensions={}))
+    # Under a gate it does not accept, the writer writes nothing.
+    with pytest.raises(UnguardedOperation):
+        _under_grid_read("version_migration", lambda: one.update(name="no"))
+    # It has no licence on any typed table: the typed rows are written through the migration's
+    # own historical models, and a guarded save or update of a live typed row is not its to make.
+    assert set(BELOW_PIPELINE_WRITES["version_migration"]) == {("queryset update", "tap_grid.Entity")}

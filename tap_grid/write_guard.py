@@ -73,6 +73,11 @@ BELOW_PIPELINE_WRITERS: dict[str, str] = {
         "the re-derive pass that brings a spine row's event time in step with its model's declaration; "
         "no typed value changes, so it writes no version and no history, and records a maintenance event"
     ),
+    "version_migration": (
+        "the adapter that carries a type's stored rows to its next version inside a migration: it moves the "
+        "revision, names its batch as the last to change the row and re-derives the grid's own spine values, "
+        "and leaves the observation pointers alone, which no pipeline write can do"
+    ),
 }
 
 # The writes each named writer may make: (operation, model label) mapped to the fields it may
@@ -101,6 +106,24 @@ BELOW_PIPELINE_WRITES: dict[str, dict[tuple[str, str], frozenset[str]]] = {
     "event_time_rederive": {
         # The three event columns, and `dimensions` for the `time` dimension the kind is stamped as.
         ("queryset update", "tap_grid.Entity"): frozenset({"event_start", "event_end", "event_precision", "dimensions"})
+    },
+    "version_migration": {
+        # The revision and its time, the batch that last changed the row, and the name and event
+        # time the grid derives from a typed row. Not the observation pointers, the collection
+        # pair, the tombstone or the stored key: a migration observed nothing and retires
+        # nothing, and the key has one writer of its own.
+        ("queryset update", "tap_grid.Entity"): frozenset(
+            {
+                "version",
+                "updated_at",
+                "last_changed_batch_id",
+                "name",
+                "event_start",
+                "event_end",
+                "event_precision",
+                "dimensions",
+            }
+        )
     },
 }
 
@@ -140,6 +163,7 @@ def _writer_gates() -> dict[str, frozenset[str]]:
         # scheduler); test_write_guard checks each name here is a registered capability.
         "scheduler_cursor": frozenset({"cares.run_scheduler", "cares.toggle_schedules"}),
         "event_time_rederive": frozenset({caps.WRITE_CAPABILITY}),
+        "version_migration": frozenset({caps.WRITE_CAPABILITY}),
     }
 
 
@@ -299,12 +323,13 @@ def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
     any other expression, is refused as an unguarded write. Called by the guarded queryset
     ``update`` after the field lock has passed.
 
-    The rule binds this one writer. The pipeline and the other named writers that may write
+    The rule binds this writer and ``version_migration``, which re-derives the same entries. The pipeline and the other named writers that may write
     ``dimensions`` (``spine_sync``) are held by their own rules, as before.
     """
     if _write_guard_bypass.get() or _service_write_active.get():
         return
-    if _below_pipeline_writer.get() != "event_time_rederive" or model_label != "tap_grid.Entity":
+    writer = _below_pipeline_writer.get()
+    if writer not in {"event_time_rederive", "version_migration"} or model_label != "tap_grid.Entity":
         return
     if "dimensions" not in values:
         return
@@ -318,7 +343,7 @@ def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
 
     detail = "queryset update tap_grid.Entity"
     raise UnguardedOperation(
-        f"unguarded write: {detail}: the event_time_rederive writer may set or remove grid-derived "
+        f"unguarded write: {detail}: the {writer} writer may set or remove grid-derived "
         "dimension entries only, through dimension_map.grid_derived_update; it may not write a "
         "dimensions map",
         callsite=detail,

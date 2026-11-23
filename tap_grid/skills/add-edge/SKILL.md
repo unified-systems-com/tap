@@ -127,6 +127,8 @@ A new edge type states no `version` and is at version 1. When you later change a
 
 Every version after the first needs a link from the version before it, or plugin validation fails. An edge type has no class, so its links live where a node type's do: `model_links.py` at the root of the plugin package, `LINKS[<edge type slug>]`, keyed by the version the link arrives at. The step is given one edge's `properties` and returns them at the next version; see the `add-model` skill for the form and for what a step must declare (`drops`, `renames`, `may_refuse`) or when to declare a `Break` (`req-grid-entity-model-version` rules 9 to 17).
 
+**The migration that ships a version.** Stored edges reach the new version through core's adapter: `apply_version(apps, schema_editor, "<edge type slug>", to_version=2)` from a `RunPython` in your plugin's migration (`tap_grid.version_migration`; the `add-model` skill shows the whole migration). It puts each stored edge's properties through your step, and gives each changed edge a new revision, a history row and a maintenance batch event. A version that narrows the type's `sources` or `targets` declares it on the step (`tightens_edges="<why>"`), and the adapter then refuses to migrate while a live edge of the type breaks the new rules, naming the edges; retire or correct them through an ordinary batch and migrate again. A version that changes the identity declaration declares `key` or `key_refused` on the step, as a node type does for its natural key.
+
 ### Cross-plugin endpoints (read before naming a foreign type)
 
 An endpoint list is a **vocabulary dependency**. Before writing another plugin's type slug into
