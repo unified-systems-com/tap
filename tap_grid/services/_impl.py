@@ -902,6 +902,32 @@ def _execute_write_pipeline(
                     "entity_tombstoned",
                 )
 
+        # A type whose rows are behind its code takes no write until migrations are applied
+        # (req-grid-entity-model-version rule 4). One write is let through: a retirement, which
+        # this pipeline only ever takes by id. It reads and writes no field of the type, and it
+        # is the cleanup a refused migration asks for.
+        if not is_delete:
+            from tap_grid.model_version import disagreement, row_type_slug
+
+            behind = disagreement(row_type_slug(instance) or "")
+            if behind is not None:
+                return WriteResult(
+                    success=False,
+                    batch_id=batch_id,
+                    operation=op.verb,
+                    errors=[
+                        ServiceError(
+                            code="model_version_pending",
+                            message=str(behind.refusal(f"{op.verb} on it")),
+                            detail={
+                                "type": behind.type_slug,
+                                "declared_version": behind.declared,
+                                "applied_version": behind.applied,
+                            },
+                        )
+                    ],
+                )
+
         # Thread caller-supplied dimensions onto the instance so the non-prespecified-id
         # path (BaseModel.save() / Edge.save()) can merge them with type defaults.
         # The prespecified-id branch below applies the same merge explicitly before save().

@@ -29,13 +29,13 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-metadata | [Canonical Entity Metadata](#canonical-entity-metadata) | In Development | Platform-level canonical metadata contract for entity instances: `name`, `description`, `description_json`. `name` is fully implemented; `description` and `description_json` are pending. |
 | req-grid-entity-display | [Display Metadata](#display-metadata) | In Development | `DEFAULT_DISPLAY` class attribute implemented on `BaseModel`; instance-level `display` JSONField deferred |
 | req-grid-entity-cascade | [Edge-Directed Cascade Deletion](#edge-directed-cascade-deletion) | Backlog | The *mechanism* is now specified as `req-grid-service-delete-cascade` (declared containment, own evaluator, fail-closed). What remains backlogged here is the entity-side half: declaring containment on the model rather than in a collector's manifest |
-| req-grid-entity-core-type-catalog | [First-Party Types In The Catalog](#first-party-types-in-the-catalog) | Backlog | Core-app types are absent from `EntityType` (only plugins write rows), so they render without icons. Pick this up when someone cares about the missing icons |
+| req-grid-entity-core-type-catalog | [First-Party Types In The Catalog](#first-party-types-in-the-catalog) | In Development | Core-app types have a catalog row with a name, a kind and an applied version, written for `req-grid-entity-model-version`. Their icons, their descriptions and the single writer run from boot are not built; pick those up when someone cares about the missing icons |
 | req-grid-entity-tombstone-managers | [Tombstone State And Manager Surface](#tombstone-state-and-manager-surface) | Approved for Development | `Entity.deleted_at` is the single canonical home of tombstone state; manager defaults differ by surface; both surfaces expose uniform `.live()` / `.tombstoned()` chainable filters |
 | req-grid-entity-batch-pointers | [Batch Pointers On The Spine](#batch-pointers-on-the-spine) | In Development | `last_changed_batch_id`, `last_observed_batch_id` and `last_observed_at` on `Entity`: which batch last changed the object, and which last saw it |
 | req-grid-entity-event-time | [Event Time On The Spine](#event-time-on-the-spine) | In Development | `event_start`, `event_end` and `event_precision` on `Entity`, and the kind as the row's `time` dimension,, copied from the fields a model declares as its event time |
 | req-grid-entity-collection-time | [Collection Time On The Spine](#collection-time-on-the-spine) | In Development | `collected_start` and `collected_end` on `Entity` for the latest observation, and the same pair on each batch event |
-| req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | Proposed | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
-| req-grid-entity-spine-version | [Spine Version](#spine-version) | Proposed | The spine's own authored version, separate from the tap release, the GRIFT format version and every type version; recorded on the grid and stated in GRIFT |
+| req-grid-entity-model-version | [Model Versions And Upgrade Steps](#model-versions-and-upgrade-steps) | In Development | One authored version per node type and edge type, recorded on the type catalog and stated in GRIFT; an import upgrades older records through the type's steps and is refused at a declared break |
+| req-grid-entity-spine-version | [Spine Version](#spine-version) | In Development | The spine's own authored version, separate from the tap release, the GRIFT format version and every type version; recorded on the grid and stated in GRIFT |
 | req-grid-entity-spine-copies | [Spine Copies On Typed Rows](#spine-copies-on-typed-rows) | Proposed | `spine_deleted_at` and `spine_dimensions` on every typed row, kept in step with `Entity` by database triggers, recorded in history, with no policy yet |
 | req-grid-entity-natural-key | [Assigned Ids, Declared Search](#assigned-ids-declared-search) | Proposed | `Entity.id` is always an assigned UUIDv7; every type declares how it is found (`NATURAL_KEY` or `KEYLESS`) and the search is generated; `Entity.natural_key` publishes each keyed row's declared identity as one readable value, derived on every save and read by no lookup |
 
@@ -220,20 +220,29 @@ The `entity_types` list in `TapPluginConfig` (and equivalent `apps.py` declarati
 ----
 RID: `req-grid-entity-core-type-catalog`
 
-Status: `Backlog`
+Status: `In Development`
 
-**Trigger to pick this up:** someone notices that core types — `page`, `panel`, `layout`,
-`collector`, `batch`, `keystone`, `dimension`, `schedule`, `projection`, `arrangement` and the rest,
-about fifteen in total — render without icons in the graph view. That is the only user-visible
-consequence today, and it is cosmetic, which is why this is Backlog rather than scheduled.
+**What is built.** `req-grid-entity-model-version` rule 6 needs a catalog row and an applied version
+for every type an export can carry, so the row itself now exists for each of core's types.
+`tap_grid.model_version.register_core_types`, called from `tap_grid`'s `ready()`, walks the entity
+model registry for the models core's apps define (sixteen node types; the `edge` model is left out,
+its table being the spine's) and each core app's `edge_types` list with `tap_grid`'s own
+(seventeen edge types), and writes `slug`, `name` (from `ENTITY_NAME`, else the slug), `kind`,
+`track_history`, `plugin_name` (the owning AppConfig's dotted `name`) and, on first registration,
+`model_version`. It is additive and never deletes a row.
 
-**Why they are missing.** `EntityType` rows are written only by the plugin loader from a manifest
-(plus the single `search` row from `tap_grid`'s own `ready()`), and first-party apps ship no manifest.
-The types themselves work perfectly — they are registered in the in-code model registry by
-`BaseModel.__init_subclass__` — they simply have no catalog row, so the display-metadata lookups
-(`batch_resolve_icons`, the viewer panel) find nothing for them.
+**What is not built, and the trigger to pick it up.** Icons and descriptions: `ENTITY_ICON` and
+`ENTITY_DESCRIPTION` are not copied to a core type's row (the `search` row keeps the icon it had),
+so core types still render without icons in the graph view. That is cosmetic, and someone noticing
+it is the trigger. The single writer run from boot's population phase is not built either: the write
+is still made in `ready()`, by two callers (this function and the plugin loader), both through
+`tap_grid.model_version.register_type`.
 
-**Proposed shape** (measured against the as-built code, 2026-08-12):
+**Why the icons are missing.** The display-metadata lookups (`batch_resolve_icons`, the viewer
+panel) read `EntityType.icon`, which is empty for a core type.
+
+**Proposed shape for the rest** (measured against the as-built code, 2026-08-12; the first point is
+built except for `description` and `icon`):
 
 - One function that walks the entity model registry and upserts a row per registered type: `slug`
   from `ENTITY_TYPE`, `name` from `ENTITY_NAME` falling back to the slug, `description`/`icon` from
@@ -1220,28 +1229,49 @@ The per-pass record is the batch event; the spine holds a copy of the newest one
 ----
 RID: `req-grid-entity-model-version`
 
-Status: `Proposed`
+Status: `In Development`
 
 Every node type and edge type has a version: a number its author sets. On one grid every row of a type is at the same version, because the migration that ships with a new version rewrites them together. Versions matter where data crosses between grids. A GRIFT document states the version of each type it carries, and an import upgrades older records through steps the type's author keeps, or is refused where the author has declared that no step exists.
 
 #### Status Details
-Proposed; nothing is built. Issue# 475 - tap holds the first prior-art review, and Issue# 1284 - tap records the rulings and two further comparisons made on 2026-11-21: about 25 systems on upgrading stored data, and about 30 on breaking changes. Each was one research pass over primary documentation, relayed in summary.
+In Development. Rules 1 to 8 are built (Issue# 475 - tap); rules 9 to 33 are not. Issue# 475 - tap holds the first prior-art review, and Issue# 1284 - tap records the rulings and two further comparisons made on 2026-11-21: about 25 systems on upgrading stored data, and about 30 on breaking changes. Each was one research pass over primary documentation, relayed in summary.
 
 What those comparisons support: systems that migrate a whole store keep one version for the store and none on a row; systems whose records arrive at mixed versions keep a version with each record and a chain of upgrade steps; nearly all refuse input newer than the code; and a change of meaning with no change of structure is caught by nothing but its author.
 
-What exists today (read on core main, 2026-11-21): nothing records which definition of a model a grid holds. `EntityType` has no version column. A GRIFT document's header carries `grift_version` and no version for any type, so an import cannot tell what definition wrote the records it reads.
+Built:
+
+- The declared version: `MODEL_VERSION` on `BaseModel` (1 unless a class states another) and `version` in an edge definition, beside `property_schema` (`tap_grid/schemas/edge-definition.schema.json`; a core app's `edge_types` entry takes the same key). `tap_grid/model_version.py` reads both.
+- The applied version: `EntityType.model_version` (migration `0022_model_and_spine_versions`, `tap_grid` only, no column on `Entity` and no plugin table changed). Its two writers are `register_type`, for a type the catalog has no row for, and `set_applied_version`, the call a migration makes in the transaction that completes its conversion. The catalog refuses any other write that would change it (`EntityType.save` and `EntityTypeQuerySet`).
+- The agreement rule. Registration compares at start (`TapPluginConfig._register_types_from_manifest` for a plugin's types, `register_core_types` for core's) and raises `ModelVersionAhead`, which stops the process and with it every management command, where the applied version is the greater. Where the declared version is the greater the process starts, `migrate` runs, and the type is refused in four places, each naming the type and both versions: the write pipeline (`model_version_pending` in the operation's result), `BaseModel.save` (`ModelVersionPending`, for a write that reaches a typed row any other way), the GRIFT importer's preflight (`model_version_pending`, the whole document) and `export_grid` (`ModelVersionPending`). A retirement by id passes.
+- Core's types in the catalog (rule 6): a row and an applied version for sixteen node types and seventeen edge types. `req-grid-entity-core-type-catalog` says what is left of that requirement.
+- The guard and the record (rules 5 and 7): `tap_grid/model_definition.py` writes a type's definition down and fingerprints it; `tap/guards/model_version.py` checks core's types and the spine against `<app>/<app label>.model_versions.json` in each core app; plugin validation checks a plugin's types against `<slug>.model_versions.json` at the plugin's root (check `model-version-records`); `manage.py model_versions --record` appends an entry and never rewrites one. Core's thirty-three types and the spine are recorded at version 1.
+- Author guidance (rule 8) in the `add-model` and `add-edge` skills.
+
+Not built, and why the requirement is not Implemented:
+
+- Links, steps and breaks (rules 9 to 18), the import upgrade and the GRIFT header (rules 19 to 26, `req-grift-header-versions`), the history rules (27 and 28) and the adapter with its edge check (rules 29 to 33). Until the adapter exists a plugin's migration converts its rows itself and calls `set_applied_version` last; such a migration writes no revision, no history and no batch event, which is what rule 29 is there to end. No type in core or in an installed plugin is above version 1, so no such migration exists yet.
+- An export does not state the versions it reads from the catalog; the header field is rule 19's. Acceptance criterion 21 is observed as far as the catalog: every type an export of core types carries has an applied version.
+- Plugin validation does not yet fail a plugin type that has no committed entry. Every plugin starts with no record, so the absence is reported and the check passes; `TAP_REQUIRE_MODEL_VERSION_RECORD=1` makes it a failure. The report is carried at info severity and worded as a warning, for the reason `req-grid-entity-event-time` gives for its own staged check: `--strict` promotes a warning to a failure and every plugin repository's CI runs `--strict`. A type that has entries is held to them now.
+- Edge types that no definition declares. A grid can hold edges of a type named only by a node's `OUTBOUND_EDGES`, with no `.edge.json` and no `edge_types` entry. Such a type has no catalog row and no version.
+
+Limits of what is built, stated so they are not found later:
+
+- A process learns which types are behind when it registers them, and holds that in memory. Before it refuses it reads the catalog again, so a migration applied by another process is seen without a restart. The opposite case is not seen: a process that started in agreement keeps writing after another deployment has migrated the rows under it. That is the general hazard of migrating under running code, and rule 4's registration check catches it at the next start.
+- The fingerprint chain shows an edit to an earlier entry that left the stored fingerprints alone, and an edit that re-fingerprinted that entry alone. It cannot show a rewrite of every fingerprint from the edited entry on, since nothing outside the file attests to it; that is for review of the file's history.
+- The definition covers what rule 5 lists, a node type's `EVENT_TIME` declaration and an edge type's identity declaration included (ruled 2026-11-22, Issue# 1284 - tap). Both were added before any record was released, so core's five record files were rebuilt from nothing in that form and the record format number stayed at 1. Adding to the list later changes every fingerprint already committed, and is then a new record format and a deliberate re-record.
+- A process that could not read the database when it started (unreachable, or not migrated yet) has compared nothing. The start cannot fail then, because an image build and `collectstatic` run with no database. The comparison is owed instead: `complete_start_checks` makes it once, in a savepoint, before that process's first write, import or export, and when migrations are applied. It compares and writes nothing, so a type with no catalog row is still first recorded at the next start. While the database stays unreadable the comparison stays owed, and a write then fails on the database itself.
 
 #### Implementation
 
 **The version of a type**
 
-1. A model class carries an authored integer version as a class attribute. A model that states none is at version 1. An edge type carries one the same way, beside its property rules. The edge table all edge types share belongs to core and is covered by `req-grid-entity-spine-version`.
+1. A model class carries an authored integer version as a class attribute, `MODEL_VERSION`. A model that states none is at version 1. An edge type carries one the same way, beside its property rules: `version` in its edge definition. The edge table all edge types share belongs to core and is covered by `req-grid-entity-spine-version`.
 2. A grid holds each type at one version: the one the installed code declares. A new version that changes stored rows ships with the migration that rewrites them, so no row is left behind at an older version. No row carries a version, on `Entity` or on the typed table.
-3. Two versions exist for a type and they are different facts. The class declares the version the code understands. `EntityType.model_version` (integer) records the version applied to this grid's data: the version its stored rows are at. The applied version is written by the migration that moves the rows to it, in the transaction that completes the conversion, and by nothing else except the first registration of a type the grid has never held, when there are no rows and applied equals declared. Registration at start does not advance it: start-up code runs before migrations do, so a stamp taken from the loaded class would call rows migrated that are not. A migration that fails leaves the applied version where it was.
-4. Ordinary operation requires the declared and the applied version to agree. Where the class declares a greater version than the one applied, the rows are not yet migrated: writes to the type, and imports and exports that carry it, are refused, naming both numbers, until migrations are applied. The migrate command itself runs through the disagreement; that is what it is for. Where the applied version is greater than the class declares, the code is older than the data and registration of the type fails, naming both. One write is allowed through the disagreement: the retirement of an entity named by its id. It is an operation on the spine that reads and writes no field of the type (rule 22), and it is the cleanup a refused migration asks for (rule 32), which would otherwise be blocked by the refusal it is meant to clear. Nothing else is: no create, no update, no restore, and no retirement that names its target by type and key, which would need the type's key at a version the rows are not at.
-5. A guard computes a fingerprint of each type's definition (its fields, their types and constraints, its natural key, its service schema, and the edge rules it declares, which are the edge types and endpoint types it allows outbound and inbound; for an edge type, its property rules, its endpoint rules and its event-time declaration) and compares it with the one committed beside the authored version. A definition whose fingerprint changed while its version did not fails the guard in the repository that owns the type. The fingerprint covers what the type's owner declares: the fields the class itself adds, and its own key, schema and edge rules. Fields every type inherits from core's base model (`batch_id` today, the tombstone and dimension copies later) belong to the spine's definition and are covered by `req-grid-entity-spine-version`. A change core makes to an inherited field moves no type's version and needs no link from any plugin.
-6. Every type a grid can export has a catalog row with an applied version, core's own node and edge types included, because an export reads the versions it states from the catalog. Core's types are absent from the catalog today (`req-grid-entity-core-type-catalog`, Backlog); this requirement needs a row and a version for each of them, and does not need their icons.
-7. The committed record is a list with one entry per version, and it only grows. Changing the entry of a version already committed fails the guard. Each entry holds enough of that version's definition for rule 15 to compare two versions.
+3. Two versions exist for a type and they are different facts. The class declares the version the code understands. `EntityType.model_version` (integer) records the version applied to this grid's data: the version its stored rows are at. The applied version is written by the migration that moves the rows to it, in the transaction that completes the conversion, and by nothing else except the first registration of a type the grid has never held, when there are no rows and applied equals declared. A type that is first catalogued while the grid already holds rows of it is recorded at version 1: those rows were written before versions were recorded, and version 1 is what every type was then. Core's own types are the standing case, since they had rows and no catalog row before this was built (ruled 2026-11-22, Issue# 1284 - tap). Registration at start does not advance it: start-up code runs before migrations do, so a stamp taken from the loaded class would call rows migrated that are not. A migration that fails leaves the applied version where it was.
+4. Ordinary operation requires the declared and the applied version to agree. Where the class declares a greater version than the one applied, the rows are not yet migrated: writes to the type, and imports and exports that carry it, are refused, naming both numbers, until migrations are applied. The migrate command itself runs through the disagreement; that is what it is for. Where the applied version is greater than the class declares, the code is older than the data and registration of the type fails, naming both. That failure stops the process, and so stops every management command, the migrate command included: nothing useful runs on code older than the data, and a migration cannot lower what a newer release wrote (ruled 2026-11-22, Issue# 1284 - tap). A process that could not make the comparison when it started, because the database could not be read, makes it before its first write, import or export. One write is allowed through the disagreement: the retirement of an entity named by its id. It is an operation on the spine that reads and writes no field of the type (rule 22), and it is the cleanup a refused migration asks for (rule 32), which would otherwise be blocked by the refusal it is meant to clear. Nothing else is: no create, no update, no restore, and no retirement that names its target by type and key, which would need the type's key at a version the rows are not at.
+5. A guard computes a fingerprint of each type's definition (its fields, their types and constraints, its natural key, its service schema, the edge rules it declares, which are the edge types and endpoint types it allows outbound and inbound, and its event-time declaration; for an edge type, its property rules, its endpoint rules, its event-time declaration and its identity declaration) and compares it with the one committed beside the authored version. A definition whose fingerprint changed while its version did not fails the guard in the repository that owns the type. The fingerprint covers what the type's owner declares: the fields the class itself adds, and its own key, schema and edge rules. Fields every type inherits from core's base model (`batch_id` today, the tombstone and dimension copies later) belong to the spine's definition and are covered by `req-grid-entity-spine-version`. A change core makes to an inherited field moves no type's version and needs no link from any plugin.
+6. Every type a grid can export has a catalog row with an applied version, core's own node and edge types included, because an export reads the versions it states from the catalog. This requirement needs a row and a version for each of core's types, and does not need their icons, which stay with `req-grid-entity-core-type-catalog`. The `edge` model is not a type in this sense: every edge type shares its table, which belongs to the spine.
+7. The committed record is a list with one entry per version, and it only grows. Changing the entry of a version already committed fails the guard. Each entry holds enough of that version's definition for rule 15 to compare two versions: the definition itself, and a fingerprint chained to the entry before it. The record is kept by the type's owner, in one file at the root of the package that defines the types, named `<app label>.model_versions.json`: a plugin's in the plugin's repository, where plugin validation checks it, and core's in each core app, where core's guard does.
 8. A change of meaning with no change of definition (a unit, a convention inside a JSON field) is invisible to the guard. The author raises the version by hand, and the type's author guidance says so.
 
 **The chain of versions**
@@ -1284,6 +1314,8 @@ What exists today (read on core main, 2026-11-21): nothing records which definit
 #### Development
 A derived hash alone cannot serve as the version: it changes for edits that do not affect stored data, and it gives no order. An authored integer alone is forgotten. The pair is what every comparable system that upgrades data arrived at.
 
+The record lives with the type's owner and not in one central file because the guard has to fail "in the repository that owns the type" (rule 5): a plugin's author raises the version, in the plugin's repository, and that is where the forgotten raise must be caught, before the plugin ships. A record in core for a plugin's types would be checked only when core's guards run with that plugin installed, by someone who cannot fix it. The file name is the singleton form `req-tap-json-naming` already defines. The entry stores the definition and not only its hash because rule 15 compares two versions field by field, and a hash can only say that something changed.
+
 A version on every row was considered and left out. Where one migration moves every row of a type, the row's version always equals the type's, and a second copy of it is one more thing that can disagree. What does differ is a document written by another grid, so that is where the version is stated.
 
 The limit of one record on a step (rule 10) is this requirement's own and not the migration system's: a Django data migration can read and write any table, as core's migration that re-keyed dimensions by node does. That is why the work that needs more than one record, the edge check of rule 32 and anything later that resolves such edges, belongs to the migration and its adapter and not to a step.
@@ -1294,11 +1326,11 @@ What a grid does about a declared break is deliberately not chosen here. Refusin
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-entity-model-version-1 | Catalog Records The Applied Version | Proposed | A type first registered at version 2 has `model_version` 2. After a migration to version 3 completes it has 3; restarting on version 3 code without migrating leaves it at 2. | |
-| req-grid-entity-model-version-2 | No Version On A Row | Proposed | Adding versioning produces a migration in `tap_grid` only, adds no column to `Entity`, and changes no plugin table. | |
-| req-grid-entity-model-version-3 | Applied And Declared Must Agree | Proposed | With the class at version 2 and the catalog at 1, a write to the type is refused naming both and `migrate` runs; with the class at 2 and the catalog at 3, registration of the type fails naming both. | |
-| req-grid-entity-model-version-4 | Guard Catches An Unbumped Change | Proposed | Adding a field to a model without changing its version fails the guard, naming the model. | |
-| req-grid-entity-model-version-5 | Committed Versions Do Not Change | Proposed | Editing the committed entry of an earlier version fails the guard. | |
+| req-grid-entity-model-version-1 | Catalog Records The Applied Version | Implemented | A type first registered at version 2 has `model_version` 2. After a migration to version 3 completes it has 3; restarting on version 3 code without migrating leaves it at 2. | A start is the registration call the process makes; a migration is `set_applied_version` in a transaction |
+| req-grid-entity-model-version-2 | No Version On A Row | Implemented | Adding versioning produces a migration in `tap_grid` only, adds no column to `Entity`, and changes no plugin table. | `0022_model_and_spine_versions` |
+| req-grid-entity-model-version-3 | Applied And Declared Must Agree | Implemented | With the class at version 2 and the catalog at 1, a write to the type is refused naming both and `migrate` runs; with the class at 2 and the catalog at 3, registration of the type fails naming both. | Also refused: a save below the pipeline, an import and an export that carry the type |
+| req-grid-entity-model-version-4 | Guard Catches An Unbumped Change | Implemented | Adding a field to a model without changing its version fails the guard, naming the model. | Core's guard for core's types; plugin validation for a plugin's recorded types |
+| req-grid-entity-model-version-5 | Committed Versions Do Not Change | Implemented | Editing the committed entry of an earlier version fails the guard. | A rewrite of every later fingerprint is not detectable from the file alone |
 | req-grid-entity-model-version-6 | Missing Link Fails Validation | Proposed | A model at version 3 with no link from 2 to 3 fails plugin validation. | |
 | req-grid-entity-model-version-7 | Undeclared Removal Fails | Proposed | Removing a field under a step that declares nothing lost fails the guard, and passes once the step names the field as dropped. | |
 | req-grid-entity-model-version-8 | Older Import Is Upgraded | Proposed | A document stating version 1 for a type installed at version 2 imports, and the stored row holds what the step returns, validated at version 2. | |
@@ -1311,11 +1343,11 @@ What a grid does about a declared break is deliberately not chosen here. Refusin
 | req-grid-entity-model-version-15 | Edge Types Are Versioned | Proposed | An edge type at version 2 imports a version-1 edge with its properties upgraded by the type's step. | |
 | req-grid-entity-model-version-16 | Batch Records The Upgrade | Proposed | The batch of an import that upgraded a type names that type with the stated and the installed version. | |
 | req-grid-entity-model-version-17 | Steps Do Not Rewrite History | Proposed | After a version change that keeps a field and its type, the history rows written before it are unchanged in number and in that field's values. | |
-| req-grid-entity-model-version-18 | A Failed Migration Does Not Advance | Proposed | Loading version 2 code against version 1 data and failing the migration leaves the catalog at 1, and ordinary writes to the type stay refused. | |
+| req-grid-entity-model-version-18 | A Failed Migration Does Not Advance | Implemented | Loading version 2 code against version 1 data and failing the migration leaves the catalog at 1, and ordinary writes to the type stay refused. | The failure is raised after `set_applied_version`, inside its transaction |
 | req-grid-entity-model-version-19 | Omission Survives An Upgrade | Proposed | A version 1 document that sends only a node's name imports into a type whose version 2 adds a field with a default, and the stored value of that field is unchanged. | |
 | req-grid-entity-model-version-20 | Keys In References Are Upgraded | Proposed | A version 1 document carrying only an edge, whose endpoint is named by a version 1 natural key, resolves that endpoint after the key is upgraded, or is refused before identity is resolved. | |
-| req-grid-entity-model-version-21 | Core Types Have Versions | Proposed | An export of a grid holding only core types states a version for every type it carries or names. | |
-| req-grid-entity-model-version-22 | Inherited Fields Move No Type | Proposed | Removing a field every type inherits from core's base model changes no type's fingerprint entry and fails no plugin's guard. | |
+| req-grid-entity-model-version-21 | Core Types Have Versions | In Development | An export of a grid holding only core types states a version for every type it carries or names. | Every core type has a catalog row and an applied version; the export does not state them until `req-grift-header-versions` is built |
+| req-grid-entity-model-version-22 | Inherited Fields Move No Type | Implemented | Removing a field every type inherits from core's base model changes no type's fingerprint entry and fails no plugin's guard. |  |
 | req-grid-entity-model-version-23 | Migration Goes Through The Adapter | Proposed | After a migration applies a step that changes a field on ten rows, each row's entity revision has moved by one, each has one new history row, each has a maintenance batch event under the migration's batch, and `last_observed_at` on each is where it was. | |
 | req-grid-entity-model-version-24 | FLIP Stays With The Source | Proposed | After a step renames a field, the FLIP entry for that field is under the new name with the source and time it had; no FLIP entry names the migration's batch. | |
 | req-grid-entity-model-version-25 | Tightened Edge Rule Is Declared | Proposed | Removing an edge type from a node type's allowed outbound edges without a version change fails the guard; with a version change and no declaration on the link it fails the guard; with both it passes. | |
@@ -1342,18 +1374,30 @@ Ways of resolving edges a tightened rule would refuse (rule 32), and a merge con
 ----
 RID: `req-grid-entity-spine-version`
 
-Status: `Proposed`
+Status: `In Development`
 
 The spine has its own version: a number core sets, which moves only when the spine changes. It is not the tap release version, not the GRIFT format version, and not any type's version. A plugin's models can then run on any number of tap releases, because nothing in a type's version or its upgrade steps refers to the spine.
 
 #### Status Details
-Proposed; nothing is built. Issue# 1284 - tap records the ruling.
+In Development. Rules 1, 2 and 7 are built; rules 3 to 6 are not. Issue# 1284 - tap records the ruling.
 
-What exists today (read on core main, 2026-11-21): the spine's shape is implied by the tap release that created the database. A GRIFT document carries `grift_version`, which describes the form of the file, and nothing that says which spine wrote it. The grid has no table that holds a value for the instance as a whole.
+Built:
+
+- `SPINE_VERSION = 1` in `tap_grid/spine_version.py`. Version 1 is the spine as of `tap_grid` migration `0022_model_and_spine_versions`.
+- The record: the one row of `SpineVersion` (table `tap_spine_version`, the same migration), written by a `post_migrate` handler each time migrations are applied, while the database holds every `tap_grid` migration the code carries. It is written the same way when the schema is built from the models (`migrate_from_models`) and put back after a `flush`.
+- The refusal: `tap_grid`'s `ready()` raises `SpineVersionAhead` where the record is greater than the code declares, so no process starts, `migrate` included. A database with no record yet starts, and `migrate` writes one.
+- The guard: `tap/guards/model_version.py` holds the spine's definition (every column of `Entity`, the columns every typed row inherits from the base model, the columns core defines on the edge table, and their constraints) to the entry committed in `tap_grid/tap_grid.model_versions.json`.
+
+Not built, and why the requirement is not Implemented:
+
+- The GRIFT header field, the refusal of a document that states none or a newer one, and the spine's chain of links (rules 3 to 6, `req-grift-header-versions`).
+- Lowering the record when a migration is reversed. The handler writes the record only while every `tap_grid` migration is applied, and never lowers one; with a single spine version there is nothing to lower to. It belongs with the chain.
+
+What exists besides: a GRIFT document carries `grift_version`, which describes the form of the file, and nothing that says which spine wrote it.
 
 #### Implementation
 1. Core carries an authored integer spine version. It covers the `Entity` row and the columns core defines on the edge table: what they are and what they mean. A tap release that does not change the spine does not move it.
-2. The grid records the spine version its database is at, written when migrations are applied. A database that records a version greater than the code declares is refused at start. Where the record lives is decided when this is built.
+2. The grid records the spine version its database is at, written when migrations are applied. A database that records a version greater than the code declares is refused at start. The record is one row in a table of its own, `tap_spine_version`.
 3. A GRIFT document states the spine version in its header, in a field of its own beside `grift_version`: `metadata.spine_version` (`req-grift-header-versions` in `spec-grift-v0.md`). The two move independently: the form of the file can change with the spine untouched, and the spine can change inside an unchanged form.
 4. A document that states no spine version is refused; there is no default, on the same terms as `req-grid-entity-model-version` rule 20. One that states a version greater than the grid's is refused, naming both.
 5. Core keeps a chain of links for the spine, of the same kind `req-grid-entity-model-version` describes: a step that takes one envelope at version N and returns it at N+1, or a declared break. An import upgrades each envelope through it before it validates.
@@ -1361,18 +1405,20 @@ What exists today (read on core main, 2026-11-21): the spine's shape is implied 
 7. The guard in `req-grid-entity-model-version` rule 5 applies to the spine: a change to the spine's definition without a change to its version fails in core.
 
 #### Development
+The record is a small table and not the `Keystone` node. A keystone is a node: it is read through the spine whose version is in question, it is written through the pipeline with a batch and an actor that a migration does not have, an operator can author several, and it travels in a GRIFT export, where it would carry one grid's spine version into another grid. A value the grid holds about its own database needs none of that, and core already keeps such bookkeeping in tables of its own (`NaturalKeyRecipe`).
+
 The tap release version was considered as the key and left out. Most releases will not change the spine, and development builds between releases can, so a release number neither moves when the spine does nor stays still when it does not. The GRIFT format version was considered too and is kept as a different number; it answers a different question, how to parse the file.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-entity-spine-version-1 | Grid Records It | Proposed | After migrations are applied the grid's recorded spine version equals the one core declares. | |
-| req-grid-entity-spine-version-2 | Newer Database Refused | Proposed | Code declaring spine version 1 does not start against a database recording version 2. | |
+| req-grid-entity-spine-version-1 | Grid Records It | Implemented | After migrations are applied the grid's recorded spine version equals the one core declares. |  |
+| req-grid-entity-spine-version-2 | Newer Database Refused | Implemented | Code declaring spine version 1 does not start against a database recording version 2. | The refusal is raised in `tap_grid`'s `ready()` |
 | req-grid-entity-spine-version-3 | Stated In GRIFT | Proposed | An export's header carries the spine version in a field separate from `grift_version`. | |
 | req-grid-entity-spine-version-4 | Older Envelope Is Upgraded | Proposed | A document stating spine version 1 imports into a grid at version 2 with each envelope upgraded by core's step. | |
 | req-grid-entity-spine-version-5 | Newer Document Refused | Proposed | A document stating a spine version greater than the grid's is refused and writes nothing. | |
-| req-grid-entity-spine-version-6 | Independent Of Type Versions | Proposed | Raising the spine version changes no type's version or fingerprint entry, and raising a type's version changes neither the spine's. | |
+| req-grid-entity-spine-version-6 | Independent Of Type Versions | Implemented | Raising the spine version changes no type's version or fingerprint entry, and raising a type's version changes neither the spine's. | Observed on the committed record: the spine's entries and the types' entries are separate lists |
 | req-grid-entity-spine-version-7 | Unstated Spine Version Refused | Proposed | A document with no spine version is refused and writes nothing. | |
 
 ### Spine Copies On Typed Rows

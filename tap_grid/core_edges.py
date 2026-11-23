@@ -40,6 +40,21 @@ PRODUCED_BATCH_PROPERTY_SCHEMA: dict[str, Any] = {
 PRODUCED_BATCH_IDENTITY: dict[str, Any] = {"discriminators": []}
 
 
+#: The same types in the list form a core app's ``edge_types`` uses: what the type catalog and the
+#: version fingerprint read (req-grid-entity-model-version rules 5 and 6). An entry may state
+#: ``version`` beside its property rules; none stated is version 1.
+CORE_EDGE_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "slug": "PRODUCED_BATCH",
+        "name": "Produced Batch",
+        "sources": None,
+        "targets": [{"type": "batch"}],
+        "property_schema": PRODUCED_BATCH_PROPERTY_SCHEMA,
+        "identity": PRODUCED_BATCH_IDENTITY,
+    },
+)
+
+
 def register_core_edges() -> None:
     """Register grid-standard edge types. Idempotent — safe to call repeatedly.
 

@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/fc9f277ace42 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2e098cb70115 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -368,6 +368,9 @@ _ERROR_CODES = frozenset(
         "duplicate_json_key",
         "non_finite_number",
         "unsupported_grift_version",
+        # A type the document carries is declared at a greater version than this grid's rows are
+        # at (req-grid-entity-model-version rule 4): nothing is imported until migrations are applied.
+        "model_version_pending",
         "schema_validation_failed",
         "duplicate_entity_id",
         "duplicate_batch_id",
@@ -5521,6 +5524,23 @@ def _grift_import_parsed(
         dangling_edge_mode=dangling_edge_mode,
         force_batches=force_batches_set,
     )
+
+    # A document that carries a type whose rows are behind its code is refused whole, naming
+    # the type and both versions (req-grid-entity-model-version rule 4). A removal that names
+    # its target by id carries no type's fields and is not counted.
+    from tap_grid.model_version import disagreements, types_carried
+
+    for behind in disagreements(types_carried(document)):
+        preflight.issues.append(
+            _issue(
+                "model_version_pending",
+                str(behind.refusal("an import that carries it")),
+                "preflight",
+                "$.batches",
+                entity_type=behind.type_slug,
+            )
+        )
+        preflight.ok = False
 
     # If any named force_batches didn't resolve to an existing batch in the
     # file, surface that explicitly — silent no-op would be confusing.

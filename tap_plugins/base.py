@@ -55,6 +55,11 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
 
             register_edge_event_time(slug, et["event_time"])
 
+        if "version" in et:
+            from tap_grid.model_version import register_edge_version
+
+            register_edge_version(slug, et["version"])
+
 
 class TapPluginConfig(AppConfig):
     """Base AppConfig for TAP plugins.
@@ -68,7 +73,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/5b7322552429 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/2c77cca1d3f9 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -221,6 +226,11 @@ class TapPluginConfig(AppConfig):
 
                 register_edge_event_time(edge.slug, edge.event_time)
 
+            if edge.version is not None:
+                from tap_grid.model_version import register_edge_version
+
+                register_edge_version(edge.slug, edge.version)
+
     # ---------------------------------------------------------------------------
     # Type registration
     # ---------------------------------------------------------------------------
@@ -233,12 +243,26 @@ class TapPluginConfig(AppConfig):
         try:
             from django.utils.module_loading import import_string
 
-            from tap_grid.models import EntityType, EntityTypeKind
+            from tap_grid.model_version import (
+                EDGE,
+                NODE,
+                declared_edge_version,
+                declared_version,
+                register_type,
+            )
+            from tap_grid.models import EntityTypeKind
 
+            # register_type writes the descriptive columns on every load and compares the version
+            # the code declares with the one applied to this grid's rows. It never advances the
+            # applied version: start-up runs before migrations do (req-grid-entity-model-version
+            # rules 3 and 4). A type whose rows are at a greater version than its class declares
+            # raises here and the process does not start.
             for model_entry in self._manifest.models:
                 cls = import_string(model_entry.class_path)
-                EntityType.objects.update_or_create(
-                    slug=model_entry.slug,
+                register_type(
+                    model_entry.slug,
+                    kind=NODE,
+                    declared=declared_version(cls),
                     defaults={
                         "name": getattr(cls, "ENTITY_NAME", model_entry.slug),
                         "icon": getattr(cls, "ENTITY_ICON", ""),
@@ -256,8 +280,10 @@ class TapPluginConfig(AppConfig):
                 )
 
             for edge in self._manifest.edges:
-                EntityType.objects.update_or_create(
-                    slug=edge.slug,
+                register_type(
+                    edge.slug,
+                    kind=EDGE,
+                    declared=declared_edge_version(edge.slug),
                     defaults={
                         "name": edge.name,
                         "icon": "",
@@ -272,6 +298,11 @@ class TapPluginConfig(AppConfig):
 
         except OperationalError, ProgrammingError:
             logger.debug("[26a8] EntityType table not ready; skipping type registration.")
+            # Not compared, so the comparison is owed before this process writes anything
+            # (req-grid-entity-model-version rule 4).
+            from tap_grid.model_version import mark_start_incomplete
+
+            mark_start_incomplete(f"the types of {self.name} could not be registered")
 
     # ---------------------------------------------------------------------------
     # Editor registration

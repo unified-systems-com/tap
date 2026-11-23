@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/9a1eb70624e0 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/5331ce05cbc4 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1461,7 +1461,7 @@ def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     """Run loads-level checks: class-path validation via Django imports.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/049be25c087d (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/f686a38bbee4 (derivation) — the
         loads level's import-and-contract checks.
     """
     _check_model_classes(manifest, result)
@@ -1473,6 +1473,71 @@ def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     _check_history_opt_outs(manifest, result)
     _check_event_time_declarations(manifest, result)
     _check_edge_event_time(manifest, result)
+    _check_model_version_records(manifest, result)
+
+
+def _check_model_version_records(manifest: Any, result: ValidationResult) -> None:
+    """Each type's definition is in step with the version record the plugin commits
+    (req-grid-entity-model-version rules 5 and 7).
+
+    The record is ``<slug>.model_versions.json`` at the plugin's root, in the plugin's own repository:
+    the plugin's author is the one who raises a version, and this check is where a forgotten
+    raise is caught before the plugin ships. Where a type has entries, a definition that changed
+    at an unchanged version fails, an edited earlier entry fails, and a declared version with no
+    entry fails.
+
+    Staged for a type with no entry at all. Every plugin starts without a record, so until the
+    fleet has recorded its types that is reported and the check passes; with
+    ``TAP_REQUIRE_MODEL_VERSION_RECORD=1`` it fails. The report is carried at INFO severity,
+    worded as a warning, for the reason ``event-time-declarations`` gives: ``--strict`` promotes
+    a warning to a failure and every plugin repository's CI runs ``--strict``.
+    """
+    import os
+
+    from tap_grid.model_definition import (
+        REQUIRE_RECORD_ENV,
+        entries_for,
+        load_record,
+        plugin_states,
+        record_file_name,
+        type_problems,
+        unrecorded,
+    )
+
+    if not (manifest.models or manifest.edges):
+        return
+    record_file = record_file_name(manifest.slug)
+    check = CheckResult(
+        id="model-version-records", name="Type definitions are in step with the committed version record"
+    )
+    path = manifest.plugin_root / record_file
+    try:
+        record = load_record(path)
+        states = plugin_states(manifest)
+    except Exception as exc:  # noqa: BLE001 — a record or a definition that cannot be read is reported, not raised
+        check.fail(f"the version record could not be checked: {exc}", path=record_file)
+        result.checks.append(check)
+        return
+    for state in states:
+        for problem in type_problems(state, entries_for(record, state)):
+            check.fail(problem, path=record_file)
+    missing = unrecorded(states, record)
+    required = os.environ.get(REQUIRE_RECORD_ENV, "") == "1"
+    if missing:
+        names = ", ".join(sorted(state.slug for state in missing))
+        text = (
+            f"{len(missing)} of {len(states)} type(s) have no entry in {record_file}: {names}. Record them "
+            f"with `manage.py model_versions --record --app {manifest.slug}` and commit the file, so a "
+            "definition that changes without its version is caught"
+        )
+        if required:
+            check.fail(text, path=record_file)
+        else:
+            check.info(f"WARNING (not yet a failure; {REQUIRE_RECORD_ENV}=1 makes it one): {text}", path=record_file)
+    elif check.status == "pass":
+        check.info(f"{len(states)} type(s) match the entry recorded for their declared version")
+    check.details = {"unrecorded": sorted(state.slug for state in missing), "required": required}
+    result.checks.append(check)
 
 
 def _check_edge_event_time(manifest: Any, result: ValidationResult) -> None:

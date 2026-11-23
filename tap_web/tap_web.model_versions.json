@@ -1,0 +1,282 @@
+{
+  "edges": {
+    "NESTS_UNDER": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "page"
+            ],
+            "targets": [
+              "page"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "fingerprint": "bf100eed3eb5be4aeee6375c718d3d3f6e0c1db4890e9573b05b33f9c14ab163",
+        "version": 1
+      }
+    ],
+    "USES_PANEL": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "page"
+            ],
+            "targets": [
+              "panel"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": {
+            "properties": {
+              "inputs": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "variable_map": {
+                "properties": {
+                  "tap_page_persistent_vars": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "tap_page_vars": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "fingerprint": "1f43243db4b2c5ad221a297411095536c4107febc15528962348b88372f5910a",
+        "version": 1
+      }
+    ],
+    "USES_SEARCH": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "panel"
+            ],
+            "targets": [
+              "search"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "9b7a733a04263e6b425db3fec4db10eb4705331989ff414694e89b9b1a3608c5",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "page": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "discoverable": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "layout": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "nav_weight": {
+              "null": false,
+              "type": "IntegerField"
+            },
+            "slug": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField",
+              "unique": true
+            }
+          },
+          "key": [
+            "slug"
+          ],
+          "service_schema": {
+            "create_required": [
+              "name",
+              "slug"
+            ],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "discoverable": {
+                "type": "boolean"
+              },
+              "layout": {
+                "type": "object"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "nav_weight": {
+                "type": "integer"
+              },
+              "slug": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "layout": {
+                "validation": "function"
+              }
+            }
+          }
+        },
+        "fingerprint": "09ad063ddc60290a102a3c26ad2b72436520a5d4ba8ed97dd80a4b6cfbd954ec",
+        "version": 1
+      }
+    ],
+    "panel": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "config": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "editor_view": {
+              "max_length": 500,
+              "null": false,
+              "type": "CharField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "input_vars": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "slug": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "view": {
+              "max_length": 500,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": [
+            "slug"
+          ],
+          "service_schema": {
+            "create_required": [
+              "name",
+              "slug",
+              "view"
+            ],
+            "fields": {
+              "config": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "editor_view": {
+                "type": "string"
+              },
+              "input_vars": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "slug": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "view": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {}
+          }
+        },
+        "fingerprint": "a3f3b58963e3bdad832719c30947dccd7a321c4323f04bbdc0f6d983990cb6aa",
+        "version": 1
+      }
+    ]
+  }
+}

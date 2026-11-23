@@ -1,0 +1,727 @@
+{
+  "edges": {
+    "HAS_COLLECTION_JOB": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "collector"
+            ],
+            "targets": [
+              "collection_job"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per collection run, written by run_collection beside the job it creates; it records an act of this grid, not an observed relationship."
+            }
+          },
+          "property_rules": null
+        },
+        "fingerprint": "fe53099676c4a257d105e1253500678db1733a4cac4d2529887136e74db4f20d",
+        "version": 1
+      }
+    ],
+    "HAS_FIRED": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "schedule"
+            ],
+            "targets": [
+              "schedule_fire"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per scheduler fire, written with the fire it records; it is the fire history of this grid, not an observed relationship."
+            }
+          },
+          "property_rules": null
+        },
+        "fingerprint": "2c9e26a3ea22895763263763b83bb048aac3d4b32ae55c2839c9b024f8a5bcfe",
+        "version": 1
+      }
+    ],
+    "SCHEDULED_TARGET": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "schedule"
+            ],
+            "targets": [
+              "collector"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "f351ebfc91057b892b5ecf52a07d7f1e321300cbad72497e188c0e2eb4137627",
+        "version": 1
+      }
+    ],
+    "TRIGGERED_JOB": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "schedule_fire"
+            ],
+            "targets": [
+              "collection_job"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "keyless": {
+              "reason": "One edge per fire that starts a run, written when the job is created; it records an act of this grid, not an observed relationship."
+            }
+          },
+          "property_rules": null
+        },
+        "fingerprint": "3e95f6003c56a2e49979289b3192073c16842bda8db7b542af90ecce7757acce",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "collection_job": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": [
+              {
+                "edges": [
+                  {
+                    "type": "HAS_COLLECTION_JOB"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "collector"
+                  }
+                ]
+              },
+              {
+                "edges": [
+                  {
+                    "type": "TRIGGERED_JOB"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "schedule_fire"
+                  }
+                ]
+              }
+            ],
+            "outbound": null
+          },
+          "event_time": null,
+          "fields": {
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "enqueued_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "finished_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "manual_run": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "manual_run_source": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "results": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "run_mode": {
+              "choices": [
+                "full",
+                "self_test_only"
+              ],
+              "max_length": 16,
+              "null": false,
+              "type": "CharField"
+            },
+            "self_test": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "started_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "status": {
+              "choices": [
+                "FAILED",
+                "READY",
+                "RUNNING",
+                "SUCCESSFUL"
+              ],
+              "max_length": 16,
+              "null": false,
+              "type": "CharField"
+            },
+            "summary": {
+              "max_length": 2048,
+              "null": false,
+              "type": "CharField"
+            },
+            "task_result_id": {
+              "max_length": 128,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name"
+            ],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "enqueued_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finished_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "manual_run": {
+                "type": "boolean"
+              },
+              "manual_run_source": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "results": {
+                "type": "object"
+              },
+              "run_mode": {
+                "enum": [
+                  "full",
+                  "self_test_only"
+                ],
+                "type": "string"
+              },
+              "self_test": {
+                "type": "object"
+              },
+              "started_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "READY",
+                  "RUNNING",
+                  "FAILED",
+                  "SUCCESSFUL"
+                ],
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "task_result_id": {
+                "type": "string"
+              }
+            },
+            "validation": {
+              "manual_run_source": {
+                "schema": {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "run_mode": {
+                "schema": {
+                  "enum": [
+                    "full",
+                    "self_test_only"
+                  ],
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "status": {
+                "schema": {
+                  "enum": [
+                    "READY",
+                    "RUNNING",
+                    "FAILED",
+                    "SUCCESSFUL"
+                  ],
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "summary": {
+                "schema": {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "task_result_id": {
+                "schema": {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "6e5194a385eb44468debf2068272af54ae2f8a89aa7ae910e60b4bbd0756101c",
+        "version": 1
+      }
+    ],
+    "collector": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": [
+              {
+                "edges": [
+                  {
+                    "type": "SCHEDULED_TARGET"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "schedule"
+                  }
+                ]
+              }
+            ],
+            "outbound": [
+              {
+                "edges": [
+                  {
+                    "type": "HAS_COLLECTION_JOB"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "collection_job"
+                  }
+                ]
+              }
+            ]
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "collector_registry": {
+              "max_length": 512,
+              "null": false,
+              "type": "CharField",
+              "unique": true
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "reconcile_authority": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "reconcile_budget": {
+              "null": true,
+              "type": "PositiveIntegerField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "collector_registry",
+              "name"
+            ],
+            "fields": {
+              "collector_registry": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "reconcile_authority": {
+                "type": "boolean"
+              },
+              "reconcile_budget": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "validation": {
+              "collector_registry": {
+                "schema": {
+                  "minLength": 3,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "description": {
+                "schema": {
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "name": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "6a785d3ce9339d63a7e23ab828af2e2908f635b306b52e64fac517883ec6a610",
+        "version": 1
+      }
+    ],
+    "schedule": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": [
+              {
+                "edges": [
+                  {
+                    "type": "HAS_FIRED"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "schedule_fire"
+                  }
+                ]
+              },
+              {
+                "edges": [
+                  {
+                    "type": "SCHEDULED_TARGET"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "collector"
+                  }
+                ]
+              }
+            ]
+          },
+          "event_time": null,
+          "fields": {
+            "cron_expression": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "enabled": {
+              "null": false,
+              "type": "BooleanField"
+            },
+            "enabled_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "last_schedule_fired": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "max_active_runs": {
+              "null": false,
+              "type": "PositiveIntegerField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "cron_expression",
+              "name"
+            ],
+            "fields": {
+              "cron_expression": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "max_active_runs": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "cron_expression": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "max_active_runs": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "validation": "jsonschema"
+              },
+              "name": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "63ac03205f1f5094f903b5269515781f4c31a2bf09cc0ce736f85b647e65507a",
+        "version": 1
+      }
+    ],
+    "schedule_fire": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": [
+              {
+                "edges": [
+                  {
+                    "type": "HAS_FIRED"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "schedule"
+                  }
+                ]
+              }
+            ],
+            "outbound": [
+              {
+                "edges": [
+                  {
+                    "type": "TRIGGERED_JOB"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "type": "collection_job"
+                  }
+                ]
+              }
+            ]
+          },
+          "event_time": null,
+          "fields": {
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "fired_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "missed_count": {
+              "null": false,
+              "type": "PositiveIntegerField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "scheduled_for": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "status": {
+              "choices": [
+                "FAILED",
+                "PENDING",
+                "SKIPPED",
+                "TRIGGERED"
+              ],
+              "max_length": 16,
+              "null": false,
+              "type": "CharField"
+            },
+            "summary": {
+              "max_length": 2048,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "fired_at",
+              "name",
+              "scheduled_for"
+            ],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "fired_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "missed_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "scheduled_for": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "PENDING",
+                  "TRIGGERED",
+                  "SKIPPED",
+                  "FAILED"
+                ],
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "validation": {
+              "missed_count": {
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "validation": "jsonschema"
+              },
+              "status": {
+                "schema": {
+                  "enum": [
+                    "PENDING",
+                    "TRIGGERED",
+                    "SKIPPED",
+                    "FAILED"
+                  ],
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              },
+              "summary": {
+                "schema": {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "22bf49efdd325d1f03471270fedd03ba8a44530efa21bc2a9973594995ec3e5a",
+        "version": 1
+      }
+    ]
+  }
+}

@@ -53,6 +53,11 @@
       "type": "boolean",
       "description": "The type is bookkeeping that only subsystem code writes (req-grid-edge-internal): the generic edge verbs and GRIFT import refuse it, and GRIFT export leaves it out. Defaults to false."
     },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The version of this edge type's definition, set by its author (req-grid-entity-model-version rule 1). Omit for version 1. Raise it with the migration that moves stored edges of the type, and by hand for a change of meaning."
+    },
     "event_time": {
       "type": "object",
       "description": "Which of the edge's properties say when the relationship happened or held in the world (req-grid-entity-event-time rule 20). Optional: an edge type that declares none has no event time. A moment names one property key; an interval names a start key and, optionally, an end key. kind says what the start means.",

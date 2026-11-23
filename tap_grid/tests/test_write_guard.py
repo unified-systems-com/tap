@@ -603,3 +603,49 @@ def test_the_guard_and_the_write_read_the_same_fields(monkeypatch: pytest.Monkey
     spine.refresh_from_db()
     assert spine.name == renamed
     assert spine.dimensions != {"shifted": "in"}
+
+
+# --- the type catalog's applied version (req-grid-entity-model-version rule 3) ---
+
+
+def test_only_its_two_writers_change_a_types_applied_version():
+    """``EntityType.model_version`` is the version applied to the grid's rows. The catalog is not a
+    graph row and sits outside the pipeline, so it carries its own lock: the migration's call and a
+    type's first registration write it, and a queryset update, a bulk update or a save that would
+    change it is refused."""
+    from django.db import transaction
+
+    from tap_grid import model_version
+    from tap_grid.models import EntityType
+
+    slug = "write_guard__catalog_lock"
+    model_version.register_type(slug, kind="node", declared=1, defaults={"name": "Lock"})
+    row = EntityType.objects.get(slug=slug)
+    assert row.model_version == 1
+
+    with pytest.raises(model_version.ModelVersionError, match="queryset update"):
+        EntityType.objects.filter(slug=slug).update(model_version=2)
+    with pytest.raises(model_version.ModelVersionError, match="bulk_update"):
+        EntityType.objects.bulk_update([row], ["model_version"])
+    row.model_version = 2
+    with pytest.raises(model_version.ModelVersionError, match="EntityType.save"):
+        row.save()
+    with pytest.raises(model_version.ModelVersionError, match="EntityType.save"):
+        row.save(update_fields=["model_version"])
+    assert EntityType.objects.get(slug=slug).model_version == 1
+
+    # A write that leaves the applied version alone is not the lock's business.
+    row = EntityType.objects.get(slug=slug)
+    row.name = "Renamed"
+    row.save()
+    EntityType.objects.filter(slug=slug).update(description="described")
+    # Registration on a later start does not write it, whatever the class declares.
+    model_version._pending.pop(slug, None)
+    model_version.register_type(slug, kind="node", declared=2, defaults={"name": "Lock"})
+    model_version._pending.pop(slug, None)
+    assert EntityType.objects.get(slug=slug).model_version == 1
+
+    # The migration's call is the writer.
+    with transaction.atomic():
+        model_version.set_applied_version(slug, 2)
+    assert EntityType.objects.get(slug=slug).model_version == 2

@@ -1,0 +1,792 @@
+{
+  "edges": {
+    "NAVIGATES_TO": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "elevation"
+            ],
+            "targets": [
+              "elevation"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "94f1fcc32e4209b8ee794711e7cc3ed0bbfe7555f29e438badbe6beda1692fa8",
+        "version": 1
+      }
+    ],
+    "USES_ARRANGEMENT": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "layout"
+            ],
+            "targets": [
+              "arrangement"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "75dabe84911ba6a200c50044fbd71cb0298ddd91a38ef5c3ff6b29109596bce9",
+        "version": 1
+      }
+    ],
+    "USES_DEFAULT_ELEVATION": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "projection"
+            ],
+            "targets": [
+              "elevation"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "62e7cc28bc6494e50930cff4e9529109faa761de743c7517e891d28e0ba153dc",
+        "version": 1
+      }
+    ],
+    "USES_ELEVATION": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "projection"
+            ],
+            "targets": [
+              "elevation"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "62e7cc28bc6494e50930cff4e9529109faa761de743c7517e891d28e0ba153dc",
+        "version": 1
+      }
+    ],
+    "USES_LAYOUT": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "elevation",
+              "panel"
+            ],
+            "targets": [
+              "layout"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "393094e070ba160fff1339692c0faff72fe70eda08abe2dcf85857eb84d04c51",
+        "version": 1
+      }
+    ],
+    "USES_PROJECTION": [
+      {
+        "definition": {
+          "endpoint_rules": {
+            "sources": [
+              "panel"
+            ],
+            "targets": [
+              "projection"
+            ]
+          },
+          "event_time": null,
+          "identity": {
+            "discriminators": []
+          },
+          "property_rules": null
+        },
+        "fingerprint": "7ba63d103dc1a628018cf3b422e68fa270b3d890540e898621c4f9b06a752498",
+        "version": 1
+      }
+    ]
+  },
+  "format": 1,
+  "nodes": {
+    "arrangement": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "definition": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name"
+            ],
+            "fields": {
+              "definition": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "definition": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "anchor": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gryphon": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "gryphon"
+                      ],
+                      "type": "object"
+                    },
+                    "anchor_offset_px": {
+                      "type": "number"
+                    },
+                    "distribution": {
+                      "enum": [
+                        "even"
+                      ],
+                      "type": "string"
+                    },
+                    "members": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gryphon": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "gryphon"
+                      ],
+                      "type": "object"
+                    },
+                    "positioning": {
+                      "enum": [
+                        "horizontal",
+                        "vertical"
+                      ],
+                      "type": "string"
+                    },
+                    "span_px": {
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "members",
+                    "positioning",
+                    "distribution"
+                  ],
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "2063fbcdffda2ecf2a1c851667c1029b3e287b79e25b01ebd3bf220a8f2fb25a",
+        "version": 1
+      }
+    ],
+    "elevation": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "definition": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "definition",
+              "name"
+            ],
+            "fields": {
+              "definition": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "definition": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "description": {
+                      "type": "string"
+                    },
+                    "double_tap_targets": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "entity_type": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target_elevation_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "entity_type",
+                          "target_elevation_id"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "layouts": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "zoom": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "zoom"
+                  ],
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "8148125b798371fee501481483fe6380f9ee56a0270f1060d095c4acbce510a5",
+        "version": 1
+      }
+    ],
+    "layout": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "definition": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "name"
+            ],
+            "fields": {
+              "definition": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "definition": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "arrangement_control": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "mode": {
+                          "enum": [
+                            "all",
+                            "none"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "arrangements": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "js_file": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "6d461878df2b437ad32bd03a7a687755274acf027de82b97d5d095c3454bd53a",
+        "version": 1
+      }
+    ],
+    "projection": [
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "definition": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [
+              "definition",
+              "name"
+            ],
+            "fields": {
+              "definition": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "validation": {
+              "definition": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "default_elevation_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "elevations": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "lock_nodes": {
+                      "type": "boolean"
+                    },
+                    "min_zoom": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "fit"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "node_style": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "default",
+                            "icon-badge"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "exclude_types": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "mode": {
+                              "enum": [
+                                "default",
+                                "icon-badge"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "status_badges": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "badge_sets": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "color": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "info_window": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "columns": {
+                                    "description": "Table columns for this badge set's section, in display order (req-viz-info-window-columns). Absent, the section shows the single Name column. Rows keep the order the Search returned.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "align": {
+                                          "description": "Horizontal alignment of the header and cells. Default left.",
+                                          "enum": [
+                                            "left",
+                                            "right"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "decimals": {
+                                          "description": "Decimal places of a `percent` value. Default 2.",
+                                          "maximum": 6,
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "field": {
+                                          "description": "Key of the Search row whose value fills this column's cells. A row without the key shows an empty cell.",
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "format": {
+                                          "description": "`text` (default) shows the value as given; `number` shows a numeric value with one decimal place; `percent` shows a fraction from 0 to 1 as a percentage (0.0004 as 0.04%), with `decimals` places.",
+                                          "enum": [
+                                            "text",
+                                            "number",
+                                            "percent"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "description": "Header text for the column.",
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "link": {
+                                          "description": "True makes this column's cell the row link when `row_url_template` resolves for the row. The first column marked true carries the link; when none is marked, the first column does.",
+                                          "type": "boolean"
+                                        },
+                                        "nowrap": {
+                                          "description": "True keeps this column's cell text on one line (no wrapping), so the column takes its content width within the window's width limits. Default false: text wraps.",
+                                          "type": "boolean"
+                                        },
+                                        "tone_steps": {
+                                          "description": "Colours a numeric cell by thresholds: the first step, highest `min` first, whose `min` is at or below the value gives the cell its tone, drawn as a badge with the tone name as its tooltip. A value below every step, or not a number, shows as plain text.",
+                                          "items": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "min": {
+                                                "description": "Lowest value this step covers.",
+                                                "type": "number"
+                                              },
+                                              "tone": {
+                                                "description": "Badge tone, from the table panel's tone palette (`info` is the muted grey).",
+                                                "enum": [
+                                                  "good",
+                                                  "warn",
+                                                  "bad",
+                                                  "muted",
+                                                  "info"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "min",
+                                              "tone"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "maxItems": 8,
+                                          "minItems": 1,
+                                          "type": "array"
+                                        },
+                                        "zero_tone": {
+                                          "description": "With `tone_steps`, the tone of a value that is exactly zero, taken instead of any step.",
+                                          "enum": [
+                                            "good",
+                                            "warn",
+                                            "bad",
+                                            "muted",
+                                            "info"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "field",
+                                        "label"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "maxItems": 8,
+                                    "minItems": 1,
+                                    "type": "array"
+                                  },
+                                  "inputs": {
+                                    "description": "Static inputs forwarded to the Search's $var bindings.",
+                                    "type": "object"
+                                  },
+                                  "row_url_template": {
+                                    "description": "Same-origin path template for each row's link, with {field} placeholders filled from that row. A row missing any referenced field renders as plain text, never a half-built URL.",
+                                    "minLength": 2,
+                                    "pattern": "^/(?![/\\\\])[^\\\\\\x00-\\x20\\x7f]*(?![\\s\\S])",
+                                    "type": "string"
+                                  },
+                                  "search_id": {
+                                    "description": "UUID of a stored Search that returns rows of {entity_id, name} for the detail panel opened on badge/host click.",
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "search_id"
+                                ],
+                                "type": "object"
+                              },
+                              "label": {
+                                "description": "Human-readable badge-set label used as the info-window section header. Falls back to `name` when absent.",
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "name": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "population": {
+                                "additionalProperties": true,
+                                "properties": {
+                                  "inputs": {
+                                    "description": "Runtime inputs forwarded to the Search's $var bindings. Used when type=search.",
+                                    "type": "object"
+                                  },
+                                  "rules": {
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "count": {
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "entity_type": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "entity_type",
+                                        "count"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "search_id": {
+                                    "description": "UUID of a stored Search whose rows return {entity_id, count} pairs. Used when type=search.",
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "enum": [
+                                      "static_by_node_type",
+                                      "search"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              },
+                              "text_color": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "color",
+                              "population"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "refresh_seconds": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "default_elevation_id",
+                    "elevations"
+                  ],
+                  "type": "object"
+                },
+                "validation": "jsonschema"
+              },
+              "name": {
+                "schema": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "541fc6efd863a2a6a2887ba8256fc8443543f9b2594121d39e32c5366f08b294",
+        "version": 1
+      }
+    ]
+  }
+}

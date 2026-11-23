@@ -448,17 +448,21 @@ def test_re_registration_moves_a_stale_row_to_the_class(import_untracked: Any) -
 
 
 @SPEC_RECORD
-def test_the_field_defaults_true_and_core_search_is_stamped_from_its_class() -> None:
-    import inspect
-
-    from tap_grid import apps as grid_apps
-    from tap_grid.models import EntityType
+@pytest.mark.django_db
+def test_the_field_defaults_true_and_core_search_is_stamped_from_its_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tap_grid.model_version import register_core_types
+    from tap_grid.models import EntityType, Search
 
     field = EntityType._meta.get_field("track_history")
     _, _, _, kwargs = field.deconstruct()
     assert kwargs["default"] is True
     assert kwargs["db_index"] is True
-    assert '"track_history": Search.TRACK_HISTORY' in inspect.getsource(grid_apps.TapCoreConfig.ready)
+    # Core's types are stamped by the registration tap_grid's ready() runs, from the class, on every load.
+    register_core_types()
+    assert EntityType.objects.get(slug="search").track_history is Search.TRACK_HISTORY
+    monkeypatch.setattr(Search, "TRACK_HISTORY", not Search.TRACK_HISTORY)
+    register_core_types()
+    assert EntityType.objects.get(slug="search").track_history is Search.TRACK_HISTORY
 
 
 # ---------------------------------------------------------------------------

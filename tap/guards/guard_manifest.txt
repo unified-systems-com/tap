@@ -35,6 +35,7 @@ json-file-naming
 log-site-baseline
 log-site-format
 log-site-within-file-uniqueness
+model-version-fingerprint
 mypy-static-typing
 per-profile-boot-resolution
 record-site-uniqueness
