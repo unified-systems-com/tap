@@ -8,6 +8,7 @@ real tables with two database sessions, ordered by observing one session blocked
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import uuid
@@ -22,7 +23,7 @@ from django.db import connection, models, transaction
 from tap_plugin.grid_fixtures.models.pg_node import PgNode
 
 from tap_grid import spine_copies
-from tap_grid.cascade_corpus.timing import finish, in_thread, wait_until_blocked_by
+from tap_grid.cascade_corpus.timing import Outcome, finish, in_thread, wait_until_blocked_by
 from tap_grid.dimension_map import grid_derived_update
 from tap_grid.grift.exporter import ExportSelection, export_grid
 from tap_grid.grift.subgraph import build_data_lane, build_spine_surface
@@ -436,18 +437,33 @@ def _write(statements: list[tuple[str, list[Any]]]) -> Any:
     return body
 
 
-def _hold_then(holder_sql: list[tuple[str, list[Any]]], contender_sql: list[tuple[str, list[Any]]]) -> None:
-    """The holder writes and holds its transaction open; the contender writes and is observed blocked
-    on it; the holder commits; the contender finishes."""
+def _blocked_on(waiter: Outcome, holder: Outcome) -> bool:
+    """Wait until the waiter's backend is blocked on the holder's (True) or the waiter has finished
+    without blocking (False). Returning rather than raising on the second lets a test check the rows
+    first, so a missing lock shows as the stale copy it causes and not only as a missing wait."""
+    try:
+        wait_until_blocked_by(waiter, holder)
+    except AssertionError:
+        if waiter.done.is_set():
+            return False
+        raise
+    return True
+
+
+def _hold_then(holder_sql: list[tuple[str, list[Any]]], contender_sql: list[tuple[str, list[Any]]]) -> bool:
+    """The holder writes and holds its transaction open; the contender writes; the holder commits once
+    the contender is observed blocked on it (or has finished without blocking); the contender finishes.
+    Returns whether the contender blocked."""
     ready, go = threading.Event(), threading.Event()
     holder = in_thread(_session(holder_sql, ready, go))
     assert ready.wait(20)
     contender = in_thread(_write(contender_sql))
     try:
-        wait_until_blocked_by(contender[1], holder[1])
+        blocked = _blocked_on(contender[1], holder[1])
     finally:
         go.set()
     finish(holder, contender)
+    return blocked
 
 
 def _both_commit_in_turn(first_sql: list[tuple[str, list[Any]]], second_sql: list[tuple[str, list[Any]]]) -> None:
@@ -475,27 +491,98 @@ def unborn_typed_row() -> Iterator[tuple[uuid.UUID, str]]:
         _sql(f"DROP TABLE IF EXISTS {aside}")
 
 
+#: The two entity-row changes a push carries, each as a raw statement on the entity table.
+ENTITY_CHANGES = {
+    "deleted_at": "UPDATE tap_entity SET deleted_at = now() WHERE id = %s",
+    "dimensions": "UPDATE tap_entity SET dimensions = '{}'::jsonb WHERE id = %s",
+}
+#: An advisory lock key nothing else takes; the pause trigger below waits on it.
+PAUSE_KEY = 0x5C0B1E5
+
+
+@contextlib.contextmanager
+def _insert_paused_after_the_pull(table: str) -> Iterator[str]:
+    """A test-only BEFORE INSERT trigger on ``table`` that waits on an advisory lock the test holds.
+
+    Row triggers on one event fire in name order, so a trigger named after the pull trigger with a
+    suffix fires after it: an insert stopped here has run the pull (read the entity row and set both
+    copies on NEW) and has not yet written the row. That is case 1c of the two-writer trial, held
+    open by a lock instead of the trial's test-only ``pg_sleep`` inside the trigger.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    trigger, function = f"{spine_copies.PULL_TRIGGER}_zz_pause_{suffix}", f"copies_test_pause_{suffix}"
+    _sql(
+        f"CREATE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS "
+        f"$$ BEGIN PERFORM pg_advisory_xact_lock_shared({PAUSE_KEY}); RETURN NEW; END $$"
+    )
+    _sql(f"CREATE TRIGGER {trigger} BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION {function}()")
+    try:
+        yield trigger
+    finally:
+        _sql(f"DROP TRIGGER IF EXISTS {trigger} ON {table}")
+        _sql(f"DROP FUNCTION IF EXISTS {function}()")
+
+
 @pytest.mark.django_db(transaction=True)
 class TestTwoWriters:
     """Each interleaving of the two-writer trial on toy tables, repeated on the real tables."""
 
     @AC[16]
-    def test_retire_holding_then_typed_insert_waits_and_reads_the_retirement(
-        self, unborn_typed_row: tuple[uuid.UUID, str]
+    @pytest.mark.parametrize("change", sorted(ENTITY_CHANGES))
+    def test_entity_change_holding_then_typed_insert_waits_and_reads_it(
+        self, unborn_typed_row: tuple[uuid.UUID, str], change: str
     ) -> None:
+        """Case 1a: the entity change is open when the typed row is inserted."""
         entity_id, insert = unborn_typed_row
-        _hold_then([("UPDATE tap_entity SET deleted_at = now() WHERE id = %s", [entity_id])], [(insert, [])])
+        before = _spine(entity_id)
+        blocked = _hold_then([(ENTITY_CHANGES[change], [entity_id])], [(insert, [])])
+        assert _spine(entity_id) != before
         assert _copies(PgNode, entity_id) == _spine(entity_id)
-        assert _copies(PgNode, entity_id)[0] is not None
+        assert blocked, "the second writer never waited for the first"
 
     @AC[16]
-    def test_typed_insert_holding_then_retire_pushes_after_it(self, unborn_typed_row: tuple[uuid.UUID, str]) -> None:
+    @pytest.mark.parametrize("change", sorted(ENTITY_CHANGES))
+    def test_typed_insert_holding_then_entity_change_pushes_after_it(
+        self, unborn_typed_row: tuple[uuid.UUID, str], change: str
+    ) -> None:
+        """Case 1b: the typed insert is open when the entity changes."""
         entity_id, insert = unborn_typed_row
-        # The insert takes FOR SHARE on the entity row, so the retirement waits for the insert to commit,
-        # and its push then finds the typed row.
-        _hold_then([(insert, [])], [("UPDATE tap_entity SET deleted_at = now() WHERE id = %s", [entity_id])])
+        before = _spine(entity_id)
+        # The insert takes FOR SHARE on the entity row, so the change waits for the insert to commit, and
+        # its push then finds the typed row.
+        blocked = _hold_then([(insert, [])], [(ENTITY_CHANGES[change], [entity_id])])
+        assert _spine(entity_id) != before
         assert _copies(PgNode, entity_id) == _spine(entity_id)
-        assert _copies(PgNode, entity_id)[0] is not None
+        assert blocked, "the second writer never waited for the first"
+
+    @AC[16]
+    @pytest.mark.parametrize("change", sorted(ENTITY_CHANGES))
+    def test_an_insert_that_has_read_the_entity_holds_it_until_the_row_is_written(
+        self, unborn_typed_row: tuple[uuid.UUID, str], change: str
+    ) -> None:
+        """Case 1c: the insert's trigger has read the entity row and not yet written the typed row when
+        the entity changes. Without the lock the change commits in that gap, the push finds no typed row,
+        and the insert then writes the value it read: a stale copy. With FOR SHARE the change cannot
+        commit until the insert has, so the test observes it blocked on the inserter and not finishing."""
+        entity_id, insert = unborn_typed_row
+        table = PgNode._meta.db_table
+        before = _spine(entity_id)
+        me = Outcome(pid=_sql("SELECT pg_backend_pid()")[0][0])
+        # The pause firing after the pull is shown, not assumed: the change below can only block on the
+        # inserter if the inserter already holds the entity row FOR SHARE, which the pull takes.
+        with _insert_paused_after_the_pull(table):
+            _sql("SELECT pg_advisory_lock(%s)", [PAUSE_KEY])
+            try:
+                inserter = in_thread(_write([(insert, [])]))
+                wait_until_blocked_by(inserter[1], me)  # stopped in the pause: the pull has run
+                changer = in_thread(_write([(ENTITY_CHANGES[change], [entity_id])]))
+                blocked = _blocked_on(changer[1], inserter[1])  # the change waits for the insert
+            finally:
+                _sql("SELECT pg_advisory_unlock(%s)", [PAUSE_KEY])
+            finish(inserter, changer)
+        assert _spine(entity_id) != before
+        assert _copies(PgNode, entity_id) == _spine(entity_id)
+        assert blocked, "the entity change committed while the insert was between its read and its write"
 
     @AC[16]
     def test_dimensions_change_holding_then_typed_update_reads_the_committed_map(self) -> None:
@@ -503,7 +590,7 @@ class TestTwoWriters:
         table = PgNode._meta.db_table
         # The typed update reads the entity row without a lock, so it does not wait; the push in the
         # entity transaction holds the typed row, so the typed update waits for that instead.
-        _hold_then(
+        assert _hold_then(
             [("UPDATE tap_entity SET dimensions = '{}'::jsonb WHERE id = %s", [node.entity_id])],
             [(f"UPDATE {table} SET name = 'renamed' WHERE entity_id = %s", [node.entity_id])],  # noqa: S608
         )
@@ -513,7 +600,7 @@ class TestTwoWriters:
     def test_typed_update_holding_then_dimensions_change_pushes_after_it(self) -> None:
         node = _node("typed-first")
         table = PgNode._meta.db_table
-        _hold_then(
+        assert _hold_then(
             [(f"UPDATE {table} SET name = 'renamed' WHERE entity_id = %s", [node.entity_id])],  # noqa: S608
             [("UPDATE tap_entity SET dimensions = '{}'::jsonb WHERE id = %s", [node.entity_id])],
         )
@@ -525,7 +612,7 @@ class TestTwoWriters:
         it waits on the entity lock and pushes after."""
         node = _node("pipeline-order")
         table = PgNode._meta.db_table
-        _hold_then(
+        assert _hold_then(
             [
                 ("SELECT 1 FROM tap_entity WHERE id = %s FOR UPDATE", [node.entity_id]),
                 (f"UPDATE {table} SET name = 'renamed' WHERE entity_id = %s", [node.entity_id]),  # noqa: S608
