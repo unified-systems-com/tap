@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.4.8](https://github.com/unified-systems-com/tap/compare/v0.4.7...v0.4.8) (2026-11-23)
+
+
+### Features
+
+* **initialize:** a Codespace takes the initializer's road and a prebuild mints nothing ([3cde866](https://github.com/unified-systems-com/tap/commit/3cde866b1eaf3c486349cd8b8547a81112dbcdfe))
+* **initialize:** a Codespace takes the initializer's road and a prebuild mints nothing [via make-it-fast] ([9222a97](https://github.com/unified-systems-com/tap/commit/9222a97e528f42048400092253e3dc9f2ab0990d))
+
+
+### Bug Fixes
+
+* **initialize:** only an owner a sign-in can match stands in for the first admin link ([ef579ac](https://github.com/unified-systems-com/tap/commit/ef579ac3934d3e66035086cc6633c3f24dd6dab4))
+* **initialize:** only an owner a sign-in can match stands in for the first admin link [via make-it-fast] ([da874d4](https://github.com/unified-systems-com/tap/commit/da874d4efa7bd87b69e46d6e092084aeb5387c45))
+
+## [0.4.7](https://github.com/unified-systems-com/tap/compare/v0.4.6...v0.4.7) (2026-11-23)
+
+
+### Features
+
+* **grid:** a version on every type, applied per grid, and the spine's own version [via hard-things] ([29e7841](https://github.com/unified-systems-com/tap/commit/29e7841c8e32a2d06c22dabefec8743310b47800))
+* **grid:** the adapter a migration calls to carry stored rows to a type's next version ([a35407b](https://github.com/unified-systems-com/tap/commit/a35407b542828412e86216e4215eb427f0c8920e))
+* **grid:** the adapter a migration calls to carry stored rows to a type's next version [via hard-things] ([ddbf329](https://github.com/unified-systems-com/tap/commit/ddbf329c6ce72592850048329f1042988cac5b0b))
+* **grid:** upgrade links between versions, applied on import, stated in the GRIFT header ([4379eeb](https://github.com/unified-systems-com/tap/commit/4379eeb9320671516a6cbd729456f0c20df5a4c2))
+
+
+### Bug Fixes
+
+* **grid:** a failing upgrade step refuses the document; a derivation must name real fields ([e57379e](https://github.com/unified-systems-com/tap/commit/e57379ebc8205939f50cf8759fb2a136d76a2713))
+* **grid:** a failing upgrade step refuses the document; a derivation must name real fields [via hard-things] ([676d172](https://github.com/unified-systems-com/tap/commit/676d1722493941f42d3432b18b1aa6e5a76e0f1b))
+* **grid:** a missing catalog row does not hide a type's version ([5770546](https://github.com/unified-systems-com/tap/commit/5770546000f1799427ac9d0f5263a7ea01d58ca3))
+* **grid:** a missing catalog row does not hide a type's version (+1 more) [via hard-things] ([256764e](https://github.com/unified-systems-com/tap/commit/256764e2a62165359e929846b146b6a0d1f139b3))
+* **grid:** look field classes up in a table; parenthesise one except clause ([c7ff8ea](https://github.com/unified-systems-com/tap/commit/c7ff8eabb87a29816bff0d3cec5e841d1f0d94f6))
+* **grid:** only equal versions are agreement; an unmigrated schema is version 1 ([1f215fe](https://github.com/unified-systems-com/tap/commit/1f215fe4c1cfb7686d7a9ec00e16bdee45ffefe2))
+* **grid:** the version adapter rebuilds keys, refuses a missing history model, and locks the catalog row ([b1b6bf6](https://github.com/unified-systems-com/tap/commit/b1b6bf68427be7d7e2fa0492b59b33ee486bd91e))
+* **grid:** the version adapter refuses a migration that is not atomic ([94d5611](https://github.com/unified-systems-com/tap/commit/94d5611cb1d96add433ff801de68745ce73a4574))
+* **grid:** the version adapter refuses another database and discards history with no live row ([0657cba](https://github.com/unified-systems-com/tap/commit/0657cba9a4cee31b637dac6f0569a90159033828))
+
+
+### Documentation
+
+* **changelog:** 0.4.6 lists the initializer, collection time and the spine spec ([31983ec](https://github.com/unified-systems-com/tap/commit/31983ecc2a0fa9f250d09ff8288dd29fabd0c16e))
+* **changelog:** 0.4.6 lists the initializer, collection time and the spine spec [via make-it-fast] ([3f34fea](https://github.com/unified-systems-com/tap/commit/3f34fea80161f3381a9d76f4ddc98577950b296a))
+
 ## [0.4.6](https://github.com/unified-systems-com/tap/compare/v0.4.5...v0.4.6) (2026-11-22)
 
 

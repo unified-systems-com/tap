@@ -354,7 +354,7 @@ def run(
 ) -> str:
     """Classify the stores, activate if needed, and write the hand-off; return the road taken.
 
-    TAP-IMPLEMENTS: req-tap-bake-initializer@0119b11722e9/0e2d215781bf (derivation) — the one place an installation
+    TAP-IMPLEMENTS: req-tap-bake-initializer@59b6c8617552/0e2d215781bf (derivation) — the one place an installation
         is classified and its road chosen, under the installation lock.
     TAP-IMPLEMENTS: req-tap-bake-activate@757ddecd2b5e/0e2d215781bf (enforcement) — values are stored pending
         before any is applied, applied from the stored values, and never minted twice.
@@ -418,6 +418,20 @@ def locked(
         return runner(argv)
 
 
+def _owner_named() -> bool:
+    """True only for an owner a sign-in can match: a JSON object with a numeric `user_id`.
+
+    That is the shape `scripts/codespace-env` writes for a resolved owner. Anything else, empty,
+    `{}`, `null`, or a malformed value, names nobody, and the first admin link is issued instead.
+    """
+    raw = os.environ.get("TAP_AUTH_INSTANCE_OWNER") or ""
+    try:
+        owner = json.loads(raw)
+    except ValueError:
+        return False
+    return isinstance(owner, dict) and bool(re.fullmatch(r"[0-9]+", str(owner.get("user_id") or "")))
+
+
 def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], int] = _run_child) -> None:
     """Finish under the installation lock: boot, then the first admin link once.
 
@@ -452,6 +466,14 @@ def finish(store: StateStore, target: Target, *, runner: Callable[[list[str]], i
                 "[i1a8] initializer: a first admin link may already have been issued by an interrupted start; "
                 "if you have none, run: manage.py enroll_admin --email <you> --print-token"
             )
+            return
+        if identity.get("first_login") == "owner" or _owner_named():
+            # A named instance owner (a Codespace's opener, req-tap-serving-codespace-7) is the first
+            # admin, granted on their first sign-in; a passkey link beside it would be a second way in
+            # that nobody asked for. An unresolved owner leaves this empty, and the link is issued.
+            if identity.get("first_login") != "owner":
+                store.write({**identity, "first_login": "owner"})
+                logger.info("[i1a9] initializer: the instance owner is the first admin; no enrolment link issued")
             return
         # Recorded before the link is minted, so a crash in between can never issue a second one.
         identity = {**identity, "first_login": "issuing"}

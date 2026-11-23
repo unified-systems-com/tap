@@ -478,7 +478,8 @@ first, in a product image whose deploy config sets `TAP_INSTALLATION_DIR` to a m
   and Finish, so a second start waits rather than migrating, booting or issuing alongside the first.
 - **Finish.** `tap.initialize finish` runs `manage.py boot`, then records `finish: done`; a failed
   boot is fatal. On the first activation only, it records `issuing`, then prints a one-time
-  `enroll_admin` link, so a crash can never issue a second one.
+  `enroll_admin` link, so a crash can never issue a second one. Where an instance owner is named, as
+  in a Codespace, it records `owner` and issues no link.
 - **Not built yet.** The seed rows, clone activation and per-installation role names.
 - **Measured locally, 2026-11-22.** The playground's 15-plugin record, with no seed, on a compose file
   carrying only a bootstrap password. From `compose up` to HTTP 302, with one admin link printed: 107.6
@@ -710,6 +711,27 @@ where the secret store lives, and how many hosts serve:
 Replacing a compromised installation is then the same act as launching one: a new installation from a
 known, attested seed, with fresh secrets and roles, in the time a launch takes.
 
+**A Codespace on the initializer's road.** A Codespace whose compose file runs a product image with
+`TAP_INSTALLATION_DIR` is an installation like any other, with three Codespace-specific rules in the
+entrypoint:
+
+- **The Codespace derivation runs before the initializer.** It needs the Codespace's name, which a
+  prebuild never has; it waits, runs out and aborts the container, so a prebuild never reaches the
+  initializer and mints nothing that every Codespace made from it would share. The derivation reads
+  no Django setting, so running it first costs nothing.
+- **The secret key is the initializer's.** The derivation still writes the hostname values and the
+  instance owner, but `scripts/codespace-env --no-secret-key` leaves `SECRET_KEY` out and creates no
+  key file in the workspace.
+- **Boot runs once.** Finish boots the installation under its lock, so the Codespace's own boot step
+  stands aside when the installation was initialized.
+
+The instance owner is the first admin, granted on their first sign-in
+([`req-tap-serving-codespace-7`](spec-tap-serving.md)), so Finish issues no passkey enrolment link
+when `TAP_AUTH_INSTANCE_OWNER` names one: a JSON object with a numeric `user_id`, the shape the
+derivation writes. An owner it could not resolve leaves the value empty, and an empty, `{}` or
+malformed value names nobody, so the link is issued as on any other host. The compose file then carries only a bootstrap database
+password and no generated secret, so the devcontainer's `initializeCommand` generates none either.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -718,6 +740,7 @@ known, attested seed, with fresh secrets and roles, in the time a launch takes.
 | req-tap-bake-hosts-2 | Spawn Takes A Seed | Proposed | `spawn-session.sh` started with a seed reference serves without running bakeable population, and its run record names the seed. | |
 | req-tap-bake-hosts-3 | Managed Database Loads | Proposed | An initialization against a database whose objects must be owned by a role other than the dump's completes with `--no-owner`, and the installation serves. | |
 | req-tap-bake-hosts-4 | Replica Start Is Serving Only | Proposed | A second serving host started against an initialized installation reaches serving without taking the initializer lock or writing installation state. | |
+| req-tap-bake-hosts-5 | A Codespace Mints At Its Own Start | In Development | In the entrypoint, the Codespace derivation precedes the initializer and aborts when no Codespace name arrives; for an installation it passes `--no-secret-key`, so the key is the initializer's; the Codespace boot step does not run for an initialized installation; and Finish issues no enrolment link when an instance owner is named. | The order and the flags are read from the entrypoint; the derivation and Finish are run in tests |
 
 ### The Launch Is Timed
 ----
