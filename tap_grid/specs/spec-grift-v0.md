@@ -1418,7 +1418,7 @@ Prior art for putting the write's intent beside the record: a FHIR transaction `
 
 #### Implementation
 1. A batch container may carry `inserts`, `updates` and `replaces`. Each is an object with `nodes` and `edges`, both always present even when empty, and its knobs, all required: the schema applies no default, as for `deletes` (`req-grift-import-deletes`, "Section Knobs").
-2. A member of a section's `nodes` is a node object and a member of its `edges` an edge object, in the shapes `req-grift-node` and `req-grift-edge` define. A `retirement` block is refused in all three sections.
+2. A member of a section's `nodes` is a node object and a member of its `edges` an edge object, in the shapes `req-grift-node` and `req-grift-edge` define. A `retirement` block is refused in all three sections. A record in `updates` may also carry `remove`, its explicit removal list (`req-grift-partial-update` rule 9); no other section admits it.
 3. Section knobs apply to every record in the section. There is no per-record override, as in the removal sections.
 4. An entity appears in at most one write section of a batch (`nodes`/`edges`, `inserts`, `updates`, `replaces`). A second appearance is refused with `duplicate_entity_id`.
 5. Order within a batch: every section's nodes before any section's edges, and within each kind `inserts`, then `nodes`/`edges`, then `updates`, then `replaces`; then `deletes`, then `purges`. Array order holds inside a section.
@@ -1507,7 +1507,7 @@ A record in `updates` writes the fields it carries to an existing row and need n
 #### Status Details
 Proposed; nothing is built. Today (read) required fields stay required under keep-absent: "validation is unchanged, so a keep-absent payload must still carry them" (`req-grid-service-write-keepabsent`, the ruling of Issue# 1128 - tap), and `req-grift-node` validates every `node` as a full object. A sender adding one fact to a node it did not create must send every required field, and each replaces the stored value. `patch_node` has no such requirement and the importer never calls it (read in Issue# 1173 - tap, not re-read here).
 
-Prior art: JSON Merge Patch. A member absent from the patch is left alone; a member present replaces; `null` removes (searched: https://www.rfc-editor.org/rfc/rfc7396.html). GRIFT's keep-absent rules are these already, with one local difference kept from Issue# 1128 - tap: `null` on a field that cannot be null resets it to its default. Rule 3 below narrows that for `updates`.
+Prior art: JSON Merge Patch. A member absent from the patch is left alone; a member present replaces; `null` removes (searched: https://www.rfc-editor.org/rfc/rfc7396.html). GRIFT takes the first two and not the third: an explicit `null` is an assertion of absence, a touched field stamped like any value (`spec-grid-node.md`, "The FLIP Hinge"; its Prior Art names Merge Patch's "null = delete" as the anti-pattern), so removal is said by a named list (rule 9), ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23). One local difference is kept from Issue# 1128 - tap: `null` on a field that cannot be null resets it to its default. Rule 3 below narrows that for `updates`.
 
 ```json
 "updates": {
@@ -1515,11 +1515,14 @@ Prior art: JSON Merge Patch. A member absent from the patch is left alone; a mem
   "on_other_source": "overwrite",
   "nodes": [
     { "entity": { "ref": "c-1", "entity_type": "ecs_container", "dimensions": {} },
-      "node": { "arn": "arn:aws:ecs:...:container/xyz", "image_digest": "sha256:..." } }
+      "node": { "arn": "arn:aws:ecs:...:container/xyz", "image_digest": "sha256:...", "labels": { "team": null } },
+      "remove": [["labels", "stale-key"], ["description"]] }
   ],
   "edges": []
 }
 ```
+
+Here `labels.team` is asserted absent and stays, `null`, stamped; `labels.stale-key` and the field `description` are released.
 
 #### Implementation
 1. Where the target exists, `node` is validated field by field against `FIELD_CRUD_SCHEMA` and the required list is not applied. The fields a natural key needs to find the row are still needed, because without them there is no target.
@@ -1530,6 +1533,7 @@ Prior art: JSON Merge Patch. A member absent from the patch is left alone; a mem
 6. `on_other_source: overwrite` is the behaviour above. `yield` is `req-grift-yield`.
 7. A record that changes nothing is an observation, as for any write (`req-grid-flip-change`).
 8. An edge in `updates` writes the keys it carries inside `properties` and leaves the others, absent keys included whoever owns them, by `req-grid-flip-nested` rules 4 to 6: an edge's `properties` is tracked per key for every edge type, with no opt-in. The keys the edge type's identity declaration names locate the edge and are not changed by an update; a record that would change one is refused naming it. Endpoints are not changed by an update.
+9. **Removal is named, never inferred from `null`.** An explicit `null`, on a field or on a key of a tracked field, is an assertion of absence, stored and stamped like any value (`req-grid-node-observation`); it removes nothing. A record in `updates` may carry `remove`, beside `entity` and its payload: an array of paths, each an array of one or two strings. `["<field>"]` names a field of a node, `["<field>", "<key>"]` a key of a per-key tracked field, and for an edge `["properties", "<key>"]` a key of its `properties`; keys are verbatim (`req-grid-flip-nested` rule 3), never dotted. Removal releases what it names: a field is reset to its model default with its FLIP entry removed, a key is removed from the object with its entry, so it is unasserted and a later yielding writer may fill it. A sender that wants it absent and not filled by another source sends `null` instead. Under `on_other_source: yield` a path whose entry names another source is skipped and reported, as a value is (`req-grift-yield` rule 3). Refused, naming the path: a path that is also carried in the payload, a required field, a field or key a natural key or the edge type's identity declaration names, a two-segment path on a field not tracked per key, and a path naming no field of the type. A path naming a key not stored writes nothing. `remove` is refused in `nodes`, `edges`, `inserts` and `replaces`: an insert asserts no removal and a replace already resets what it omits. It is part of format `"1"` with the write sections (`req-grift-write-sections` rule 13) and lands with its code. Ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23); this withdraws the earlier rule that `null` removes a key under `overwrite`.
 
 #### Development
 Making required fields required-on-create-only for every record in `nodes` was the other shape Issue# 1173 - tap names. It needs no new section, and it leaves the sender unable to say what should happen when the row is not there: the create would fail on the missing fields and abort the batch. The section's `on_missing` is that answer. Calling `patch_node` was not chosen as the contract because `PATCH_EXTRA_FIELDS` are excluded from GRIFT payloads.
@@ -1545,6 +1549,9 @@ An edge's `properties` is per-key for every edge type because it is the edge's o
 | req-grift-partial-update-3 | Null On Required Refused | Proposed | An explicit `null` on a required field in `updates` is refused, naming the field. | |
 | req-grift-partial-update-4 | Edge Properties By Key | Proposed | An edge holding `{"a":1,"b":2}` in `properties`, sent in `updates` with `{"b":3}`, ends `{"a":1,"b":3}` with `a`'s entry unchanged. | Owner ruling, Issue# 1284 - tap |
 | req-grift-partial-update-5 | Edge Identity Unchanged | Proposed | An `updates` record that would change a property the edge type's identity names is refused naming it. | |
+| req-grift-partial-update-6 | Null Asserts, Remove Releases | Proposed | An `updates` record sending an optional nullable field as `null` stores `null` with an entry for the writing batch; one listing the field in `remove` resets it to its default and leaves it with no entry; one listing a field it also carries, a required field, or a natural-key field is refused naming the path. | Rule 9; Q52 |
+| req-grift-partial-update-7 | Null Blocks A Stale Yielding Value | Proposed | Source B sends `owner: null` in `updates`; source C then sends `owner: "bob"` under `yield`: `owner` stays `null` with B's entry and the result names it yielded to B. | Rule 9; Q52 |
+| req-grift-partial-update-8 | Removal Lets A Yielding Writer Fill | Proposed | Source B lists `["owner"]` in `remove`; source C then sends `owner: "bob"` under `yield`: `owner` is `"bob"` with C's entry, yielded. | Rule 9; Q52 |
 
 ## Yielding To Another Source
 ----
@@ -1555,15 +1562,15 @@ Status: `Proposed`
 Under `on_other_source: yield`, a record in `updates` writes a field only where no other source has asserted the field's current value. Issue# 1172 - tap.
 
 #### Status Details
-Proposed; nothing is built. Today (read, Issue# 1172 - tap) a sender can send a field, which replaces it whoever wrote it, or omit it, which leaves a stale value of its own in place, or read `flip_map` first and decide, with a gap. FLIP already names the batch that set each field's current value, and the batch carries `source` and `actor` (`req-grid-flip-map-2`, `req-grid-flip-batch-1`; `Batch.source` read in `tap_grid/models.py`). Not verified: that every collector sets `Batch.source`, and distinctly from every other collector.
+Proposed; nothing is built. Today (read, Issue# 1172 - tap) a sender can send a field, which replaces it whoever wrote it, or omit it, which leaves a stale value of its own in place, or read `flip_map` first and decide, with a gap. FLIP already names the batch that set each field's current value, and the batch carries `source` and `actor` (`req-grid-flip-map-2`, `req-grid-flip-batch-1`; `Batch.source` read in `tap_grid/models.py`). `source` is free text a document sets, so rule 1 does not use it: identity is set at the write boundary (Q52, Issue# 1284 - tap).
 
 Which source has the final say on a value is **not decided** here. Yield lets a second-hand source step aside and lets a closer source take a value from it; it does not rank two sources that both write with `overwrite`, or a source against an operator's edit. That needs a hierarchy of provenance, which the owner has deferred: Issue# 1341 - tap.
 
 Prior art: Kubernetes Server-Side Apply. Each field has managers; an apply that would change a field another manager owns is a conflict; the applier may force it, omit the field, or match the value and share it (searched: https://kubernetes.io/docs/reference/using-api/server-side-apply/). The mapping: a manager is a source, `overwrite` is a forced apply, `yield` is an apply that drops the conflicting field in place of failing. The issue asks for a skip that is reported, not an error, so that either collector can run first.
 
 #### Implementation
-1. A **source** is the `source` of the batch a FLIP entry points at. Two batches are the same source when their `source` values are equal and not empty.
-   A batch whose `source` is empty cannot write under `yield`: an `updates` section with `on_other_source: yield` in such a batch refuses the document, naming the batch. Without a source a yielding writer would yield to its own earlier writes, which count as another source's, and could never correct a value it wrote.
+1. A **source** is the write identity of the batch a FLIP entry points at, set at the write boundary by core and never read from the document. A collector write, a batch a run imports through `CollectorBase.submit_grift`, is identified by the plugin slug and the collector's name (its version is not part of the identity). Any other write, an operator's import or edit, is identified by the acting user. Core records the identity on the batch when it opens it, in a place no document can set; `metadata.collector` cannot serve alone, because it also holds a claim a document carried from another grid, kept as written (`req-tap-cares-collector-version` rule 8). Two batches are the same source when their recorded identities are equal. The batch's `source` text, and a `metadata.collector` a document carried from another grid (`req-tap-cares-collector-version` rule 8), are labels only and decide nothing here. Ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23).
+   A write with no established identity (no collector run and no acting user, as for a system import) is treated as having no source, and cannot write under `yield`: an `updates` section with `on_other_source: yield` in such a batch refuses the document, naming the batch. Without a source a yielding writer would yield to its own earlier writes, which count as another source's, and could never correct a value it wrote. A batch recorded before identities were set has none and resolves as **unknown**: an entry pointing at it is another source's to every yielding writer, and it is never the same source as anything.
 2. Under `yield`, a field the record carries is written when the field has no FLIP entry, or its entry points at a batch of the same source as the writing batch. Otherwise the field is skipped: its value, its entry and nothing else about it change.
 3. Each skipped field is reported in the result as a warning naming the entity, the field and the other source. It is never dropped silently.
 4. The judgement is made inside the write, on the row as locked for the write. There is no read-then-write gap.
@@ -1593,8 +1600,9 @@ Which source has the final say on a value, and whether a ranking of sources, kin
 | req-grift-yield-5 | Confirming Takes A Yielded Field | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`: the entry is B's and not yielded, no history row is written, the revision is unchanged; A's later different `name` under `yield` is skipped. | Rule 7 |
 | req-grift-yield-6 | Confirming Does Not Take An Overwritten Field | Proposed | A wrote `name` with `overwrite`; B sends the same `name` with `overwrite`: the entry stays A's, and nothing is written. | Rule 7; Issue# 322 - tap |
 | req-grift-yield-7 | No Gap | Proposed | The judgement uses the row as locked for the write. | Needs two connections |
-| req-grift-yield-8 | A Yielding Write Needs A Source | Proposed | A document whose batch has an empty `source` and an `updates` section with `on_other_source: yield` is refused, naming the batch, and writes nothing. | |
+| req-grift-yield-8 | A Yielding Write Needs A Source | Proposed | A document imported with no established write identity (no collector run, no acting user) and an `updates` section with `on_other_source: yield` is refused, naming the batch, and writes nothing. | Rule 1 |
 | req-grift-yield-9 | A Transfer Is Recorded, Not Revised | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`. The row's `flip_map` entry for `name` is B's batch, not yielded; the typed row's history count, revision, `updated_at` and `last_changed_batch_id` are as before; and B's `observe` event for the object lists `name` with the previous attribution (A's batch, yielded) and the new one (B's batch, not yielded). | Rule 8; the provenance-only write path |
+| req-grift-yield-10 | Identity Is The Boundary's, Not The Document's | Proposed | Two collectors whose batches state the same `source` text are different sources: the second, under `yield`, skips the first's field. One collector whose batches state different `source` texts is one source: under `yield` it refreshes its own field. A hand import of a document whose batch carries another grid's `metadata.collector` is identified by the acting user, not by that collector. An entry pointing at a batch with no identity is skipped by every yielding writer. | Rule 1; Q52 |
 
 ## Full Replace
 ----
