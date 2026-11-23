@@ -30,6 +30,7 @@ def core_problems() -> list[str]:
         app_record_path,
         core_states,
         entries_for,
+        link_problems,
         load_record,
         type_problems,
         unrecorded,
@@ -45,6 +46,8 @@ def core_problems() -> list[str]:
             continue
         for state in states:
             problems.extend(f"{owner}: {problem}" for problem in type_problems(state, entries_for(record, state)))
+            # Rules 15 and 16: every version after the first has a link, and a step declares what it costs.
+            problems.extend(f"{owner}: {problem}" for problem in link_problems(state, entries_for(record, state)))
         problems.extend(
             f"{owner}: {state.label} has no committed entry in {owner}/{path.name}. Record it "
             "(manage.py model_versions --record)"

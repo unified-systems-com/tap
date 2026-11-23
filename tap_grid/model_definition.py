@@ -528,3 +528,127 @@ def app_record_path(app_name: str) -> Path:
 def unrecorded(states: Iterable[TypeState], record: Mapping[str, Any]) -> list[TypeState]:
     """The types with no committed entry at all."""
     return [state for state in states if not has_record(entries_for(record, state))]
+
+
+# ---------------------------------------------------------------------------
+# The chain between versions (rules 15 and 16)
+# ---------------------------------------------------------------------------
+
+
+def _narrowed(before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
+    """Why a kept field takes fewer values than it did, or ``""`` where it does not."""
+    if before.get("type") != after.get("type"):
+        return f"its type changed from {before.get('type')} to {after.get('type')}"
+    for limit in ("max_length", "max_digits", "decimal_places"):
+        old, new = before.get(limit), after.get(limit)
+        if isinstance(old, int) and isinstance(new, int) and new < old:
+            return f"{limit} went from {old} to {new}"
+    old_choices, new_choices = before.get("choices"), after.get("choices")
+    if new_choices is not None and (
+        old_choices is None or not set(map(str, old_choices)) <= set(map(str, new_choices))
+    ):
+        return "its allowed values were reduced"
+    if not before.get("null") and after.get("null") is False and before.get("unique") is None and after.get("unique"):
+        return "it became unique"
+    return ""
+
+
+def _node_step_problems(
+    label: str, where: str, before: Mapping[str, Any], after: Mapping[str, Any], step: Any
+) -> list[str]:
+    problems: list[str] = []
+    old_fields: Mapping[str, Any] = before.get("fields") or {}
+    new_fields: Mapping[str, Any] = after.get("fields") or {}
+    accounted = set(step.drops) | set(step.renames.values())
+    for source in step.derived.values():
+        accounted |= {source} if isinstance(source, str) else set(source)
+    for name in sorted(set(old_fields) - set(new_fields) - accounted):
+        problems.append(
+            f"{label}: field {name!r} is removed from {where} and the step does not declare it. Name it in "
+            "the step's drops, or as the old field of a rename, or declare a break"
+        )
+    for name in sorted(set(step.drops) & set(new_fields)):
+        problems.append(f"{label}: the step from {where} declares {name!r} dropped and the new version still has it")
+    for new_name, old_name in sorted(step.renames.items()):
+        if old_name not in old_fields or new_name not in new_fields:
+            problems.append(
+                f"{label}: the step from {where} declares {old_name!r} renamed to {new_name!r}, and that is not "
+                "a field of the old version becoming a field of the new one"
+            )
+    refusable: list[str] = []
+    for name in sorted(set(old_fields) & set(new_fields)):
+        reason = _narrowed(old_fields[name], new_fields[name])
+        if reason:
+            refusable.append(f"field {name!r} is narrowed ({reason})")
+        if old_fields[name].get("null") and not new_fields[name].get("null"):
+            refusable.append(f"field {name!r} can no longer be empty")
+    old_required = set((before.get("service_schema") or {}).get("create_required") or ())
+    new_required = set((after.get("service_schema") or {}).get("create_required") or ())
+    for name in sorted((new_required - old_required) & set(old_fields)):
+        refusable.append(f"field {name!r} is made required")
+    if refusable and not step.may_refuse:
+        problems.extend(
+            f"{label}: from {where} {reason}, so some records of the old version cannot be carried, and the "
+            "step does not say it may refuse records (may_refuse, with the reason), nor is a break declared"
+            for reason in refusable
+        )
+    if before.get("key") != after.get("key") and step.key is None and not step.key_refused:
+        problems.append(
+            f"{label}: the natural key changes from {where} ({before.get('key')} to {after.get('key')}) and the "
+            "step declares neither how a key is carried across (key) nor that it cannot be (key_refused)"
+        )
+    return problems
+
+
+def _edge_step_problems(
+    label: str, where: str, before: Mapping[str, Any], after: Mapping[str, Any], step: Any
+) -> list[str]:
+    problems: list[str] = []
+    old_rules, new_rules = before.get("property_rules"), after.get("property_rules")
+    old_properties = set((old_rules or {}).get("properties") or ()) if isinstance(old_rules, Mapping) else set()
+    new_properties = set((new_rules or {}).get("properties") or ()) if isinstance(new_rules, Mapping) else set()
+    accounted = set(step.drops) | set(step.renames.values())
+    for name in sorted(old_properties - new_properties - accounted):
+        problems.append(
+            f"{label}: property {name!r} is removed from {where} and the step does not declare it dropped or renamed"
+        )
+    old_required = set((old_rules or {}).get("required") or ()) if isinstance(old_rules, Mapping) else set()
+    new_required = set((new_rules or {}).get("required") or ()) if isinstance(new_rules, Mapping) else set()
+    if (new_required - old_required) and not step.may_refuse:
+        named = ", ".join(sorted(new_required - old_required))
+        problems.append(
+            f"{label}: from {where} the properties {named} are made required and the step does not say it may "
+            "refuse records (may_refuse)"
+        )
+    return problems
+
+
+def link_problems(state: TypeState, entries: list[dict[str, Any]]) -> list[str]:
+    """What is wrong between a type's consecutive versions and the links declared for them.
+
+    Rule 16: a version after the first with no link is a problem, whether or not the type has a
+    committed record. Rule 15: where two consecutive entries are recorded and the link between
+    them is a step, a field removed, a type narrowed, a field made required and a natural key
+    changed must each be declared on the step. A declared break excuses any difference. The
+    spine's chain is checked for its links only: its definition is three tables, not one list of
+    fields, and a change to it is core's own to review. An edge rule a version tightens is
+    declared on the link by the rule that checks stored edges for it, which is not built yet.
+    """
+    from tap_grid import version_links
+
+    slug = version_links.SPINE if state.kind == SPINE else state.slug
+    problems = version_links.declaration_problems(state.label, slug, state.version)
+    if problems or state.kind == SPINE or chain_problems(state.label, entries):
+        return problems
+    by_version = {entry["version"]: entry["definition"] for entry in entries}
+    by_version.setdefault(state.version, state.definition)
+    chain = version_links.links_for(slug)
+    for version in range(FIRST_VERSION + 1, state.version + 1):
+        link = chain.links.get(version)
+        before, after = by_version.get(version - 1), by_version.get(version)
+        if not isinstance(link, version_links.Step) or before is None or after is None:
+            continue
+        where = version_links.describe(version)
+        compare = _node_step_problems if state.kind == NODE else _edge_step_problems
+        problems.extend(compare(state.label, where, before, after, link))
+    return problems

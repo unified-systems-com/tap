@@ -125,6 +125,8 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
 
 A new edge type states no `version` and is at version 1. When you later change an existing edge type's property rules, endpoint rules, event-time declaration or identity declaration, raise `version` in its `.edge.json` by one (it sits beside `property_schema`), ship the migration that moves the stored edges and ends by calling `tap_grid.model_version.set_applied_version("<SLUG>", <new version>)` in the same transaction, and record the new version with `manage.py model_versions --record --app <plugin>`; plugin validation fails a recorded type whose definition changed while its version did not. The check cannot see a change of meaning that leaves the definition alone, such as a property that now holds a different unit: raise the version by hand for that too. See `req-grid-entity-model-version` in `tap_grid/specs/spec-grid-entity.md`.
 
+Every version after the first needs a link from the version before it, or plugin validation fails. An edge type has no class, so its links live where a node type's do: `model_links.py` at the root of the plugin package, `LINKS[<edge type slug>]`, keyed by the version the link arrives at. The step is given one edge's `properties` and returns them at the next version; see the `add-model` skill for the form and for what a step must declare (`drops`, `renames`, `may_refuse`) or when to declare a `Break` (`req-grid-entity-model-version` rules 9 to 17).
+
 ### Cross-plugin endpoints (read before naming a foreign type)
 
 An endpoint list is a **vocabulary dependency**. Before writing another plugin's type slug into

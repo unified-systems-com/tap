@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/5331ce05cbc4 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/824c4ba19b07 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1497,6 +1497,7 @@ def _check_model_version_records(manifest: Any, result: ValidationResult) -> Non
     from tap_grid.model_definition import (
         REQUIRE_RECORD_ENV,
         entries_for,
+        link_problems,
         load_record,
         plugin_states,
         record_file_name,
@@ -1520,6 +1521,10 @@ def _check_model_version_records(manifest: Any, result: ValidationResult) -> Non
         return
     for state in states:
         for problem in type_problems(state, entries_for(record, state)):
+            check.fail(problem, path=record_file)
+        # Rules 15 and 16: a version after the first with no link fails, recorded or not, and a
+        # step between two recorded versions declares what it costs.
+        for problem in link_problems(state, entries_for(record, state)):
             check.fail(problem, path=record_file)
     missing = unrecorded(states, record)
     required = os.environ.get(REQUIRE_RECORD_ENV, "") == "1"

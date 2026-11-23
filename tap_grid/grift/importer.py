@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2e098cb70115 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/f5a38a0d928c (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -16,10 +16,10 @@ import json
 import logging
 import math
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
@@ -32,6 +32,7 @@ from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift.refs import resolve_refs, substitute_ids
+from tap_grid.grift.upgrade import formats_read, upgrade_document
 from tap_grid.models import BaseModel, Entity
 from tap_grid.natural_key import AmbiguousIdentity, Keyless, identity_lock_key, key_values, normalized_key_values
 from tap_grid.service_types import WriteOperation
@@ -268,7 +269,9 @@ class _PreflightResult:
 
 _DOC_REQUIRED = frozenset(["metadata", "_reserved", "batches"])
 _DOC_ALLOWED = frozenset(["metadata", "_reserved", "batches"])
-_METADATA_ALLOWED = frozenset(["grift_version"])
+# `spine_version` and `type_versions` belong to format "1" (req-grift-header-versions); the JSON
+# schema says which format requires them and which refuses them.
+_METADATA_ALLOWED = frozenset(["grift_version", "spine_version", "type_versions"])
 _BATCH_REQUIRED = frozenset(["batch_entity", "batch_node", "nodes", "edges"])
 # Removal sections (`deletes`, `purges`) are optional per
 # req-grift-import-deletes; presence is detected at parse time and validated
@@ -371,6 +374,16 @@ _ERROR_CODES = frozenset(
         # A type the document carries is declared at a greater version than this grid's rows are
         # at (req-grid-entity-model-version rule 4): nothing is imported until migrations are applied.
         "model_version_pending",
+        # What a document's stated versions refuse (req-grid-entity-model-version rules 20, 23
+        # and 24, req-grid-entity-spine-version rule 4): a version not stated, one newer than the
+        # installed definition, one older than the type still imports, a declared break or a
+        # missing link in the way, and a record a step refused.
+        "version_unstated",
+        "version_newer",
+        "version_too_old",
+        "version_break",
+        "version_no_link",
+        "record_refused_by_upgrade",
         "schema_validation_failed",
         "duplicate_entity_id",
         "duplicate_batch_id",
@@ -1789,13 +1802,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/72d545755649 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/af3e0f32887f (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/72d545755649 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@93cd1de545bb/af3e0f32887f (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1879,13 +1892,15 @@ def _run_preflight(
                     "$.metadata.grift_version",
                 )
             )
-        elif gv != GRIFT_VERSION:
-            # req-grid-import-grift-preflight-4: this importer speaks GRIFT v0 only; an unknown
-            # version refuses the file rather than guessing at its meaning (Issue# 630 - tap).
+        elif gv not in formats_read():
+            # req-grid-import-grift-preflight-4: an unknown version refuses the file rather than
+            # guessing at its meaning (Issue# 630 - tap). The refusal names the version it was
+            # given and the versions it reads (req-grift-header-versions rule 10).
+            reads = " and ".join(repr(version) for version in formats_read())
             issues.append(
                 _issue(
                     "unsupported_grift_version",
-                    f"grift_version {gv!r} is not supported: this importer reads GRIFT version {GRIFT_VERSION!r} only",
+                    f"grift_version {gv!r} is not supported: this importer reads GRIFT version {reads} only",
                     "preflight",
                     "$.metadata.grift_version",
                 )
@@ -2927,6 +2942,7 @@ def _execute_grift_batch(
     parsed_removals: _ParsedRemovalSections | None = None,
     refs: dict[str, str] | None = None,
     read_boundary: datetime | None = None,
+    version_upgrades: dict[str, dict[str, int]] | None = None,
 ) -> tuple[GriftImportedBatch, list[GriftIssue]]:
     """Import one GRIFT batch atomically. Returns (batch_summary, issues).
 
@@ -2938,7 +2954,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/6892bc742a83 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/772b22356f81 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2985,6 +3001,11 @@ def _execute_grift_batch(
         "imported_at": reference_time.isoformat(),
         "source_batch_entity_id": batch_entity_id,
     }
+    # What the import upgraded, read from its batch (req-grid-entity-model-version rule 26): for
+    # each type, and for the spine, the version the document stated and the installed one. The
+    # stated versions are stored on no row (req-grift-header-versions rule 8).
+    if version_upgrades:
+        importer_data["upgraded"] = {slug: dict(change) for slug, change in sorted(version_upgrades.items())}
     for src_key, dest_key in (
         ("created_at", "source_created_at"),
         ("updated_at", "source_updated_at"),
@@ -5518,12 +5539,56 @@ def _grift_import_parsed(
         if isinstance(meta, dict):
             grift_version = str(meta.get("grift_version", ""))
 
+    # The upgrade comes first: every record and every key is brought from the version the
+    # document states to the installed one before anything is validated and before anything is
+    # written (req-grid-entity-model-version rule 21). A document it refuses goes no further.
+    upgrade = upgrade_document(document)
+    if upgrade.refused:
+        refusals = [
+            _issue(
+                refusal.code,
+                refusal.message,
+                "preflight",
+                refusal.path,
+                entity_type=refusal.entity_type,
+                entity_id=refusal.entity_id,
+            )
+            for refusal in upgrade.refusals
+        ]
+        return GriftImportResult(
+            success=False,
+            grift_version=grift_version,
+            import_mode=IMPORT_MODE,
+            dangling_edge_mode=dangling_edge_mode,
+            reference_time=reference_time.isoformat(),
+            counts=GriftCounts(errors=len(refusals)),
+            imported_batches=[],
+            skipped_batches=[],
+            errors=refusals,
+            warnings=[],
+        )
+    document = upgrade.document
+
     preflight = _run_preflight(
         document,
         reference_time=reference_time,
         dangling_edge_mode=dangling_edge_mode,
         force_batches=force_batches_set,
     )
+    # A field a step dropped is never dropped without a report (rule 25): by type and field.
+    for dropped_type, dropped_fields in upgrade.dropped.items():
+        for dropped_field in dropped_fields:
+            stated = upgrade.upgraded[dropped_type]
+            preflight.issues.append(
+                _issue(
+                    "field_dropped_by_upgrade",
+                    f"Type {dropped_type!r}: field {dropped_field!r} was dropped upgrading its records from "
+                    f"version {stated['stated']} to {stated['installed']}; the installed version has no place for it",
+                    "preflight",
+                    "$.metadata.type_versions",
+                    entity_type=dropped_type,
+                )
+            )
 
     # A document that carries a type whose rows are behind its code is refused whole, naming
     # the type and both versions (req-grid-entity-model-version rule 4). A removal that names
@@ -5607,6 +5672,7 @@ def _grift_import_parsed(
             parsed_removals=preflight.parsed_removals_by_idx.get(batch_idx),
             refs=preflight.resolved_refs.get(batch_container["batch_entity"]["entity_id"], {}),
             read_boundary=read_boundary,
+            version_upgrades=upgrade.upgraded,
         )
         imported_batches.append(summary)
         exec_issues.extend(batch_issues)

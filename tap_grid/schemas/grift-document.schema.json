@@ -14,9 +14,36 @@
       "properties": {
         "grift_version": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "The format of the file. \"1\" states the versions that wrote the document; \"0\" is the earlier form, which states none (req-grift-header-versions)."
+        },
+        "spine_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The spine version of the grid that wrote the document (req-grift-header-versions rule 1)."
+        },
+        "type_versions": {
+          "type": "object",
+          "description": "The version of every entity type the document carries or names, node types and edge types alike, on the grid that wrote it (req-grift-header-versions rule 2).",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "grift_version": { "const": "0" } }, "required": ["grift_version"] },
+          "then": {
+            "description": "The unversioned form states no versions.",
+            "properties": { "spine_version": false, "type_versions": false }
+          }
+        },
+        {
+          "if": { "properties": { "grift_version": { "const": "1" } }, "required": ["grift_version"] },
+          "then": {
+            "description": "At \"1\" both are required (req-grift-header-versions rule 9).",
+            "required": ["spine_version", "type_versions"]
+          }
+        }
+      ]
     },
     "_reserved": {
       "type": "object"

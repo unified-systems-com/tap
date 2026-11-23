@@ -73,12 +73,12 @@ Before any mutation begins, the importer must complete a full-file preflight pas
 | req-grid-import-grift-preflight-1 | No mutation before the full pass | Implemented | The full-file preflight completes before any mutation begins. | |
 | req-grid-import-grift-preflight-2 | Preflight failure imports nothing | Implemented | A file failing preflight produces no graph mutation at all. | |
 | req-grid-import-grift-preflight-3 | Every decoder failure is a structured refusal | Implemented | The `str \| bytes` arm decodes through one decoder configuration (`_parse_document`) and never raises: a syntax error, undecodable bytes, an integer literal past the interpreter's digit limit and nesting past its recursion limit are one `invalid_json` issue at phase `parse`, path `$`; a repeated object key is `duplicate_json_key` (the later value would otherwise silently replace the earlier one); `NaN`, `Infinity`, `-Infinity` and a literal that overflows to infinity are `non_finite_number` (outside the JSON grammar; PostgreSQL cannot store them). Bytes decode as `json.loads` auto-detects them — UTF-8, UTF-16 or UTF-32 by the first bytes, a BOM tolerated on bytes and refused on text; no restriction to UTF-8. Nothing is written. A parsed dict never passes through the decoder, so it cannot carry these. | Issue# 630 - tap, George's rulings 1, 2 and 4 (2026-09-18). `tap_grid/tests/test_grift_boundary.py::TestParseBoundary`, `::TestRootShape`. Before: `UnicodeDecodeError`, the digit-limit `ValueError` and `RecursionError` raised out of `grift_import` (observed at 100 000 nesting levels). |
-| req-grid-import-grift-preflight-4 | Document version pinned | Implemented | `metadata.grift_version` must equal `"0"` (`GRIFT_VERSION`); any other string is `unsupported_grift_version` at `$.metadata.grift_version`, phase `preflight`, and the file imports nothing. The result still reports the version the file declared. A future importer that speaks another version finds its refusal already in place. | Issue# 630 - tap, ruling 3. `::TestGriftVersionPinned`. Before: any non-empty string imported. |
+| req-grid-import-grift-preflight-4 | Document version pinned | Implemented | `metadata.grift_version` must be a format this importer reads: `"0"`, the form that states no versions, or `"1"`, which states them (`req-grift-header-versions` in `spec-grift-v0.md`). Any other string is `unsupported_grift_version` at `$.metadata.grift_version`, phase `preflight`, naming the version given and the versions read, and the file imports nothing. The result still reports the version the file declared. A future importer that speaks another version finds its refusal already in place. | Issue# 630 - tap, ruling 3. `::TestGriftVersionPinned`. Before: any non-empty string imported. |
 
 ### Preflight Steps
 
 1. Parse the file as raw JSON — the `str | bytes` arm, one decoder, every failure a structured refusal (`req-grid-import-grift-preflight-3`).
-2. Validate the top-level document and container structure against the GRIFT schemas, and pin `metadata.grift_version` to `"0"` (`req-grid-import-grift-preflight-4`).
+2. Validate the top-level document and container structure against the GRIFT schemas, and pin `metadata.grift_version` to a format this importer reads (`req-grid-import-grift-preflight-4`). Before this step a document at format `"1"` is upgraded from the versions its header states to the installed ones, or refused (`req-grid-entity-model-version` rules 19 to 26 in `spec-grid-entity.md`).
 3. Validate every batch, node, and edge wrapper shape.
 4. Validate typed payloads against the local TAP model registry and field contract:
    - field shapes from `FIELD_CRUD_SCHEMA`
@@ -1132,7 +1132,8 @@ v0 should define stable codes for common importer outcomes, including:
 - `invalid_json` — the decoder could not read the text or bytes (syntax, encoding, digit limit, nesting)
 - `duplicate_json_key` — an object repeated a key (`req-grid-import-grift-preflight-3`)
 - `non_finite_number` — `NaN`, `Infinity`, `-Infinity` or a literal overflowing to infinity
-- `unsupported_grift_version` — `metadata.grift_version` is not `"0"` (`req-grid-import-grift-preflight-4`)
+- `unsupported_grift_version` — `metadata.grift_version` is not a format this importer reads (`req-grid-import-grift-preflight-4`)
+- `version_unstated`, `version_newer`, `version_too_old`, `version_break`, `version_no_link`, `record_refused_by_upgrade` — what a document's stated versions refuse, before validation (`req-grid-entity-model-version` rules 20, 23 and 24 in `spec-grid-entity.md`). `field_dropped_by_upgrade` is the warning for a field a step dropped (rule 25)
 - `model_version_pending` — the document carries a type whose class declares a greater version than this grid's rows are at; nothing is imported until migrations are applied (`req-grid-entity-model-version` rule 4)
 - `schema_validation_failed`
 - `duplicate_entity_id`
