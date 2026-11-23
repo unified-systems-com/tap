@@ -404,3 +404,22 @@ def test_a_codespace_on_the_initializers_road_is_guarded_keyed_and_booted_once()
     assert '[[ -n "${TAP_PRODUCT_IMAGE}" && -n "${TAP_INSTALLATION_DIR:-}" ]]' in derive and "--no-secret-key" in derive
     # Finish boots an initialized installation; the Codespace's own boot stands aside.
     assert 'if [ "${CODESPACES:-}" = "true" ] && [ -z "${TAP_INITIALIZED}" ]; then' in text
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+@pytest.mark.parametrize("owner", ["", " ", "{}", "null", "[]", "not json", '{"login": "visitor"}', '{"user_id": "abc"}'])
+def test_an_owner_that_names_nobody_still_gets_the_link(
+    owner: str, store: initialize.StateStore, cluster: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TAP_AUTH_INSTANCE_OWNER", owner)
+    initialize.run(store, initialize.Target(URL), handoff=tmp_path / "a.env")
+    calls: list[str] = []
+
+    def runner(argv: list[str]) -> int:
+        calls.append(argv[2])
+        return 0
+
+    initialize.finish(store, initialize.Target(URL), runner=runner)
+    assert calls == ["boot", "enroll_admin"]
+    identity = store.read()
+    assert identity is not None and identity["first_login"] == "issued"

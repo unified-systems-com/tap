@@ -727,8 +727,9 @@ entrypoint:
 
 The instance owner is the first admin, granted on their first sign-in
 ([`req-tap-serving-codespace-7`](spec-tap-serving.md)), so Finish issues no passkey enrolment link
-when `TAP_AUTH_INSTANCE_OWNER` is set; an owner the derivation could not resolve leaves it empty, and
-the link is issued as on any other host. The compose file then carries only a bootstrap database
+when `TAP_AUTH_INSTANCE_OWNER` names one: a JSON object with a numeric `user_id`, the shape the
+derivation writes. An owner it could not resolve leaves the value empty, and an empty, `{}` or
+malformed value names nobody, so the link is issued as on any other host. The compose file then carries only a bootstrap database
 password and no generated secret, so the devcontainer's `initializeCommand` generates none either.
 
 #### Acceptance Criteria
