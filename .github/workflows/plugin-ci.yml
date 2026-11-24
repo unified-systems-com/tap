@@ -901,6 +901,54 @@ jobs:
             docker compose --env-file .env logs web | tail -150; exit 1
           fi
 
+      # Models and migrations agree (req-tap-plugin-extdev-repo-ci-18; base-model release,
+      # Issue# 1288 - tap; ruled Q57a on Issue# 1284 - tap). Every road but the
+      # nightly's `migrations` row builds its databases from the MODELS, so a plugin whose
+      # models moved — or whose BaseModel moved under it, as when core adds spine_deleted_at /
+      # spine_dimensions and drops the typed batch_id — passes its whole suite with no migration
+      # for the change, and the field's `migrate` is the first thing to find out. This asks
+      # Django directly: `makemigrations --check --dry-run` over the plugin's own app labels exits
+      # 1 when it would write a migration, and prints it (-v 3) so the author sees what is owed.
+      #
+      # The labels come from the booted app registry, not from the caller: every installed
+      # AppConfig whose module is `tap_plugin.<slug>` or below it. A plugin's label is its slug
+      # by convention (req-tap-plugin-arch-identity), but reading the registry also covers a
+      # plugin that ships a second app under its namespace, and an empty set fails closed
+      # rather than checking nothing. Only the plugin under test is checked: its dependencies
+      # are pinned releases with their own CI, and a label outside the plugin would make this
+      # PR red for a migration it cannot write. Runs on both roads, after the boot has settled
+      # (makemigrations reads the applied-migration history to check it is consistent). The
+      # labels line carries a marker so a log line the shell prints after it cannot be read as one.
+      - name: Migrations — the plugin's models need no new migration
+        id: makemigrations
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set -euo pipefail
+          labels=$(docker compose --env-file .env exec -T -e PLUGIN_SLUG="$PLUGIN_SLUG" web sh -c \
+            'cd /app && uv run --no-sync python manage.py shell -c "
+          import os
+          from django.apps import apps
+          root = \"tap_plugin.\" + os.environ[\"PLUGIN_SLUG\"]
+          print(\"TAP-LABELS:\", \" \".join(sorted(a.label for a in apps.get_app_configs() if a.name == root or a.name.startswith(root + \".\"))))
+          "' | sed -n 's/^TAP-LABELS: *//p' | tail -1)
+          if [ -z "$labels" ]; then
+            echo "::error::no installed app is tap_plugin.$PLUGIN_SLUG or below it — nothing to check, so this fails closed"
+            exit 1
+          fi
+          echo "checking app label(s): $labels"
+          echo "labels=$labels" >> "$GITHUB_OUTPUT"
+          set +e
+          docker compose --env-file .env exec -T web sh -c \
+            "cd /app && uv run --no-sync python manage.py makemigrations $labels --check --dry-run -v 3" \
+            2>&1 | tee makemigrations.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" != 0 ]; then
+            echo "::error::tap_plugin.$PLUGIN_SLUG's models differ from its migrations: run \`manage.py makemigrations $labels\` against the core this run used (its SHA is in the job summary) and commit the result. If the change comes from core's BaseModel, the new migration must also depend on core's migration that made it (makemigrations does not add that dependency), and requires_tap must be raised to that core in the same PR."
+            exit 1
+          fi
+
       # The migrations road (tap#1262). The boot above migrated every app from zero, so a
       # migration that no longer applies has already failed the health wait with TAP-ABORT.
       # tap.schema_parity then builds three scratch databases from the same installed apps (a
@@ -1132,6 +1180,8 @@ jobs:
           TEST_WORKERS: ${{ inputs.test_workers }}
           SCHEMA_PARITY: ${{ inputs.schema_parity }}
           PARITY_OUTCOME: ${{ steps.parity.outcome || 'not reached' }}
+          MAKEMIGRATIONS_OUTCOME: ${{ steps.makemigrations.outcome || 'not reached' }}
+          MAKEMIGRATIONS_LABELS: ${{ steps.makemigrations.outputs.labels || '' }}
         run: |
           plugin_sha=$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)
           executed=$(python3 - <<'PY'
@@ -1152,10 +1202,16 @@ jobs:
               echo "| road | migrations from zero, then \`tap.schema_parity\` (no suite) |"
               echo "| parity | $PARITY_OUTCOME |"
             fi
+            echo "| migrations match models | $MAKEMIGRATIONS_OUTCOME${MAKEMIGRATIONS_LABELS:+ (\`$MAKEMIGRATIONS_LABELS\`)} |"
             echo "| fast set (ci_fast) | $FAST_RESULT |"
             echo "| suite mode | $TEST_MODE$([ "$TEST_MODE" = parallel ] && echo " (-n $TEST_WORKERS)") |"
             echo "| tests executed | $executed |"
           } >> "$GITHUB_STEP_SUMMARY"
+          # Both roads: a skipped or cancelled migrations check is not a pass.
+          if [ "$MAKEMIGRATIONS_OUTCOME" != success ]; then
+            echo "::error::the migrations check is '$MAKEMIGRATIONS_OUTCOME', not success"
+            exit 1
+          fi
           # The migrations road runs no suite by design; its evidence is the parity step, which
           # must have run and passed. Every other road keeps the zero-executed rule below.
           if [ "$SCHEMA_PARITY" = true ]; then
