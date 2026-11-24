@@ -28,9 +28,9 @@ tap-cares also acts as a future skill-tree anchor. As each subsystem stabilizes,
 | req-tap-cares-v0-capability-nodes | [Capability On-Grid Nodes](#capability-on-grid-nodes) | Proposed | On-grid nodes and edges for tap-cares capabilities |
 | req-tap-cares-v0-collector | [Collectors](#collectors) | Proposed | Pull data from external or local sources into structured collection results |
 | req-tap-cares-v0-receiver | [Receivers](#receivers) | Proposed | Open an inbound surface and accept pushed data |
-| req-tap-cares-v0-emitter | [Emitters](#emitters) | Proposed | Send data or notifications outward through explicit channels |
+| req-tap-cares-v0-emitter | [Emitters](#emitters) | Proposed | Send data outward: on-grid `Emitter`, published payload source, envelope-held destination, `EmissionJob` delivery record, dry run, operator arming |
 | req-tap-cares-v0-action | [Actions](#actions) | Proposed | Generate and track proposed or executable responses to processed data |
-| req-tap-cares-v0-scheduler | [Scheduler](#scheduler) | Proposed | Periodically execute collector capability nodes via the scheduler spec |
+| req-tap-cares-v0-scheduler | [Scheduler](#scheduler) | Proposed | Periodically execute collector and emitter capability nodes via the scheduler spec |
 | req-tap-cares-v0-secrets | [Secrets](#secrets) | Implemented | Mounted `*.secret.json` files resolved through tap-cares runtime registry |
 | req-tap-cares-v0-merge | [Grid Merge Contract](#grid-merge-contract) | Proposed | Normalize collected or received data into GRIFT batches for service-layer grid writes |
 | req-tap-cares-v0-run-record | [Run Records And Observability](#run-records-and-observability) | Proposed | On-grid execution records for debugging, audit, and UI/API visibility |
@@ -134,19 +134,189 @@ RID: `req-tap-cares-v0-emitter`
 
 Status: `Proposed`
 
-An emitter sends data, notifications, or artifacts out of TAP through an explicit channel. Examples include email, Signal, GitHub, filesystem export, webhook calls, or future federation transports.
+An emitter sends data, notifications, or artifacts out of TAP through an explicit channel. Examples include email, Signal, GitHub, filesystem export, webhook calls, or future federation transports. v0 builds one channel: an HTTPS request to one operator-configured destination. Every other channel is Backlog.
 
 Emitters are side-effecting by default. They should declare their side effects, dry-run support, payload contract, delivery result shape, retry behavior, and required authenticator.
 
-Emitter execution should be reachable from explicit user intent, an approved action, or a schedule. The system should make it easy to see on the grid what was sent, where it was sent, and why.
+Emitter execution should be reachable from explicit user intent, an approved action, or a schedule. The system should make it easy to see on the grid what was sent, where it was sent, and why. v0 builds the explicit-intent and schedule paths; the approved-action path waits on `req-tap-cares-v0-action`.
 
-### Acceptance Criteria
+An emitter sends grid data off the box, so this requirement is security-critical work (`spec-security-posture.md`): the secure path is the default and every relaxation is opt-in, stated, and recorded.
+
+#### The shape
+
+An emitter is the collector's mirror and reuses its machinery rather than inventing a parallel one:
+
+| | Collector | Emitter |
+| --- | --- | --- |
+| Registration (read-only, at `ready()`) | `register_collector(...)` | `register_emitter(...)` |
+| On-grid capability node | `Collector` | `Emitter` |
+| Materialization (bound actor, boot) | `reconcile_collector_nodes()` | `reconcile_emitter_nodes()` |
+| Sole run entry point | `run_collection(...)` | `run_emission(...)` |
+| Task | `run_collector` | `run_emitter` (default queue) |
+| Run record | `CollectionJob` | `EmissionJob` |
+| Capability → run edge | `HAS_COLLECTION_JOB` | `HAS_EMISSION_JOB` |
+| Fire → run edge | `TRIGGERED_JOB` | `TRIGGERED_EMISSION` |
+| Operator arming switch | `arm_reconcile` | `arm_emitter` |
+
+What differs is the direction of the side effect. A collector's effect lands on the grid and is reviewable after the fact as a GRIFT batch; an emitter's effect lands on someone else's system and cannot be taken back. So an emitter records its intent before it acts, sends only what it declared to only where the operator pointed it, and does nothing at all until an operator arms it.
+
+#### Registration and the `Emitter` node
+
+```python
+def register_emitter(
+    key: str,
+    cls: type[EmitterBase],
+    *,
+    scope: str,            # the plugin's stable slug, never inferred
+    name: str,
+    description: str,
+    payload_source: str,   # "scope:key" of a registered payload source
+) -> None: ...
+
+def reconcile_emitter_nodes() -> dict[str, int]: ...
+```
+
+`register_emitter` writes no grid node (`req-tap-plugin-load-v0-ready-readonly`); `reconcile_emitter_nodes()` is the sole writer of `Emitter` rows, through the trusted-internal batch path, exactly as `req-tap-cares-collector-registration` specifies for collectors. A class may be registered under several keys, each its own `Emitter`.
+
+`Emitter` is a standard `BaseModel` (via `add-model`), `INTERNAL_ONLY`, `NATURAL_KEY = KEYLESS` with a reason (a registration, authored not observed; `req-grid-entity-natural-key-5`), and its id is **assigned**, never derived (`req-grid-entity-natural-key-1`; the Collector's derived id is not copied). Reconcile finds the row by its unique `emitter_registry`. Default dimension `{"tap_cares": "emitter"}`. Fields:
+
+| Field | Notes |
+| --- | --- |
+| `name`, `description` | From registration |
+| `emitter_registry` | `scope:key`, unique per grid |
+| `payload_source` | `scope:key` of the payload source this emitter sends; from registration |
+| `secret_kind` | The envelope kind the class requires (`EmitterBase.SECRET_KIND`) |
+| `side_effects` | The class's `SIDE_EFFECTS` declaration, copied verbatim so it is visible on the grid |
+| `send_authority` | Boolean, default `false`; written only by `arm_emitter` |
+
+Because the id is assigned, no plugin GRIFT bundle can name an emitter as a `SCHEDULED_TARGET`, and none should: a schedule that sends data off the box is an operator's decision, not an install side effect. The schedule-grift guard (`schedule-grift-targets`) already refuses a bundle edge that does not resolve to a registered collector; that refusal is kept and stated as intended for emitters.
+
+#### `EmitterBase`
+
+```python
+class EmitterBase(ABC):
+    EMITTER_VERSION: ClassVar[str]
+    SECRET_KIND: ClassVar[str]                  # consumer-owned kind (req-tap-cares-secrets-consumer-kinds)
+    SECRET_SCHEMA: ClassVar[str]                # package path of the kind's JSON Schema
+    SIDE_EFFECTS: ClassVar[list[dict[str, Any]]]
+    MAX_ATTEMPTS: ClassVar[int] = 1             # 1..3
+    MAX_PAYLOAD_BYTES: ClassVar[int] = 16 * 1024 * 1024
+
+    def __init__(self, config: EmitterConfig) -> None: ...   # carries the validated envelope data
+
+    def prepare(self, payload: PayloadDocument) -> DeliveryRequest:
+        """Pure: no network, no grid write. Names one declared operation, its path
+        parameters, the exact body bytes, the media type and non-secret headers."""
+
+    def deliver(self, request: DeliveryRequest, transport: EmitTransport) -> DeliveryReceipt:
+        """Sends `request` through `transport` and classifies the answer."""
+```
+
+**Declared side effects.** `SIDE_EFFECTS` is a list of operations, each `{"operation", "method", "path", "effect", "idempotent", "idempotency_header"}`: `path` is a template whose `{name}` segments match `[A-Za-z0-9_-]+`, `effect` is one plain sentence an operator can read ("creates a file attachment on the destination record"), `idempotent` says whether repeating it is harmless, and `idempotency_header` optionally names the header the destination honors as an idempotency key. The list is validated at registration against `tap_cares/schemas/emitter_side_effects.schema.json` (strict, every field described), copied to the node, and is **also the transport's allowlist**: one declaration, so the declared and the enforced cannot drift.
+
+**Payload.** An emitter never reads another plugin's code or tables. It names one *payload source*: a callable a plugin publishes with `register_payload_source(key, fn, *, scope, name, description, media_type)` into a `ScopedRegistry`, resolved by `scope:key` at run time, the same publish-by-key pattern as `register_search_runner`. The source runs inside the emit task under the emitter's program actor, reads only through Search and service-layer reads (`req-grid-search-canonical-read`), writes nothing, and returns a `PayloadDocument(body: bytes, media_type, source_entity_id | None)`. A source that is not installed fails the run naming its key. The producing plugin owns the document format, its JSON Schema, and its spec; tap_cares owns only the handoff.
+
+**Digest.** Core, not the emitter, computes `sha256:<hex>` (FIPS-approved, through the FIPS-provider `hashlib`) and the byte count over the exact `DeliveryRequest` body that `deliver` will be handed, and the transport refuses a send whose body does not match the recorded digest. The digest is derived once at the boundary, never declared by plugin code.
+
+**Idempotency and retry.** Each run carries one idempotency key, the `EmissionJob` entity id, sent unchanged on every attempt when the operation names an `idempotency_header`. Retries are in-run only and bounded by `MAX_ATTEMPTS` (at most 3). A retry is permitted only for an operation that is `idempotent` or names an `idempotency_header`; otherwise one attempt is all there is. The emitter's `deliver` classifies a failure as retryable or not; core owns the backoff. There is no task re-enqueue and no cross-run retry: the next scheduled fire is the retry.
+
+#### Destination and secret
+
+Destination settings are not nodes. Whoever can edit a node must not be able to point a credential at another host. Each emitter reads exactly one operator-owned envelope (`spec-tap-cares-secrets.md`) at the **same `scope:key` as the emitter**, so the binding is derived and there is no reference to keep in sync. Its `kind` must equal `SECRET_KIND`, and its `data` is validated against `SECRET_SCHEMA` with `require_secret_kind` before anything else runs. `data` holds the credential and any destination-specific parameters the plugin's kind defines.
+
+The destination itself lives in the envelope's reserved, non-secret `metadata.emit_destination`: an `https://host[:port][/path-prefix]` origin, parsed strictly (no userinfo, query, fragment, dot segments, or trailing-dot host; host and scheme lower-cased; port made explicit). It sits in `metadata` because it is not secret and is recorded on every run, beside the other reserved metadata keys (`required_for_boot`, `max_bytes`). `http://` is refused in v0.
+
+#### Egress
+
+`EmitTransport` is the only sanctioned egress path for an emitter. It is built per run on the existing `requests` dependency (no new dependency) and refuses before sending:
+
+- any URL outside `emit_destination`, and any method-and-path pair that does not match a declared operation;
+- any redirect;
+- TLS verification off, a client certificate, or a proxy; environment proxy settings are ignored;
+- a body whose digest is not the recorded one.
+
+Every call has a connect and read timeout and a total deadline. A response body is read only up to 1 MiB, and JSON nested deeper than 64 levels is refused. The response is untrusted data. It is never logged whole and never stored, and it never becomes a grid write. The only things kept are the HTTP status and an emitter-extracted `remote_reference` of at most 255 printable characters (the destination's id for what it received).
+
+Because emitter code is trusted Python in the worker, this is a contract and a structural default, not a sandbox: a plugin could open its own socket. That gap is named here (`req-sec-honest-risk`) on the same footing as `req-tap-cares-collector-read-boundary-5`. Host-level egress policy is Backlog.
+
+#### The run: `run_emission` and `EmissionJob`
+
+`run_emission(emitter, *, dry_run, caller_context=None, manual_run=False, manual_run_source="") -> EmissionJob` is the sole entry point, with the same contract shape as `run_collection`: it opens one lifecycle batch (`source = "tap_cares.emitter"`), creates the `EmissionJob` through the trusted-internal create, writes `HAS_EMISSION_JOB`, and enqueues `run_emitter` with JSON-safe ids only. The task body is the sole writer of the job after that.
+
+The task runs these steps in order: resolve and validate the envelope; parse `emit_destination`; fetch the payload; `prepare`; digest. Then it commits the **send intent**: destination, operation, payload source, digest, byte count, and idempotency key, written on the job and committed **before the first byte leaves**. This is the outbox pattern: a record of what is about to be sent exists before the sending does. Only then, if the run is not a dry run, does it call `deliver`.
+
+`EmissionJob` is `INTERNAL_ONLY`, `KEYLESS` ("a run: an act of this grid"), default dimension `{"tap_cares": "emission_job"}`. Fields:
+
+| Field | Notes |
+| --- | --- |
+| `name`, `description`, `summary` | `summary` is redacted, at most 2048 characters |
+| `status` | The `CollectionJob` lifecycle vocabulary: `READY`, `RUNNING`, `SUCCESSFUL`, `FAILED` |
+| `outcome` | `not_sent`, `delivered`, `refused`, `unknown` |
+| `dry_run`, `dry_run_reason` | `requested` or `unarmed` |
+| `manual_run`, `manual_run_source` | As on `CollectionJob` |
+| `destination_origin`, `operation` | The parsed origin; the declared operation name with its method and path template |
+| `payload_source`, `payload_digest`, `payload_bytes`, `media_type` | |
+| `idempotency_key`, `attempts`, `response_status`, `remote_reference` | |
+| `emitter_version` | `EMITTER_VERSION` at run time |
+| `task_result_id`, `enqueued_at`, `started_at`, `intent_recorded_at`, `finished_at` | |
+
+**Outcomes.** A send has three outcomes, never two. `delivered` means the destination acknowledged with success. `refused` means it answered and declined. `unknown` means a request may have reached it with no reliable answer back: a timeout after send, a dropped connection, or a worker that died after the intent was committed. `unknown` is never rendered as `failed`-and-not-sent, because the data may be on the other side. `not_sent` covers dry runs and failures before the intent commit. `SUCCESSFUL` means `delivered`, or a dry run that reached its digest; anything else is `FAILED`. The stale-run reaper (`req-tap-cares-collector-job-reaper`) covers `EmissionJob` too, and a reaped job with a committed intent gets `outcome = unknown`.
+
+**Edges.** `Emitter --HAS_EMISSION_JOB--> EmissionJob` and `ScheduleFire --TRIGGERED_EMISSION--> EmissionJob` are internal-only and keyless, like their collector twins. `EmissionJob --EMITTED_PAYLOAD--> <any node>` (wildcard target, internal-only, keyless) is written when the payload source returned a `source_entity_id` that resolves, linking what was sent to the grid node it was made from.
+
+**Dry run.** Every emitter supports dry run, and it is the same run with the last step removed. It resolves and validates the envelope, parses the destination, fetches, prepares, digests, and commits the same intent record with `dry_run = true` and `outcome = not_sent`. `deliver` is never called and no transport is built, so a dry run makes no external call by construction. A dry run therefore answers "what exactly would be sent, where, by which operation, and is it configured", which is what an operator needs before arming.
+
+#### Scheduling
+
+`SCHEDULED_TARGET` gains `emitter` as a deliberate second target type (`spec-tap-cares-scheduler.md`, `req-tap-cares-scheduler-scope`). The scheduler dispatches on the target's type, calling `run_collection` for a collector and `run_emission(emitter, dry_run=False)` for an emitter, and a fire for any other type fails. Exactly one target per schedule, slot dedupe, no catch-up, and `max_active_runs` are unchanged; for an emitter target, the active runs are the `EmissionJob`s reached through `TRIGGERED_EMISSION` whose status is `READY` or `RUNNING`.
+
+#### Approval stance (v0)
+
+v0 has **no per-delivery approval**. Approval is **arming**:
+
+- An emitter is unarmed when it first appears. While unarmed, every run, scheduled or manual, is a dry run with `dry_run_reason = unarmed`, so a fresh install never sends anything.
+- `manage.py arm_emitter <scope:key> --on|--off --as <username>` is the one writer of `send_authority`. It is gated by the capability `cares.arm_emitters` (an operator act that no program actor holds), and it writes on a batch of its own whose metadata is the audit record (operator, shell OS user, emitter, before, after). This mirrors `arm_reconcile` (`req-tap-cares-collector-model-12`).
+- A `Schedule` targeting an armed emitter is the standing policy that authorizes its scheduled sends ("an approved scheduler policy", `req-tap-cares-v0-action`).
+- `manage.py run_emitter <scope:key> [--send] --as <username>` is the explicit-intent door. It is gated by `cares.run_emitters`, **defaults to a dry run**, and sends only with `--send` on an armed emitter. It sets `manual_run_source = "shell"`.
+
+Proposed → approved → executed action workflows, Administrivia buttons, and an API trigger are Backlog.
+
+**Named accepted risk.** `Schedule` and `SCHEDULED_TARGET` are user-creatable. Any user who may create them can make an *armed* emitter send its fixed payload to its fixed destination on a cadence they choose (bounded by minute resolution and `max_active_runs`). They cannot change what is sent or where it goes. Gating schedule creation on the target type is Backlog.
+
+#### What is recorded, and what is not
+
+No secret value, credential header, payload body, response body, or full request URL with a query string appears on any node, edge, batch, `summary`, or log line, including on failure paths. Exception text passes through the secrets redaction (`req-tap-cares-secrets-redaction`) before it is stored. What is logged is the emitter key, destination origin, operation, digest, byte count, outcome, HTTP status, and attempt number. Storing the payload body itself, so that "what was sent" can be replayed byte for byte, is Backlog. Until then the digest plus `EMITTED_PAYLOAD` is the record.
+
+#### Prior art, and what it changed
+
+Surveyed 2026-11-24 from documentation; no code copied.
+
+- **Singer/Meltano targets.** The tap/target split is our collector/emitter split. Borrowed: the emitter consumes a document someone else produced and owns only delivery. Rejected: the stdin stream coupling. Our producer and consumer meet by registry key, not pipe.
+- **Vector sinks and Logstash outputs.** Borrowed: delivered means the destination's response said success (Vector's end-to-end acknowledgements). That is why `delivered` needs an answer, and why a missing answer is `unknown`, not success. Rejected: in-memory or disk buffers and unbounded retry. A buffer is state outside the grid, and the next fire is our retry.
+- **Airflow operators and Dagster asset materializations.** Borrowed: one durable record per run, with lineage to the asset it was made from (`EMITTED_PAYLOAD`). Rejected: task-level automatic retries with backoff across worker restarts, which would re-send non-idempotent requests.
+- **Transactional outbox and Kubernetes Events.** Borrowed: the intent is durable state written before the side effect. That gives the `unknown` outcome its meaning after a crash.
+- **Argo Events sensors and triggers.** Borrowed: the trigger (`Schedule`) is separate from what it fires, and the trigger's own policy is the authorization. Rejected: arbitrary trigger templates that build requests from event data, because our request shape is fixed in reviewed code.
+- **Stripe idempotency keys.** Keys are up to 255 characters, are client-generated, should carry no sensitive data, and are honored on POST. Borrowed: one key per logical send, reused across retries, which is why the key is the `EmissionJob` id. Retries are allowed only where the destination honors a key or the operation is idempotent.
+- **Tenable plugin (this organization).** "Settings are not nodes" and an allowlist at the transport bound to the configured root. Borrowed whole, with the declaration made generic.
+
+#### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-v0-emitter-1 | Declared Side Effects | Proposed | Emitters declare what external side effects they may perform. | |
-| req-tap-cares-v0-emitter-2 | Delivery Result | Proposed | Emitter runs record on-grid structured delivery status, including success, failure, and destination metadata. | |
-| req-tap-cares-v0-emitter-3 | Dry-Run Shape | Proposed | Emitters define whether dry-run is supported and what a dry-run result contains. | |
+| req-tap-cares-v0-emitter-1 | Declared Side Effects | Proposed | Each emitter class declares `SIDE_EFFECTS` (operation, method, path template, effect sentence, `idempotent`, optional `idempotency_header`), validated at registration against `tap_cares/schemas/emitter_side_effects.schema.json` and copied to the `Emitter` node; the transport refuses any request that matches no declared operation. | One declaration is both the record and the allowlist. |
+| req-tap-cares-v0-emitter-2 | Delivery Result | Proposed | Every run writes one `EmissionJob` with the fields above, linked `Emitter --HAS_EMISSION_JOB-->` and, when scheduled, `ScheduleFire --TRIGGERED_EMISSION-->`; `EMITTED_PAYLOAD` links the source node when one resolves. | Promotes `req-tap-cares-v0-run-record-3` for emitters. |
+| req-tap-cares-v0-emitter-3 | Dry-Run Shape | Proposed | Every emitter supports dry run: the same steps and the same record through the intent commit, `dry_run = true`, `outcome = not_sent`, `deliver` never called and no transport built. | A test asserts no socket is opened. |
+| req-tap-cares-v0-emitter-4 | Split Registration, Assigned Identity | Proposed | `register_emitter(key, cls, *, scope, name, description, payload_source)` writes no grid node; `reconcile_emitter_nodes()` is the sole writer of the `INTERNAL_ONLY`, `KEYLESS` `Emitter`, found by unique `emitter_registry`, id assigned; no GRIFT bundle can target an emitter. | Mirrors `req-tap-cares-collector-registration` without the derived-id exception. |
+| req-tap-cares-v0-emitter-5 | Payload Through A Published Source | Proposed | An emitter's payload comes only from the payload source it named, resolved by `scope:key` from `register_payload_source`; the source reads through Search and service-layer reads and writes nothing; an absent source fails the run naming its key. | No import of, or read around, another plugin. |
+| req-tap-cares-v0-emitter-6 | Digest Derived At The Boundary | Proposed | Core computes `sha256:<hex>` and the byte count over the exact body handed to `deliver`, and the transport refuses a body that does not match. | FIPS-approved hash. |
+| req-tap-cares-v0-emitter-7 | Destination In The Envelope | Proposed | Each emitter reads one envelope at its own `scope:key`, of kind `SECRET_KIND`, validated against `SECRET_SCHEMA` before any other step; the destination is the strictly parsed `https` origin in `metadata.emit_destination`; no node field holds a destination or credential. | Settings are not nodes. |
+| req-tap-cares-v0-emitter-8 | Bounded Egress | Proposed | `EmitTransport` refuses other origins, undeclared operations, redirects, disabled TLS verification, proxies (environment ones included), and digest mismatches before sending; every call is time-bounded; responses are capped at 1 MiB and 64 levels of JSON depth. | The in-process enforcement gap is named. |
+| req-tap-cares-v0-emitter-9 | Intent Before Send, Three Outcomes | Proposed | Destination, operation, digest, size, and idempotency key are committed on the job before the first byte is sent; outcomes are `delivered`, `refused`, `unknown` and `not_sent`; a send with no reliable answer, or a reaped job with a committed intent, is `unknown`. | Outbox. Never two states. |
+| req-tap-cares-v0-emitter-10 | Bounded In-Run Retry | Proposed | At most `MAX_ATTEMPTS` (≤ 3) attempts within one run, only for an operation that is `idempotent` or names an `idempotency_header`, each attempt carrying the `EmissionJob` id as the key; no re-enqueue and no cross-run retry. | |
+| req-tap-cares-v0-emitter-11 | One Entry Point | Proposed | `run_emission(...)` is the sole way to start an emission; it owns the lifecycle batch (`source = "tap_cares.emitter"`), the `EmissionJob` create, `HAS_EMISSION_JOB`, and the enqueue of `run_emitter` with JSON-safe ids. | Same contract shape as `run_collection`. |
+| req-tap-cares-v0-emitter-12 | Arming Is The Approval | Proposed | `send_authority` defaults to `false` and is written only by `arm_emitter` (capability `cares.arm_emitters`, audit batch); an unarmed emitter's runs are dry runs with `dry_run_reason = unarmed`; `run_emitter` (capability `cares.run_emitters`) dry-runs unless `--send` is given on an armed emitter. | Per-delivery approval waits on `req-tap-cares-v0-action`. |
+| req-tap-cares-v0-emitter-13 | Nothing Secret Or Received Is Kept | Proposed | No secret value, credential header, payload body, response body, or query-bearing URL appears in any record or log line, including on failure; only the HTTP status and an emitter-extracted `remote_reference` (≤ 255 printable characters) survive from a response; a response never causes a grid write. | A test fails a send and searches every record and log line. |
+| req-tap-cares-v0-emitter-14 | Deferred Work Named | Backlog | Multi-item runs with a per-item `Delivery` node; several destinations per emitter; payload body retention; skip-if-unchanged by digest; Administrivia emitter table, run and arm controls; API trigger; action-mediated approval; schedule-creation gating by target type; non-HTTPS channels (email, Signal, filesystem, SFTP); operator-declared proxy and CA bundle; plaintext opt-in; host-level egress policy; a `build-emitter` skill; the shared dual-existence helper (`req-grid-dual-existence-consolidation`, which this second consumer triggers). | Each lands as its own requirement when a consumer needs it. |
 
 ## Actions
 ----
@@ -186,11 +356,11 @@ The scheduler is specified in `spec-tap-cares-scheduler.md`.
 v0 scheduler scope is intentionally narrow:
 
 - Huey evaluates schedules once per minute.
-- Schedules target `Collector` nodes only.
+- Schedules target `Collector` or `Emitter` nodes (emitters per `req-tap-cares-v0-emitter`).
 - Schedule cadence is a five-field UTC cron expression.
 - Missed scheduled slots are counted on the next observed fire through `ScheduleFire.missed_count`; they are not backfilled.
 - Schedule overlap is controlled by per-schedule `max_active_runs`.
-- Scheduled collection invokes `run_collection(...)`; it does not create jobs or enqueue collector tasks directly.
+- Scheduled collection invokes `run_collection(...)` and scheduled emission invokes `run_emission(...)`; the scheduler does not create jobs or enqueue tasks directly.
 
 Schedules should reference collector capability nodes rather than importing implementation functions directly. Schedule state, fire history, missed counts, and links to collection jobs live on the TAP grid rather than in Huey.
 
@@ -198,7 +368,7 @@ Schedules should reference collector capability nodes rather than importing impl
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-v0-scheduler-1 | Collector Target | Proposed | v0 schedules execute `Collector` nodes by stable grid identity. | See `spec-tap-cares-scheduler.md`. |
+| req-tap-cares-v0-scheduler-1 | Collector Or Emitter Target | Proposed | v0 schedules execute `Collector` or `Emitter` nodes by stable grid identity. | See `spec-tap-cares-scheduler.md`. |
 | req-tap-cares-v0-scheduler-2 | Durable Schedule | Proposed | Enabled state, UTC cron expression, processed-slot cursor, and max active run limit are stored durably. | |
 | req-tap-cares-v0-scheduler-3 | Durable Fire History | Proposed | Each evaluated due slot creates a `ScheduleFire` recording triggered, skipped, or failed scheduler decision state. | |
 | req-tap-cares-v0-scheduler-4 | No Catch-Up Execution | Proposed | Missed slots are counted but not backfilled. | |
@@ -277,7 +447,7 @@ Run records are TAP graph domain entities by default. The execution of collector
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-v0-run-record-1 | Every Execution Has A Run Node | Proposed | Each tap-cares execution path creates a durable on-grid run node. | |
 | req-tap-cares-v0-run-record-2 | Failure Visibility | Proposed | Failures preserve enough structured error context to explain what failed and where. | |
-| req-tap-cares-v0-run-record-3 | Linked Outcomes | Proposed | Run nodes link by edges to GRIFT batches, generated actions, or emitter delivery records they produce. | |
+| req-tap-cares-v0-run-record-3 | Linked Outcomes | Proposed | Run nodes link by edges to GRIFT batches, generated actions, or emitter delivery records they produce. | Emitter delivery records are `EmissionJob` nodes, linked from `Emitter` and `ScheduleFire` (`req-tap-cares-v0-emitter-2`). |
 | req-tap-cares-v0-run-record-4 | Grid Queryable | Proposed | Run records can be discovered through normal TAP graph query and visualization capabilities. | |
 
 
@@ -403,7 +573,7 @@ Open questions for follow-up specs:
 - Which tap-cares run record and execution edge types should ship in the initial model set.
 - How much GRIFT batch detail should be stored directly on-grid versus referenced as an artifact.
 - How schedules should run in production: Django Tasks, management command plus cron, long-running worker, or another local-first mechanism.
-- What approval model is needed before actions can execute side-effecting emitters.
+- What approval model is needed before actions can execute side-effecting emitters. (v0's stance for scheduled and manual emission is operator arming, `req-tap-cares-v0-emitter-12`; action-mediated approval is still open.)
 - How authenticator records should integrate with Django auth, local deployments, and plugin-specific credential needs.
 - Whether a future Secret/SecretReference BaseModel should expose secret metadata, schemas, generator commands, health, and usage edges on the grid.
 - Whether "Synchronize" should become the explicit second "s" capability in tap-cares.
