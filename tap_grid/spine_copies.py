@@ -419,7 +419,7 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
     table no longer has, and every insert and update of the table would fail. Rows are filled after
     the triggers are in place, so a row written after this commits is kept by them.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/39f54e47f6b0 (derivation) — rules 8 and 9: the
+    TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/57d7c7d318ff (derivation) — rules 8 and 9: the
         one installer of the triggers and the type map, for core's and every plugin's tables.
     """
     connection = connections[using]
