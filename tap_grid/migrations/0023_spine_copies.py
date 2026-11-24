@@ -258,5 +258,5 @@ class Migration(migrations.Migration):
             model_name="entity",
             index=models.Index(fields=["last_observed_at"], name="idx_entity_last_observed_at"),
         ),
-        migrations.RunPython(batch_to_version_2, migrations.RunPython.noop),
+        migrations.RunPython(batch_to_version_2),  # irreversible: reversing would leave the version records above the schema
     ]

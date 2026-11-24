@@ -202,5 +202,5 @@ class Migration(migrations.Migration):
                 help_text="Copy of Entity.dimensions in the stored shape, kept by the database.",
             ),
         ),
-        migrations.RunPython(to_version_2, migrations.RunPython.noop),
+        migrations.RunPython(to_version_2),  # irreversible: reversing would leave the version records above the schema
     ]
