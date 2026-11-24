@@ -705,3 +705,81 @@ def test_the_version_migration_writer_moves_the_revision_and_not_the_observation
     # It has no licence on any typed table: the typed rows are written through the migration's
     # own historical models, and a guarded save or update of a live typed row is not its to make.
     assert set(BELOW_PIPELINE_WRITES["version_migration"]) == {("queryset update", "tap_grid.Entity")}
+
+
+# --- the spine copies are written by the database alone (req-grid-entity-spine-copies rule 6) ---
+
+COPIES = ("spine_deleted_at", "spine_dimensions")
+NO_PYTHON_WRITER = pytest.mark.spec("req-grid-entity-spine-copies-6")
+
+
+def _copy_values(name: str) -> dict[str, object]:
+    return {name: None if name == "spine_deleted_at" else {}}
+
+
+def _typed_row(name: str) -> object:
+    from tap_plugin.grid_fixtures.models.pg_node import PgNode
+
+    return PgNode.objects.get(entity=_node(name))
+
+
+@NO_PYTHON_WRITER
+@pytest.mark.parametrize("name", COPIES)
+def test_the_pipeline_cannot_save_or_update_a_spine_copy(name: str) -> None:
+    from tap_plugin.grid_fixtures.models.pg_node import PgNode
+
+    row = cast(PgNode, _typed_row(f"pipeline-{name}"))
+    with service_write_scope():
+        with pytest.raises(UnguardedOperation, match=name):
+            row.save(update_fields=[name])
+        with pytest.raises(UnguardedOperation, match=name):
+            PgNode.all_objects.filter(pk=row.pk).update(**_copy_values(name))
+        with pytest.raises(UnguardedOperation, match=name):
+            PgNode.all_objects.bulk_update([row], [name])
+
+
+@NO_PYTHON_WRITER
+@pytest.mark.parametrize("name", COPIES)
+def test_the_test_hatch_cannot_write_a_spine_copy(name: str) -> None:
+    from tap_plugin.grid_fixtures.models.pg_node import PgNode
+
+    row = cast(PgNode, _typed_row(f"hatch-{name}"))
+    with unguarded_write():
+        with pytest.raises(UnguardedOperation, match=name):
+            PgNode.all_objects.filter(pk=row.pk).update(**_copy_values(name))
+        with pytest.raises(UnguardedOperation, match=name):
+            row.save(update_fields=["name", name])
+
+
+@NO_PYTHON_WRITER
+@pytest.mark.parametrize("writer", sorted(BELOW_PIPELINE_WRITERS))
+def test_no_named_writer_can_write_a_spine_copy(writer: str) -> None:
+    """Every named writer, under every gate it accepts, is refused a write that names either copy,
+    and none is named for one."""
+    from tap_plugin.grid_fixtures.models.pg_node import PgNode
+
+    from tap_grid.write_guard import gated_body
+
+    row = cast(PgNode, _typed_row(f"writer-{writer}"))
+    for name in COPIES:
+        for gate in sorted(_writer_gates()[writer]):
+            with gated_body(gate), below_pipeline_write(writer), pytest.raises(UnguardedOperation, match=name):
+                PgNode.all_objects.filter(pk=row.pk).update(**_copy_values(name))
+    for fields in BELOW_PIPELINE_WRITES[writer].values():
+        assert not set(COPIES) & fields, writer
+
+
+@NO_PYTHON_WRITER
+def test_a_save_that_names_no_copy_passes_and_the_database_overrules_the_object() -> None:
+    """A whole-row save names no field, so it is not refused; what the object held for a copy is
+    overruled by the trigger in the same statement (rule 5)."""
+    from tap_plugin.grid_fixtures.models.pg_node import PgNode
+
+    row = cast(PgNode, _typed_row("overruled"))
+    forged = {"forged": {"v": "x", "src": "declared"}}
+    row.spine_dimensions = forged
+    with service_write_scope():
+        row.save()
+    stored = PgNode.all_objects.values_list("spine_dimensions", flat=True).get(pk=row.pk)
+    assert stored != forged
+    assert stored == Entity.objects.values_list("dimensions", flat=True).get(pk=row.entity_id)

@@ -257,7 +257,9 @@ class TestReobservationIsNotAChange:
         newest, previous = Panel.history.filter(entity_id=entity_id).order_by("-history_date", "-history_id")[:2]
         assert Panel.history.filter(entity_id=entity_id).count() == 2
         differing = {change.field for change in newest.diff_against(previous).changes}
-        assert differing == {"description", "batch_id", "flip_map"}
+        # The batch is the history row's own column now (Issue# 1288 - tap), not a field of the row.
+        assert differing == {"description", "flip_map"}
+        assert newest.batch_id == str(third) != previous.batch_id
         assert _events(entity_id, third) == [BatchEventType.UPDATE]
 
     @REOBS[3]

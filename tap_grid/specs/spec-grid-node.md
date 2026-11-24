@@ -53,7 +53,10 @@ Implemented in `tap_grid/models.py` as `class BaseModel(models.Model)`. Retroact
 | Field | Type | Notes |
 | --- | --- | --- |
 | `entity` | OneToOneField → Entity, CASCADE | The backing spine record. Auto-created on first save if not set. |
-| `batch_id` | CharField(36, db_index=True) | UUIDv7 of the FLIP batch this change was part of (Phase 2). |
+| `flip_map` | JSONField(default=dict) | FLIP: which batch last set each provenance-tracked field (`req-grid-flip-map-3`). |
+| `spine_deleted_at`, `spine_dimensions` | DateTimeField / JSONField, not editable | Copies of `Entity.deleted_at` and `Entity.dimensions`, kept by database triggers (`req-grid-entity-spine-copies`). |
+
+The typed row carries no batch id. The batch that last changed a row and the latest batch that wrote or re-observed it are the spine pointers `Entity.last_changed_batch_id` and `Entity.last_observed_batch_id` (`req-grid-entity-batch-pointers`), and each history row names the batch that produced it in its own `batch_id` column (`HistoricalBatchRecord`, `tap_grid/history.py`). The typed `batch_id` this table used to list was removed with the base-model release (Issue# 1288 - tap; spine version 2).
 
 `originating_grid_id`, `created_at`, and `updated_at` live on `Entity` — the authoritative source of record. `BaseModel.save()` touches `entity.updated_at` on every typed-model save so the Entity timestamp stays current.
 
@@ -101,14 +104,14 @@ concept = Concept.objects.create(summary="Separation of Concerns")
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-node-model-1 | BaseModel Is Abstract | Implemented | `BaseModel` sets `Meta.abstract = True`; no `tap_basemodel` table exists in the schema. | |
-| req-grid-node-model-2 | Common Fields Present | Implemented | Every concrete `BaseModel` subclass inherits `entity` and `batch_id`. Timestamps and grid ID live on the backing Entity. | |
+| req-grid-node-model-2 | Common Fields Present | Implemented | Every concrete `BaseModel` subclass inherits `entity`, `flip_map`, `spine_deleted_at` and `spine_dimensions`, and no typed `batch_id`. Timestamps, grid ID and the batch pointers live on the backing Entity. | Originally `entity` and `batch_id`; the typed `batch_id` was removed with the base-model release (Issue# 1288 - tap), and its question is answered by the spine pointers and the history row's `batch_id`. |
 | req-grid-node-model-3 | Registry Hook | Implemented | `__init_subclass__` registers the subclass in `_ENTITY_MODEL_REGISTRY` when `ENTITY_TYPE` is declared in the subclass's own `__dict__`. Abstract subclasses that omit `ENTITY_TYPE` are not registered. | |
 | req-grid-node-model-4 | Constraint Hook | Implemented | `__init_subclass__` calls `register_constraints()` when `OUTBOUND_EDGES` or `INBOUND_EDGES` is present on the subclass. | |
 | req-grid-node-model-5 | FLIP Hook | Implemented | `__init_subclass__` calls `get_model_flip_config()` to cache FLIP config for the subclass at class-definition time. | |
 
 #### Future
 Consider a Django system check that validates all registered `ENTITY_TYPE` values against the `EntityType` table at startup to surface misconfigured plugins early or a more clever way to automagically assign names that won't risk namespace pollution.  
-Consider revisiting whether `batch_id` should move to `Entity` or be handled differently once FLIP matures — the tight entity-node coupling may change how FLIP tracks provenance.
+Settled by the base-model release (Issue# 1288 - tap): the typed `batch_id` left the typed row, the batches that last changed and last observed a row moved to `Entity` (`last_changed_batch_id`, `last_observed_batch_id`), and the history row keeps its own `batch_id`. FLIP's per-field provenance stays in `flip_map` on the typed row.
 
 
 ### Node Display Name

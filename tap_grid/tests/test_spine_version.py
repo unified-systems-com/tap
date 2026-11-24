@@ -31,7 +31,9 @@ class TestTheRecord:
     @AC[1]
     def test_a_migrated_database_records_the_version_core_declares(self) -> None:
         """The test database was built by ``migrate``; its record is what that left."""
-        assert spine_version.SPINE_VERSION == 1
+        # Version 2 since the base-model release (Issue# 1288 - tap): the typed batch_id removed and the
+        # spine copies added (req-grid-entity-spine-copies).
+        assert spine_version.SPINE_VERSION == 2
         assert spine_version.recorded_version() == spine_version.SPINE_VERSION
         assert SpineVersion.objects.count() == 1
 
@@ -67,7 +69,7 @@ class TestTheRecord:
 
         assert spine_version._schema_is_current("default")
         latest = MigrationRecorder.Migration.objects.filter(app="tap_grid").order_by("-name").first()
-        assert latest is not None and latest.name == "0022_model_and_spine_versions"
+        assert latest is not None and latest.name == "0023_spine_copies"
         with transaction.atomic():
             latest.delete()
             assert not spine_version._schema_is_current("default")
@@ -86,11 +88,13 @@ class TestTheRecord:
 class TestANewerDatabase:
     @AC[2]
     def test_code_at_version_1_refuses_a_database_at_version_2(self) -> None:
-        SpineVersion.objects.update(version=2)
+        # Relative to what core declares now (2 since Issue# 1288 - tap): a record one ahead is refused.
+        declared = spine_version.SPINE_VERSION
+        SpineVersion.objects.update(version=declared + 1)
         with pytest.raises(spine_version.SpineVersionAhead) as raised:
             spine_version.refuse_newer_database()
-        assert (raised.value.declared, raised.value.recorded) == (1, 2)
-        assert "spine version 2" in str(raised.value) and "spine version 1" in str(raised.value)
+        assert (raised.value.declared, raised.value.recorded) == (declared, declared + 1)
+        assert f"spine version {declared + 1}" in str(raised.value) and f"spine version {declared}" in str(raised.value)
         # ready() raises it, and Django stops a process whose app cannot be made ready.
         assert isinstance(raised.value, ImproperlyConfigured)
 
@@ -108,7 +112,7 @@ class TestANewerDatabase:
         config.compare_versions_at_start()
         assert reached == ["catalog"]
 
-        SpineVersion.objects.update(version=2)
+        SpineVersion.objects.update(version=spine_version.SPINE_VERSION + 1)
         with pytest.raises(spine_version.SpineVersionAhead):
             config.compare_versions_at_start()
         assert reached == ["catalog"]
@@ -145,7 +149,8 @@ class TestTheSpineDefinition:
         moved = copy.deepcopy(definition.spine_definition())
         moved["entity"]["fields"]["added_column"] = {"type": "CharField", "null": True, "max_length": 8}
         monkeypatch.setattr(definition, "spine_definition", lambda: moved)
-        with pytest.raises(AssertionError, match="the spine.*entity.fields.added_column added.*still 1"):
+        expected = f"the spine.*entity.fields.added_column added.*still {spine_version.SPINE_VERSION}"
+        with pytest.raises(AssertionError, match=expected):
             ModelVersionGuard().check()
 
     @AC[6]
@@ -159,15 +164,14 @@ class TestTheSpineDefinition:
             definition.append_entry(record, state)
         before = copy.deepcopy(record)
 
-        # The spine moves: a new column and version 2.
+        # The spine moves: a new column and the next version.
         moved = copy.deepcopy(spine.definition)
         moved["entity"]["fields"]["added_column"] = {"type": "CharField", "null": True}
-        spine_2 = definition.TypeState(definition.SPINE, definition.SPINE, 2, moved)
+        spine_2 = definition.TypeState(definition.SPINE, definition.SPINE, spine.version + 1, moved)
         assert definition.append_entry(record, spine_2)
         assert record["nodes"] == before["nodes"] and record["edges"] == before["edges"]
         for state in types:
             assert definition.type_problems(state, definition.entries_for(record, state)) == []
-            assert state.version == 1
 
         # A type moves: the spine's entries are as they were, and the spine is still in step.
         keystone = next(state for state in types if state.slug == "keystone")

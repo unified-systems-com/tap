@@ -4,11 +4,13 @@ Makes one GRIFT/collector/service batch legible: what it added (nodes + edges),
 what it removed (deletes + purges), and the batch's own metadata. Generic —
 any batch from any plugin.
 
-Sourcing (see spec-web-batch-viewer-v0.md — `batch_id` is on the typed rows,
-not the Entity spine, so cross-type questions go through Gryphon):
-  nodes added  → Gryphon  n.data.batch_id == bid AND deleted_at IS NULL
-  edges added  → Edge.objects.filter(batch_id=bid)  (from → type → to)
-  deletes      → Gryphon  n.data.batch_id == bid AND deleted_at IS NOT NULL
+Sourcing (see spec-web-batch-viewer-v0.md — the batch that last changed a row is the
+spine's `last_changed_batch_id`, req-grid-entity-batch-pointers; the typed `batch_id` it
+replaced was removed with Issue# 1288 - tap):
+  nodes added  → Gryphon  n.last_changed_batch_id == bid AND deleted_at IS NULL
+  edges added  → live Edge rows whose entity's last_changed_batch_id == bid  (from → type → to)
+  deletes      → Gryphon  n.last_changed_batch_id == bid AND deleted_at IS NOT NULL
+                 (a retirement is a change, so these are the nodes the batch retired)
   purges       → batch.metadata["removals"] (the only place hard-deleted rows
                  survive — a recorded manifest; honest empty state when absent)
 
@@ -32,11 +34,11 @@ DEFAULT_VAR_NAME = "batch_entity_id"
 
 
 def _nodes_by_batch(bid: str, *, deleted: bool) -> list[dict[str, Any]]:
-    """Live (deleted=False) or tombstoned (deleted=True) nodes stamped with the batch."""
+    """Live (deleted=False) or tombstoned (deleted=True) nodes the batch last changed."""
     # deleted_at is a spine field (n.deleted_at), NOT a data field — Gryphon
     # exposes it directly; n.data.deleted_at would never resolve.
     clause = "IS NOT NULL" if deleted else "IS NULL"
-    query = f"MATCH (n) WHERE n.data.batch_id = $bid AND n.deleted_at {clause} RETURN n"
+    query = f"MATCH (n) WHERE n.last_changed_batch_id = $bid AND n.deleted_at {clause} RETURN n"
     envelope = execute_gryphon_raw(query, {"bid": bid}, layer="extended")
     return [
         {
@@ -112,7 +114,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
     added_ids = {r["entity_id"] for r in added}
 
     # Edges added — from → type → to, with each endpoint flagged in-batch vs external.
-    edges = Edge.objects.filter(batch_id=bid).select_related("from_entity", "to_entity")
+    edges = Edge.objects.filter(entity__last_changed_batch_id=bid).select_related("from_entity", "to_entity")
     edge_rows = []
     for e in edges:
         fid, tid = str(e.from_entity_id), str(e.to_entity_id)

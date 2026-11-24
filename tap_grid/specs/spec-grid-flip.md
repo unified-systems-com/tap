@@ -127,7 +127,7 @@ The FLIP coverage contract is:
 1. FLIP is on by default for service-writeable model types.
 2. FLIP stamps all service-writeable fields.
 3. "Service-writeable fields" means fields writable by callers through the model's published service schemas.
-4. System-managed fields such as `entity`, `entity_id`, `batch_id`, `flip_map`, lifecycle timestamps, and other internal service-managed fields are excluded from FLIP stamping.
+4. System-managed fields such as `entity`, `entity_id`, `flip_map`, the spine copies `spine_deleted_at` and `spine_dimensions`, lifecycle timestamps, and other internal service-managed fields are excluded from FLIP stamping. The batch pointers live on `Entity` (`last_changed_batch_id`, `last_observed_batch_id`) and are never typed fields; the typed `batch_id` was removed with the base-model release (Issue# 1288 - tap).
 5. For `patch`, FLIP updates the fields the payload touched whose value changed, and a touched field asserted for the first time (`req-grid-flip-change`). A touched field whose stored value the payload repeats keeps its entry.
 6. For `replace`, FLIP updates the fields of the replace surface whose value changed, and a field the payload names that is asserted for the first time (`req-grid-flip-change`). A field the payload does not name is stamped only when its reset to the default changed the stored value.
 7. For `create`, FLIP updates the service-writeable fields established at creation time.
@@ -149,7 +149,7 @@ If TAP later finds a real need for exceptions, configuration can return as a del
 | --- | --- | :---: | --- | --- |
 | req-grid-flip-default-1 | Default On For Service-Writeable Types | Implemented | FLIP applies by default to model types writable through the standard service layer. | No per-model config needed |
 | req-grid-flip-default-2 | All Service-Writeable Fields Stamped | Implemented | FLIP covers all service-writeable fields rather than an explicit allow-list. | Derived from `SERVICE_CRUD_SCHEMA` properties |
-| req-grid-flip-default-3 | System Fields Excluded | Implemented | Service-managed/internal fields are excluded from default FLIP stamping. | `entity`, `batch_id`, `flip_map` etc. are never in `SERVICE_CRUD_SCHEMA` |
+| req-grid-flip-default-3 | System Fields Excluded | Implemented | Service-managed/internal fields are excluded from default FLIP stamping. | `entity`, `flip_map`, `spine_deleted_at`, `spine_dimensions` etc. are never in `SERVICE_CRUD_SCHEMA` (the typed `batch_id` this note once named was removed with the base-model release, Issue# 1288 - tap) |
 | req-grid-flip-default-4 | Patch Replace Create Semantics Defined | Implemented | FLIP stamping behavior for create, patch, and replace follows the service-write surface rather than ad hoc save behavior. | `changed_fields` controls partial vs full stamping |
 
 #### Future

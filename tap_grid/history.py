@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from django.db import models
 from simple_history.models import HistoricalRecords
 
 if TYPE_CHECKING:
@@ -86,6 +87,31 @@ class HistoryNotTracked(LookupError):
             f"no history for this type: {name} declares TRACK_HISTORY = False (req-grid-history-optout)."
         )
         self.model_class = model_class
+
+
+class HistoricalBatchRecord(models.Model):
+    """The base every history model is built on: the batch that produced each history row.
+
+    Until Issue# 1288 - tap a history row's ``batch_id`` was copied from the typed row's own
+    ``batch_id``, which every save stamped. The typed column is gone (the spine's batch pointers
+    replaced it, ``req-grid-entity-batch-pointers``), and the pointers name only the last writer,
+    so the version-to-batch association lives on the history row alone (Issue# 896 - tap). The
+    field is declared exactly as the copied one was, so the history tables keep their column and
+    their rows, and no history migration changes. It is set when the row is written, from the
+    batch in the caller's context (``tap_grid.spine_copies.fill_history_row``); empty where a write
+    ran with no batch.
+    """
+
+    batch_id = models.CharField(
+        max_length=36,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="UUIDv7 of the batch this change was included in.",
+    )
+
+    class Meta:
+        abstract = True
 
 
 class TapHistoricalRecords(HistoricalRecords):

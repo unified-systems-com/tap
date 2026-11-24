@@ -30,9 +30,11 @@ def register_edge_types_from_list(edge_types: list[dict[str, Any]]) -> None:
         register_edge_type_constraints,
     )
     from tap_grid.edge_identity import register_edge_identity
+    from tap_grid.model_version import register_edge_declared
 
     for et in edge_types:
         slug = et["slug"]
+        register_edge_declared(slug)
         sources = et.get("sources")
         targets = et.get("targets")
 
@@ -73,7 +75,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/2c77cca1d3f9 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/e1bd119e9973 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -201,8 +203,11 @@ class TapPluginConfig(AppConfig):
             register_edge_type_constraints,
         )
         from tap_grid.edge_identity import register_edge_identity
+        from tap_grid.model_version import register_edge_declared
 
         for edge in self._manifest.edges:
+            # Every edge, a wildcard one too: it is installed whether or not it states endpoints.
+            register_edge_declared(edge.slug)
             sources = [{"type": s} for s in edge.sources] if edge.sources is not None else None
             targets = [{"type": t} for t in edge.targets] if edge.targets is not None else None
 

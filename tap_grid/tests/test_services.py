@@ -193,13 +193,16 @@ class TestCreateNode:
         entity = Entity.objects.get(pk=result.entity_id)
         assert entity.entity_type == "grid_fixtures__constrained_source"
 
-    def test_batch_id_stamped_on_model(self):
+    def test_batch_id_stamped_on_the_spine(self):
+        # The typed batch_id was removed with the base-model release (Issue# 1288 - tap); the batch
+        # a create rides is the spine's last_changed_batch_id (req-grid-entity-batch-pointers).
         ctx = CallerContext(batch_id=str(uuid.uuid7()))
         result = create_node(
             "grid_fixtures__constrained_source", {"name": "Test", "description": "test"}, caller_context=ctx
         )
         char = ConstrainedSource.objects.get(entity_id=result.entity_id)
-        assert char.batch_id == ctx.batch_id
+        assert not hasattr(char, "batch_id")
+        assert str(char.entity.last_changed_batch_id) == ctx.batch_id
 
     def test_object_summary_in_standard_mode(self):
         result = create_node("grid_fixtures__constrained_source", {"name": "Test"}, result_mode="standard")

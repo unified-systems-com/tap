@@ -396,8 +396,10 @@ def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operatio
     (req-tap-cares-collector-run-collection-16):
 
       1. `Batch.source` says the collector runtime produced this batch.
-      2. `CollectionJob.batch_id` — the job's own spine row — says its writes rode
-         this batch. `run_collection` creates the job *inside* the batch, so this
+      2. The job's spine row names this batch as the last to change it
+         (`Entity.last_changed_batch_id`, which replaced the typed `CollectionJob.batch_id`
+         with Issue# 1288 - tap): its writes rode this batch. `run_collection` creates the job
+         *inside* the batch, so this
          holds from the moment the task can first see the row.
 
     Called at BOTH ends, and that is the point: the worker checks it before
@@ -415,7 +417,7 @@ def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operatio
         return False
     try:
         batch = Batch.objects.get(entity_id=batch_entity_id)
-        job = CollectionJob.objects.get(entity_id=job_entity_id)
+        job = CollectionJob.objects.select_related("entity").get(entity_id=job_entity_id)
     # PEP 758 (Python 3.14): an except clause may list exception types without
     # parentheses. This is valid, and black removes the parentheses if you write
     # them — noted because it reads as a pre-3.14 SyntaxError at a glance, and has
@@ -428,7 +430,8 @@ def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operatio
             job_entity_id,
         )
         return False
-    if batch.source != LIFECYCLE_BATCH_SOURCE or str(job.batch_id) != str(batch_entity_id):
+    job_batch = job.entity.last_changed_batch_id
+    if batch.source != LIFECYCLE_BATCH_SOURCE or str(job_batch) != str(batch_entity_id):
         logger.error(
             "[004e] collector: %s refused — batch %s has source %r (expected %r) and job %s "
             "records its batch as %r; this is not that job's lifecycle batch",
@@ -437,7 +440,7 @@ def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operatio
             batch.source,
             LIFECYCLE_BATCH_SOURCE,
             job_entity_id,
-            job.batch_id,
+            job_batch,
         )
         return False
     return True

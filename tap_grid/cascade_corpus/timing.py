@@ -119,7 +119,7 @@ def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
 def hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.Event, then: Callable[[], Any]) -> Any:
     """In one transaction: lock the row, say so, wait for the signal, run ``then``, commit."""
     with transaction.atomic():
-        Entity.objects.select_for_update().get(pk=entity_id)
+        Entity.objects.select_for_update(no_key=True).get(pk=entity_id)
         locked.set()
         _require(go.wait(JOIN_SECONDS), "the test never released the lock holder")
         return then()

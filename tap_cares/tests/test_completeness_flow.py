@@ -116,7 +116,7 @@ def _lifecycle_batch(job: Any) -> Batch:
 
     edge = Edge.objects.filter(edge_type="HAS_COLLECTION_JOB", to_entity_id=job.entity_id).first()
     assert edge is not None
-    batch = Batch.objects.filter(source=LIFECYCLE_BATCH_SOURCE, entity_id=edge.batch_id).first()
+    batch = Batch.objects.filter(source=LIFECYCLE_BATCH_SOURCE, entity_id=edge.entity.last_changed_batch_id).first()
     assert isinstance(batch, Batch), "the job's HAS_COLLECTION_JOB edge rides its lifecycle batch"
     return batch
 

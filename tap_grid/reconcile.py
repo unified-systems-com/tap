@@ -573,7 +573,7 @@ def _release_held(batch: Any, *, claim_event_ids: set[str] | None, released_by: 
         # and is seen below, or holds the anchor until it commits, and this waits for it. Id order, as
         # the importer takes them, so the two never wait on each other.
         list(
-            Entity.objects.select_for_update()
+            Entity.objects.select_for_update(no_key=True)
             .filter(pk__in=sorted({uuid.UUID(c["anchor_entity_id"]) for c in candidates if c.get("anchor_entity_id")}))
             .order_by("pk")
             .values_list("pk", flat=True)
@@ -741,7 +741,7 @@ def _lock_target(entity_id: uuid.UUID) -> None:
     committed state, not two."""
     from tap_grid.models import Entity
 
-    Entity.objects.select_for_update().filter(pk=entity_id).exists()
+    Entity.objects.select_for_update(no_key=True).filter(pk=entity_id).exists()
 
 
 def _derived_at(batch: Any) -> datetime | None:

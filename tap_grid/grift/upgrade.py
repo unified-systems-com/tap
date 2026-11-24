@@ -32,7 +32,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tap_grid import version_links
-from tap_grid.model_version import EDGE, FIRST_VERSION, declared_edge_version, declared_version, types_carried
+from tap_grid.model_version import (
+    EDGE,
+    FIRST_VERSION,
+    declared_edge_version,
+    declared_version,
+    edge_declared,
+    types_carried,
+)
 from tap_grid.version_links import Break, RecordRefused, Step
 
 #: The format that states no versions, and the one that states them.
@@ -87,13 +94,17 @@ class UpgradeOutcome:
 
 
 def installed_version(type_slug: str) -> int | None:
-    """The version the installed code declares for a type; None for a type nothing registers."""
+    """The version the installed code declares for a type; None for a type nothing registers.
+
+    An edge type is installed when any definition declares it, a wildcard edge that states no
+    endpoints (and so registers no constraint) included; its version is 1 where it states none.
+    """
     from tap_grid.constraints import list_registered_edge_types
     from tap_grid.registry import get_model_class, list_entity_types
 
     if type_slug != EDGE and type_slug in list_entity_types():
         return declared_version(get_model_class(type_slug))
-    if type_slug in list_registered_edge_types():
+    if type_slug in list_registered_edge_types() or edge_declared(type_slug):
         return declared_edge_version(type_slug)
     return None
 
@@ -460,8 +471,13 @@ def upgrade_document(document: Any) -> UpgradeOutcome:
     return outcome
 
 
-def build_header(document: Any, *, using: str = "default") -> dict[str, Any]:
+def build_header(document: Any, *, using: str = "default", unversioned: bool = False) -> dict[str, Any]:
     """The ``metadata`` of a document this grid writes: the format, the spine and every type's version.
+
+    With ``unversioned``, the header of a format ``"0"`` document restated at ``"1"`` (``tap_grid.grift.
+    restamp``): what such a document's records are at, which is the spine and every type at version 1
+    (rule 11), whatever this grid is at now. The types listed are the same ones, from the same reading
+    of the document, so the exporter and the restamp cannot disagree about which types a header names.
 
     The spine version is the one the database records, and each type's is the version applied to
     this grid's rows, read from the catalog in one query (rule 6 of ``req-grift-header-versions``).
@@ -470,7 +486,7 @@ def build_header(document: Any, *, using: str = "default") -> dict[str, Any]:
 
     For the exporter, and for any producer in core or a plugin that builds a document in code.
 
-    TAP-IMPLEMENTS: req-grift-header-versions@3ea859bff2aa/1244de1460d0 (derivation) — rules 1, 2, 4 and 6: the header a
+    TAP-IMPLEMENTS: req-grift-header-versions@845735e37fe5/78c1febc624b (derivation) — rules 1, 2, 4 and 6: the header a
         document written by this grid carries, with an entry for every type the document carries
         or names.
     """
@@ -478,6 +494,12 @@ def build_header(document: Any, *, using: str = "default") -> dict[str, Any]:
     from tap_grid.models import EntityType
 
     carried = sorted(types_carried(document))
+    if unversioned:
+        return {
+            "grift_version": VERSIONED_FORMAT,
+            SPINE_VERSION_KEY: FIRST_VERSION,
+            TYPE_VERSIONS_KEY: dict.fromkeys(carried, FIRST_VERSION),
+        }
     applied = dict(EntityType.objects.using(using).filter(slug__in=carried).values_list("slug", "model_version"))
     recorded = spine_version.recorded_version(using=using)
     return {

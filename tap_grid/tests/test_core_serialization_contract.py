@@ -89,8 +89,9 @@ EXPECTED_SPINE_SURFACE = [
 EXPECTED_EDGE_COLUMNS = [
     "id",
     "entity_id",
-    "batch_id",
     "flip_map",
+    "spine_deleted_at",
+    "spine_dimensions",
     "from_entity_id",
     "to_entity_id",
     "edge_type",

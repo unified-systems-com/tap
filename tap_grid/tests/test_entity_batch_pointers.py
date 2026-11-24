@@ -26,7 +26,7 @@ from tap_grid.tests.test_grift import _batch_container, _batch_entity_id, _minim
 from tap_grid.write_guard import service_write_scope
 from tap_web.models import Panel
 
-AC = {n: pytest.mark.spec(f"req-grid-entity-batch-pointers-{n}") for n in range(1, 11)}
+AC = {n: pytest.mark.spec(f"req-grid-entity-batch-pointers-{n}") for n in range(1, 12)}
 
 _TYPE = "grid_fixtures__node"
 LINK = "PG_LINKS__grid_fixtures"
@@ -327,6 +327,20 @@ class TestSpineSurface:
         names = Entity.SPINE_FIELD_NAMES
         at = names.index("version")
         assert names[at + 1 : at + 4] == POINTERS
+
+    @AC[11]
+    @pytest.mark.django_db
+    def test_last_observed_at_has_its_own_btree_index(self) -> None:
+        # Owner ruling Q49 (Issue# 1284 - tap): indexed, accepting the cost on the observation write.
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT indexdef FROM pg_indexes WHERE tablename = 'tap_entity' AND indexname = %s",
+                ["idx_entity_last_observed_at"],
+            )
+            found = [row[0] for row in cursor.fetchall()]
+        assert len(found) == 1 and "USING btree (last_observed_at)" in found[0], found
 
     def test_observed_at_is_declared_after_updated_at(self) -> None:
         # The insert copies updated_at into last_observed_at; Django computes insert values in

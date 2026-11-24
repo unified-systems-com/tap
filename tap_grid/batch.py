@@ -341,9 +341,10 @@ def get_entity_batches(entity_id: uuid.UUID) -> list[Batch]:
 def batch_counts(batch_id: uuid.UUID | str, *, batch: Batch | None = None) -> dict[str, int]:
     """How many nodes/edges a batch added, deleted (tombstoned), and purged.
 
-    ``batch_id`` is stamped on the typed rows (``n.data.batch_id``), not the
-    Entity spine, so the node questions go through Gryphon; the edge count is a
-    direct ``Edge`` scan; purges survive only in the batch's recorded removal
+    The batch that last changed a row is the spine's ``last_changed_batch_id``
+    (req-grid-entity-batch-pointers); the node questions go through Gryphon and the
+    edge count is a direct ``Edge`` scan. A retirement is a change, so the deletes are
+    the nodes the batch retired; purges survive only in the batch's recorded removal
     manifest (hard-deleted rows are gone). These scans are not free — callers
     rendering many batches in a list should prefer ``batch_summary(...,
     with_counts=False)``.
@@ -358,7 +359,7 @@ def batch_counts(batch_id: uuid.UUID | str, *, batch: Batch | None = None) -> di
     def _added(*, deleted: bool) -> list[dict[str, Any]]:
         clause = "IS NOT NULL" if deleted else "IS NULL"
         envelope = execute_gryphon_raw(
-            f"MATCH (n) WHERE n.data.batch_id = $bid AND n.deleted_at {clause} RETURN n",
+            f"MATCH (n) WHERE n.last_changed_batch_id = $bid AND n.deleted_at {clause} RETURN n",
             {"bid": bid},
             layer="extended",
         )
@@ -375,7 +376,7 @@ def batch_counts(batch_id: uuid.UUID | str, *, batch: Batch | None = None) -> di
 
     return {
         "nodes": len(added),
-        "edges": Edge.objects.filter(batch_id=bid).count(),
+        "edges": Edge.objects.filter(entity__last_changed_batch_id=bid).count(),
         "deletes": len(tombstoned),
         "purges": len(purges),
         "node_types": len(Counter(n.get("entity_type") for n in added)),

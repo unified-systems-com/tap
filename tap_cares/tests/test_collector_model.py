@@ -58,13 +58,14 @@ class TestCreateRequired:
         # reconcile run-configuration fields the reconcile verb reads (req-grid-reconcile-verb-2/-3,
         # Issue# 652 - tap): authority (off by default) and budget (null = the class default).
         declared = {f.name for f in Collector._meta.get_fields() if hasattr(f, "attname")}
-        # entity, id, batch_id, flip_map come from BaseModel; the rest are the model's own.
+        # entity, id, flip_map and the spine copies come from BaseModel; the rest are the model's own.
         own = declared - {
             "id",
             "entity",
             "entity_id",
-            "batch_id",
             "flip_map",
+            "spine_deleted_at",
+            "spine_dimensions",
         }
         assert own == {"name", "description", "collector_registry", "reconcile_authority", "reconcile_budget"}
 

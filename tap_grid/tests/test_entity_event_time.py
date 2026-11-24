@@ -1018,3 +1018,51 @@ class TestTheDeclarationCheck:
         for cls in (Arrangement, Elevation, Layout, Projection, Page, Panel, Dimension, Keystone, Search, TapFile):
             assert cls.EVENT_TIME is NO_EVENT_TIME, cls
         assert TapDirectory.EVENT_TIME is NO_EVENT_TIME
+
+
+# ---------------------------------------------------------------------------
+# Rule 31: a run of our own collecting has no event time (req-grid-entity-event-time-39)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def source_run_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``PgNode`` standing in for a type that records a scan the source performed: its own start and
+    finish, declared ``Interval(<started>, "occurred", end=<finished>)`` as rule 31 prescribes."""
+    monkeypatch.setattr(PgNode, "EVENT_TIME", Interval("description", "occurred", end="kind"), raising=False)
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-entity-event-time-39")
+class TestOurRunsHaveNoEventTime:
+    def test_batch_and_collection_job_declare_none(self) -> None:
+        from tap_cares.models import CollectionJob
+        from tap_grid.models import Batch
+
+        assert Batch.EVENT_TIME is NO_EVENT_TIME
+        assert CollectionJob.EVENT_TIME is NO_EVENT_TIME
+
+    def test_a_closed_batch_keeps_the_three_columns_and_tap_time_empty(self) -> None:
+        from tap_grid.batch import close_batch, create_batch
+
+        batch = create_batch(source="test:event-time-39")
+        close_batch(batch)
+        batch.refresh_from_db()
+        assert batch.started_at is not None and batch.closed_at is not None
+        assert _four(batch.entity_id) == (None, None, None, None)
+
+    def test_a_finished_collection_job_keeps_the_three_columns_and_tap_time_empty(self) -> None:
+        from tap_cares.models import CollectionJob, CollectionJobStatus
+
+        job = CollectionJob.objects.create(name="event-time-39", description="", enqueued_at=_utc(2026, 11, 1))
+        assert _four(job.entity_id) == (None, None, None, None)
+        job.status = CollectionJobStatus.SUCCESSFUL
+        job.started_at = _utc(2026, 11, 1, 0, 1)
+        job.finished_at = _utc(2026, 11, 1, 0, 9)
+        job.save(update_fields=["status", "started_at", "finished_at"])
+        job.save()  # and a whole-row save
+        assert _four(job.entity_id) == (None, None, None, None)
+
+    def test_a_run_the_source_performed_has_its_pair_and_occurred(self, source_run_interval: None) -> None:
+        result = _create({"name": "scan", "description": "2026-11-01T02:00:00Z", "kind": "2026-11-01T02:40:00Z"})
+        assert _four(result.entity_id) == (_utc(2026, 11, 1, 2), _utc(2026, 11, 1, 2, 40), "occurred", "second")

@@ -2,7 +2,20 @@
 
 import pytest
 
+from tap_grid.model_version import _writing_applied_version
 from tap_grid.models import EntityType, EntityTypeKind
+
+
+@pytest.fixture
+def empty_catalog(db):
+    """A type catalog with no row, for a test that asserts on the whole of it.
+
+    Every test database is seeded with core's catalog rows (``tap.pytest_harness``), some above
+    version 1, and a row above version 1 is deleted only by an applied-version writer
+    (req-grid-entity-model-version rule 3). The delete is the test's own and is rolled back with it.
+    """
+    with _writing_applied_version():
+        EntityType.objects.all().delete()
 
 
 @pytest.mark.django_db
@@ -14,8 +27,7 @@ class TestListEntityTypes:
         slugs = [t["slug"] for t in data]
         assert "server" in slugs
 
-    def test_empty(self, logged_in_client):
-        EntityType.objects.all().delete()
+    def test_empty(self, empty_catalog, logged_in_client):
         assert logged_in_client.get("/api/v1/entity-types/").json() == []
 
     def test_no_cap_denied_403(self, no_cap_client):
@@ -44,8 +56,7 @@ class TestEntityTypeKind:
         assert entry["kind"] == "node"
 
     @pytest.mark.spec("req-grid-entity-type-kind")
-    def test_filter_by_kind(self, logged_in_client):
-        EntityType.objects.all().delete()
+    def test_filter_by_kind(self, empty_catalog, logged_in_client):
         EntityType.objects.create(slug="server", name="Server", kind=EntityTypeKind.NODE)
         EntityType.objects.create(slug="RUNS_ON", name="Runs On", kind=EntityTypeKind.EDGE)
 
@@ -64,7 +75,7 @@ class TestEntityTypeKind:
         assert logged_in_client.get("/api/v1/entity-types/?kind=nodes").json() == []
 
     @pytest.mark.spec("req-grid-entity-type-kind")
-    def test_unclassified_rows_are_not_claimed_as_nodes(self, logged_in_client):
+    def test_unclassified_rows_are_not_claimed_as_nodes(self, empty_catalog, logged_in_client):
         # Rows written before the field existed keep "" until their writer next
         # runs; a consumer must be able to tell that apart from a known node.
         EntityType.objects.create(slug="legacy", name="Legacy")

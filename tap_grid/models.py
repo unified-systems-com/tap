@@ -33,7 +33,7 @@ from tap_grid.event_time import (
     derive,
     derive_for_instance,
 )
-from tap_grid.history import TapHistoricalRecords, _get_history_user
+from tap_grid.history import HistoricalBatchRecord, TapHistoricalRecords, _get_history_user
 from tap_grid.natural_key import (
     KEYLESS,
     PREFIX_INDEX_CHARS,
@@ -689,6 +689,9 @@ class Entity(models.Model):
                 OpClass(Left("natural_key", PREFIX_INDEX_CHARS), name="text_pattern_ops"),
                 name="idx_entity_natural_key_prefix",
             ),
+            # "Not seen since" (req-grid-entity-batch-pointers rule 12): indexed by owner ruling Q49
+            # (Issue# 1284 - tap), accepting its cost on every observation write.
+            models.Index(fields=["last_observed_at"], name="idx_entity_last_observed_at"),
         ]
 
     # ------------------------------------------------------------------
@@ -1201,7 +1204,7 @@ def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) ->
     pointer (req-grid-entity-batch-pointers rule 6); outside it (a named below-pipeline writer, a
     test fixture) there is no batch to name and the pointers are left as they are.
 
-    TAP-IMPLEMENTS: req-grid-entity-batch-pointers@856ecf5f7f82/b5ccd9e8f09e (derivation) — rules 2, 5 and 6: the
+    TAP-IMPLEMENTS: req-grid-entity-batch-pointers@c1f78f4f57a4/b5ccd9e8f09e (derivation) — rules 2, 5 and 6: the
         one decision of which batch a changing save names on the spine, which ``BaseModel.save``
         writes in the statement that increments ``version``, as changer and observer at once.
     """
@@ -1219,6 +1222,12 @@ def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) ->
             )
         return None
     return active_batch_id if isinstance(active_batch_id, uuid.UUID) else uuid.UUID(str(active_batch_id))
+
+
+#: The one history declaration every BaseModel subclass inherits. A module name of its own, so core
+#: can write a history row itself where no save happens: the final row a retirement writes
+#: (req-grid-entity-spine-copies rule 13, tap_grid.spine_copies).
+BASE_HISTORY = TapHistoricalRecords(get_user=_get_history_user, inherit=True, bases=[HistoricalBatchRecord])
 
 
 class BaseModel(models.Model):
@@ -1358,24 +1367,39 @@ class BaseModel(models.Model):
     # opts out with TRACK_HISTORY = False (req-grid-history-optout; TapHistoricalRecords
     # skips it). No retention limits yet: retention policy and per-app / grid-wide scope
     # remain backlogged under req-grid-history-scope.
-    history = TapHistoricalRecords(get_user=_get_history_user, inherit=True)
+    #
+    # Each history row says which batch produced it in its own `batch_id` column, declared on the
+    # history model's base (`HistoricalBatchRecord`), not copied from the typed row: the typed
+    # `batch_id` was removed with the spine copies (Issue# 1288 - tap) and the spine's batch
+    # pointers name only the last writer (req-grid-entity-batch-pointers rules 7 and 10).
+    history = BASE_HISTORY
 
     entity = models.OneToOneField(
         Entity,
         on_delete=models.CASCADE,
         related_name="%(class)s",
     )
-    batch_id = models.CharField(
-        max_length=36,
-        blank=True,
-        default="",
-        db_index=True,
-        help_text="UUIDv7 of the batch this change was included in.",
-    )
     flip_map = models.JSONField(
         default=dict,
         blank=True,
         help_text="FLIP field-path-to-batch-id map: tracks which batch last set each provenance-tracked field.",
+    )
+    # Copies of two values of this row's Entity (req-grid-entity-spine-copies), for a future database
+    # policy that decides from this table's own columns. The database keeps them in step: a trigger
+    # on the entity table pushes a change, a trigger on this table fills them on every insert and
+    # update (tap_grid.spine_copies). No Python code writes them; the write guard refuses a write that
+    # names one. The entity row is the authority; read it, not these.
+    spine_deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Copy of Entity.deleted_at, kept by the database. Empty while the entity is live.",
+    )
+    spine_dimensions = models.JSONField(
+        default=dict,
+        blank=True,
+        editable=False,
+        help_text="Copy of Entity.dimensions in the stored shape, kept by the database.",
     )
 
     class Meta:
@@ -1748,6 +1772,10 @@ class BaseModel(models.Model):
         # save names its batch on the spine, the pair is written empty, so a pair is never left
         # standing for a batch that did not state one (rule 5).
         collected: dict[str, Any] = kwargs.pop("_collected", None) or {"collected_start": None, "collected_end": None}
+        # The GRIFT envelope of a node the import replaces: its dimensions reach the spine after this
+        # save, in the importer's post-pass, and the history row this save writes records the map
+        # the write settles on, not the one the row held before (req-grid-entity-spine-copies rule 12).
+        spine_intent: dict[str, Any] | None = kwargs.pop("_spine_intent", None)
         self._prepare_for_write_checked()
         if not skip_validation:
             self.full_validate()
@@ -1756,18 +1784,14 @@ class BaseModel(models.Model):
         if entity_type is None:
             raise ImproperlyConfigured(f"{self.__class__.__name__} must declare ENTITY_TYPE: ClassVar[str].")
 
-        # FLIP: propagate batch_id from CallerContext and update flip_map.
-        # Both happen before the DB write so they are atomic with field changes.
+        # FLIP: update flip_map from the batch in the CallerContext, before the DB write so it is
+        # atomic with the field changes. The history row names the same batch (HistoricalBatchRecord).
         from tap_grid.caller_context import get_caller_context
         from tap_grid.flip import update_flip_map
+        from tap_grid.spine_copies import stash_history_copies
 
         ctx = get_caller_context()
         active_batch_id = ctx.batch_id if ctx else None
-
-        # Stamp the model's batch_id field with the active batch (replaces the
-        # old pre_save signal that did the same thing).
-        if active_batch_id:
-            self.batch_id = active_batch_id
 
         # The spine's batch pointers (req-grid-entity-batch-pointers). A save is a change, so the
         # batch that makes it is named on the row as the last to change and the last to observe
@@ -1820,10 +1844,10 @@ class BaseModel(models.Model):
                     # The window the creating batch stated, if it named itself on the row.
                     **(collected if pointer_batch is not None else {}),
                 )
-                super().save(*args, **kwargs)
+                with stash_history_copies(self, self.entity.deleted_at, self.entity.dimensions, active_batch_id):
+                    super().save(*args, **kwargs)
         else:
             self._confirm_entity()
-            super().save(*args, **kwargs)
 
             if spine_just_created:
                 # The pipeline pre-created the Entity moments ago (services.py
@@ -1833,7 +1857,44 @@ class BaseModel(models.Model):
                 # logical create operation, so skip spine_updates to preserve
                 # the single-bump invariant — exactly one version increment
                 # per logical mutation.
+                with stash_history_copies(self, self.entity.deleted_at, self.entity.dimensions, active_batch_id):
+                    super().save(*args, **kwargs)
                 return
+
+            # The event time and the `tap.time` dimension this save writes to the spine, worked out
+            # before the typed row is saved, so the history row the save writes records the map the
+            # write settles on (req-grid-entity-spine-copies rule 12). The values a partial save
+            # leaves out are read back from the row; this save does not write those columns, so the
+            # row holds the same values before and after it.
+            event_updates: dict[str, Any] = {}
+            time_update: Any = None
+            stored_dims = self.entity.dimensions or {}
+            settled_dims: dict[str, Any] = dict(stored_dims)
+            new_dims: dict[str, Any] = dict(stored_dims)
+            if _stores_event_fields(self, kwargs.get("update_fields")):
+                if kwargs.get("update_fields") is not None:
+                    event_time = self._stored_event_time(kwargs["update_fields"])
+                event_updates = {
+                    name: value
+                    for name, value in event_time.as_columns().items()
+                    if getattr(self.entity, name) != value
+                }
+                # The kind, as the row's `tap.time` dimension, in the spine statement below: set where
+                # an event time was derived, removed where none was. Written only when it differs.
+                # Written as a key-level database expression, not a whole map from this instance's
+                # copy, so a dimension another writer changed since the row was read is not lost.
+                from tap_grid.dimension_map import grid_derived_update, with_grid_derived
+
+                new_dims = dict(with_grid_derived(stored_dims, event_time.as_dimensions()))
+                time_update = grid_derived_update(event_time.as_dimensions()) if new_dims != stored_dims else None
+                if time_update is not None:
+                    settled_dims = new_dims
+            if spine_intent:
+                from tap_grid.write_classification import intent_dimensions
+
+                settled_dims = intent_dimensions(spine_intent, settled_dims)
+            with stash_history_copies(self, self.entity.deleted_at, settled_dims, active_batch_id):
+                super().save(*args, **kwargs)
 
             # Spine sync. BaseModel is the source of truth for `name` (via
             # get_name()); Entity.name is a subordinate materialized
@@ -1870,29 +1931,11 @@ class BaseModel(models.Model):
                 spine_updates["natural_key"] = new_key
             # Event time, in this same statement, written only where it changed. A partial save
             # that stores none of the declared fields leaves it alone: the unsaved in-memory
-            # values are not what the row holds.
-            event_updates: dict[str, Any] = {}
-            if _stores_event_fields(self, kwargs.get("update_fields")):
-                if kwargs.get("update_fields") is not None:
-                    event_time = self._stored_event_time(kwargs["update_fields"])
-                event_updates = {
-                    name: value
-                    for name, value in event_time.as_columns().items()
-                    if getattr(self.entity, name) != value
-                }
-                # The kind, as the row's `tap.time` dimension, in this same statement: set where an
-                # event time was derived, removed where none was. Written only when it differs.
-                # Written as a key-level database expression, not a whole map from this instance's
-                # copy, so a dimension another writer changed since the row was read is not lost.
-                from tap_grid.dimension_map import grid_derived_update, with_grid_derived
-
-                stored_dims = self.entity.dimensions or {}
-                new_dims = dict(with_grid_derived(stored_dims, event_time.as_dimensions()))
-                time_update = grid_derived_update(event_time.as_dimensions()) if new_dims != stored_dims else None
-                spine_updates.update(event_updates)
-                if time_update is not None:
-                    spine_updates["dimensions"] = time_update
-                    event_updates["dimensions"] = new_dims
+            # values are not what the row holds. Worked out above, before the typed row was saved.
+            spine_updates.update(event_updates)
+            if time_update is not None:
+                spine_updates["dimensions"] = time_update
+                event_updates["dimensions"] = new_dims
             Entity.objects.filter(pk=self.entity_id).update(**spine_updates)
             for name, value in event_updates.items():
                 setattr(self.entity, name, value)
@@ -2326,6 +2369,12 @@ class Batch(BaseModel):
         "an event: a batch is something TAP did, so there is no source object for a later run to recognise"
     )
     INTERNAL_ONLY: ClassVar[bool] = True
+    # No event time (req-grid-entity-event-time rule 1): a batch's times are when TAP collected or
+    # wrote, which is collection and grid time, never when something happened in the world.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
+    # Version 2: the event-time declaration above, where there was none (owner ruling, Issue# 1284 - tap,
+    # 2026-11-23). No stored value changes; the step is the identity (model_links).
+    MODEL_VERSION: ClassVar[int] = 2
 
     _DESCRIPTION_JSON_SCHEMA: ClassVar[dict] = {
         "oneOf": [

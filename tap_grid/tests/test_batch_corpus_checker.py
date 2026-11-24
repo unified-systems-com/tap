@@ -65,6 +65,18 @@ def _id(obs: dict[str, Any], name: str) -> uuid.UUID:
     return built.ids[name]
 
 
+
+def _restamp_history(model: Any, entity_id: Any, batch_id: str) -> None:
+    """Move the batch on a row's latest history row written while it was live: what the checker reads
+    as the batch that last wrote the row's content."""
+    latest = (
+        model.history.filter(entity_id=entity_id, spine_deleted_at__isnull=True)
+        .order_by("-history_date", "-history_id")
+        .first()
+    )
+    assert latest is not None
+    model.history.filter(history_id=latest.history_id).update(batch_id=batch_id)
+
 class TestTheCheckerRejects:
     def test_a_correct_run_passes(self, observed: dict[str, Any]) -> None:
         assert _check(observed) == []
@@ -204,13 +216,15 @@ class TestTheSecondPassRejects:
         ), failures
 
     def test_a_typed_row_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
-        Panel.all_objects.filter(entity_id=_id(observed, "A")).update(batch_id=str(uuid.uuid7()))
+        # The batch that wrote a version is on its history row since the typed batch_id was removed
+        # (Issue# 1288 - tap).
+        _restamp_history(Panel, _id(observed, "A"), str(uuid.uuid7()))
         failures = _check(observed)
         assert any("A is stamped with batch" in f for f in failures), failures
 
     def test_a_live_edge_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
         """Codex, PR# 637 - tap: an edge is a typed row with a batch stamp too."""
-        Edge.all_objects.filter(entity_id=_id(observed, "e")).update(batch_id=str(uuid.uuid7()))
+        _restamp_history(Edge, _id(observed, "e"), str(uuid.uuid7()))
         failures = _check(observed)
         assert any("e is stamped with batch" in f for f in failures), failures
 
@@ -234,7 +248,7 @@ class TestTheSecondPassRejects:
             )
             == []
         )
-        Panel.all_objects.filter(entity_id=built.ids["o1"]).update(batch_id=str(built.ids["b2"]))
+        _restamp_history(Panel, built.ids["o1"], str(built.ids["b2"]))
         failures = check(
             *args,
             snapshot(),

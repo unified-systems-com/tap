@@ -1039,7 +1039,7 @@ def purge_node(
         # function and the lock holds for the rest of the transaction so the
         # subsequent cascade reads + hard deletes run on a stable view.
         if entity_expected_version is not None:
-            entity = Entity.objects.select_for_update().filter(pk=target_uuid).first()
+            entity = Entity.objects.select_for_update(no_key=True).filter(pk=target_uuid).first()
             if entity is None:
                 raise ServiceVersionConflictError(
                     entity_expected_version=entity_expected_version,
@@ -1195,7 +1195,7 @@ def purge_edge(
         # before any reads or writes; the lock holds for the rest of the
         # transaction.
         if entity_expected_version is not None:
-            entity = Entity.objects.select_for_update().filter(pk=target_uuid).first()
+            entity = Entity.objects.select_for_update(no_key=True).filter(pk=target_uuid).first()
             if entity is None:
                 raise ServiceVersionConflictError(
                     entity_expected_version=entity_expected_version,
