@@ -95,22 +95,28 @@ class TestFullHistoryFlow:
 
 @pytest.mark.django_db
 class TestBatchIdFieldExists:
-    """Tests for batch_id field on BaseModel."""
+    """The batch a save rides is named on the spine, not on the typed row.
 
-    def test_batch_id_field_exists_on_character(self):
-        """ConstrainedSource model has batch_id field populated by CallerContext."""
+    The typed ``batch_id`` was removed with the base-model release (Issue# 1288 - tap); the batch
+    that last changed a row is ``Entity.last_changed_batch_id`` (req-grid-entity-batch-pointers).
+    """
+
+    def test_the_typed_row_has_no_batch_id_and_the_spine_names_the_batch(self):
+        """ConstrainedSource carries no typed batch_id; the CallerContext batch lands on its spine row."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         with batch_ctx(source="test:batch-id") as batch_id:
             entity = make_spine_entity("grid_fixtures__constrained_source", name="Batch ID Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
-        assert hasattr(character, "batch_id")
-        assert character.batch_id == batch_id
+        assert "batch_id" not in {f.name for f in ConstrainedSource._meta.concrete_fields}
+        character.entity.refresh_from_db()
+        assert str(character.entity.last_changed_batch_id) == batch_id
+        assert str(character.entity.last_observed_batch_id) == batch_id
 
     @pytest.mark.spec("req-grid-service-batch-all-1")
     def test_batch_id_updated_on_subsequent_save(self):
-        """batch_id field is updated to the latest CallerContext batch on each save."""
+        """The spine's last-changed batch moves to the latest CallerContext batch on each changing save."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         with batch_ctx(source="test:batch-id-create") as first_batch_id:
@@ -125,9 +131,9 @@ class TestBatchIdFieldExists:
         finally:
             set_caller_context(None)
 
-        character.refresh_from_db()
-        assert character.batch_id == second_batch_id
-        assert character.batch_id != first_batch_id
+        character.entity.refresh_from_db()
+        assert str(character.entity.last_changed_batch_id) == second_batch_id
+        assert str(character.entity.last_changed_batch_id) != first_batch_id
 
 
 @pytest.mark.django_db
