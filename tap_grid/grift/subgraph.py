@@ -14,8 +14,8 @@ Lane builders mirror the spec's vocabulary 1:1:
 
   build_spine_surface(entity) -> {<all Entity-row fields, flat at top>}
   build_data_lane(typed_model) -> {<all BaseModel-row fields, including
-                                    universal description / batch_id /
-                                    flip_map and the entity_id / name
+                                    universal description / flip_map
+                                    and the entity_id / name
                                     mirrors>}
   build_display_lane(...)     -> {"tap_viz": {<computed-for-render>}}
 
@@ -114,8 +114,9 @@ def build_data_lane(typed_model: BaseModel | None) -> dict[str, Any]:
     Per spec-grift-envelope § Data Lane Rule:
     - Reads per-model FIELD_CRUD_SCHEMA fields (the typed surface the model
       declares as service-writeable).
-    - Plus the universal BaseModel fields (`description`, `batch_id`,
-      `flip_map`).
+    - Plus the universal BaseModel fields (`description`, `flip_map`).
+      There is no typed `batch_id` (removed, Issue# 1288 - tap); the batch
+      pointers are spine fields.
     - Includes the required `entity_id` and `name` mirrors of top-level
       values (req-grift-envelope-denorm-3 enforces mirror equality).
     - Excludes `entity_type` (it's a spine field, surfaces only at top).
@@ -253,7 +254,7 @@ def _build_edge_data_lane(edge: Edge) -> dict[str, Any]:
 
     Edges have a small fixed shape: the two endpoint FKs, the immutable
     edge_type, and the properties JSONField. Universal BaseModel fields
-    (description, batch_id, flip_map) are included; mirrors of entity_id
+    (description, flip_map) are included; mirrors of entity_id
     and name follow the same rule as node envelopes.
     """
     result: dict[str, Any] = {

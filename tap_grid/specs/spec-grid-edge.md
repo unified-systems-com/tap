@@ -110,7 +110,7 @@ Fields:
 | `edge_type` | CharField(max_length=255, db_index=True) | Type slug (e.g. `MENTORS`, `APPLIES_TO`). No FK — decoupled for speed |
 | `properties` | JSONField(default=dict, blank=True) | JSON payload for this edge instance; may be any valid JSON unless constrained by `property_schema` |
 
-Inherited from `BaseModel`: `entity` (OneToOneField to spine), `originating_grid_id`, `batch_id`, `created_at`, `updated_at`.
+Inherited from `BaseModel`: `entity` (OneToOneField to spine), `flip_map`, and the spine copies `spine_deleted_at` and `spine_dimensions` (`req-grid-entity-spine-copies`). `originating_grid_id`, `created_at`, `updated_at` and the batch pointers (`last_changed_batch_id`, `last_observed_batch_id`, `req-grid-entity-batch-pointers`) live on the edge's backing `Entity`; the typed `batch_id` was removed with the base-model release (Issue# 1288 - tap), and each history row names its batch in its own `batch_id`.
 
 Compound indexes on `(from_entity, edge_type)` and `(to_entity, edge_type)` support the primary traversal patterns — "all edges of type X leaving node A" and "all edges of type X arriving at node B" — without full table scans.
 

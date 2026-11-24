@@ -392,7 +392,8 @@ documentary rule is a rule that is already broken and does not say so.
 
 Two mechanisms that could have conflicted with a blanket block, and do not:
 
-- **Batch membership is not an edge.** `batch_id` is stamped on typed rows; the core
+- **Batch membership is not an edge.** The batch is recorded on the spine (`Entity.last_changed_batch_id`
+  and `Entity.last_observed_batch_id`) and on each history row's `batch_id`; the core
   `PRODUCED_BATCH` edge type targets `batch`, not `dimension`. GRIFT can import dimension nodes
   into a batch with inbound edges blocked.
 - **No edge type in the tree names `dimension` as a source or target** as of this writing.

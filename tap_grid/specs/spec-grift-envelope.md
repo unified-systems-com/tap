@@ -163,9 +163,13 @@ Status: `In Development`
 
 **Only fields stored on the `Entity` row are surfaced at the top level
 of the envelope.** Universal cross-cutting fields stored elsewhere (e.g.
-`batch_id` / `flip_map` on BaseModel — see `req-grid-flip-map-3`
-"Canonical Object Locality") are *not* surfaced; they live in their
-storage lane (`data` in v0).
+`flip_map` on BaseModel — see `req-grid-flip-map-3` "Canonical Object
+Locality") are *not* surfaced; they live in their storage lane (`data` in
+v0). The batch pointers are on the `Entity` row
+(`last_changed_batch_id`, `last_observed_batch_id`,
+`req-grid-entity-batch-pointers`), so they are spine fields; the typed
+`batch_id` that this paragraph once named with `flip_map` was removed with
+the base-model release (Issue# 1288 - tap).
 
 The canonical set and order of spine fields is defined in
 `spec-grid-entity` § Canonical Spine Surface
@@ -185,7 +189,7 @@ semantic (debate which fields are "important enough" to surface).
 | --- | --- | :---: | --- |
 | req-grift-envelope-spine-1 | Entity-Row Only | Proposed | A field at the top level of an envelope corresponds 1:1 to a field on the `Entity` row, in the canonical order defined by `req-grid-entity-spine-surface`. |
 | req-grift-envelope-spine-2 | All Entity Fields Surface | Proposed | Every persisted field on the `Entity` row appears at top level. |
-| req-grift-envelope-spine-3 | No Non-Entity Fields At Top | Proposed | Fields stored on BaseModel rows (e.g. `description`, `tags`, `batch_id`, `flip_map`) never appear at top level. |
+| req-grift-envelope-spine-3 | No Non-Entity Fields At Top | Proposed | Fields stored on BaseModel rows (e.g. `description`, `tags`, `flip_map`) never appear at top level. |
 | req-grift-envelope-spine-4 | Name Is Descriptive, Not An Identifier | Proposed | `name` is human-readable metadata. The stable identifier is `entity_id`. Callers and joins must not depend on `name` immutability. |
 
 ## Data Lane Rule
@@ -202,15 +206,18 @@ know what to expect inside.
 
 - The fields inside `data` correspond to the per-model class's
   `FIELD_CRUD_SCHEMA` plus the universal BaseModel fields (`description`,
-  `batch_id`, `flip_map`).
+  `flip_map`). The spine copies (`spine_deleted_at`, `spine_dimensions`)
+  are not in it (`req-grid-entity-spine-copies` rule 15), and there is no
+  typed `batch_id` since the base-model release (Issue# 1288 - tap): the
+  batch pointers are spine fields.
 - `data` contains required `entity_id` and `name` mirrors of the
   top-level values (see [Denormalized Field Mirroring](#denormalized-field-mirroring)).
 - For nodes, `data` typically contains: `entity_id` (mirror), `name`
   (mirror), `description`, model-specific scalars, `tags`, model-specific
-  JSON blobs, `batch_id`, `flip_map`.
+  JSON blobs, `flip_map`.
 - For edges, `data` typically contains: `entity_id` (mirror), `name`
   (mirror), `description`, `from_entity_id`, `to_entity_id`,
-  `edge_type`, `properties`, `batch_id`, `flip_map`.
+  `edge_type`, `properties`, `flip_map`.
 - `data.entity_type` is **not** present (it's a spine field; surfaces only at top level).
 
 ### Acceptance Criteria
@@ -495,7 +502,7 @@ this spec, per the project's no-messy-specs discipline.
 - **Additional top-level lanes for history, provenance, perspectives,
   alternative views, etc.** The envelope shape is extensible; new
   top-level lanes can be added by demand-driven specs without breaking
-  v0 callers. FLIP / `batch_id` / history embedding all become candidates
+  v0 callers. FLIP / per-version batch (the history row's `batch_id`) / history embedding all become candidates
   once there's a real need. The exact naming, contents, and timing will
   be settled by those future specs.
 - **Per-field cost-tier markers on BaseModel.** A way to flag specific
