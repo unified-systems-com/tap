@@ -396,3 +396,72 @@ def test_scan_plugin_fingerprints_a_dependency_binary_outside_the_plugin_tree(tm
     (venv_bin / "tool").write_bytes(b"\x7fELF ... sodium_init ... a console script the dependency installed")
     report = crypto_bom.scan_plugin(plugin, extra_native_roots=[venv_bin / "tool"])
     assert any(f.provider == "libsodium" and f.artifact.endswith("/bin/tool") and f.is_failure for f in report.findings)
+
+
+# ---------------------------------------------------------------------------- record-held opt-out (req-fips-system-gate-opt-out)
+_OFF = {"mode": "off", "reason": "outside any authorization boundary: a visitor's own machine"}
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-1")
+def test_the_scan_runs_unless_the_record_turns_it_off(monkeypatch) -> None:
+    monkeypatch.delenv("TAP_FIPS_SYSTEM_GATE", raising=False)
+    assert crypto_bom.scan_declined("p", setting={}) is None
+    assert crypto_bom.scan_declined("p", setting={"mode": "on"}) is None
+    assert crypto_bom.scan_declined("p", setting=_OFF) == _OFF["reason"]
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-1")
+@pytest.mark.parametrize("setting", [{"mode": "off"}, {"mode": "off", "reason": "   "}, {"mode": "off", "reason": 3}, {"mode": "maybe"}])
+def test_off_needs_a_reason_and_a_known_mode(monkeypatch, setting) -> None:
+    monkeypatch.delenv("TAP_FIPS_SYSTEM_GATE", raising=False)
+    with pytest.raises(crypto_bom.GateSettingError):
+        crypto_bom.scan_declined("p", setting=setting)
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-2")
+def test_the_environment_can_only_turn_the_scan_back_on(monkeypatch) -> None:
+    monkeypatch.setenv("TAP_FIPS_SYSTEM_GATE", "required")
+    assert crypto_bom.scan_declined("p", setting=_OFF) is None
+    for value in ("off", "0", "false", "skip"):
+        monkeypatch.setenv("TAP_FIPS_SYSTEM_GATE", value)
+        with pytest.raises(crypto_bom.GateSettingError):
+            crypto_bom.scan_declined("p", setting={})
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-3")
+def test_the_gate_cli_says_why_it_skipped_and_scans_nothing(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("TAP_FIPS_MODE", "1")
+    monkeypatch.delenv("TAP_FIPS_SYSTEM_GATE", raising=False)
+    monkeypatch.setattr(crypto_bom, "_profile_gate_setting", lambda profile_id: _OFF)
+
+    def _boom():
+        raise AssertionError("the scan ran although the record turned it off")
+
+    monkeypatch.setattr(crypto_bom, "core_report", _boom)
+    assert crypto_bom.main(["--gate", "--profile", "p"]) == 0
+    out = capsys.readouterr().out
+    assert "crypto-BOM scan OFF by boot profile 'p'" in out and _OFF["reason"] in out
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-3")
+def test_a_malformed_setting_refuses_the_boot(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("TAP_FIPS_MODE", "1")
+    monkeypatch.delenv("TAP_FIPS_SYSTEM_GATE", raising=False)
+    monkeypatch.setattr(crypto_bom, "_profile_gate_setting", lambda profile_id: {"mode": "off"})
+    assert crypto_bom.main(["--gate", "--profile", "p"]) == 1
+    assert "TAP-ABORT: crypto-bom" in capsys.readouterr().err
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-2")
+def test_required_in_the_environment_scans_despite_the_record(monkeypatch) -> None:
+    monkeypatch.setenv("TAP_FIPS_MODE", "1")
+    monkeypatch.setenv("TAP_FIPS_SYSTEM_GATE", "required")
+    monkeypatch.setattr(crypto_bom, "_profile_gate_setting", lambda profile_id: _OFF)
+    ran: list[str] = []
+
+    def _gate(profile_id: str) -> tuple[int, crypto_bom.Report]:
+        ran.append(profile_id)
+        return 0, crypto_bom.Report()
+
+    monkeypatch.setattr(crypto_bom, "system_fips_gate", _gate)
+    assert crypto_bom.main(["--gate", "--profile", "p"]) == 0 and ran == ["p"]

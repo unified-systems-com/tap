@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 10 |
+| mapped | 11 |
 | unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -22,3 +22,4 @@
 | `req-fips-pedantic-install` | Implemented | Tested | — | `req-fips-pedantic-install-1`, `req-fips-pedantic-install-2` |
 | `req-fips-pin-currency` | Partial | Tested | — | `req-fips-pin-currency-2`, `req-fips-pin-currency-3`, `req-fips-pin-currency-8` |
 | `req-fips-single-openssl-core` | Implemented | Tested | — | `req-fips-single-openssl-core-1`, `req-fips-single-openssl-core-2`, `req-fips-single-openssl-core-3`, `req-fips-single-openssl-core-4` |
+| `req-fips-system-gate-opt-out` | Implemented | Tested | — | `req-fips-system-gate-opt-out-1`, `req-fips-system-gate-opt-out-2`, `req-fips-system-gate-opt-out-3` |
