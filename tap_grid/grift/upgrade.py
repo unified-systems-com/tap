@@ -32,7 +32,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tap_grid import version_links
-from tap_grid.model_version import EDGE, FIRST_VERSION, declared_edge_version, declared_version, types_carried
+from tap_grid.model_version import (
+    EDGE,
+    FIRST_VERSION,
+    declared_edge_version,
+    declared_version,
+    edge_declared,
+    types_carried,
+)
 from tap_grid.version_links import Break, RecordRefused, Step
 
 #: The format that states no versions, and the one that states them.
@@ -87,13 +94,17 @@ class UpgradeOutcome:
 
 
 def installed_version(type_slug: str) -> int | None:
-    """The version the installed code declares for a type; None for a type nothing registers."""
+    """The version the installed code declares for a type; None for a type nothing registers.
+
+    An edge type is installed when any definition declares it, a wildcard edge that states no
+    endpoints (and so registers no constraint) included; its version is 1 where it states none.
+    """
     from tap_grid.constraints import list_registered_edge_types
     from tap_grid.registry import get_model_class, list_entity_types
 
     if type_slug != EDGE and type_slug in list_entity_types():
         return declared_version(get_model_class(type_slug))
-    if type_slug in list_registered_edge_types():
+    if type_slug in list_registered_edge_types() or edge_declared(type_slug):
         return declared_edge_version(type_slug)
     return None
 

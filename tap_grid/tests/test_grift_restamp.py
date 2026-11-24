@@ -10,16 +10,20 @@ from __future__ import annotations
 import copy
 import json
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from django.core.management import CommandError, call_command
 
+from tap_grid import model_version
 from tap_grid.grift import grift_import
 from tap_grid.grift.restamp import RestampRefused, metadata_span, restamp_text
-from tap_grid.grift.upgrade import upgrade_document
+from tap_grid.grift.upgrade import installed_version, upgrade_document
 from tap_grid.tests.test_entity_batch_pointers import _panel
 from tap_grid.tests.test_grift import _batch_container, _minimal_doc
+from tap_plugins.base import TapPluginConfig
 from tap_web.models import Panel
 
 FLEET = pytest.mark.spec("req-grift-header-versions-8")
@@ -107,6 +111,74 @@ def test_any_repeated_top_level_key_is_refused_by_name() -> None:
     doubled = text.rstrip().removesuffix("}") + ', "batches": ' + json.dumps(document["batches"]) + "}"
     with pytest.raises(RestampRefused, match=r"repeats the top-level key\(s\) batches"):
         restamp_text(doubled)
+
+
+# grid_fixtures' wildcard edges: no sources, no targets, no version, so they register no constraint.
+WILDCARD_EDGES = ("PG_LINKS__grid_fixtures", "PG_NESTS__grid_fixtures", "PG_OPTIONAL__grid_fixtures")
+
+
+def _wildcard_edge(edge_type: str, from_id: str, to_id: str) -> dict[str, object]:
+    return {
+        "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge", "dimensions": {}},
+        "edge": {"from_entity_id": from_id, "to_entity_id": to_id, "edge_type": edge_type, "properties": {}},
+    }
+
+
+@FLEET
+def test_a_wildcard_manifest_edge_is_installed_and_restated_at_version_1() -> None:
+    """A wildcard edge is installed although it registers no constraint (PR 1352 review): rule 11 reads it at 1."""
+    a, b = _panel("restamp-wild-a", str(uuid.uuid4())), _panel("restamp-wild-b", str(uuid.uuid4()))
+    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])  # type: ignore[index]
+    edges = [_wildcard_edge(edge_type, *ends) for edge_type in WILDCARD_EDGES]
+    text = json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=edges)]), indent=2)
+    result = restamp_text(text)
+    assert result.changed
+    assert result.header["type_versions"] == {"batch": 1, "panel": 1, **dict.fromkeys(WILDCARD_EDGES, 1)}
+    assert _outside_header(result.text) == _outside_header(text)
+
+
+@pytest.fixture
+def restored_edge_declarations() -> Iterator[None]:
+    declared, versions = set(model_version._edge_types), dict(model_version._edge_versions)
+    try:
+        yield
+    finally:
+        model_version._edge_types.clear()
+        model_version._edge_types.update(declared)
+        model_version._edge_versions.clear()
+        model_version._edge_versions.update(versions)
+
+
+def _manifest_edge(slug: str, version: int | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        slug=slug,
+        sources=None,
+        targets=None,
+        property_schema=None,
+        default_dimensions=None,
+        identity=None,
+        internal_only=False,
+        event_time=None,
+        version=version,
+    )
+
+
+@FLEET
+def test_a_manifest_edge_with_no_endpoints_is_installed_at_its_declared_version(
+    restored_edge_declarations: None,
+) -> None:
+    assert installed_version("RESTAMP_WILD_PLAIN") is None
+    edges = [_manifest_edge("RESTAMP_WILD_PLAIN", None), _manifest_edge("RESTAMP_WILD_V2", 2)]
+    TapPluginConfig._register_edges_from_manifest(SimpleNamespace(_manifest=SimpleNamespace(edges=edges)))  # type: ignore[arg-type]
+    assert installed_version("RESTAMP_WILD_PLAIN") == 1
+    assert installed_version("RESTAMP_WILD_V2") == 2
+    # A "0" document is read at version 1 whatever the installed version (rule 11), so that is what
+    # its restated header says; the import then carries the record up the declared links.
+    a, b = _panel("restamp-wild-c", str(uuid.uuid4())), _panel("restamp-wild-d", str(uuid.uuid4()))
+    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])  # type: ignore[index]
+    edge = _wildcard_edge("RESTAMP_WILD_V2", *ends)
+    result = restamp_text(json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=[edge])])))
+    assert result.header["type_versions"]["RESTAMP_WILD_V2"] == 1
 
 
 @FLEET

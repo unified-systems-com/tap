@@ -103,6 +103,10 @@ def checked_version(value: Any, where: str) -> int:
 # ---------------------------------------------------------------------------
 
 _edge_versions: dict[str, int] = {}
+#: Every edge type an installed definition declares, whatever it says of its endpoints or version. A
+#: wildcard edge (no sources, no targets) registers no constraint and often no version, so neither
+#: of the other registries names it, yet it is installed and its version is known: 1 unless stated.
+_edge_types: set[str] = set()
 
 
 def declared_version(model_cls: type) -> int:
@@ -115,6 +119,16 @@ def declared_version(model_cls: type) -> int:
 def register_edge_version(edge_type: str, version: Any) -> None:
     """Record the version an edge type's definition states, at startup. In memory only."""
     _edge_versions[edge_type] = checked_version(version, f"edge type {edge_type!r} {EDGE_VERSION_KEY}")
+
+
+def register_edge_declared(edge_type: str) -> None:
+    """Record, at startup, that an installed definition declares ``edge_type``. In memory only."""
+    _edge_types.add(edge_type)
+
+
+def edge_declared(edge_type: str) -> bool:
+    """Whether an installed definition declares ``edge_type``, endpoints and version stated or not."""
+    return edge_type in _edge_types or edge_type in _edge_versions
 
 
 def edge_version_declared(edge_type: str) -> bool:
