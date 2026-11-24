@@ -935,7 +935,7 @@ jobs:
           from django.apps import apps
           root = \"tap_plugin.\" + os.environ[\"PLUGIN_SLUG\"]
           print(\"TAP-LABELS:\", \" \".join(sorted(a.label for a in apps.get_app_configs() if a.name == root or a.name.startswith(root + \".\"))))
-          "' | sed -n '/^TAP-LABELS:/{s/^TAP-LABELS: *//p;q;}')
+          "' | awk '/^TAP-LABELS:/ && !seen { sub(/^TAP-LABELS: */, ""); print; seen = 1 }')
           read -r -a label_list <<< "$labels"
           if [ "${#label_list[@]}" = 0 ]; then
             echo "::error::no installed app is tap_plugin.$PLUGIN_SLUG or below it — nothing to check, so this fails closed"

@@ -980,6 +980,7 @@ case "$*" in
     echo "a boot log line on stdout"
     [ -n "${STUB_LABELS+x}" ] && echo "TAP-LABELS: $STUB_LABELS"
     [ -n "${STUB_SECOND_LABELS+x}" ] && echo "TAP-LABELS: $STUB_SECOND_LABELS"
+    [ -n "${STUB_TRAILING_LINES+x}" ] && seq 1 "$STUB_TRAILING_LINES"
     echo "a log line printed after the labels"
     exit 0 ;;
   *"manage.py makemigrations"*)
@@ -1129,3 +1130,14 @@ def test_only_the_first_marked_line_names_the_labels(tmp_path: Path) -> None:
     assert step_out == "labels=grid_fixtures\n"
     checks = [c for c in calls if "makemigrations" in c]
     assert len(checks) == 1 and "other_app" not in checks[0]
+
+
+def test_output_after_the_marker_cannot_break_the_pipe(tmp_path: Path) -> None:
+    """The extractor reads the whole stream: stopping at the first marker would leave the
+    producer writing into a closed pipe, and under ``pipefail`` the step would die with 141
+    (seen on the server for PR# 1352 - tap, where the stub's trailing line was enough)."""
+    code, output, step_out, _ = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures", STUB_TRAILING_LINES="200000"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"
