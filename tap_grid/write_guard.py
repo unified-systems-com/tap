@@ -359,7 +359,7 @@ def refuse_spine_copies(operation: str, model_label: str, fields: Iterable[str] 
     test harness's hatch too. A save that writes every column names none, and whatever the object
     held is overruled by the trigger in the same statement (rule 5).
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/47fef3c226bc (enforcement) — rule 6: no Python
+    TAP-IMPLEMENTS: req-grid-entity-spine-copies@394a78e39a5d/47fef3c226bc (enforcement) — rule 6: no Python
         writer may write a spine copy.
     """
     if fields is None:
