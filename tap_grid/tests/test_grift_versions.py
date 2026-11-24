@@ -4,8 +4,11 @@ Specs: ``req-grid-entity-model-version`` (the chain of versions, and import),
 ``req-grid-entity-spine-version`` rules 3 to 6 in ``tap_grid/specs/spec-grid-entity.md``, and
 ``req-grift-header-versions`` in ``tap_grid/specs/spec-grift-v0.md``.
 
-No real type is above version 1, so a test raises one: it declares a greater version on an
-installed type for the length of the test and declares the links that version needs.
+A document states each type at the version this core installs and the spine at the spine version
+this core installs, so that nothing is upgraded unless a test says so. The spine is at version 2 and
+some of core's own types are too (the base-model release, Issue# 1288 - tap); the fixture type is at
+version 1. A test that needs a type or the spine to be newer raises it: it declares a greater version
+for the length of the test and declares the links that version needs.
 """
 
 from __future__ import annotations
@@ -47,7 +50,13 @@ PLAIN_LINK = "PG_LINKS__grid_fixtures"
 
 @pytest.fixture(autouse=True)
 def _process_state() -> Iterator[None]:
-    """Declared links and edge versions are per process; put them back after each test."""
+    """Declared links and edge versions are per process; put them back after each test.
+
+    The installed apps' links are read before the snapshot. Read lazily, once per process, they would
+    otherwise be read inside the first test that asks and then cleared with that test's own, leaving
+    every later test without core's spine and type links.
+    """
+    version_links.any_declared()
     declared, edge_versions, pending = dict(version_links._declared), dict(mv._edge_versions), dict(mv._pending)
     owed = mv._start_incomplete
     mv._pending.clear()
@@ -62,6 +71,11 @@ def _process_state() -> Iterator[None]:
         mv._pending.clear()
         mv._pending.update(pending)
         mv._start_incomplete = owed
+
+
+#: The spine version and core's type versions as installed, read before any test raises one.
+SPINE = spine_version.SPINE_VERSION
+INSTALLED = {slug: mv.declared_version(model) for slug, model in mv.core_node_types().items()}
 
 
 def _node(name: str, entity_id: str | None = None, **fields: Any) -> dict[str, Any]:
@@ -87,15 +101,18 @@ def _document(
     *,
     nodes: list[dict[str, Any]] | None = None,
     edges: list[dict[str, Any]] | None = None,
-    spine: int | None = 1,
+    spine: int | None = SPINE,
     versions: dict[str, int] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    """A document at format "1". Every type it carries is stated at 1 unless ``versions`` says otherwise."""
+    """A document at format "1", stating the installed spine and each core type at its installed version.
+
+    Every other type it carries is stated at 1, and ``versions`` overrides any of them.
+    """
     container = _batch_container(_batch_entity_id(), nodes=nodes or [], edges=edges or [])
     container.update(extra)
     document = _minimal_doc([container])
-    stated = dict.fromkeys(sorted(mv.types_carried(document)), 1)
+    stated = {slug: INSTALLED.get(slug, 1) for slug in sorted(mv.types_carried(document))}
     stated.update(versions or {})
     document["metadata"] = {"grift_version": "1", "type_versions": stated}
     if spine is not None:
@@ -514,14 +531,15 @@ class TestKeysInReferences:
 class TestTheSpineChain:
     @SV[5]
     def test_a_newer_spine_refuses_the_document(self) -> None:
-        result = grift_import(_document(nodes=[_node("newer spine")], spine=2))
+        result = grift_import(_document(nodes=[_node("newer spine")], spine=SPINE + 1))
         assert not result.success and _codes(result) == ["version_newer"]
-        assert "spine version 2" in result.errors[0].message and "spine version 1" in result.errors[0].message
+        message = result.errors[0].message
+        assert f"spine version {SPINE + 1}" in message and f"spine version {SPINE}" in message
         assert not Entity.objects.filter(name="newer spine").exists()
 
     @SV[4]
     def test_an_older_envelope_goes_through_core_s_step(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(spine_version, "SPINE_VERSION", 2)
+        monkeypatch.setattr(spine_version, "SPINE_VERSION", SPINE + 1)
         seen: list[set[str]] = []
 
         def rename_title(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -530,14 +548,16 @@ class TestTheSpineChain:
                 envelope["name"] = envelope.pop("title")
             return envelope
 
-        version_links.declare(version_links.SPINE, {2: Step(rename_title, renames={"name": "title"})})
+        chain = dict(version_links.links_for(version_links.SPINE).links)
+        chain[SPINE + 1] = Step(rename_title, renames={"name": "title"})
+        version_links.declare(version_links.SPINE, chain)
         node = _node("spine one")
         node["entity"]["title"] = node["entity"].pop("name")
         result = grift_import(_document(nodes=[node]))
         assert result.success, result.errors
         assert Entity.objects.filter(name="spine one", entity_type=NODE).exists()
         batch = Batch.all_objects.get(entity_id=result.imported_batches[0].batch_entity_id)
-        assert batch.description_json["data"]["upgraded"] == {"spine": {"stated": 1, "installed": 2}}
+        assert batch.description_json["data"]["upgraded"] == {"spine": {"stated": SPINE, "installed": SPINE + 1}}
         # The spine's step was given envelopes and never a type's fields (rule 6).
         assert seen and all("entity_type" in keys and "description" not in keys for keys in seen)
 
@@ -548,10 +568,10 @@ class TestTheSpineChain:
         outcome = grift_upgrade.upgrade_document(document)
         assert set(outcome.upgraded) == {NODE}
         assert outcome.document["batches"][0]["nodes"][0]["entity"] == document["batches"][0]["nodes"][0]["entity"]
-        assert outcome.document["metadata"]["spine_version"] == 1
+        assert outcome.document["metadata"]["spine_version"] == SPINE
 
     def test_a_missing_spine_link_refuses_the_document(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(spine_version, "SPINE_VERSION", 2)
+        monkeypatch.setattr(spine_version, "SPINE_VERSION", SPINE + 1)
         result = grift_import(_document(nodes=[_node("no spine link")]))
         assert _codes(result) == ["version_no_link"] and "The spine" in result.errors[0].message
 
@@ -685,12 +705,23 @@ class TestTheGuardBetweenVersions:
         version_links.declare("SYNTHETIC", {2: Step(lambda fields: fields, drops=("note",), may_refuse="no level")})
         assert definition.link_problems(second, entries) == []
 
-    def test_core_declares_no_links_and_needs_none(self) -> None:
-        """Every core type and the spine are at version 1: no chain exists, and the guard asks for none."""
+    def test_core_declares_a_link_for_each_version_it_moved_and_no_other(self) -> None:
+        """Core declares chains for the spine and for its types above version 1, and for nothing else.
+
+        The guard finds nothing missing, and each chain has one link for every version after the
+        first, up to the installed one.
+        """
         from tap.guards.model_version import core_problems
 
         assert core_problems() == []
-        assert not any(slug for slug in version_links._declared if slug != "synthetic")
+        moved = {slug: version for slug, version in INSTALLED.items() if version > 1}
+        expected = {version_links.SPINE: SPINE, **moved} if SPINE > 1 else moved
+        core_chains = {
+            slug: sorted(version_links.links_for(slug).links)
+            for slug in version_links._declared
+            if slug == version_links.SPINE or slug in INSTALLED
+        }
+        assert core_chains == {slug: list(range(2, version + 1)) for slug, version in expected.items()}
 
     def test_links_are_found_in_an_app_s_model_links_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sys
@@ -799,8 +830,10 @@ class TestStepsOnUnvalidatedRecords:
         assert not PgNode.objects.filter(entity__name="shape").exists()
 
     def test_a_header_that_is_not_an_object_of_versions_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(spine_version, "SPINE_VERSION", 2)
-        version_links.declare(version_links.SPINE, {2: Step(lambda envelope: envelope)})
+        monkeypatch.setattr(spine_version, "SPINE_VERSION", SPINE + 1)
+        chain = dict(version_links.links_for(version_links.SPINE).links)
+        chain[SPINE + 1] = Step(lambda envelope: envelope)
+        version_links.declare(version_links.SPINE, chain)
         document = _document(nodes=[_node("header")])
         document["metadata"]["type_versions"] = ["not", "an", "object"]
         outcome = grift_upgrade.upgrade_document(copy.deepcopy(document))
