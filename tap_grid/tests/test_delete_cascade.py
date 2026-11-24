@@ -238,7 +238,8 @@ class TestContainedCascade:
 
         # The warning is bounded under the locks (Codex on PR# 651 - tap): ten more outside
         # parents cost the cascade the edge endings they imply (two queries per edge, the
-        # existing rule) and at most the warning's three fixed queries beyond that.
+        # existing rule, and the final history row each ended edge gets, req-grid-entity-spine-copies
+        # rule 13) and at most the warning's three fixed queries beyond that.
         from django.db import connection
         from django.test.utils import CaptureQueriesContext
 
@@ -251,7 +252,7 @@ class TestContainedCascade:
                 assert delete_node(r_n.pk, cascade="contained").success
             return len(ctx.captured_queries)
 
-        assert _cascade_with_outside_parents(12) - _cascade_with_outside_parents(2) <= 2 * 10 + 3
+        assert _cascade_with_outside_parents(12) - _cascade_with_outside_parents(2) <= 3 * 10 + 3
 
         # The root's own parent is not a shared child: an ordinary delete of a node that has a
         # parent does not warn (Grok on PR# 651 - tap).
