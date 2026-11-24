@@ -9,6 +9,7 @@ real tables with two database sessions, ordered by observing one session blocked
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import threading
 import uuid
@@ -35,7 +36,7 @@ from tap_grid.write_classification import SYSTEM_MANAGED_FIELDS
 from tap_grid.write_guard import unguarded_write
 from tap_web.models import Panel
 
-AC = {n: pytest.mark.spec(f"req-grid-entity-spine-copies-{n}") for n in range(1, 17)}
+AC = {n: pytest.mark.spec(f"req-grid-entity-spine-copies-{n}") for n in range(1, 18)}
 COPIES = ("spine_deleted_at", "spine_dimensions")
 NODE = "grid_fixtures__node"
 LINK = "PG_LINKS__grid_fixtures"
@@ -266,7 +267,51 @@ class TestInstaller:
         report = spine_copies.install()
         assert plugin_like_model.ENTITY_TYPE in report.skipped
         assert "spine_dimensions" in report.skipped[plugin_like_model.ENTITY_TYPE]
+        assert "makemigrations tap_grid" in report.skipped[plugin_like_model.ENTITY_TYPE]
         assert not spine_copies.check().clean
+
+    @AC[17]
+    def test_a_table_without_the_columns_refuses_the_boot_naming_it_and_the_remedy(
+        self, plugin_like_model: Any, tmp_path: Path
+    ) -> None:
+        from tap_boot.orchestrator import BootError, run_boot
+        from tap_boot.record import BootRecord
+
+        table = plugin_like_model._meta.db_table
+        spine_copies.assert_columns()  # a database built from the models has them everywhere
+        assert spine_copies.missing_columns() == []
+        _sql(f"ALTER TABLE {table} DROP COLUMN spine_dimensions")
+        [gap] = spine_copies.missing_columns()
+        assert (gap.table, gap.app_label, gap.columns) == (table, "tap_grid", ("spine_dimensions",))
+        assert gap.entity_types == (plugin_like_model.ENTITY_TYPE,)
+        with pytest.raises(spine_copies.SpineColumnsMissing) as raised:
+            spine_copies.assert_columns()
+        message = str(raised.value)
+        for named in (table, "spine_dimensions", "makemigrations tap_grid", "0023_spine_copies", "requires_tap"):
+            assert named in message, named
+
+        record = BootRecord("test", base_dir=tmp_path)
+        with pytest.raises(BootError, match=re.escape(table)) as aborted:
+            run_boot(None, record=record)
+        assert aborted.value.detail == {"failed_step": "spine_columns", "tables": [table]}
+        data = json.loads(record.path.read_text(encoding="utf-8"))
+        # Refused before the first database write: the auth phase never started.
+        assert [phase["phase"] for phase in data["phases"]] == ["posture", "plugin_data", "files", "spine_columns"]
+        assert data["outcome"] != "ok"
+
+    @AC[17]
+    def test_the_command_lists_a_table_without_the_columns_and_the_remedy(self, plugin_like_model: Any) -> None:
+        import io
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        table = plugin_like_model._meta.db_table
+        _sql(f"ALTER TABLE {table} DROP COLUMN spine_deleted_at")
+        out = io.StringIO()
+        with pytest.raises(CommandError, match="makemigrations tap_grid"):
+            call_command("spine_copies", stdout=out)
+        assert f"missing columns: {table} (app tap_grid) has no column spine_deleted_at" in out.getvalue()
 
     @AC[8]
     @AC[9]

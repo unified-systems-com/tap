@@ -25,6 +25,12 @@ What this module holds:
   each of them, and would not run on a database built from the models
   (``tap_boot.model_schema``, which refuses ``RunSQL`` and builds every test database). The
   natural-key catch-up runs at the same point for the same reasons (``tap_grid.spine_natural_key``).
+- **The column gate** (rule 20). A registered typed table that exists without the two columns is a
+  plugin whose migration was generated before them. The installer skips it (a partial ``migrate``
+  can legitimately stop short of the migration that adds them), but boot refuses to start on it:
+  :func:`assert_columns`, called by the boot's ``spine_columns`` phase, raises
+  :class:`SpineColumnsMissing` naming each table and the remedy. ``manage.py spine_copies`` lists
+  the same tables.
 - **The drift check and the repair** (rule 10). The check counts, per typed table, the rows whose
   copies differ from their entity row, and the tables that lack a trigger. It reports and fails
   nothing at boot (a non-critical health probe, ``grid.spine_copies``, and ``manage.py
@@ -259,10 +265,108 @@ def _ready_tables(connection: Any, wanted: dict[str, str]) -> tuple[dict[str, st
             columns = {c.name for c in connection.introspection.get_table_description(cursor, table)}
             missing = sorted(SPINE_COPY_FIELDS - columns)
             if missing:
-                skipped[entity_type] = f"table {table} has no column {', '.join(missing)}; migrate its app"
+                skipped[entity_type] = f"table {table} has no column {', '.join(missing)}; {_remedy(entity_type)}"
                 continue
             ready[entity_type] = table
     return ready, skipped
+
+
+def _app_label(entity_type: str) -> str:
+    from tap_grid.registry import get_model_class
+
+    meta = getattr(get_model_class(entity_type), "_meta", None)
+    return str(meta.app_label) if meta is not None else "?"
+
+
+def _remedy(entity_type: str) -> str:
+    label = _app_label(entity_type)
+    return (
+        f"the migrations of app {label} predate the spine copies: regenerate them against this core "
+        f"(manage.py makemigrations {label}, depending on tap_grid 0023_spine_copies), raise the plugin's "
+        "requires_tap to this core, and migrate; boot refuses to start until then"
+    )
+
+
+@dataclass(frozen=True)
+class MissingColumns:
+    """A registered typed table that exists without one or both copy columns (rule 20)."""
+
+    table: str
+    app_label: str
+    entity_types: tuple[str, ...]
+    columns: tuple[str, ...]
+
+    def describe(self) -> str:
+        types = "" if self.entity_types == (self.table,) else f"; {', '.join(self.entity_types)}"
+        return f"{self.table} (app {self.app_label}{types}) has no column {', '.join(self.columns)}"
+
+
+def missing_columns(*, using: str = DEFAULT_DB_ALIAS) -> list[MissingColumns]:
+    """Every registered typed table that exists but lacks a copy column, one entry per table.
+
+    A table that does not exist is not listed: that is an app not migrated yet, which the critical
+    ``migrations`` and ``grid.tables`` probes report. Changes nothing; empty on a database that is
+    not PostgreSQL, which keeps no copies (rule 18).
+    """
+    connection = connections[using]
+    if connection.vendor != "postgresql":
+        return []
+    by_table: dict[str, list[str]] = {}
+    for entity_type, table in typed_tables().items():
+        by_table.setdefault(table, []).append(entity_type)
+    found: list[MissingColumns] = []
+    with connection.cursor() as cursor:
+        existing = set(connection.introspection.table_names(cursor))
+        for table, entity_types in sorted(by_table.items()):
+            if table not in existing:
+                continue
+            columns = {c.name for c in connection.introspection.get_table_description(cursor, table)}
+            missing = tuple(sorted(SPINE_COPY_FIELDS - columns))
+            if missing:
+                types = tuple(sorted(entity_types))
+                found.append(MissingColumns(table, _app_label(types[0]), types, missing))
+    return found
+
+
+class SpineColumnsMissing(RuntimeError):
+    """A registered typed table lacks the copy columns, so the instance must not start (rule 20)."""
+
+    def __init__(self, missing: list[MissingColumns]) -> None:
+        self.missing = missing
+        labels = sorted({m.app_label for m in missing})
+        both = tuple(sorted(SPINE_COPY_FIELDS))
+        by_app = []
+        for label in labels:
+            named = [
+                m.table + ("" if m.columns == both else f" (no {', '.join(m.columns)})")
+                for m in missing
+                if m.app_label == label
+            ]
+            by_app.append(f"app {label}: {', '.join(named)}")
+        tables = "; ".join(by_app)
+        super().__init__(
+            f"{len(missing)} typed table(s) lack the spine-copy columns ({', '.join(both)}) — {tables}. Every "
+            "read and write of these types names the columns, so the instance refuses to start rather than fail on them later. "
+            "The app's migrations were generated before the base-model release: regenerate them against this "
+            f"core (manage.py makemigrations {' '.join(labels)}; the new migration depends on tap_grid "
+            "0023_spine_copies), raise the plugin's requires_tap to this core, release it and migrate. "
+            "manage.py spine_copies lists these tables (req-grid-entity-spine-copies rule 20)."
+        )
+
+
+def assert_columns(*, using: str = DEFAULT_DB_ALIAS) -> None:
+    """Raise :class:`SpineColumnsMissing` when any registered typed table lacks a copy column.
+
+    The boot's ``spine_columns`` phase calls it before the first write (rule 20). A database built
+    from the models always has the columns, so every test database and every schema-from-models
+    stack passes; only a database migrated with a plugin migration that predates them fails.
+
+    TAP-IMPLEMENTS: req-grid-entity-spine-copies (enforcement) — rule 20: a typed table without the
+        columns refuses the boot, naming the table and the remedy.
+    """
+    missing = missing_columns(using=using)
+    if missing:
+        raise SpineColumnsMissing(missing)
 
 
 @dataclass
