@@ -103,6 +103,10 @@ def checked_version(value: Any, where: str) -> int:
 # ---------------------------------------------------------------------------
 
 _edge_versions: dict[str, int] = {}
+#: Every edge type an installed definition declares, whatever it says of its endpoints or version. A
+#: wildcard edge (no sources, no targets) registers no constraint and often no version, so neither
+#: of the other registries names it, yet it is installed and its version is known: 1 unless stated.
+_edge_types: set[str] = set()
 
 
 def declared_version(model_cls: type) -> int:
@@ -115,6 +119,16 @@ def declared_version(model_cls: type) -> int:
 def register_edge_version(edge_type: str, version: Any) -> None:
     """Record the version an edge type's definition states, at startup. In memory only."""
     _edge_versions[edge_type] = checked_version(version, f"edge type {edge_type!r} {EDGE_VERSION_KEY}")
+
+
+def register_edge_declared(edge_type: str) -> None:
+    """Record, at startup, that an installed definition declares ``edge_type``. In memory only."""
+    _edge_types.add(edge_type)
+
+
+def edge_declared(edge_type: str) -> bool:
+    """Whether an installed definition declares ``edge_type``, endpoints and version stated or not."""
+    return edge_type in _edge_types or edge_type in _edge_versions
 
 
 def edge_version_declared(edge_type: str) -> bool:
@@ -248,7 +262,7 @@ def complete_start_checks(*, using: str = DEFAULT_DB_ALIAS) -> bool:
     raises, and the comparison stays owed so every later write raises too. It writes nothing:
     a type with no catalog row gets one when the process next starts.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@9a71e8c91f1d/03409ba39d66 (derivation) — rule 4: a process
+    TAP-IMPLEMENTS: req-grid-entity-model-version@086e61d992ac/03409ba39d66 (derivation) — rule 4: a process
         whose start could not read the database does not go on to write unchecked; the
         comparison is made before its first write, import or export.
     """
@@ -315,7 +329,7 @@ def register_type(
 
     Raises :class:`ModelVersionAhead` where the applied version is greater than the declared one.
 
-    TAP-IMPLEMENTS: req-grid-entity-model-version@9a71e8c91f1d/5c34838bcadb (derivation) — rules 3 and 4: the one
+    TAP-IMPLEMENTS: req-grid-entity-model-version@086e61d992ac/5c34838bcadb (derivation) — rules 3 and 4: the one
         place a type's declared version meets the version applied to the grid's rows. It records
         the applied version only for a type the catalog has never held, and otherwise compares.
     """

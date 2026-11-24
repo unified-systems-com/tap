@@ -350,6 +350,36 @@ def enforce_value_rules(model_label: str, values: Mapping[str, Any]) -> None:
     )
 
 
+def refuse_spine_copies(operation: str, model_label: str, fields: Iterable[str] | None) -> None:
+    """Refuse a write that names a spine copy, whoever makes it (req-grid-entity-spine-copies rule 6).
+
+    The copies are written by the database's triggers alone. A save whose ``update_fields``, a
+    queryset update whose keyword arguments, or a bulk write whose fields name ``spine_deleted_at``
+    or ``spine_dimensions`` is refused for every writer: the pipeline, every named writer, and the
+    test harness's hatch too. A save that writes every column names none, and whatever the object
+    held is overruled by the trigger in the same statement (rule 5).
+
+    TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/47fef3c226bc (enforcement) — rule 6: no Python
+        writer may write a spine copy.
+    """
+    if fields is None:
+        return
+    from tap_grid.spine_copies import SPINE_COPY_FIELDS
+
+    named = sorted(SPINE_COPY_FIELDS.intersection(fields))
+    if not named:
+        return
+    from tap_auth.errors import UnguardedOperation
+
+    detail = f"{operation} {model_label}"
+    raise UnguardedOperation(
+        f"unguarded write: {detail} names {', '.join(named)}. The spine copies are kept by the database's "
+        "triggers alone and no Python writer may write them (req-grid-entity-spine-copies rule 6); write "
+        "Entity.deleted_at or Entity.dimensions through the pipeline and the trigger copies them.",
+        callsite=detail,
+    )
+
+
 def _writer_permits(
     writer: str,
     operation: str,
@@ -428,6 +458,7 @@ def enforce_service_write(
         may_update: True when the write can change an existing row.
     """
     detail = f"{operation} {model_label}"
+    refuse_spine_copies(operation, model_label, fields)
     if _write_guard_bypass.get() or _service_write_active.get():
         return
     writer = _below_pipeline_writer.get()

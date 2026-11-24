@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/a52a815a28d6 (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/7bc706bb7909 (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@ef9483ca12d8/a52a815a28d6 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@677c8b80eb84/7bc706bb7909 (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -203,6 +203,13 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         with rec.phase("files"):
             _phase_files(say)
 
+        # The typed tables next, before the first database write: a registered typed table without
+        # the spine-copy columns belongs to a plugin whose migration predates them, and every read
+        # and write of its types would fail on the missing column (req-grid-entity-spine-copies
+        # rule 20, Q57b on Issue# 1284 - tap). Refused here rather than warned about at migrate.
+        with rec.phase("spine_columns"):
+            _phase_spine_columns(say)
+
         with rec.phase("auth"):
             _phase_auth(profile, say)
 
@@ -329,6 +336,26 @@ def _phase_files(say: Echo) -> None:
         run_gate(say)
     except FileStoreGateError as exc:
         raise BootError(f"file store: {exc}", detail={"failed_step": "files"}) from exc
+
+
+def _phase_spine_columns(say: Echo) -> None:
+    """spine-columns phase: refuse a typed table that lacks the spine-copy columns (req-boot-phases-8).
+
+    Reads the schema only. A database built from the models always has the columns; a database
+    migrated with a plugin migration generated before the base-model release does not, and the
+    message names each table and the remedy (``tap_grid.spine_copies.assert_columns``).
+    """
+    from tap_grid.spine_copies import SpineColumnsMissing, assert_columns
+
+    try:
+        assert_columns()
+    except SpineColumnsMissing as exc:
+        logger.error("[5c1d] boot spine columns: %s", exc)
+        raise BootError(
+            f"spine columns: {exc}",
+            detail={"failed_step": "spine_columns", "tables": [m.table for m in exc.missing]},
+        ) from exc
+    say("Spine-columns phase: every typed table has the spine-copy columns.")
 
 
 def _phase_auth(profile: BootProfile | None, say: Echo) -> None:

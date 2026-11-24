@@ -221,7 +221,7 @@ def _row(state: ProjectState, model_name: str, type_slug: str, **values: Any) ->
     """One stored row in the table's current shape, with its spine row, written before versions moved."""
     flip = values.pop("flip_map", {})
     entity = Entity.objects.create(entity_type=type_slug, name=str(values.get("label") or values.get("name")))
-    state.apps.get_model(APP, model_name).objects.create(entity_id=entity.pk, batch_id="", flip_map=flip, **values)
+    state.apps.get_model(APP, model_name).objects.create(entity_id=entity.pk, flip_map=flip, **values)
     return uuid.UUID(str(entity.pk))
 
 
@@ -474,7 +474,6 @@ def _history_row(state: ProjectState, entity_id: uuid.UUID, **values: Any) -> No
     state.apps.get_model(APP, "HistoricalVmWidget").objects.create(
         id=row_id,
         entity_id=entity_id,
-        batch_id="",
         flip_map={},
         history_date=timezone.now(),
         history_type="~",

@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/15ec9cd9dd07 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/19ccbbcfd82d (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2699,7 +2699,8 @@ def _check_and_lock_removal_targets(
     # subclasses), so Entity.objects already returns the rows we need for
     # both `on_tombstoned` and purge semantics.
     target_uuids = [uuid.UUID(t.entity_id) for t in all_targets]
-    locked_rows = {str(row.pk): row for row in Entity.objects.select_for_update().filter(pk__in=target_uuids)}
+    locking = Entity.objects.select_for_update(no_key=True).filter(pk__in=target_uuids)
+    locked_rows = {str(row.pk): row for row in locking}
 
     def _apply_policy(
         target: _ParsedRemovalTarget,
@@ -4714,7 +4715,7 @@ def _apply_authority_claims(
     Raises ``_BatchFailed`` for two claims over one scope, and for an anchor key that names more
     than one node. Computing proposals reads the grid, so ``grid.read`` is authorised first.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@5aee4b877a5a/03bf4aa76834 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-edge-authority@5aee4b877a5a/2574fd86a5c8 (derivation) — the one
         place a claim's scope, its asserted set and its proposals are derived, fenced and recorded.
     """
     from tap_auth import policy
@@ -4783,7 +4784,7 @@ def _apply_authority_claims(
     # One lock set in id order, so two batches claiming the same anchors in opposite orders never
     # wait on each other (the lesson of Issue# 943 - tap).
     list(
-        Entity.objects.select_for_update()
+        Entity.objects.select_for_update(no_key=True)
         .filter(pk__in=sorted({uuid.UUID(found) for found in resolved if found is not None}))
         .order_by("pk")
         .values_list("pk", flat=True)
@@ -4848,7 +4849,7 @@ def _apply_authority_claims(
             # Lock in id order, so two writers judging overlapping scopes never wait on each other
             # (the lesson of Issue# 943 - tap), then keep only what is still live under the lock.
             locked = list(
-                Entity.objects.select_for_update()
+                Entity.objects.select_for_update(no_key=True)
                 .filter(pk__in=[uuid.UUID(c) for c in candidates], deleted_at__isnull=True)
                 .order_by("pk")
                 .values_list("pk", flat=True)

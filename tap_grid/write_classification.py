@@ -16,7 +16,9 @@ from tap_grid.flip import _get_service_writeable_fields, is_flip_enabled
 #: The fields the grid manages on every typed row. They are outside FLIP (req-grid-flip-default-3)
 #: and outside the comparison (req-grid-flip-change rule 7). This is the one place the list is
 #: kept; a test fails when a field is added to ``BaseModel`` without being listed here.
-SYSTEM_MANAGED_FIELDS: frozenset[str] = frozenset({"entity", "batch_id", "flip_map"})
+#: The spine copies are here (req-grid-entity-spine-copies rule 14): the database writes them, so a
+#: write whose only effect on a row is a changed copy is not a change to that row.
+SYSTEM_MANAGED_FIELDS: frozenset[str] = frozenset({"entity", "flip_map", "spine_deleted_at", "spine_dimensions"})
 
 
 @dataclass(frozen=True)
@@ -198,31 +200,19 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     if not intent:
         return {}
     envelope_name = intent.get("envelope_name")
-    envelope_dims = intent.get("envelope_dims") or {}
     # The envelope is authoritative for the caller's values on a replace, an empty one included:
     # {} clears them (Issue# 608 - tap; aws-build Q46b). The type's defaults are re-merged under
     # it, src default, as a create builds them, so a collector's run never wipes them (aws-build
     # Q59 D6; req-grid-dimension-reference-7).
-    from tap_grid.dimension_map import settle
     from tap_grid.models import Entity
-    from tap_grid.registry import get_model_class
 
-    try:
-        type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
-    except KeyError:
-        type_defaults = {}
     # Read the persisted spine values to decide whether anything needs to
     # change. A no-op update should not bump updated_at.
     try:
         persisted = Entity.objects.values("name", "dimensions").get(pk=uuid.UUID(str(intent["entity_id"])))
     except Entity.DoesNotExist:
         return {}
-    # The expected map is built where every stored map is (dimension_map.settle): defaults, the
-    # envelope over them, and the grid's own derived entries (the `tap.time` dimension) carried from
-    # the stored row. An envelope never carries those, so leaving them out would make every
-    # re-import of a row that has one differ from the spine, be classified changed, and have the
-    # post-pass strip the entry it just compared against.
-    stored_dims = settle(type_defaults, envelope_dims, persisted=persisted["dimensions"] or {})
+    stored_dims = intent_dimensions(intent, persisted["dimensions"] or {})
 
     _refuse_keyed_dimension_change(intent.get("entity_type") or "", persisted["dimensions"] or {}, stored_dims)
 
@@ -232,3 +222,24 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     if stored_dims != (persisted["dimensions"] or {}):
         delta["dimensions"] = dict(stored_dims)
     return delta
+
+
+def intent_dimensions(intent: dict[str, Any], persisted: dict[str, Any]) -> dict[str, Any]:
+    """The dimension map a replaced node's GRIFT envelope leaves on its spine row, given the stored map.
+
+    The one place the importer's expected map is built, read by :func:`spine_delta` to classify the
+    write and decide the post-pass, and by ``BaseModel.save`` for the history row the replace writes
+    (req-grid-entity-spine-copies rule 12). Built where every stored map is
+    (``dimension_map.settle``): the type's defaults, the envelope over them, and the grid's own
+    derived entries (the ``tap.time`` dimension) carried from the stored map. An envelope never
+    carries those, so leaving them out would make every re-import of a row that has one differ from
+    the spine, be classified changed, and have the post-pass strip the entry it just compared against.
+    """
+    from tap_grid.dimension_map import settle
+    from tap_grid.registry import get_model_class
+
+    try:
+        type_defaults = dict(getattr(get_model_class(intent.get("entity_type") or ""), "DEFAULT_DIMENSIONS", {}) or {})
+    except KeyError:
+        type_defaults = {}
+    return dict(settle(type_defaults, intent.get("envelope_dims") or {}, persisted=persisted))

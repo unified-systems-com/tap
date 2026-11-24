@@ -25,8 +25,10 @@ from django.db import DEFAULT_DB_ALIAS, OperationalError, ProgrammingError, conn
 
 logger = logging.getLogger(__name__)
 
-#: The spine's version. Version 1 is the spine as of tap_grid migration 0022.
-SPINE_VERSION = 1
+#: The spine's version. Version 1 is the spine as of tap_grid migration 0022. Version 2, with migration
+#: 0023, removed the typed row's ``batch_id`` and added the spine copies ``spine_deleted_at`` and
+#: ``spine_dimensions`` to every typed row (req-grid-entity-spine-copies, Issue# 1288 - tap).
+SPINE_VERSION = 2
 
 _APP_LABEL = "tap_grid"
 
@@ -103,7 +105,7 @@ def record_after_migrate(sender: Any, *, using: str = DEFAULT_DB_ALIAS, **kwargs
     put back. A record greater than this code declares is left alone: this code did not write
     that spine and must not claim it.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-version@d2cf7b3722f1/20f966f690b5 (derivation) — rule 2: the one writer
+    TAP-IMPLEMENTS: req-grid-entity-spine-version@627213df8d37/20f966f690b5 (derivation) — rule 2: the one writer
         of the grid's record of its spine version, run when migrations are applied.
     """
     from django.db import router

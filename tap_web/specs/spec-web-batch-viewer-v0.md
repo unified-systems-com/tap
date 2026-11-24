@@ -8,13 +8,13 @@ It is a generic platform view (the panels live in `tap_web`), reached from the *
 
 ## The representation problem (and how each section is sourced)
 
-`batch_id` lives on the typed `BaseModel` rows (and on `Edge`, which is a `BaseModel`), **not** on the `Entity` spine — so "everything in batch X" is a cross-type question best answered by Gryphon, not an ORM filter. Each section has a different, deliberately-chosen source:
+The batch that last changed a row is the spine's `last_changed_batch_id` (`req-grid-entity-batch-pointers`); the typed `batch_id` this page first read was removed with the base-model release (Issue# 1288 - tap). It is the same last-writer stamp, now on the `Entity` spine — so "everything in batch X" is a cross-type question best answered by Gryphon, not an ORM filter. Each section has a different, deliberately-chosen source:
 
 | Section | Source | Recoverable? |
 | --- | --- | --- |
-| **Nodes added** | Gryphon `MATCH (n) WHERE n.data.batch_id = $bid AND n.data.deleted_at IS NULL` | ✅ live on the grid |
-| **Edges added** | `Edge.objects.filter(batch_id=bid)` — `from_entity` / `edge_type` / `to_entity` | ✅ live on the grid |
-| **Deletes (tombstones)** | nodes with `batch_id = bid AND deleted_at IS NOT NULL` (soft-deleted rows persist) | ✅ tombstones remain in the DB |
+| **Nodes added** | Gryphon `MATCH (n) WHERE n.last_changed_batch_id = $bid AND n.deleted_at IS NULL` | ✅ live on the grid |
+| **Edges added** | live `Edge` rows whose `entity.last_changed_batch_id = bid` — `from_entity` / `edge_type` / `to_entity` | ✅ live on the grid |
+| **Deletes (tombstones)** | nodes with `last_changed_batch_id = bid AND deleted_at IS NOT NULL`: a retirement is a change, so these are the nodes the batch retired (soft-deleted rows persist) | ✅ tombstones remain in the DB |
 | **Purges (hard deletes)** | a persisted **removal manifest** on the batch (`metadata.removals`) — *the rows themselves are gone* | ⚠️ only if the batch recorded a manifest |
 
 The purge row is the crux the design has to solve honestly: a **purge is a hard delete**, so the entity is no longer on the grid and `batch_id` can't find it. The only way to show *what* a batch purged is for the batch to have **recorded the manifest before deleting** (entity_id, entity_type, name, action). v0 reads `batch.metadata["removals"]`; the importer change that writes it is `req-web-batch-viewer-removal-manifest` below. Until a batch carries a manifest, the purges section says so explicitly rather than rendering a silently-empty (and misleading) table — the `unknown ≠ empty` discipline.
@@ -26,9 +26,9 @@ The purge row is the crux the design has to solve honestly: a **purge is a hard 
 | req-web-batch-viewer-roster | [Batch Roster Page](#batch-roster-page) | Implemented | `tap_web` `batch-list` panel; `administrivia` page at `/administrivia/batches`; the discoverable nav entry; rows click through to the single-batch viewer |
 | req-web-batch-viewer-panel | [Batch Viewer Panel + Page](#batch-viewer-panel--page) | Implemented | `tap_web` `batch-viewer` panel; `administrivia` page at `/administrivia/batch` (hidden from nav); latest-by-default + deep-link |
 | req-web-batch-viewer-header | [Batch Header](#batch-header) | Implemented | name, source, status, started/closed, description, at-a-glance counts |
-| req-web-batch-viewer-nodes | [Nodes Added Table](#nodes-added-table) | Implemented | Gryphon by `data.batch_id`; Tabulator (type, name, entity_id), grouped by type |
+| req-web-batch-viewer-nodes | [Nodes Added Table](#nodes-added-table) | Implemented | Gryphon by `last_changed_batch_id`; Tabulator (type, name, entity_id), grouped by type |
 | req-web-batch-viewer-edges | [Edges Table](#edges-table) | Implemented | `from → type → to` with names; each endpoint flagged in-batch vs external |
-| req-web-batch-viewer-deletes | [Deletes Table](#deletes-table) | Implemented | tombstones (`batch_id` + `deleted_at`) |
+| req-web-batch-viewer-deletes | [Deletes Table](#deletes-table) | Implemented | tombstones (`last_changed_batch_id` + `deleted_at`) |
 | req-web-batch-viewer-purges | [Purges Representation](#purges-representation) | Implemented | reads `metadata.removals` (action=purge); honest empty/absent state |
 | req-web-batch-viewer-removal-manifest | [Removal Manifest Persistence](#removal-manifest-persistence) | Proposed | importer records `metadata.removals` so purges become recoverable |
 
@@ -79,7 +79,7 @@ RID: `req-web-batch-viewer-nodes`
 
 Status: `Implemented`
 
-All live nodes stamped with the batch, via Gryphon `MATCH (n) WHERE n.data.batch_id = $bid AND n.data.deleted_at IS NULL`. Rendered as a Tabulator (sortable + quick-filter), columns: entity_type, name, entity_id; grouped by entity_type. **Semantics note:** `batch_id` is FLIP's *last-writer* stamp, so this is "nodes the batch currently owns" — a node later re-written by another batch moves to that batch. For a freshly-imported batch this equals "nodes added," which is the common case; the header labels it accordingly.
+All live nodes stamped with the batch, via Gryphon `MATCH (n) WHERE n.last_changed_batch_id = $bid AND n.deleted_at IS NULL`. Rendered as a Tabulator (sortable + quick-filter), columns: entity_type, name, entity_id; grouped by entity_type. **Semantics note:** `last_changed_batch_id` is the *last-writer* stamp, so this is "nodes the batch currently owns" — a node later re-written by another batch moves to that batch. For a freshly-imported batch this equals "nodes added," which is the common case; the header labels it accordingly.
 
 ### Edges Table
 ----
@@ -87,7 +87,7 @@ RID: `req-web-batch-viewer-edges`
 
 Status: `Implemented`
 
-`Edge.objects.filter(batch_id=bid)`, rendered as `from-name → edge_type → to-name` (the tractable shape — never raw entity_ids). Each endpoint is flagged **in-batch** (its node is in this batch's node set) or **external** (a pre-existing node the batch linked to), so cross-batch wiring reads at a glance. Tabulator, sortable + quick-filter, groupable by edge_type.
+`Edge.objects.filter(entity__last_changed_batch_id=bid)`, rendered as `from-name → edge_type → to-name` (the tractable shape — never raw entity_ids). Each endpoint is flagged **in-batch** (its node is in this batch's node set) or **external** (a pre-existing node the batch linked to), so cross-batch wiring reads at a glance. Tabulator, sortable + quick-filter, groupable by edge_type.
 
 ### Deletes Table
 ----
@@ -95,7 +95,7 @@ RID: `req-web-batch-viewer-deletes`
 
 Status: `Implemented`
 
-Tombstoned nodes the batch removed: `batch_id = bid AND deleted_at IS NOT NULL`. Soft-deleted rows persist in the DB, so these are fully recoverable. Columns: entity_type, name, entity_id, deleted_at.
+Tombstoned nodes the batch removed: `last_changed_batch_id = bid AND deleted_at IS NOT NULL` (the batch that retired them, since a retirement is a change). Soft-deleted rows persist in the DB, so these are fully recoverable. Columns: entity_type, name, entity_id, deleted_at.
 
 ### Purges Representation
 ----

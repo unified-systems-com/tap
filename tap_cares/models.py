@@ -214,6 +214,11 @@ class CollectionJob(BaseModel):
     # a run: a job is an execution TAP performed, not an object it observed.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
     NATURAL_KEY_REASON: ClassVar[str] = "a run: a job is an execution TAP performed, not an object it observed"
+    # No event time: a job's times are when TAP ran the collection, not when anything happened in the world.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
+    # Version 2: the event-time declaration above, where there was none (owner ruling, Issue# 1284 - tap,
+    # 2026-11-23). No stored value changes; the step is the identity (model_links).
+    MODEL_VERSION: ClassVar[int] = 2
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "collection_job"}
     INTERNAL_ONLY: ClassVar[bool] = True
 
@@ -339,7 +344,7 @@ class CollectionJob(BaseModel):
 class Schedule(BaseModel):
     """An on-grid recurring policy that says "run this collector when cron matches."
 
-    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/ceb6b5dc91af (derivation) — the
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/ccda84f53548 (derivation) — the
         on-grid recurring-policy node.
 
     `Schedule` is user-creatable: writes flow through the tap_cares scheduler
@@ -356,6 +361,12 @@ class Schedule(BaseModel):
     NATURAL_KEY_REASON: ClassVar[str] = (
         "authored, not observed: a schedule is declared, and the declaration carries its id"
     )
+    # No event time: a schedule is TAP's own configuration for when to collect; nothing in the world
+    # happened at its times.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
+    # Version 2: the event-time declaration above, where there was none (owner ruling, Issue# 1284 - tap,
+    # 2026-11-23). No stored value changes; the step is the identity (model_links).
+    MODEL_VERSION: ClassVar[int] = 2
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "schedule"}
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
@@ -495,7 +506,7 @@ class ScheduleFireStatus(models.TextChoices):
 class ScheduleFire(BaseModel):
     """The on-grid execution-decision record for one evaluated cron slot.
 
-    TAP-IMPLEMENTS: req-tap-cares-scheduler-fire-model@3c7180cf74e0/54db11beef3d (derivation) —
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-fire-model@3c7180cf74e0/4fe2257e21d3 (derivation) —
         the per-slot execution-decision record.
 
     Created in Stage 1 of the scheduler tick (slot claim, status=PENDING) and
@@ -517,6 +528,11 @@ class ScheduleFire(BaseModel):
     # an event: a fire is something TAP did at a time.
     NATURAL_KEY: ClassVar[Keyless] = KEYLESS
     NATURAL_KEY_REASON: ClassVar[str] = "an event: a fire is something TAP did at a time"
+    # No event time: a fire is TAP's own scheduler acting, so its time is grid time, not a time in the world.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
+    # Version 2: the event-time declaration above, where there was none (owner ruling, Issue# 1284 - tap,
+    # 2026-11-23). No stored value changes; the step is the identity (model_links).
+    MODEL_VERSION: ClassVar[int] = 2
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "schedule_fire"}
     INTERNAL_ONLY: ClassVar[bool] = True
 

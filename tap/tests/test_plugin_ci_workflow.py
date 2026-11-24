@@ -965,3 +965,179 @@ def test_only_a_migrations_row_that_ran_closes_the_owner_issue(
     assert code == 0, stderr
     assert ("issue close 7" in writes) is closes, writes
     assert "issue create" not in writes
+
+
+# The migrations-match-models check (req-tap-plugin-extdev-repo-ci-18; Q57a, Issue# 1284 - tap). Every
+# road but the nightly's migrations row builds its databases from the models, so nothing else notices
+# a plugin whose models (or whose BaseModel, moved by core) need a migration it does not ship.
+
+MAKEMIGRATIONS_STEP = "Migrations — the plugin's models need no new migration"
+
+_MM_DOCKER_STUB = """#!/usr/bin/env bash
+echo "docker $*" >> "$STUB_LOG"
+case "$*" in
+  *"manage.py shell"*)
+    echo "a boot log line on stdout"
+    [ -n "${STUB_LABELS+x}" ] && echo "TAP-LABELS: $STUB_LABELS"
+    [ -n "${STUB_SECOND_LABELS+x}" ] && echo "TAP-LABELS: $STUB_SECOND_LABELS"
+    [ -n "${STUB_TRAILING_LINES+x}" ] && seq 1 "$STUB_TRAILING_LINES"
+    echo "a log line printed after the labels"
+    exit 0 ;;
+  *"manage.py makemigrations"*)
+    echo "Migrations for 'grid_fixtures': (stub)"
+    exit "${STUB_MM_RC:-0}" ;;
+  *) echo "unexpected docker call: $*" >&2; exit 2 ;;
+esac
+"""
+
+
+def _run_makemigrations(tmp_path: Path, **overrides: str | None) -> tuple[int, str, str, list[str]]:
+    """Run the check's own body under a stub docker; return (exit code, output, step output, calls)."""
+    steps, names = _boot_steps()
+    body = str(steps[names.index(MAKEMIGRATIONS_STEP)]["run"])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text(_MM_DOCKER_STUB, encoding="utf-8")
+    (bin_dir / "docker").chmod(0o755)
+    log, out = tmp_path / "calls", tmp_path / "out"
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "PLUGIN_SLUG": "grid_fixtures",
+        "GITHUB_OUTPUT": str(out),
+        "STUB_LOG": str(log),
+        "STUB_LABELS": "grid_fixtures",
+    }
+    env.update({key: value for key, value in overrides.items() if value is not None})
+    for key in [key for key, value in overrides.items() if value is None]:
+        env.pop(key)
+    result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body under a stub docker IS the test; argv list, no shell, PATH leads with a temp stub dir
+        ["bash", "-c", body], env=env, cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    step_out = out.read_text(encoding="utf-8") if out.exists() else ""
+    return result.returncode, result.stdout + result.stderr, step_out, calls
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_the_migrations_check_runs_on_both_roads_after_the_boot_and_before_parity_and_the_suite() -> None:
+    steps, names = _boot_steps()
+    step = steps[names.index(MAKEMIGRATIONS_STEP)]
+    assert step["id"] == "makemigrations"
+    assert "if" not in step, "both roads: a pull request and the nightly's migrations row"
+    assert "continue-on-error" not in step
+    assert 'makemigrations "${label_list[@]}" --check --dry-run' in step["run"]
+    order = [
+        "Wait for the stack to become healthy",
+        MAKEMIGRATIONS_STEP,
+        "Parity — the real migrations from zero equal a model-built database",
+        "Run the plugin's in-package tests",
+    ]
+    assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_the_check_reads_the_plugins_labels_from_the_marker_and_passes_when_nothing_is_owed(tmp_path: Path) -> None:
+    code, output, step_out, calls = _run_makemigrations(tmp_path, STUB_LABELS="grid_fixtures grid_fixtures_extra")
+    assert code == 0, output
+    assert "labels=grid_fixtures grid_fixtures_extra" in step_out
+    checks = [c for c in calls if "makemigrations" in c]
+    assert len(checks) == 1
+    assert "makemigrations grid_fixtures grid_fixtures_extra --check --dry-run -v 3" in checks[0]
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_a_migration_owed_fails_the_check_and_names_the_remedy(tmp_path: Path) -> None:
+    code, output, _, _ = _run_makemigrations(tmp_path, STUB_MM_RC="1")
+    assert code != 0
+    assert "::error::tap_plugin.grid_fixtures's models differ from its migrations" in output
+    assert "manage.py makemigrations grid_fixtures" in output and "requires_tap" in output
+    assert (tmp_path / "makemigrations.log").read_text(encoding="utf-8").startswith("Migrations for"), (
+        "the would-be migration is kept for the author"
+    )
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+@pytest.mark.parametrize("labels", [None, ""])
+def test_no_plugin_app_in_the_registry_fails_closed_without_checking(tmp_path: Path, labels: str | None) -> None:
+    code, output, _, calls = _run_makemigrations(tmp_path, STUB_LABELS=labels)
+    assert code != 0
+    assert "nothing to check, so this fails closed" in output
+    assert not any("makemigrations" in c for c in calls)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_the_summary_is_red_unless_the_migrations_check_succeeded_on_either_road() -> None:
+    steps, names = _boot_steps()
+    summary = steps[names.index("Summary (fails on zero executed tests)")]
+    assert summary["env"]["MAKEMIGRATIONS_OUTCOME"] == "${{ steps.makemigrations.outcome || 'not reached' }}"
+    run = summary["run"]
+    gate = '[ "$MAKEMIGRATIONS_OUTCOME" != success ]'
+    assert gate in run
+    # Before the migrations road's early exit, so that road is held to it too.
+    assert run.index(gate) < run.rindex('[ "$SCHEMA_PARITY" = true ]')
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_the_labels_reach_makemigrations_as_argv_never_inside_a_command_string() -> None:
+    """Nothing read back from the container is spliced into a string a shell parses (PR 1352 review)."""
+    steps, names = _boot_steps()
+    run = str(steps[names.index(MAKEMIGRATIONS_STEP)]["run"])
+    check = run[run.index("set +e") :]
+    assert "sh -c" not in check, "the check runs manage.py directly, with the labels as separate words"
+    assert '"${label_list[@]}"' in check
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+@pytest.mark.parametrize(
+    "labels",
+    [
+        'grid_fixtures"; touch pwned; echo "',
+        "grid_fixtures'; touch pwned; echo '",
+        "grid_fixtures $(touch pwned)",
+        "grid_fixtures;touch pwned",
+        "grid-fixtures",
+        "9grid",
+    ],
+)
+def test_a_label_that_is_not_an_identifier_fails_closed_without_checking(tmp_path: Path, labels: str) -> None:
+    code, output, step_out, calls = _run_makemigrations(tmp_path, STUB_LABELS=labels)
+    assert code != 0
+    assert "not an identifier" in output and "fails closed" in output
+    assert not any("makemigrations" in c for c in calls)
+    assert step_out == "", "nothing unvalidated reaches GITHUB_OUTPUT"
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_a_newline_in_the_labels_cannot_add_a_label_or_an_output_line(tmp_path: Path) -> None:
+    code, output, step_out, calls = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures\nlabels=forged\ntouch pwned"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"
+    checks = [c for c in calls if "makemigrations" in c]
+    assert len(checks) == 1
+    assert checks[0].endswith("manage.py makemigrations grid_fixtures --check --dry-run -v 3")
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_only_the_first_marked_line_names_the_labels(tmp_path: Path) -> None:
+    code, output, step_out, calls = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures", STUB_SECOND_LABELS="other_app"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"
+    checks = [c for c in calls if "makemigrations" in c]
+    assert len(checks) == 1 and "other_app" not in checks[0]
+
+
+def test_output_after_the_marker_cannot_break_the_pipe(tmp_path: Path) -> None:
+    """The extractor reads the whole stream: stopping at the first marker would leave the
+    producer writing into a closed pipe, and under ``pipefail`` the step would die with 141
+    (seen on the server for PR# 1352 - tap, where the stub's trailing line was enough)."""
+    code, output, step_out, _ = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures", STUB_TRAILING_LINES="200000"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"

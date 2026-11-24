@@ -113,4 +113,37 @@ def probe_history_agreement() -> ProbeResult:
     return ProbeResult.healthy()
 
 
-__all__ = ["probe_grid_tables", "probe_history_agreement"]
+def probe_spine_copies() -> ProbeResult:
+    """Every typed row's spine copies agree with its entity row, and every typed table keeps them.
+
+    Reported, not gating (``critical=False``): req-grid-entity-spine-copies rule 10. Nothing reads
+    the copies yet (no policy exists and the live-rows manager joins ``Entity``), so a difference
+    misleads no reader; it is a defect report. It names the tables and counts and repairs nothing:
+    ``manage.py spine_copies --repair`` does. The day a policy reads the copies this stops being
+    enough, and that requirement refuses instead (``tap_grid.spine_copies.assert_clean``).
+    """
+    from tap_grid.read_guard import unguarded_read
+    from tap_grid.spine_copies import check
+
+    try:
+        with unguarded_read():
+            report = check()
+    except Exception as exc:  # noqa: BLE001 — report, never raise.
+        logger.warning("[c4e3] health: spine copies probe failed: %s", exc)
+        return ProbeResult.unhealthy("grid.spine_copies_check_failed", detail=exception_detail(exc))
+    if not report.clean:
+        return ProbeResult.unhealthy(
+            "grid.spine_copies_drift",
+            detail=report.summary(),
+            reasoning=(
+                "The database keeps spine_deleted_at and spine_dimensions on every typed row equal to the "
+                "entity row. Triggers do not fire for a session that disables them (a restore, a replication "
+                "apply), and a table migrated after the last install has none yet. Run manage.py spine_copies "
+                "--repair, which reinstalls the triggers and brings the rows into step."
+            ),
+            context={"drifted": report.drifted, "untriggered": report.untriggered, "unmapped": report.unmapped},
+        )
+    return ProbeResult.healthy()
+
+
+__all__ = ["probe_grid_tables", "probe_history_agreement", "probe_spine_copies"]

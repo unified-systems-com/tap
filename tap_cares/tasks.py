@@ -117,7 +117,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
     Every claim that did not become an edge, refused or failed, is returned for the task body to
     record on the job, so a missing edge is never only a log line.
 
-    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@573c12406621/164e83c07726 (derivation) —
+    TAP-IMPLEMENTS: req-grid-edge-produced-batch-claims@573c12406621/d81e7ca6b6fa (derivation) —
         the one place a run's batch claims become edges: collapse, find-or-create by identity, and
         the locked check that keeps one imported claim per batch.
     """
@@ -137,7 +137,7 @@ def _link_produced_batches(job: CollectionJob, produced_batches: list[tuple[str,
                 if disposition != "imported":
                     batch_entity = Entity.objects.get(id=batch_id)
                 else:
-                    batch_entity = Entity.objects.select_for_update().get(id=batch_id)
+                    batch_entity = Entity.objects.select_for_update(no_key=True).get(id=batch_id)
                     holders = [producer for producer in imported_by(batch_id) if producer != job_id]
                     if holders:
                         logger.error(
@@ -438,7 +438,9 @@ def _previous_run(collector_entity_id: str, job_entity_id: str) -> tuple[Any, se
     )
     if previous is None:
         return None, set()
-    lifecycle_batch_id = str(previous.batch_id)
+    # The batch that last changed the job: its lifecycle batch (the typed batch_id it replaced was
+    # removed with Issue# 1288 - tap).
+    lifecycle_batch_id = str(previous.entity.last_changed_batch_id)
     if not _is_lifecycle_batch_of(lifecycle_batch_id, str(previous.entity_id), operation="candidate derivation"):
         return None, set()
     produced = produced_batches(previous.entity_id)

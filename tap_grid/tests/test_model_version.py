@@ -608,7 +608,8 @@ class TestNoVersionOnARow:
 
 class TestCoreTypes:
     def test_each_core_node_and_edge_type_gets_a_row_and_a_version(self) -> None:
-        EntityType.objects.all().delete()
+        with mv._writing_applied_version():  # rows above version 1 (batch, Issue# 1288 - tap) are guarded
+            EntityType.objects.all().delete()
         mv.register_core_types()
         nodes = set(EntityType.objects.filter(kind=EntityTypeKind.NODE).values_list("slug", flat=True))
         edges = set(EntityType.objects.filter(kind=EntityTypeKind.EDGE).values_list("slug", flat=True))
@@ -617,7 +618,15 @@ class TestCoreTypes:
         # The edge model's table is the spine's; it is not a node type.
         assert "edge" not in nodes
         assert nodes == set(mv.core_node_types()) and edges == set(mv.core_edge_types())
-        assert set(EntityType.objects.values_list("model_version", flat=True)) == {1}
+        # Each at the version its class declares, or at 1 where the grid already held rows of it and had
+        # no catalog row (rows written before versions existed; register_type).
+        declared = {
+            slug: 1 if mv._holds_rows(slug, mv.NODE, "default") else mv.declared_version(cls)
+            for slug, cls in mv.core_node_types().items()
+        }
+        nodes_at = EntityType.objects.filter(kind=EntityTypeKind.NODE).values_list("slug", "model_version")
+        assert dict(nodes_at) == declared
+        assert set(EntityType.objects.filter(kind=EntityTypeKind.EDGE).values_list("model_version", flat=True)) == {1}
         # The owning app's dotted name, which icon resolution compares (req-grid-entity-core-type-catalog).
         assert EntityType.objects.get(slug="page").plugin_name == "tap_web"
         # The one row core wrote before this keeps the name and icon it had.
@@ -634,7 +643,8 @@ class TestCoreTypes:
         from tap_grid.tests.test_grift_export import _empty_the_grid
 
         _empty_the_grid()
-        EntityType.objects.all().delete()
+        with mv._writing_applied_version():
+            EntityType.objects.all().delete()
         mv.register_core_types()
         made = create_node("keystone", {"name": "this grid"})
         assert made.success, made.errors
@@ -644,7 +654,8 @@ class TestCoreTypes:
         carried = {"batch", *export.node_counts, *export.edge_counts}
         assert "keystone" in carried
         versions = {slug: mv.applied_version(slug) for slug in sorted(carried)}
-        assert all(version == 1 for version in versions.values()), versions
+        assert all(version is not None and version >= 1 for version in versions.values()), versions
+        assert versions["batch"] == 2  # declared since Issue# 1288 - tap
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +923,8 @@ class TestTheFingerprintGuard:
     @AC[22]
     def test_no_recorded_type_holds_an_inherited_field_and_the_spine_holds_them_all(self) -> None:
         inherited = definition.inherited_field_names(BaseModel)
-        assert {"entity", "batch_id", "flip_map"} <= inherited
+        assert {"entity", "flip_map", "spine_deleted_at", "spine_dimensions"} <= inherited
+        assert "batch_id" not in inherited  # removed with spine version 2 (Issue# 1288 - tap)
         states = [state for owned in definition.core_states().values() for state in owned]
         plugin: Any = apps.get_app_config("grid_fixtures")
         states += definition.plugin_states(plugin._manifest)
@@ -1051,7 +1063,7 @@ class TestReviewRoundTwo:
             mv.refuse_if_pending("PRODUCED_BATCH", "a write")
         assert mv._start_incomplete
         # A type declared at 1 cannot be behind version 1, and the surrounding transaction still works.
-        mv.refuse_if_pending("batch", "a write")
+        mv.refuse_if_pending("dimension", "a write")
         assert EntityType.objects.count() >= 0
 
 
@@ -1075,8 +1087,10 @@ class TestReviewRoundThree:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A type declared at 2 whose rows exist and whose catalog row does not is behind."""
-        EntityType.objects.filter(slug="batch").delete()
-        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else 1)
+        with mv._writing_applied_version():
+            EntityType.objects.filter(slug="batch").delete()
+        declared_now = mv.declared_version
+        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else declared_now(cls))
         monkeypatch.setattr(mv, "_holds_rows", lambda slug, kind, using: slug == "batch")
         mv._start_incomplete = True
         with pytest.raises(mv.ModelVersionPending) as raised:
@@ -1084,8 +1098,10 @@ class TestReviewRoundThree:
         assert (raised.value.declared, raised.value.applied) == (2, 1)
 
     def test_an_uncatalogued_type_with_no_rows_is_not_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        EntityType.objects.filter(slug="batch").delete()
-        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else 1)
+        with mv._writing_applied_version():
+            EntityType.objects.filter(slug="batch").delete()
+        declared_now = mv.declared_version
+        monkeypatch.setattr(mv, "declared_version", lambda cls: 2 if cls.__name__ == "Batch" else declared_now(cls))
         monkeypatch.setattr(mv, "_holds_rows", lambda slug, kind, using: False)
         mv._start_incomplete = True
         mv.refuse_if_pending("batch", "a write")

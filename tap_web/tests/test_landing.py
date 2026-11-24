@@ -8,6 +8,7 @@ migration's row cleanup on the upgrade path.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
@@ -15,6 +16,7 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
 from tap.pytest_harness import make_admin_client
+from tap_grid import spine_copies
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
 from tap_grid.models import Entity
 from tap_grid.registry import retired_entity_reason
@@ -328,11 +330,41 @@ class TestRetiredStrip:
 class TestDropLandingPageMigration:
     """req-web-page-landing-14: the upgrade path cleans every obsolete spine row and keeps the page."""
 
+    @pytest.fixture(autouse=True)
+    def _migrated_back_afterwards(self) -> Iterator[None]:
+        """Put every migration the test reversed back, whatever the test did, and reinstall the copies.
+
+        The test moves ``tap_web`` back past ``0005_spine_copies``, which drops the spine-copy columns.
+        Left there, every later test on this database writes to a page or panel table without them,
+        and a ``web_landing_page`` table left behind by a failure stops the next flush.
+        """
+        yield
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        spine_copies.install()
+
+    @staticmethod
+    def _migrate(target: tuple[str, str]) -> MigrationExecutor:
+        """Move ``tap_web`` to ``target`` as ``manage.py migrate`` does, its post-migrate install included.
+
+        ``MigrationExecutor`` sends no ``post_migrate``, so the spine-copy installer that a
+        ``migrate`` runs afterwards is called here: on the way back it withdraws the triggers from
+        the tables the reversal left without the copy columns (req-grid-entity-spine-copies rule 8).
+        """
+        executor = MigrationExecutor(connection)
+        executor.migrate([target])
+        spine_copies.install()
+        return executor
+
     @pytest.mark.spec("req-web-page-landing-14")
     def test_upgrade_path_cleans_rows_and_preserves_target_page(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate([("tap_web", "0002_strip_uses_search_binding_key")])
-        old_apps = executor.loader.project_state([("tap_web", "0002_strip_uses_search_binding_key")]).apps
+        executor = self._migrate(("tap_web", "0002_strip_uses_search_binding_key"))
+        # tap_web is back at 0002 and tap_grid is not moved, so the models are read at both: the
+        # spine's tables as they stand (no typed batch_id since tap_grid 0023), the web tables as
+        # they were.
+        grid_now = executor.loader.graph.leaf_nodes("tap_grid")
+        old_apps = executor.loader.project_state([("tap_web", "0002_strip_uses_search_binding_key"), *grid_now]).apps
         OldEntity = old_apps.get_model("tap_grid", "Entity")
         OldEdge = old_apps.get_model("tap_grid", "Edge")
         OldLanding = old_apps.get_model("tap_web", "LandingPage")
@@ -347,8 +379,7 @@ class TestDropLandingPageMigration:
             entity=edge_entity, from_entity=landing_entity, to_entity=page_entity, edge_type="USES_LANDING_PAGE"
         )
 
-        executor = MigrationExecutor(connection)
-        executor.migrate([("tap_web", "0003_drop_landing_page")])
+        self._migrate(("tap_web", "0003_drop_landing_page"))
 
         assert not Entity.objects.filter(entity_type="landing_page").exists()
         assert not Entity.objects.filter(pk=edge_entity.pk).exists()

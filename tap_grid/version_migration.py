@@ -630,6 +630,11 @@ def _locked_rows(target: _Target, using: str) -> Any:
         last = rows[-1].pk
 
 
+def _has_field(model: Any, name: str) -> bool:
+    """Whether a migration-state model has the field ``name`` at this point of the migration."""
+    return any(f.name == name for f in model._meta.concrete_fields)
+
+
 def _carry_rows(
     target: _Target, step: version_links.Step, to_version: int, using: str, actor: Any, report: MigrationReport
 ) -> None:
@@ -690,7 +695,11 @@ def _carry_rows(
         now = timezone.now()
         if flip != row.flip_map:
             values["flip_map"] = flip
-        values["batch_id"] = report.batch_id
+        # A typed row named its batch itself until the column was removed (Issue# 1288 - tap); a
+        # migration that runs at a state before that removal still writes it. The history row
+        # below names the batch either way.
+        if _has_field(target.rows, "batch_id"):
+            values["batch_id"] = report.batch_id
         target.rows._default_manager.using(using).filter(pk=row.pk).update(**values)
         for attname, value in values.items():
             setattr(row, attname, value)
@@ -707,8 +716,20 @@ def _carry_rows(
             Entity.objects.using(using).filter(pk=entity.pk).update(**spine)  # TAP-WRITE-COV: version migration
 
         if target.history is not None:
+            copied = {f.attname: getattr(row, f.attname) for f in target.rows._meta.concrete_fields}
+            # The history row records the batch that produced it, and the spine copies as the entity
+            # row stands after this write, not as the typed row was read (req-grid-entity-spine-copies
+            # rule 12). Each only where the migration state has the column.
+            if _has_field(target.history, "batch_id"):
+                copied["batch_id"] = report.batch_id
+            if _has_field(target.history, "spine_dimensions"):
+                retired, dimensions = (
+                    Entity.objects.using(using).values_list("deleted_at", "dimensions").get(pk=entity.pk)
+                )
+                copied["spine_deleted_at"] = retired
+                copied["spine_dimensions"] = dimensions
             target.history._default_manager.using(using).create(
-                **{f.attname: getattr(row, f.attname) for f in target.rows._meta.concrete_fields},
+                **copied,
                 history_date=now,
                 history_type="~",
                 history_user_id=getattr(actor, "pk", None),

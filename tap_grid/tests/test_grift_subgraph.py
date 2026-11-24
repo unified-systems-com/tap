@@ -114,10 +114,12 @@ class TestBuildDataLane:
     def test_includes_universal_basemodel_fields(self):
         character = _make_character()
         data = build_data_lane(character)
-        # description, batch_id, flip_map are universal — always present.
+        # description and flip_map are universal — always present. The typed batch_id was removed with
+        # the base-model release (Issue# 1288 - tap): the batch pointers are spine fields, not data.
         assert "description" in data
-        assert "batch_id" in data
         assert "flip_map" in data
+        assert "batch_id" not in data
+        assert not {"spine_deleted_at", "spine_dimensions"} & set(data), "the copies are on no surface"
 
     def test_includes_entity_id_mirror(self):
         character = _make_character()

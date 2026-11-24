@@ -100,11 +100,12 @@ def _model_field_pairs(obj: Any) -> list[tuple[str, str, bool]]:
     own bookkeeping; keeps the model's own declared fields in declaration
     order.
     """
-    # batch_id + flip_map are BaseModel spine fields surfaced separately by
-    # the FLIP panel below; suppressing them here keeps Details focused on
-    # the model's own typed fields (per the entity-page story: identity →
-    # context → facts → provenance, with each beat in one place).
-    SKIP = {"id", "entity_id", "batch_id", "flip_map"}
+    # flip_map is a BaseModel field surfaced separately by the FLIP panel below,
+    # and the spine copies are the database's copies of the entity row, never a
+    # surface (req-grid-entity-spine-copies rule 15); suppressing them here keeps
+    # Details focused on the model's own typed fields (identity, context, facts,
+    # provenance, each beat in one place).
+    SKIP = {"id", "entity_id", "flip_map", "spine_deleted_at", "spine_dimensions"}
     pairs: list[tuple[str, str, bool]] = []
     seen: set[str] = set()
     for field in obj._meta.get_fields():

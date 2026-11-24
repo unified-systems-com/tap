@@ -161,6 +161,133 @@
         },
         "fingerprint": "7c5271336bc13eabfd4d135e235a38ee4e06ab950282f764e86b8e04feb2a8f3",
         "version": 1
+      },
+      {
+        "definition": {
+          "constraints": [],
+          "edge_rules": {
+            "inbound": null,
+            "outbound": null
+          },
+          "event_time": {
+            "shape": "none"
+          },
+          "fields": {
+            "actor": {
+              "null": true,
+              "to": "tap_auth.user",
+              "type": "ForeignKey"
+            },
+            "closed_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "description": {
+              "null": false,
+              "type": "TextField"
+            },
+            "description_json": {
+              "null": true,
+              "type": "JSONField"
+            },
+            "error_message": {
+              "null": false,
+              "type": "TextField"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "metadata": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "source": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "started_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "status": {
+              "choices": [
+                "closed",
+                "failed",
+                "open"
+              ],
+              "max_length": 20,
+              "null": false,
+              "type": "CharField"
+            }
+          },
+          "key": "keyless",
+          "service_schema": {
+            "create_required": [],
+            "fields": {
+              "description": {
+                "type": "string"
+              },
+              "description_json": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "validation": {
+              "description_json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "data": {
+                          "type": "object"
+                        },
+                        "format": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "format",
+                        "data"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "validation": "jsonschema"
+              }
+            }
+          }
+        },
+        "fingerprint": "8cfd78b21a52b45afe417fa169658fa454ae13a1a4a66beead2e1c7e0f7d30a4",
+        "version": 2
       }
     ],
     "dimension": [
@@ -683,6 +810,204 @@
       },
       "fingerprint": "76de269d918a0e404ffea3429aa637b66d35af7381b21539881c056609e67033",
       "version": 1
+    },
+    {
+      "definition": {
+        "base_model": {
+          "entity": {
+            "null": false,
+            "to": "tap_grid.entity",
+            "type": "OneToOneField",
+            "unique": true
+          },
+          "flip_map": {
+            "null": false,
+            "type": "JSONField"
+          },
+          "spine_deleted_at": {
+            "null": true,
+            "type": "DateTimeField"
+          },
+          "spine_dimensions": {
+            "null": false,
+            "type": "JSONField"
+          }
+        },
+        "edge": {
+          "constraints": [],
+          "fields": {
+            "edge_type": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "from_entity": {
+              "null": false,
+              "to": "tap_grid.entity",
+              "type": "ForeignKey"
+            },
+            "id": {
+              "null": false,
+              "primary_key": true,
+              "type": "BigAutoField"
+            },
+            "properties": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "to_entity": {
+              "null": false,
+              "to": "tap_grid.entity",
+              "type": "ForeignKey"
+            }
+          }
+        },
+        "entity": {
+          "constraints": [
+            {
+              "args": [],
+              "class": "django.db.models.CheckConstraint",
+              "kwargs": {
+                "condition": {
+                  "children": [
+                    {
+                      "children": [
+                        [
+                          "collected_end__isnull",
+                          true
+                        ],
+                        [
+                          "collected_start__isnull",
+                          true
+                        ]
+                      ],
+                      "negated": false,
+                      "q": "AND"
+                    },
+                    {
+                      "children": [
+                        [
+                          "collected_end__gte",
+                          {
+                            "args": [
+                              "collected_start"
+                            ],
+                            "class": "django.db.models.F",
+                            "kwargs": {}
+                          }
+                        ],
+                        [
+                          "collected_end__isnull",
+                          false
+                        ],
+                        [
+                          "collected_start__isnull",
+                          false
+                        ]
+                      ],
+                      "negated": false,
+                      "q": "AND"
+                    }
+                  ],
+                  "negated": false,
+                  "q": "OR"
+                },
+                "name": "entity_collected_pair"
+              }
+            }
+          ],
+          "fields": {
+            "collected_end": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "collected_start": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "created_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "deleted_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "dimensions": {
+              "null": false,
+              "type": "JSONField"
+            },
+            "entity_type": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "event_end": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "event_precision": {
+              "choices": [
+                "day",
+                "month",
+                "second",
+                "year"
+              ],
+              "max_length": 8,
+              "null": true,
+              "type": "CharField"
+            },
+            "event_start": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "id": {
+              "max_length": 32,
+              "null": false,
+              "primary_key": true,
+              "type": "UUIDField"
+            },
+            "last_changed_batch_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "last_observed_at": {
+              "null": true,
+              "type": "DateTimeField"
+            },
+            "last_observed_batch_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "name": {
+              "max_length": 255,
+              "null": false,
+              "type": "CharField"
+            },
+            "natural_key": {
+              "null": true,
+              "type": "TextField"
+            },
+            "originating_grid_id": {
+              "max_length": 32,
+              "null": true,
+              "type": "UUIDField"
+            },
+            "updated_at": {
+              "null": false,
+              "type": "DateTimeField"
+            },
+            "version": {
+              "null": false,
+              "type": "PositiveIntegerField"
+            }
+          }
+        }
+      },
+      "fingerprint": "46748373d92bae1ae625e3bddff5bc4eb25ba7db8d34a1f18b78157023a36c22",
+      "version": 2
     }
   ]
 }

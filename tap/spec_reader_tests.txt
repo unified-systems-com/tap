@@ -22,6 +22,7 @@ tap_grid/tests/test_entity_event_time.py
 tap_grid/tests/test_find_existing.py
 tap_grid/tests/test_natural_key.py
 tap_grid/tests/test_require_caller_context.py
+tap_grid/tests/test_spine_copies.py
 tap_health/tests/test_probe_detail_leak.py
 tap_plugins/tests/test_plugin_data_directory.py
 tap_web/tests/test_html_sanitize.py

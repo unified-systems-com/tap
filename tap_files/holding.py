@@ -235,7 +235,7 @@ def _hold_version(
         # Lock the file's row before reading its format records. Attaching an edge locks both
         # endpoints (tap_grid/services/_impl.py, _lock_rows), so an attach either committed before
         # this lock, and its edge is read and removed here, or waits until the patch has committed.
-        Entity.objects.select_for_update().filter(pk=entity_id).first()
+        Entity.objects.select_for_update(no_key=True).filter(pk=entity_id).first()
         ops = [
             WriteOperation(
                 verb="patch_node",
