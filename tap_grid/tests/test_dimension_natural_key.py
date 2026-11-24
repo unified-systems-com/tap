@@ -163,6 +163,36 @@ class TestEligibility:
         with pytest.raises(ValueError, match="usable_in_keys"):
             Panel.find_existing(**{dimension_entry("tap.test.perspective"): "a", "slug": "p"})
 
+    def test_a_direct_create_is_held_to_eligibility_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A create that never searches still resolves the entry (PR# 1356 - tap review, Codex)."""
+        _declare_dimension("tap.test.perspective", usable_in_keys=False)
+        monkeypatch.setattr(Panel, "NATURAL_KEY", (dimension_entry("tap.test.perspective"), "slug"))
+        result = write_batch(
+            [
+                WriteOperation(
+                    verb="create_node",
+                    type_slug="panel",
+                    payload=_panel_payload("p"),
+                    dimensions={"tap.graph": "web", "tap.test.perspective": "a"},
+                )
+            ]
+        )
+        assert not result.success
+        assert "usable_in_keys" in str(result.results)
+        assert not Panel.objects.filter(slug="p").exists()
+
+    def test_a_direct_create_naming_an_undeclared_dimension_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Panel, "NATURAL_KEY", (dimension_entry("tap.test.nowhere"), "slug"))
+        result = write_batch(
+            [
+                WriteOperation(
+                    verb="create_node", type_slug="panel", payload=_panel_payload("p"), dimensions={"tap.graph": "web"}
+                )
+            ]
+        )
+        assert not result.success
+        assert "tap.test.nowhere" in str(result.results)
+
     def test_an_undeclared_dimension_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(Panel, "NATURAL_KEY", (dimension_entry("tap.test.nowhere"), "slug"))
         with pytest.raises(LookupError, match="tap.test.nowhere"):

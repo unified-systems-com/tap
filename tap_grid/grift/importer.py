@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/19ccbbcfd82d (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2782820e6cd8 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -3962,7 +3962,7 @@ def _resolve_ref_identities(
     row to this one — sequential batches, not a collision. Resolving searches the live grid
     and reports what it finds, so a batch with a ref node first authorises ``grid.read``.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/2f191f4abd80 (enforcement) — a ref
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/83c95c586449 (enforcement) — a ref
         node's search of the live grid runs only after grid.read is authorised (acceptance -5).
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw

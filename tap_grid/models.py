@@ -1628,12 +1628,19 @@ class BaseModel(models.Model):
         return merged
 
     def missing_key_dimensions(self) -> list[str]:
-        """The dimension entries of this type's key a create would leave without a value (``-30``)."""
-        from tap_grid.natural_key import constituting_properties, keyed_dimension_entries
+        """The dimension entries of this type's key a create would leave without a value (``-30``).
+
+        Each entry is resolved first (:func:`~tap_grid.natural_key.key_dimension`), so a create that
+        never searches is held to eligibility too (``-29``): an undeclared dimension raises
+        ``LookupError`` and one without ``usable_in_keys`` raises ``ValueError``.
+        """
+        from tap_grid.natural_key import constituting_properties, key_dimension, keyed_dimension_entries
 
         entries = keyed_dimension_entries(type(self))
         if not entries:
             return []
+        for entry in entries:
+            key_dimension(type(self), entry)
         values = constituting_properties(entries, {}, self.key_dimensions())
         return [entry for entry in entries if values[entry] is None]
 

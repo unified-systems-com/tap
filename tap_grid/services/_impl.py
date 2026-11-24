@@ -977,7 +977,7 @@ def _execute_write_pipeline(
         if op.verb == "create_node":
             try:
                 missing = instance.missing_key_dimensions()
-            except LookupError as error:  # an undeclared default or key dimension
+            except (LookupError, ValueError) as error:  # an undeclared or ineligible key dimension (-29)
                 raise ServiceValidationError(str(error)) from error
             if missing:
                 raise ServiceValidationError(
