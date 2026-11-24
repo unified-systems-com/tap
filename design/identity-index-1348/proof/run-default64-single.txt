@@ -1,0 +1,13 @@
+[today] first  N=20000: FAILED after 0.80s OutOfMemory: out of shared memory
+[today] resend N=20000: FAILED after 0.78s OutOfMemory: out of shared memory
+[today] rows=0 live_dups=0 orphans=0
+[index] first  N=20000: created=20000 found=0 locks=20 advisory=0 s=0.23
+[index] resend N=20000: created=0 found=20000 locks=20 advisory=0 s=0.24
+[index] rows=20000 live_dups=0 orphans=0
+[lockrows] first  N=20000: created=20000 found=0 locks=22 advisory=0 s=0.33
+[lockrows] resend N=20000: created=0 found=20000 locks=22 advisory=0 s=0.36
+[lockrows] rows=20000 live_dups=0 orphans=0
+[index] det after create+resend: ins=20000 upd=20000 hot_upd=0 dead=20000
+[edges index] first  E=20000: created=20000 found=0 locks=21 advisory=0 s=0.44
+[edges index] resend E=20000 (reversed): created=0 found=20000 locks=21 advisory=0 s=0.27
+[edges index] edges=20000

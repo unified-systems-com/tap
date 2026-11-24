@@ -1,0 +1,9 @@
+[today] first  N=20000: created=20000 found=0 locks=20008 advisory=20000 s=5.53
+[today] resend N=20000: created=0 found=20000 locks=20010 advisory=20000 s=5.84
+[today] rows=20000 live_dups=0 orphans=0
+[index] first  N=20000: created=20000 found=0 locks=20 advisory=0 s=0.22
+[index] resend N=20000: created=0 found=20000 locks=20 advisory=0 s=0.23
+[index] rows=20000 live_dups=0 orphans=0
+[lockrows] first  N=20000: created=20000 found=0 locks=22 advisory=0 s=0.33
+[lockrows] resend N=20000: created=0 found=20000 locks=22 advisory=0 s=0.34
+[lockrows] rows=20000 live_dups=0 orphans=0

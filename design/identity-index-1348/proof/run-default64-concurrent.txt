@@ -1,0 +1,4 @@
+[two writers sort=True] rounds=5 outcomes: ok=10 deadlock=0 live_dups=0 orphans=0 peak_server_locks=45 mean_round_s=0.53
+   sample: A:ok(created=20000,found=0,locks=20); B:ok(created=10000,found=10000,locks=20); A:ok(created=10000,found=10000,locks=20); B:ok(created=10000,found=10000,locks=20)
+[two writers sort=False] rounds=5 outcomes: ok=5 deadlock=5 live_dups=0 orphans=0 peak_server_locks=36 mean_round_s=1.28
+   sample: A:deadlock; B:ok(created=20000,found=0,locks=20); B:deadlock; A:ok(created=10000,found=10000,locks=20)

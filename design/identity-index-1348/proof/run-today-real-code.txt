@@ -1,0 +1,10 @@
+# today_locks.py, real tap code, one transaction, N node keys + N edge keys
+## tap_hard-things-db-1, private db idxproof_1348 (max_locks_per_transaction=512, max_connections=150)
+keys=40000 advisory_locks_held=40000 all_locks_held=40002 node_phase_s=1.31 total_s=2.67
+## throwaway server, Postgres defaults (64 x (100 + 0))
+keys=6000  advisory_locks_held=6000  all_locks_held=6002
+keys=7000  advisory_locks_held=7000  all_locks_held=7002
+keys=9000  advisory_locks_held=9000  all_locks_held=9002
+keys=12000 advisory_locks_held=12000 all_locks_held=12002
+keys=15000 FAILED after 1.53s: OperationalError: out of shared memory | HINT: You might need to increase "max_locks_per_transaction".
+keys=20000 FAILED after 1.23s: OperationalError: out of shared memory | HINT: You might need to increase "max_locks_per_transaction".
