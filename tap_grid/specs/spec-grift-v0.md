@@ -4,7 +4,7 @@
 
 GRIFT, the Grid Interchange Format, is TAP's JSON-based interchange format for moving graph data between files and grids. GRIFT v0 is intentionally small, strict, and practical: it should be easy to validate, easy to diff, and sufficient to refactor plugin seed data such as the LOTR dataset into portable JSON files.
 
-GRIFT's node and edge lanes are full-object interchange: they do not describe patches, history replay, or FLIP state. They carry enough canonical information for an importer to choose its own create, replace, upsert, or skip behavior while preserving universal entity identity through `entity_id`. GRIFT's removal lanes are explicit identity-targeted operations, declared separately from node and edge upserts.
+GRIFT's node and edge lanes are full-object interchange: they do not describe patches, history replay, or FLIP state. The write sections (`req-grift-write-sections`, Proposed) add three more ways to write a record: insert only, update the fields sent, and replace whole. They carry enough canonical information for an importer to choose its own create, replace, upsert, or skip behavior while preserving universal entity identity through `entity_id`. GRIFT's removal lanes are explicit identity-targeted operations, declared separately from node and edge upserts.
 
 GRIFT also carries an optional **optimistic concurrency** contract. Any mutating target — an upsert envelope or a removal target — may declare the version of the local entity it expects to act on. The importer enforces that expectation atomically: if the local version has moved on, the conflicting batch fails loud rather than overwriting state the author did not see. This is the same model Kubernetes uses with `resourceVersion`, Postgres SERIALIZABLE uses with `40001 serialization_failure`, and event-sourcing frameworks use with `entity_expected_version` on aggregate writes. The author's mental model is "apply if the grid still matches my plan, else tell me." Senders that need to recover from a conflict re-read, re-plan, and resubmit.
 
@@ -596,6 +596,12 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-contents | [Contents Declaration](#contents-declaration) | Implemented | A batch declares what kinds of record it carries; the importer verifies the declaration against the batch and decides whether it accepts each kind |
 | req-grift-export | [Grid Export](#grid-export) | Implemented | `manage.py export_grift` serialises a grid, retired rows included, optionally narrowed by dimension, batch or reachability |
 | req-grift-header-versions | [Version Declarations In The Header](#version-declarations-in-the-header) | In Development | `metadata.spine_version` and `metadata.type_versions`: the spine version and the version of each type the document carries, beside `grift_version` |
+| req-grift-write-sections | [Write Sections](#write-sections) | Proposed | Optional `inserts`, `updates` and `replaces` sections beside `nodes` and `edges`, for nodes and edges |
+| req-grift-insert-only | [Insert-Only Records](#insert-only-records) | Proposed | A record in `inserts` is created if absent and leaves an existing row untouched |
+| req-grift-partial-update | [Updates Without Required Fields](#updates-without-required-fields) | Proposed | A record in `updates` writes the fields it carries, and an edge the keys it carries in `properties` |
+| req-grift-yield | [Yielding To Another Source](#yielding-to-another-source) | Proposed | Under `on_other_source: yield` a field another source asserted is skipped and reported |
+| req-grift-full-replace | [Full Replace](#full-replace) | Proposed | A record in `replaces` is the whole object; omitted fields reset |
+| req-grift-collection-window | [Collection Window](#collection-window) | Proposed | `collected`: when a collector read each object, stated per record or once per batch, kept apart from the record's fields; format `"1"` only; an export states each row's spine pair |
 | req-grift-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | Explicit exclusions for this version |
 
 ## Document Format
@@ -1392,6 +1398,400 @@ Staged by ruling, and why the requirement is not Implemented:
 | req-grift-header-versions-6 | Format Version Moves To 1 | Implemented | An export states `grift_version` `"1"`. An importer refuses a format it does not read, naming the version given and the versions it reads. | An importer that reads only `"0"` is the released one, not run here |
 | req-grift-header-versions-7 | Format 0 Is Read Until The Fleet Moves | Implemented | A document stating `"0"` imports with no upgrade and no version refusal; with `TAP_REQUIRE_GRIFT_VERSIONS=1` it is refused, naming the version, and writes nothing. |  |
 | req-grift-header-versions-8 | The Fleet States Its Versions | Proposed | No committed GRIFT document in core states `"0"`, `GRIFT_VERSION` is `"1"`, and a document stating `"0"` is refused with no switch set. | Issue# 1288 - tap |
+
+## Write Sections
+----
+RID: `req-grift-write-sections`
+
+Status: `Proposed`
+
+A batch states how each record is to be written by the section it puts the record in. `nodes` and `edges` stay what they are, an upsert that keeps absent fields. Three optional sections sit beside them, each shaped like the removal sections a batch already has: `inserts` (create only if absent), `updates` (write the fields sent to a row that may already exist, optionally yielding to another source) and `replaces` (replace the whole object). Nodes and edges are both in scope in all three.
+
+#### Status Details
+Proposed; nothing is built. The five items it serves were ruled in by the owner as one decision set on Issue# 1284 - tap (Q5 a to e), with the open points of the first draft ruled on 2026-11-23 on the same issue: edges are in scope for all three sections, and the narrow ownership rule of `req-grift-yield` rule 7. This is Phase 2's "GRIFT write semantics" track of the time and observation epic, Issue# 886 - tap.
+
+Today (read) a batch container has `batch_entity`, `batch_node`, `nodes`, `edges` and the optional `deletes`, `purges` and `contents`, and refuses unknown keys (`req-grift-batch`). A record in `nodes` or `edges` whose target exists is applied through `replace_node` / `replace_edge` with `absent="keep"`, the ruling of Issue# 1128 - tap; one whose target does not exist is created (`spec-grid-import-grift.md`, "Per-Entity Last-Write-Wins"). There is no way to say "only if absent", "only the fields I send, without the required ones", "unless another source owns it", or "the whole object, omissions included".
+
+Two things about targets found while writing this (read): identity resolution searches live rows only (`resolve_identity`, `tap_grid/services/__init__.py`), so a record addressed by its natural key does not see a tombstoned row with the same key; Issue# 1170 - tap tracks a lookup that would. And the identity locks a batch takes up front are collected from `nodes` only (`_ref_node_lock_keys`, `tap_grid/grift/importer.py`); the new sections must be added to that collection.
+
+Prior art for putting the write's intent beside the record: a FHIR transaction `Bundle` carries a `request` per entry with its method and an `ifNoneExist` condition (searched: https://hl7.org/fhir/R4/bundle.html, https://hl7.org/fhir/R4/http.html). GRIFT already has its own idiom for the same thing, a section per intent with section-level knobs (`deletes`, `purges`), so this follows GRIFT's idiom and takes only the semantics from the published formats.
+
+#### Implementation
+1. A batch container may carry `inserts`, `updates` and `replaces`. Each is an object with `nodes` and `edges`, both always present even when empty, and its knobs, all required: the schema applies no default, as for `deletes` (`req-grift-import-deletes`, "Section Knobs").
+2. A member of a section's `nodes` is a node object and a member of its `edges` an edge object, in the shapes `req-grift-node` and `req-grift-edge` define. A `retirement` block is refused in all three sections. A record in `updates` may also carry `remove`, its explicit removal list (`req-grift-partial-update` rule 9); no other section admits it.
+3. Section knobs apply to every record in the section. There is no per-record override, as in the removal sections.
+4. An entity appears in at most one write section of a batch (`nodes`/`edges`, `inserts`, `updates`, `replaces`). A second appearance is refused with `duplicate_entity_id`.
+5. Order within a batch: every section's nodes before any section's edges, and within each kind `inserts`, then `nodes`/`edges`, then `updates`, then `replaces`; then `deletes`, then `purges`. Array order holds inside a section.
+6. Batch-local `ref`s and key endpoints work across the sections of one batch, and the identity locks a batch takes before its writes cover every section.
+7. `metadata.type_versions` names every type any section carries, and the upgrade (`req-grid-entity-model-version` rule 21) runs over the records of all sections before anything is validated or written. A step meets partial records in `updates`; a step that needs a field the record does not carry refuses that record, which refuses the document.
+8. A record in any write section may state a collection window, and inherits its batch's, in the form `req-grift-collection-window` defines (rules 2 and 4 there); what the grid does with it is `req-grid-entity-collection-time`. A record that names a row is an observation of it whatever it writes: a skipped insert and a fully yielded update move the row's observation pointers and its collection window, and change no value and no FLIP entry (`req-grift-insert-only` rule 7, `req-grift-collection-window` rule 7).
+9. A record addressed by `entity_id` whose target is tombstoned is refused with `entity_tombstoned`, in all three sections. Nothing here restores a retired entity. A record addressed by its natural key does not find a tombstoned row (identity resolution reads live rows) and is treated as having no target, as in `nodes` today; whether such a record should see the tombstone waits on Issue# 1170 - tap.
+10. Resolving whether a target exists is a read of the grid: the importer authorises `grid.read` in the import's scope before it, as it does for a `ref` (`req-grid-import-grift-identity-5`).
+11. `entity_expected_version` is allowed in `updates` and `replaces` and keeps its meaning. In `inserts` it is refused: the section already says what the sender expects.
+12. The import result counts records per section and outcome (created, written, unchanged, skipped) and carries one issue per skipped record and per yielded field or key.
+13. The sections are part of format `"1"`. No released core reads format `"1"`, so adding them before 0.5.0 changes no reader in the field.
+
+#### Development
+A per-record `request` block, as FHIR has, was considered and left out: GRIFT's section knobs have no per-record override, and one section per intent keeps a document diffable. Overloading `entity_expected_version` with `0` for "must not exist" was considered for insert-only and left out: the field's minimum is 1, and a version conflict aborts the batch (`req-grift-concurrency-version-5`), where an insert that finds its row must skip.
+
+Edges were considered for exclusion, since every ticket speaks of nodes. The owner ruled them in, including key-level updates inside an edge's `properties` (`req-grift-partial-update` rule 8), so the shape does not change again when edges need it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-write-sections-1 | Three Optional Sections | Proposed | The schema admits `inserts`, `updates` and `replaces` on a batch container, each requiring `nodes`, `edges` and its knobs, and still refuses any other key. | |
+| req-grift-write-sections-2 | One Section Per Entity | Proposed | A batch naming one entity in two write sections is refused with `duplicate_entity_id` and writes nothing. | |
+| req-grift-write-sections-3 | Order | Proposed | An edge in `edges` whose endpoint is a node created by `inserts` of the same batch is written. | |
+| req-grift-write-sections-4 | Upgrade Covers Every Section | Proposed | A version-1 record in `updates` of a document stating version 1, imported where the type is at version 2, is written as the step returns it. | |
+| req-grift-write-sections-5 | Tombstoned Target Refused By Id | Proposed | A record in any of the three sections addressed by the `entity_id` of a tombstoned entity fails with `entity_tombstoned`. | |
+| req-grift-write-sections-6 | Locks Cover Every Section | Proposed | A batch whose `inserts` and `updates` name keyed nodes takes their identity locks before any write, in the one sorted order. | |
+
+## Insert-Only Records
+----
+RID: `req-grift-insert-only`
+
+Status: `Proposed`
+
+A record in `inserts` is created when no row exists for it and leaves an existing row exactly as it is. Issue# 1071 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read in Issue# 1071 - tap, run on 2026-10-19 before keep-absent landed) a node sent under an existing identity replaces the row; since Issue# 1128 - tap an omitted field is kept, but every field sent still replaces, and a sender cannot say "leave it if it is there". A collector must read first and write after, with a gap.
+
+Rule 4 for a record addressed by a natural key is verified by reading the code, not by a test: `resolve_identity` takes a transaction-scoped advisory lock on the type and key values and then searches, inside the batch's transaction, so a second writer of the same key waits and finds the first one's row (`tap_grid/services/__init__.py`, the `pg_advisory_xact_lock` in `resolve_identity`; `_take_identity_locks` in `tap_grid/grift/importer.py`). Rule 4 for a record addressed by `entity_id` is an assumption: no code was read that settles what a concurrent create of the same id does.
+
+Prior art: FHIR conditional create. With no match the server creates; with one match it ignores the request; with several it answers 412 (searched: https://hl7.org/fhir/R4/http.html). HTTP's `If-None-Match: *` on a `PUT` is the same intent (memory, RFC 9110, not fetched).
+
+```json
+"inserts": {
+  "on_existing": "skip",
+  "nodes": [
+    { "entity": { "ref": "task-1", "entity_type": "ecs_task", "dimensions": {} },
+      "node": { "arn": "arn:aws:ecs:...:task/abc", "name": "abc" } }
+  ],
+  "edges": []
+}
+```
+
+#### Implementation
+1. `on_existing` is `skip`, `warn` or `error`. `skip` leaves the row and reports the record as skipped at info severity; `warn` does the same at warning severity; `error` fails the batch.
+2. A record whose target does not exist is created exactly as a record in `nodes` or `edges` would be: full validation, required fields required.
+3. A record whose target exists writes no value to it: no field, no envelope `name` or `dimensions`, no FLIP entry, no revision, no history row. It is still an observation of the row (rule 7).
+4. The check and the create are one step inside the batch transaction. For a record addressed by natural key, both happen under the identity lock for that type and key. For a record addressed by `entity_id`, a create that loses to a concurrent create of the same id is treated as "exists".
+5. A natural key that matches more than one live row fails the batch, as it does today (FHIR's 412).
+6. A keyless type has nothing to find: a record of it addressed by `ref` is always created.
+7. A skipped record is an observation of the row by this batch. It moves the observation pointers (`last_observed_batch_id`, `last_observed_at`) and the row's collection window, to the window the record states or to empty when it states none (`req-grift-collection-window` rule 7), and it changes no value and no FLIP entry, writes no history row and does not change the revision. The window then says when this batch read the object, not when the values the row keeps were read (`req-grift-collection-window` rule 1).
+8. An edge in `inserts` follows the same rules, its target found by `entity_id` or by its type's identity declaration.
+
+#### Development
+`on_exists: skip` on the plain `nodes` array, the first shape the issue suggested, has nowhere to live: `nodes` is an array, and a per-record flag is the override GRIFT rules out.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-insert-only-1 | Absent Is Created | Proposed | An `inserts` record for an identity with no row creates the row. | |
+| req-grift-insert-only-2 | Existing Is Untouched | Proposed | An `inserts` record for an identity with a live row leaves every field, the name, the dimensions, `flip_map` and the revision as they were, and the result reports it skipped; `last_observed_batch_id` and the collection window move to the inserting batch's. | The issue's done-test; rule 7 |
+| req-grift-insert-only-3 | No Gap | Proposed | Two imports inserting the same keyed identity at once create one row; the other reports a skip. | Needs two connections |
+| req-grift-insert-only-4 | Error Policy | Proposed | With `on_existing: error` an existing target fails the batch and nothing is written. | |
+| req-grift-insert-only-5 | Edges Too | Proposed | An edge in `inserts` whose identity matches a live edge leaves its `properties` and `flip_map` unchanged. | |
+
+## Updates Without Required Fields
+----
+RID: `req-grift-partial-update`
+
+Status: `Proposed`
+
+A record in `updates` writes the fields it carries to an existing row and need not carry the type's required fields. For an edge, it writes the keys it carries inside `properties`. Issue# 1173 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read) required fields stay required under keep-absent: "validation is unchanged, so a keep-absent payload must still carry them" (`req-grid-service-write-keepabsent`, the ruling of Issue# 1128 - tap), and `req-grift-node` validates every `node` as a full object. A sender adding one fact to a node it did not create must send every required field, and each replaces the stored value. `patch_node` has no such requirement and the importer never calls it (read in Issue# 1173 - tap, not re-read here).
+
+Prior art: JSON Merge Patch. A member absent from the patch is left alone; a member present replaces; `null` removes (searched: https://www.rfc-editor.org/rfc/rfc7396.html). GRIFT takes the first two and not the third: an explicit `null` is an assertion of absence, a touched field stamped like any value (`spec-grid-node.md`, "The FLIP Hinge"; its Prior Art names Merge Patch's "null = delete" as the anti-pattern), so removal is said by a named list (rule 9), ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23). One local difference is kept from Issue# 1128 - tap: `null` on a field that cannot be null resets it to its default. Rule 3 below narrows that for `updates`.
+
+```json
+"updates": {
+  "on_missing": "ignore",
+  "on_other_source": "overwrite",
+  "nodes": [
+    { "entity": { "ref": "c-1", "entity_type": "ecs_container", "dimensions": {} },
+      "node": { "arn": "arn:aws:ecs:...:container/xyz", "image_digest": "sha256:...", "labels": { "team": null } },
+      "remove": [["labels", "stale-key"], ["description"]] }
+  ],
+  "edges": []
+}
+```
+
+Here `labels.team` is asserted absent and stays, `null`, stamped; `labels.stale-key` and the field `description` are released.
+
+#### Implementation
+1. Where the target exists, `node` is validated field by field against `FIELD_CRUD_SCHEMA` and the required list is not applied. The fields a natural key needs to find the row are still needed, because without them there is no target.
+2. The write follows the keep-absent rules as they stand (`req-grid-service-write-keepabsent-2` to `-4`, `-6`): absent kept, present replaces whole, FLIP on what changed or was first asserted. A field tracked per key (`req-grid-flip-nested`) is written key by key instead.
+3. An explicit `null` on a required field is refused with the field named, where keep-absent in `nodes` resets it to its default.
+4. `on_missing` is `error`, `warn`, `ignore` or `create`. The first three are the removal sections' values with the same meaning. `create` creates the row, and then the required fields are required; a record that lacks them fails the batch naming them.
+5. The envelope's `name` and `dimensions` are applied as for a record in `nodes`, except under `on_other_source: yield` (`req-grift-yield` rule 8).
+6. `on_other_source: overwrite` is the behaviour above. `yield` is `req-grift-yield`.
+7. A record that changes nothing is an observation, as for any write (`req-grid-flip-change`).
+8. An edge in `updates` writes the keys it carries inside `properties` and leaves the others, absent keys included whoever owns them, by `req-grid-flip-nested` rules 4 to 6: an edge's `properties` is tracked per key for every edge type, with no opt-in. The keys the edge type's identity declaration names locate the edge and are not changed by an update; a record that would change one is refused naming it. Endpoints are not changed by an update.
+9. **Removal is named, never inferred from `null`.** An explicit `null`, on a field or on a key of a tracked field, is an assertion of absence, stored and stamped like any value (`req-grid-node-observation`); it removes nothing. A record in `updates` may carry `remove`, beside `entity` and its payload: an array of paths, each an array of one or two strings. `["<field>"]` names a field of a node, `["<field>", "<key>"]` a key of a per-key tracked field, and for an edge `["properties", "<key>"]` a key of its `properties`; keys are verbatim (`req-grid-flip-nested` rule 3), never dotted. Removal releases what it names: a field is reset to its model default with its FLIP entry removed, a key is removed from the object with its entry, so it is unasserted and a later yielding writer may fill it. A sender that wants it absent and not filled by another source sends `null` instead. Under `on_other_source: yield` a path whose entry names another source is skipped and reported, as a value is (`req-grift-yield` rule 3). Refused, naming the path: a path that is also carried in the payload, a required field, a field or key a natural key or the edge type's identity declaration names, a two-segment path on a field not tracked per key, and a path naming no field of the type. A path naming a key not stored writes nothing. `remove` is refused in `nodes`, `edges`, `inserts` and `replaces`: an insert asserts no removal and a replace already resets what it omits. It is part of format `"1"` with the write sections (`req-grift-write-sections` rule 13) and lands with its code. Ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23); this withdraws the earlier rule that `null` removes a key under `overwrite`.
+10. **Whole-field operations on a tracked field.** A field tracked per key (`req-grid-flip-nested` rules 1 and 2) has an entry per key and no entry for the field as a whole, so an operation on the whole field is judged as follows.
+    - **`remove` of the whole field, in `updates`.** Under `on_other_source: yield`, `remove: [["<field>"]]` is refused with `tracked_field_whole_remove_under_yield`, naming the field and the remedy: per-key paths (`[["<field>", "<key>"]]`), which rule 9 then judges key by key. Under `overwrite`, `remove: [["<field>"]]` resets the field to its model default and removes every key's entry, whoever owns it, as `overwrite` already takes every key it names.
+    - **The whole field sent as `null`, everywhere.** `<field>: null` on a tracked field is refused with `tracked_field_whole_null_refused`, naming the field, in `nodes`, `updates` and `replaces`, under either `on_other_source`, and whether or not the field is nullable. The per-key ownership map has no place for an assertion about the container, and a non-nullable tracked field sent as `null` would otherwise be reset to its model default, removing every key's entry, whoever owns it. The refusal names the remedy: a `null` per key, or, in `updates` under `overwrite`, `remove` of the field.
+    - A refused record fails the batch as any refused path does, and nothing is written.
+    Ruled by the owner on Issue# 1284 - tap (Q53b and Q53d, 2026-11-23).
+
+#### Development
+Making required fields required-on-create-only for every record in `nodes` was the other shape Issue# 1173 - tap names. It needs no new section, and it leaves the sender unable to say what should happen when the row is not there: the create would fail on the missing fields and abort the batch. The section's `on_missing` is that answer. Calling `patch_node` was not chosen as the contract because `PATCH_EXTRA_FIELDS` are excluded from GRIFT payloads.
+
+Rule 10: letting a yielding `remove: [["tags"]]` remove only the writer's own keys was considered; it makes one path mean "the field" under `overwrite` and "my keys" under `yield`, and a sender who meant the whole field would not learn that another source's keys stayed until it read the row. Container-level attribution, an entry for the field as a whole beside its per-key entries, so that `tags: null` could be stored as an assertion about the container, is a possible later extension, not built and not specified here.
+
+An edge's `properties` is per-key for every edge type because it is the edge's only writeable object, so an update that replaced it whole would not be partial at all; the cost the per-key opt-in guards against on nodes, large `configuration` objects, does not arise for edge properties in the fleet today (designed, not measured).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-partial-update-1 | No Required Re-Send | Proposed | An `updates` record carrying one optional field and none of the type's required fields writes that field to an existing row and leaves the required fields' values and FLIP entries as they were. | The issue's case |
+| req-grift-partial-update-2 | Missing Target Policy | Proposed | With `on_missing: ignore` a record whose target does not exist writes nothing and is reported; with `error` the batch fails; with `create` and the required fields present the row is created; with `create` and one missing the batch fails naming it. | |
+| req-grift-partial-update-3 | Null On Required Refused | Proposed | An explicit `null` on a required field in `updates` is refused, naming the field. | |
+| req-grift-partial-update-4 | Edge Properties By Key | Proposed | An edge holding `{"a":1,"b":2}` in `properties`, sent in `updates` with `{"b":3}`, ends `{"a":1,"b":3}` with `a`'s entry unchanged. | Owner ruling, Issue# 1284 - tap |
+| req-grift-partial-update-5 | Edge Identity Unchanged | Proposed | An `updates` record that would change a property the edge type's identity names is refused naming it. | |
+| req-grift-partial-update-6 | Null Asserts, Remove Releases | Proposed | An `updates` record sending an optional nullable field as `null` stores `null` with an entry for the writing batch; one listing the field in `remove` resets it to its default and leaves it with no entry; one listing a field it also carries, a required field, or a natural-key field is refused naming the path. | Rule 9; Q52 |
+| req-grift-partial-update-7 | Null Blocks A Stale Yielding Value | Proposed | Source B sends `owner: null` in `updates`; source C then sends `owner: "bob"` under `yield`: `owner` stays `null` with B's entry and the result names it yielded to B. | Rule 9; Q52 |
+| req-grift-partial-update-8 | Removal Lets A Yielding Writer Fill | Proposed | Source B lists `["owner"]` in `remove`; source C then sends `owner: "bob"` under `yield`: `owner` is `"bob"` with C's entry, yielded. | Rule 9; Q52 |
+| req-grift-partial-update-9 | Yielding Whole Remove Of A Tracked Field Refused | Proposed | `tags` is tracked per key and holds `{"a":1,"b":2}`, `a` with source A's entry and `b` with source B's. A sends `remove: [["tags"]]` under `yield`: refused with `tracked_field_whole_remove_under_yield` naming `tags` and the per-key remedy; `tags`, both entries and the row are unchanged. | Rule 10; Q53b |
+| req-grift-partial-update-10 | Yielding Whole Null On A Tracked Field Refused | Proposed | The same row; A sends `tags: null` in `updates` under `yield`: refused with `tracked_field_whole_null_refused` naming `tags` and the per-key remedy; nothing changes. | Rule 10; Q53d |
+| req-grift-partial-update-11 | Overwrite Whole Remove Resets A Tracked Field | Proposed | The same row; A sends `remove: [["tags"]]` with `overwrite`: `tags` is its model default and `flip_map` holds no entry for any of its keys, B's included. | Rule 10; Q53b |
+| req-grift-partial-update-12 | Overwrite Whole Null On A Tracked Field Refused | Proposed | `tags` is nullable; A sends `tags: null` in `updates` with `overwrite`: refused with `tracked_field_whole_null_refused` naming `tags` and the remedies (a `null` per key, or `remove` under `overwrite`); nothing changes. | Rule 10; Q53d |
+| req-grift-partial-update-13 | Per-Key Remedy Is Judged Per Key | Proposed | The same row; A sends `remove: [["tags","a"],["tags","b"]]` under `yield`: `a` and its entry are removed, `b` is skipped and reported as yielded to B. | Rules 9 and 10 |
+| req-grift-partial-update-14 | Whole Null In Nodes Refused | Proposed | The same row; A sends the node in `nodes` of a format "1" document with `tags: null`: refused with `tracked_field_whole_null_refused` naming `tags` and the per-key remedy; `tags`, both entries and the row are unchanged. | Rule 10; Q53d |
+| req-grift-partial-update-15 | Whole Null In Replaces Refused | Proposed | The same row; A sends the node in `replaces` with `tags: null`: refused with `tracked_field_whole_null_refused` naming `tags`; the row is not replaced, and `tags` and both entries are unchanged. | Rule 10; Q53d |
+| req-grift-partial-update-16 | Whole Null On A Non-Nullable Tracked Field Refused | Proposed | `tags` is tracked per key and not nullable, holding `{"a":1,"b":2}` with A's and B's entries. A sends `tags: null` in `updates` with `overwrite`: refused with `tracked_field_whole_null_refused`, not reset to its default; `tags` and both entries, B's included, are unchanged. | Rule 10; Q53d |
+
+## Yielding To Another Source
+----
+RID: `req-grift-yield`
+
+Status: `Proposed`
+
+Under `on_other_source: yield`, a record in `updates` writes a field only where no other source has asserted the field's current value. Issue# 1172 - tap.
+
+#### Status Details
+Proposed; nothing is built. Today (read, Issue# 1172 - tap) a sender can send a field, which replaces it whoever wrote it, or omit it, which leaves a stale value of its own in place, or read `flip_map` first and decide, with a gap. FLIP already names the batch that set each field's current value, and the batch carries `source` and `actor` (`req-grid-flip-map-2`, `req-grid-flip-batch-1`; `Batch.source` read in `tap_grid/models.py`). `source` is free text a document sets, so rule 1 does not use it: identity is set at the write boundary (Q52, Issue# 1284 - tap).
+
+Which source has the final say on a value is **not decided** here. Yield lets a second-hand source step aside and lets a closer source take a value from it; it does not rank two sources that both write with `overwrite`, or a source against an operator's edit. That needs a hierarchy of provenance, which the owner has deferred: Issue# 1341 - tap.
+
+Prior art: Kubernetes Server-Side Apply. Each field has managers; an apply that would change a field another manager owns is a conflict; the applier may force it, omit the field, or match the value and share it (searched: https://kubernetes.io/docs/reference/using-api/server-side-apply/). The mapping: a manager is a source, `overwrite` is a forced apply, `yield` is an apply that drops the conflicting field in place of failing. The issue asks for a skip that is reported, not an error, so that either collector can run first.
+
+#### Implementation
+1. A **source** is the write identity of the batch a FLIP entry points at, set at the write boundary by core and never read from the document. A collector write, a batch a run imports through `CollectorBase.submit_grift`, is identified by the plugin slug and the collector's name (its version is not part of the identity). Any other write, an operator's import or edit, is identified by the acting user. Core records the identity on the batch when it opens it, in a place no document can set; `metadata.collector` cannot serve alone, because it also holds a claim a document carried from another grid, kept as written (`req-tap-cares-collector-version` rule 8). Two batches are the same source when their recorded identities are equal. The batch's `source` text, and a `metadata.collector` a document carried from another grid (`req-tap-cares-collector-version` rule 8), are labels only and decide nothing here. Ruled by the owner on Issue# 1284 - tap (Q52, 2026-11-23).
+   A write with no established identity (no collector run and no acting user, as for a system import) is treated as having no source, and cannot write under `yield`: an `updates` section with `on_other_source: yield` in such a batch refuses the document, naming the batch. Without a source a yielding writer would yield to its own earlier writes, which count as another source's, and could never correct a value it wrote. A batch recorded before identities were set has none and resolves as **unknown**: an entry pointing at it is another source's to every yielding writer, and it is never the same source as anything.
+   **A batch's write identity is fixed.** It is set once, when core opens the batch, and never changes. Every later write that lands in an existing batch must resolve, at the write boundary and before any mutation, to that same identity: a service call that joins a batch by passing its id (`caller_context.batch_id`, or an ambient batch scope), and a force re-import that re-executes a batch in place (`req-grid-import-grift-force-reimport`). The comparison is of resolved identities, plugin slug and collector name or acting user, never of the `source` text or the caller's claim, so a collector's own delegated writes, the service calls its run makes into the batch `submit_grift` opened, still join. A mismatch is refused with `batch_identity_mismatch`, naming the batch, its identity and the writer's, and nothing is written. An operator who force-re-imports a collector's batch is refused: the re-import is not treated as the collector. A write with no established identity joins only a batch opened with none, and a batch whose identity is unknown is joined or re-executed by no write. Restamping the batch with the writer's identity is forbidden: every FLIP entry already pointing at the batch would change source, and with it what a yielding writer is allowed to take. Ruled by the owner on Issue# 1284 - tap (Q53c, 2026-11-23). Not built: the join path is `write_batch` (`tap_grid/services/__init__.py`, which calls `_ensure_batch` in `tap_grid/services/_impl.py` and today leaves an existing batch alone, checking only its label by `_refuse_renaming_an_existing_batch`), and the force path is the `is_force_reimport` branch of `_execute_grift_batch` (`tap_grid/grift/importer.py`), which today reuses the original batch row and checks no identity.
+2. Under `yield`, a field the record carries is written when the field has no FLIP entry, or its entry points at a batch of the same source as the writing batch. Otherwise the field is skipped: its value, its entry and nothing else about it change.
+3. Each skipped field is reported in the result as a warning naming the entity, the field and the other source. It is never dropped silently.
+4. The judgement is made inside the write, on the row as locked for the write. There is no read-then-write gap.
+5. A record all of whose fields are skipped writes no field and is an observation.
+6. `yield` on a field of a type with FLIP off (`req-grid-flip-default`) is refused: there is nothing to judge by.
+7. An entry written by a yielding write records that it was yielded (`req-grid-flip-nested` rule 10 gives the form). A later write by a **different** source in `nodes`, in `updates` with `overwrite`, or in `replaces`, that carries the **same** value moves the entry to the writing batch **only when the entry was yielded**; the moved entry is not yielded. An entry not written by a yielding write never moves on a confirming write, whoever sends it. This is the one exception to `req-grid-flip-change` rule 3, ruled by the owner on Issue# 1284 - tap (2026-11-23).
+8. A change of owner under rule 7 with no change of value is an observation, not an update: it writes no history row and does not change the revision, `updated_at` or `last_changed_batch_id` (`req-grid-history-reobservation`). It is still a write of provenance, and it needs a path of its own. Today a write that changes no value skips the typed save, and with it the FLIP stamp (`_execute_write_pipeline`, `tap_grid/services/_impl.py`: an unchanged classification records an `observe` event and calls `instance.save` only when something changed). Building rule 7 adds a provenance-only write: on the row as locked for the write (rule 4), it rewrites the moved entries of `flip_map` and nothing else, with no typed save, no history row and no revision. The batch's existing event for the object (the `observe` event an unchanged write records) lists each transferred field path, a tracked key as its field and key, with the previous attribution (batch id, yielded) and the new one. No second event is written.
+9. Under `yield` the envelope's `name` and `dimensions` are not applied to a row that exists. They are applied on a create.
+10. No precedence between sources is declared anywhere. The closer source writes with `overwrite`; a second-hand source writes with `yield`. Which is which is the collector author's statement, made by the section and knob it uses.
+
+#### Development
+Fill-only (write only where the stored value is null) was set aside in the issue: a source could never refresh its own value. A declared precedence table between sources was considered and left out for 0.5.0; it belongs to Issue# 1341 - tap. Failing the batch on a conflict, as Server-Side Apply does, was left out for the reason in the issue.
+
+Without rule 7 the design has a hole (designed, not observed): a provider that writes the same value a second-hand source already wrote does not move the entry, by `req-grid-flip-change`, so the field stays the second-hand source's, which can later overwrite a value the provider confirmed. A wider rule was considered, that any different source confirming a value takes it. It was not chosen: two sources that both write with `overwrite` and agree would then take the field from each other on every pass, a write on every unchanged pass, which is what Issue# 322 - tap removed. The narrow rule costs one flag on a yielded entry.
+
+#### Future
+Which source has the final say on a value, and whether a ranking of sources, kinds of source, operators or a per-field declaration decides it: Issue# 1341 - tap.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-yield-1 | Other Source's Field Is Left | Proposed | Source B writes `name`; source A sends `name` under `yield`: value and entry are B's, and the result names the field as yielded to B. | |
+| req-grift-yield-2 | Own Field Is Refreshed | Proposed | Source A wrote `image`; A sends a new `image` under `yield`: it is written and stamped. | |
+| req-grift-yield-3 | Unstamped Field Is Written | Proposed | A field with no FLIP entry is written under `yield`, and its entry records that it was yielded. | |
+| req-grift-yield-4 | Either Runs First | Proposed | A then B (overwrite) then A (yield), and B then A (yield), end with the same values for the fields B sends. | The owner's ruling in the issue |
+| req-grift-yield-5 | Confirming Takes A Yielded Field | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`: the entry is B's and not yielded, no history row is written, the revision is unchanged; A's later different `name` under `yield` is skipped. | Rule 7 |
+| req-grift-yield-6 | Confirming Does Not Take An Overwritten Field | Proposed | A wrote `name` with `overwrite`; B sends the same `name` with `overwrite`: the entry stays A's, and nothing is written. | Rule 7; Issue# 322 - tap |
+| req-grift-yield-7 | No Gap | Proposed | The judgement uses the row as locked for the write. | Needs two connections |
+| req-grift-yield-8 | A Yielding Write Needs A Source | Proposed | A document imported with no established write identity (no collector run, no acting user) and an `updates` section with `on_other_source: yield` is refused, naming the batch, and writes nothing. | Rule 1 |
+| req-grift-yield-9 | A Transfer Is Recorded, Not Revised | Proposed | A wrote `name` under `yield`; B sends the same `name` with `overwrite`. The row's `flip_map` entry for `name` is B's batch, not yielded; the typed row's history count, revision, `updated_at` and `last_changed_batch_id` are as before; and B's `observe` event for the object lists `name` with the previous attribution (A's batch, yielded) and the new one (B's batch, not yielded). | Rule 8; the provenance-only write path |
+| req-grift-yield-10 | Identity Is The Boundary's, Not The Document's | Proposed | Two collectors whose batches state the same `source` text are different sources: the second, under `yield`, skips the first's field. One collector whose batches state different `source` texts is one source: under `yield` it refreshes its own field. A hand import of a document whose batch carries another grid's `metadata.collector` is identified by the acting user, not by that collector. An entry pointing at a batch with no identity is skipped by every yielding writer. | Rule 1; Q52 |
+| req-grift-yield-11 | Joining With The Same Identity | Proposed | A collector run opens a batch through `submit_grift`; a service call made by the same run, passing that batch's id, writes into it, and its FLIP entries point at the batch and resolve to the collector's identity. | Rule 1, fixed identity |
+| req-grift-yield-12 | A Different Identity Cannot Join Or Re-Execute | Proposed | An operator's service call passing a collector's batch id is refused with `batch_identity_mismatch`, and a force re-import of that batch by the operator is refused the same way; in both the batch's recorded identity, its rows, `flip_map` entries and events are as before, and nothing is written. | Rule 1, fixed identity; no restamp |
+
+## Full Replace
+----
+RID: `req-grift-full-replace`
+
+Status: `Proposed`
+
+A record in `replaces` is the whole object: a field it omits is reset, not kept.
+
+#### Status Details
+Proposed; nothing is built. Since Issue# 1128 - tap an omitted field in `nodes` is kept (read: `spec-grid-import-grift.md`, "Absent Fields On Upsert"). A sender that holds the whole truth of an object can clear a field only by sending `null` for each one by name, and an object key only by re-sending the field. The service verb already has the behaviour: `replace_node` with `absent="reset"`, its default (`req-grid-service-write-keepabsent-1`).
+
+Prior art: HTTP `PUT` replaces the representation whole (memory: RFC 9110, not fetched).
+
+```json
+"replaces": {
+  "on_missing": "create",
+  "nodes": [ { "entity": { "entity_id": "0196...", "entity_type": "panel", "dimensions": {} },
+               "node": { "title": "Inventory", "config": {} } } ],
+  "edges": []
+}
+```
+
+#### Implementation
+1. `node` is validated as a full object: required fields required (`req-grift-node`, "Node Validation").
+2. A field the record omits is reset to its model default. A field it carries replaces whole, a per-key tracked field included (`req-grid-flip-nested` rule 8), and an edge's `properties` included.
+3. FLIP moves on the fields whose value changed, including a reset that changed the value (`req-grid-flip-change` rule 5), and on a field or key asserted for the first time (no entry yet). A field or key replaced with an identical value keeps its owner, a per-key tracked field and an edge's `properties` judged key by key (`req-grid-flip-nested` rule 8). The one exception is the narrow ownership rule: an entry written by a yielding write moves to the replacing batch when the replace confirms its value from a different source (`req-grift-yield` rules 7 and 8). Entries it writes are not yielded.
+4. `on_missing` is `error`, `warn`, `ignore` or `create`.
+5. There is no `on_other_source`. A full replace is a statement of the whole object and does not yield.
+6. The envelope's `name` and `dimensions` are applied as for a record in `nodes`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-full-replace-1 | Omitted Is Reset | Proposed | A `replaces` record omitting an optional field that holds a value leaves it at the model default with a FLIP entry for the writing batch. | |
+| req-grift-full-replace-2 | Required Still Required | Proposed | A `replaces` record lacking a required field is refused. | |
+| req-grift-full-replace-3 | Same Record In Nodes Keeps It | Proposed | The same record in `nodes` leaves the omitted field's value. | The difference from upsert |
+| req-grift-full-replace-4 | Edge Properties Replaced Whole | Proposed | An edge holding `{"a":1,"b":2}` sent in `replaces` with `{"b":3}` ends `{"b":3}`. | |
+| req-grift-full-replace-5 | Identical Replace Moves No Owner | Proposed | Source B wrote a per-key tracked map `{"a":1,"b":2}` with `overwrite` (no entry yielded). Source A sends the same field as `{"a":1,"b":2}` in `replaces`: every key's entry is still B's, and no history row is written. Had B written `b` under `yield`, `b`'s entry alone would move to A, not yielded. | Rule 3; `req-grid-flip-nested` rule 8; Issue# 322 - tap |
+
+## Collection Window
+----
+RID: `req-grift-collection-window`
+
+Status: `Proposed`
+
+A document says when the collector read each object it carries. The statement is a window, a start and an end on the collector's own clock, and it sits beside the record, never inside the fields the record writes. A batch may state one window for all its records, and a record may state its own in place of it. What the window means and what the grid does with it is `req-grid-entity-collection-time` (`spec-grid-entity.md`); this requirement specifies only how a document states it, and how an export writes it.
+
+#### Status Details
+Proposed; nothing is built. This is the GRIFT document form that `req-grid-entity-collection-time` rule 2 names, and that `req-grift-write-sections` rule 8 points at. The design was ruled by the owner on 2026-11-23, on Issue# 1284 - tap (Q50): all seven decisions (A to G, under Development) as recommended. Nothing in it is open.
+
+What exists today (read at tap main `34fbda8a` and this branch at `662dcde1` with `git show`; nothing was run):
+
+- The write-batch form is built. `WriteOperation.collected` (`tap_grid/service_types.py`) takes a `CollectionWindow(start, end)` beside the operation's `payload`, each bound a timezone-aware datetime or ISO 8601 text with a zone. `settle_window` (`tap_grid/collection_time.py`) turns it into the stored pair or into nothing and a `collection_time_not_recorded` warning (no zone, text that is not a time, end before start); `order_warnings` reports `collection_time_older_read` and `collection_time_out_of_order` and corrects nothing.
+- The database refuses a half-set pair and an end before its start, on `Entity` and on `BatchEvent` (`req-grid-entity-collection-time` rule 6).
+- The importer states no window. None of the `WriteOperation(...)` calls in `tap_grid/grift/importer.py` passes `collected`, so every row a GRIFT import names, collectors' included, leaves the import with an empty pair (`req-grid-entity-collection-time` rule 5 and its Status Details).
+- The import result does not carry an operation's warnings to its caller (`req-grid-entity-event-time`, Status Details, the same gap for `event_time_not_stored`): the three `collection_time_*` warnings are raised in the write operation's result and go no further. Building this requirement includes carrying them into the import result's `warnings` (rules 9 and 10).
+- The document has nowhere to put one. The schema's batch container admits `batch_entity`, `batch_node`, `nodes`, `edges`, `deletes`, `purges`, `contents` and `edge_cases`; a node or edge object admits `entity`, the payload and `retirement`; all refuse an unknown key (`tap_grid/schemas/grift-document.schema.json`). `GriftRemovalTarget` is one definition shared by the `deletes` and `purges` sections, so admitting `collected` on a delete target and refusing it on a purge target (rules 2 and 5) needs the purge section's items to name a target that does not admit it. The spine table in `spec-grid-entity.md` says the envelope does not carry `collected_start`, and it still does not.
+- The exporter writes no collection time. `_entity_envelope` (`tap_grid/grift/exporter.py`) emits `entity_id`, `entity_type`, `dimensions` and `name` only; `grep collected` over the exporter finds nothing but the word "collection" in prose.
+- The importer checks envelope times in code, not by the schema's `format` (no format checker is used): `_check_datetime` parses with Django's `parse_datetime`, and `_make_aware` gives a time with no zone the server's zone. A window must not take that path: a bound with no zone is not recorded (rule 9).
+
+The rulings this follows, on Issue# 1284 - tap: the spine pair belongs to the latest batch to name the object, empty included, and a late older read moves it and warns (third set, 2026-11-22, which reverses the "does not move backwards" of the second set); a value that cannot be stored truthfully is left off with a warning, where the design record proposed a hard stop (first set, 2026-11-21); and this form's seven decisions (Q50, 2026-11-23).
+
+Prior art read for the shape (each page opened on 2026-11-23):
+
+- STIX 2.1 `observed-data` states one window, `first_observed` and `last_observed`, for a group of objects it references by `object_refs`, apart from those objects' own properties, and requires `last_observed` to be "greater than or equal to" `first_observed`; its timestamps "MUST be represented in the UTC timezone" (https://docs.oasis-open.org/cti/stix/v2.1/os/stix-v2.1-os.html, sections 2.16.1 and 4.14). That is the batch-level window.
+- OpenTelemetry logs carry `ObservedTimestamp`, "Time when the event was observed by the collection system", on each record beside `Timestamp`, the source's time; the `Resource` shared by many records may be recorded "only once per batch" (https://opentelemetry.io/docs/specs/otel/logs/data-model/). That is the per-record window, with a batch-level shared part.
+- Elastic Common Schema keeps `event.created`, "when the event was first read by an agent, or by your pipeline", apart from `@timestamp`, the time extracted from the event (https://www.elastic.co/guide/en/ecs/current/ecs-event.html). OCSF keeps `metadata.logged_time`, "when the logging system collected and logged the event", inside a `metadata` object apart from the event's fields (https://schema.ocsf.io/1.3.0/objects/metadata).
+- FHIR keeps who-made-this-and-when in a separate `Provenance` resource that names its subjects by reference (`target`) and states `occurred[x]` as a period (https://hl7.org/fhir/R4/provenance.html). That is the keyed-map shape, set aside under Development. `meta.lastUpdated` is the receiving server's own time: "the server SHALL update this item to the current time on the server" (https://hl7.org/fhir/R4/resource.html), the same rule as the grid's `updated_at`, and not a collection time.
+- CycloneDX states one `metadata.timestamp`, "when the BOM was created", for the whole document, and no per-component read time was found in the part of the schema page read (https://cyclonedx.org/docs/1.6/json/). A document-level time only.
+
+#### Implementation
+
+```json
+{
+  "batch_entity": { "entity_id": "0196...", "entity_type": "batch", "dimensions": {} },
+  "batch_node": { "name": "aws inventory 2026-11-23", "source": "collector:aws_core" },
+  "collected": { "start": "2026-11-23T14:00:02Z", "end": "2026-11-23T14:03:41Z" },
+  "nodes": [
+    { "entity": { "ref": "i-1", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0abc", "state": "running" } },
+    { "entity": { "ref": "i-2", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0def", "state": "stopped" },
+      "collected": { "start": "2026-11-23T14:05:10Z", "end": "2026-11-23T14:05:10Z" } },
+    { "entity": { "ref": "i-3", "entity_type": "aws_ec2_instance", "dimensions": {} },
+      "node": { "instance_id": "i-0fed", "state": "running" },
+      "collected": null }
+  ],
+  "edges": []
+}
+```
+
+Here `i-1` was read in the batch's window, `i-2` in a call of its own, and `i-3` states none (it came from a cache, say) and gets an empty pair.
+
+```json
+"GriftCollectionWindow": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["start", "end"],
+  "properties": {
+    "start": { "type": "string", "minLength": 1 },
+    "end": { "type": "string", "minLength": 1 }
+  }
+}
+```
+
+1. **The window.** A collection window is an object with exactly `start` and `end`, both required, each an RFC 3339 date-time text with a zone (`Z` or an offset). `end` equals `start` when the object was read in one call. It carries no precision: its width is the precision (`req-grid-entity-collection-time` rule 1). **What it means on a row:** the row's window is the collection window asserted by the latest batch that addressed the row (`req-grid-entity-collection-time` rule 5). It says when that batch's collector read the object. It does not date every value the row holds: a batch that addressed the row and wrote nothing (a skipped insert, a fully yielded update), or wrote some fields of a row other sources wrote the rest of, moves the window and leaves values other batches wrote, read at other times. When a value was read is answered, where it can be, by its FLIP entry, which names the batch that wrote the value, and by that batch's event for the object, which carries the window that batch stated for it. The evidence does not always settle it: one batch can address the same object more than once with different windows (two records of the batch naming it, each stating its own `collected`), and an ordinary event does not say which fields its operation changed, so which of the batch's windows covers the value is not recorded. Where the evidence does not settle it, a reader reports the value's read window as ambiguous, naming the candidate windows, and does not pick one.
+2. **Where it sits.** The key is `collected`. It may appear:
+   - on a batch container, as the batch's window;
+   - on a node object and an edge object, in `nodes`, `edges` and the `nodes` and `edges` of `inserts`, `updates` and `replaces` (`req-grift-write-sections`), beside `entity`, the payload and `retirement`;
+   - on a target in `deletes`, whether named by `entity_id` (`GriftRemovalTarget`) or by edge identity (`GriftEdgeRemovalByIdentity`).
+
+   It never appears inside `node`, inside an edge's `properties`, inside the entity envelope, or inside `batch_node`. A model field that happens to be called `collected` is that model's own field and unrelated.
+3. **Keyed by object through its record.** A record names one object, by `entity_id`, `ref`, natural key or edge identity, so a window on a record is keyed by that object, whichever way the record addresses it. This is the shape `WriteOperation.collected` has (`req-grid-entity-collection-time` Status Details) and the shape `retirement` already has in a document. There is no second map from object to window.
+4. **Which window a record states.** For each record, in this order: the record's own `collected` when the record has the key; otherwise the batch's `collected` when the batch has one; otherwise none. A record's `"collected": null` states none and the batch's window does not apply to it. `null` is refused on a batch container, where leaving the key out says the same.
+5. **Not on purges, not inferred.** `collected` on a `purges` target is refused: a purge removes the row and its batch events, so nothing would hold the window. The schema gives the purge section's items a target definition that does not admit the key, since `GriftRemovalTarget` is shared with `deletes` today. The batch's window does not apply to purge targets, to the edges a node's retirement ends (`req-grid-entity-collection-time`, Status Details, "As built"), to rows the dangling sweep tombstones, or to `edge_cases` claims, none of which is a record the batch stated a read for. A window is never taken from `batch_node.started_at` or `closed_at`, from the envelope's times, or from the import's reference time (`req-grid-entity-collection-time` rule 3).
+6. **What the importer does with it.** The window a record states is passed as `WriteOperation.collected` on every operation the importer makes for that record: the create or the replace, and, for a record carrying a `retirement` block, the retirement after it, so the pair the batch leaves on the row is the stated one. A record that states none passes nothing. Everything after that is the write-batch form's, unchanged: the settling, the pair on the batch event and on the spine, the late-older-read warning, the order warnings.
+7. **Every write that names the object.** The pair moves wherever the batch names the object, changed or not (`req-grid-entity-collection-time` rule 4). So the window is recorded for a record in `inserts` that finds its row and skips (`req-grift-insert-only` rule 7), for a record in `updates` all of whose fields are yielded (`req-grift-yield` rule 5), and for an unchanged record in `nodes`. In each of these the row keeps values another batch wrote, and the window is this batch's assertion of when it read the object, in the meaning rule 1 gives, not a date on those values. A record that writes nothing and names no row records nothing and is not warned about: `updates` or `replaces` with `on_missing` `ignore` or `warn` and no target, a `deletes` target skipped under `on_missing` or `on_tombstoned`, a batch skipped as `batch_already_imported`, and every record of a batch that fails.
+8. **Validation of the shape.** These refuse the document at preflight with `schema_validation_failed`, naming the path, and write nothing: `collected` that is not an object (or `null` on a batch container); a missing `start` or `end`; any other key; a bound that is not a non-empty text; `collected` on a purge target, on `batch_node`, in the envelope, or anywhere rule 2 does not name; and `collected` anywhere in a document at format `"0"` (rule 12).
+9. **Validation of the values.** A bound that does not read as a date-time, a bound with no zone, and an end before its start are not refusals. The window is not recorded, the record's row gets an empty pair as if it stated none, and the import result carries the `collection_time_not_recorded` warning with the reason, naming the record's path and object (`req-grid-entity-collection-time` rule 6, and the 2026-11-21 ruling that chose a warning over a hard stop). A bound with no zone is never given the server's zone, as `_make_aware` does for envelope times. The batch's window is settled once at preflight: when it cannot be recorded, the result carries one warning naming the batch and the number of records that relied on it, not one per record, and those records state none.
+10. **Order is reported, not refused.** A window that ends after the time of the write, or before the object's event time starts, is written as stated and reported with `collection_time_out_of_order`; a window that ends before the one the row carries moves the pair and is reported with `collection_time_older_read`. Both reach the import result's warnings. Neither is a refusal: the import's reference time bounds the envelope's and the retirement block's times (`timestamp_in_future`), not collection time, which rule 7 of `req-grid-entity-collection-time` reports and never corrects. Two batches of one document that name one object are two writes in order, and the second's window is the one the row keeps.
+11. **Never a field, never FLIP.** A window writes no typed field, no FLIP entry, no history row and no revision; it does not change `updated_at`, `last_changed_batch_id`, the entity's `version`, the event-time columns or the `tap.time` dimension. It is not a field for `on_other_source: yield` to judge, `on_existing` to protect or `entity_expected_version` to guard, and it makes no record a change that would otherwise be unchanged (`req-grid-history-reobservation`). A version conflict aborts the batch, and with it every window the batch stated.
+12. **Format `"1"` only.** `collected` is part of format `"1"`, with the write sections (`req-grift-write-sections` rule 13). A document at format `"0"` that carries it is refused (rule 8), naming the key and that it needs format `"1"`. No released core reads format `"1"`, so adding the key now changes no reader in the field; adding it to `"0"` would make a released importer refuse a new document for an unknown key, not for the version it can name (`req-grift-header-versions` rule 10). It lands before 0.5.0, inside format `"1"`. Once a core that reads `"1"` is released, a key added after that needs format `"2"`; this one is not added to `"1"` after such a release without a new ruling.
+13. **No version moves.** The spine columns exist already, so this form raises neither `spine_version` nor any type's version, and `type_versions` gains no entry for it. `contents` gains no aspect: a window is part of a record, not a kind of record, and an importer that does not read it refuses the key.
+14. **The export states the spine pair.** The exporter writes `collected` on each node and edge object whose spine row has both `collected_start` and `collected_end`, from those two columns, in UTC; a row whose pair is empty gets no key, never `null`. It writes no `collected` on the batch it mints: that batch read nothing, and one window for rows read at many times would be false, which is the reason `req-tap-cares-collector-version` defers `metadata.collector` on an export. The per-pass pairs on batch events are not exported, as no other part of a batch's history is (`contents.history` is `included: false`). The pair is data about the row on the source grid, as a `retirement` block is data about its retirement, and the export carries it in the meaning rule 1 gives: the collection window asserted by the latest batch that addressed the row there. It is not a date on each value the exported object carries; a value may have been read by an earlier batch, at another time, and the export does not say which (per-value provenance is FLIP, which the export does not carry: `contents.flip` is `included: false`). Imported, it becomes the import batch's statement for that row in the same meaning, and the batch's `source` still says it is a capture (`req-grift-export`, "Honest provenance").
+15. **Lands with its code.** The schema admits `collected` in the same change as the importer code that honours it and the exporter code that writes it, as `req-grift-edge-identity-surface-1` requires for its shapes: no window is accepted and dropped. The same change adds `GriftCollectionWindow` and the `collected` properties (on `GriftBatchContainer`, `GriftNodeObject`, `GriftEdgeObject`, the delete targets `GriftRemovalTarget` and `GriftEdgeRemovalByIdentity`, and not on a purge target) to this spec's JSON Schemas section; until then the fragment above is the definition.
+
+#### Development
+The owner ruled the seven decisions below on 2026-11-23 (Issue# 1284 - tap, Q50), each as it was recommended.
+
+**A. Where the window sits: a batch-level `collected`, a per-record `collected` that takes its place, and `null` on a record to state none** (rules 2 to 4). One key, keyed by object through the record that already addresses it however it does, as the built `WriteOperation.collected` is; the batch window spares a one-pass collector from repeating itself and expands at preflight, so the grid still stores per object. Two alternatives were set aside:
+
+- *A keyed map in the batch* (`"collection": {"default": {...}, "by_object": {"<entity_id>": {...}}}`), the FHIR `Provenance` shape and the one rule 2 of `req-grid-entity-collection-time` reads most literally. A record addressed by `ref`, natural key or edge identity has no `entity_id` in the document, so the map needs a second key form for each, resolved by its own lookup; a map key naming no record of the batch is a new failure to refuse; and the window sits away from the record it describes, which a reviewer of a diff has to join by hand. The per-record key is keyed by object through the record, which is how the built write-batch form already reads rule 2. FHIR's separation fits FHIR because a `Provenance` is a resource with a life of its own; a window is not.
+- *Per record only, no batch window*: simpler, one way to say it, and the OpenTelemetry and ECS precedent. Not chosen because the common collector reads a whole account in one pass and would repeat one window on every record, which costs bytes and invites a record stamped from a different clock read than its neighbours; and a document written by hand would rarely state one at all. STIX states the window once for a group. The batch window is a shorthand expanded at preflight into per-object statements, so what the grid stores is per object either way.
+
+Two other places were left out for the same reason, that the window must stay apart from what the record writes:
+
+- *In the envelope* (`collected_start` / `collected_end` beside `created_at`). The envelope carries the spine's own fields, `name` and `dimensions` among them, which the write applies to the row; rule 2 keeps the window apart from what the object writes, and `spec-grid-entity.md` says the spine columns are not accepted in the envelope. The envelope's times are also validated and dropped, a different contract from one the grid records.
+- *In `batch_node`* (the Batch model's fields, or a reserved key in its `metadata`). `batch_node` is the batch's typed payload; `started_at` and `closed_at` are the batch's own lifecycle, which rule 3 says a reader may use as a best estimate and the grid must never copy into the pair; and `metadata` is free-form, with `collector` its first reserved key, where a per-object fact has no place.
+
+**B. Format `"1"` only** (rule 12). No released core reads `"1"`, so the key reaches no old reader, and an old reader refuses a new document for its version, which it can name. The consequence, accepted: a collector can state a window only once it writes format `"1"`, which ties the collector sweep (Issue# 1289 - tap) to the fleet move (Issue# 1288 - tap). Allowing the key at `"0"` would not loosen that, because every released core refuses it there as an unknown key, so a plugin's floor must be raised either way.
+
+**C. A window whose values are wrong warns; only a malformed shape refuses** (rules 8 and 9). The window is dropped, the row gets an empty pair, and the document imports. It is the rule the grid already holds for the same value (`req-grid-entity-collection-time` rule 6), chosen by the owner on 2026-11-21 over the design record's hard stop, and one bad clock read should not cost a whole collection. Refusing at preflight, as GRIFT refuses `updated_at` before `created_at` (`timestamp_order_invalid`), was considered: it is stricter than the grid's own rule for the same value, and a collector with a broken clock is caught by the warning.
+
+**D. An export states windows, per object from the spine pair, never at batch level** (rule 14). The pair is the window asserted by the latest batch that addressed the row, not a date on each of its values (rule 1), and the export carries it with that meaning; leaving it out would empty every pair on a replay (`req-grid-entity-collection-time` rule 5), a loss with nothing gained. The reason the collector-version spec deferred `metadata.collector` (one capture batch would claim one collector for many) does not apply to a per-object fact, and it is why the export writes no batch window.
+
+**E. Removals: a `deletes` target may state a window and inherits the batch's; a `purges` target may not** (rules 2 and 5). The write-batch form already records a window on a retirement, and a collector that deletes what it found gone read that absence in its pass; a purge erases the events that would hold it. The cost, accepted: a hand-written cleanup batch with a window stamps its deletes too; an author who does not mean that puts the deletes in a batch of their own.
+
+**F. Timing: this lands with the write sections, before 0.5.0, inside format `"1"`** (rule 12). After a core that reads `"1"` is released, a new key needs format `"2"`.
+
+**G. Cross-references, amended in the same change as this requirement:** `req-grid-entity-collection-time` rule 2 and its Status Details "Not built" bullet name this requirement as the document form; the Notes of `req-grid-entity-collection-time-3` no longer say a document cannot state one; `req-grift-write-sections` rule 8 cites this RID; and the issue-code list in `spec-grid-import-grift.md` admits the three `collection_time_*` warnings in an import result.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-collection-window-1 | A Record States Its Window | Proposed | A node in `nodes` with `collected` creates a row whose spine pair, and whose batch event's pair, are the stated window in UTC; the node's typed fields and `flip_map` are what they would be without the key. | |
+| req-grift-collection-window-2 | The Batch Window Applies | Proposed | In a batch with `collected` and three nodes, one with its own window, one with none and one with `"collected": null`, the rows' pairs are the record's window, the batch window and empty, in that order. | Rule 4 |
+| req-grift-collection-window-3 | No Window Is An Empty Pair | Proposed | A batch and records stating no window leave every row's pair empty, and neither bound equals the import's reference time or the batch's `started_at`. | Rule 5; `req-grid-entity-collection-time-2` |
+| req-grift-collection-window-4 | Every Section | Proposed | A node and an edge in each of `inserts`, `updates` and `replaces` with `collected` each record it; an `inserts` record that finds its row and skips, and an `updates` record all of whose fields are yielded, move the pair and write no history row. | Rule 7; needs the write sections |
+| req-grift-collection-window-5 | Edges And Retirements | Proposed | An edge object with `collected` records it on the edge's row; a `deletes` node target with `collected` records it on the retired node, and the edges the retirement ends have an empty pair; a record carrying a `retirement` block leaves the stated window on the retired row. | |
+| req-grift-collection-window-6 | Shape Refused | Proposed | `collected` with a missing `end`, an extra key, a number as a bound, on a purge target, inside `node`, inside the envelope, or `null` on a batch container refuses the document with `schema_validation_failed` naming the path, and writes nothing. | Rule 8 |
+| req-grift-collection-window-7 | Bad Values Warn | Proposed | A record whose window has an end before its start, a bound with no zone, or a bound that is not a time imports with an empty pair and a `collection_time_not_recorded` warning in the import result naming the path; a batch window with no zone gives one warning naming the batch and the count of records that relied on it. | Rule 9; Decision C |
+| req-grift-collection-window-8 | Late Older Read Warns | Proposed | A document whose window ends before the one the row carries moves the pair to it and the import result carries `collection_time_older_read` naming the object and both windows; a window ending after the time of the write is written and the import result carries `collection_time_out_of_order`. | Rule 10 |
+| req-grift-collection-window-9 | Never A Field | Proposed | Re-importing an unchanged record with a new window moves only the pair and `last_observed_*`: version, `updated_at`, `last_changed_batch_id`, history count, `flip_map`, the event-time columns and `tap.time` are unmoved. | Rule 11; `req-grid-entity-collection-time-3` through a document |
+| req-grift-collection-window-10 | Format 0 Refuses It | Proposed | A document at format `"0"` carrying `collected` anywhere is refused, naming the key and format `"1"`; the same document at `"1"` imports. | Rule 12 |
+| req-grift-collection-window-11 | Export Writes The Pair | Proposed | Exporting a grid with one row whose pair is set and one whose pair is empty writes `collected` with the pair in UTC on the first object, no key on the second, and no `collected` on the batch. | Rule 14 |
+| req-grift-collection-window-12 | Round Trip Keeps The Pair | Proposed | Importing that export into an empty grid gives each row the source's pair, and each of the import batch's events the same pair, with no warning. | Rule 14 |
+| req-grift-collection-window-13 | A Skipped Insert Moves The Window, Not The Value | Proposed | Source B's batch stores `state: "new"` on a row with a window of today. Source A's `inserts` record for the same row, `state: "old"`, collected yesterday, is skipped: the row keeps `"new"` and B's FLIP entry, its spine pair is A's window (yesterday) with `collection_time_older_read` in the result, and B's batch event still carries today's window. Exported, the object carries `state: "new"` and `collected` with A's window, which under rule 14 is the window of the latest batch that addressed the row, not the time `"new"` was read. | Rules 1, 7 and 14; `req-grift-insert-only` rule 7 |
+| req-grift-collection-window-14 | A Partial Update To A Mixed-Source Row | Proposed | A row whose `image` is source B's and whose `owner` is source A's. A's `updates` record carrying only `owner`, with a window, writes `owner` and moves the spine pair to A's window; `image` keeps B's value and entry, and B's batch event keeps B's window, which is where the read time of `image` is found. | Rules 1 and 7 |
 
 ## Stored Files
 ----

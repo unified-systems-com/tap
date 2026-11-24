@@ -604,8 +604,8 @@ Last-write-wins is a useful tool, but a silent one is a footgun. The importer mu
 | req-grid-import-grift-ordering-6 | Skipped-batch visibility | Implemented | Each skipped batch emits a `[skip]` log line that includes the explicit `--force-batches` recipe to re-run it. | |
 | req-grid-import-grift-ordering-7 | Lint mode | Implemented | `--lint` scans all selected bundles, reports cross-bundle `entity_id` duplicates, exits non-zero on any duplicate. | |
 | req-grid-import-grift-ordering-8 | Absent fields kept on upsert | Proposed | A node or edge routed to an existing entity is applied in keep-absent mode: a field the document omits keeps its stored value and earns no FLIP entry. | `unified-systems-com/tap#1128`; `req-grid-service-write-keepabsent-2`. |
-| req-grid-import-grift-ordering-9 | Present fields replace whole | Proposed | A field the document carries replaces its stored value whole, so an object key the sender dropped is dropped; a null on a non-null field resets the field to its model default. | `req-grid-service-write-keepabsent-3`, `-4`. |
-| req-grid-import-grift-ordering-10 | Edge properties replace whole | Proposed | A GRIFT edge document always carries `properties` (the document schema requires it), so an edge routed to an existing entity replaces its stored properties whole; no key of the old properties survives unless re-sent. | Keep-absent changes nothing observable for edges today; the importer still sets it so a future optional edge field inherits the rule. |
+| req-grid-import-grift-ordering-9 | Present fields replace whole | Proposed | A field the document carries replaces its stored value whole, so an object key the sender dropped is dropped; a null on a non-null field resets the field to its model default. | `req-grid-service-write-keepabsent-3`, `-4`. Format "1" narrows this for fields tracked per key, edge `properties` included: `req-grid-flip-nested` rule 5. |
+| req-grid-import-grift-ordering-10 | Edge properties replace whole | Proposed | A GRIFT edge document always carries `properties` (the document schema requires it), so an edge routed to an existing entity replaces its stored properties whole; no key of the old properties survives unless re-sent. | Keep-absent changes nothing observable for edges today; the importer still sets it so a future optional edge field inherits the rule. Format "1" narrows this for fields tracked per key, edge `properties` included: `req-grid-flip-nested` rule 5. |
 
 ## Strict-No-Overwrite Mode
 ----
@@ -1142,6 +1142,10 @@ v0 should define stable codes for common importer outcomes, including:
 - `payload_validation_failed`
 - `timestamp_in_future`
 - `timestamp_order_invalid`
+- `collection_time_not_recorded`, `collection_time_older_read`, `collection_time_out_of_order` — warnings, never errors, about a collection window a document states (`req-grift-collection-window` rules 9 and 10 in `spec-grift-v0.md`; `req-grid-entity-collection-time` rules 5 to 7 in `spec-grid-entity.md`): a window not recorded and the row's pair left empty, an older read arriving late that moved the pair, and a window out of order with the event time or the time of the write. None refuses the document. Proposed: the write operation raises all three today, and the import result does not yet carry them
+- `batch_identity_mismatch` — a refusal: a write that joins an existing batch, or a force re-import that re-executes one, resolves to a write identity other than the one core recorded when it opened the batch; nothing is written (`req-grift-yield` rule 1 in `spec-grift-v0.md`). Proposed, not built
+- `tracked_field_whole_remove_under_yield` — a refusal: an `updates` record under `on_other_source: yield` lists a field tracked per key as a whole in `remove`; the remedy named is per-key paths (`req-grift-partial-update` rule 10 in `spec-grift-v0.md`). Proposed, not built
+- `tracked_field_whole_null_refused` — a refusal: a record in `nodes`, `updates` or `replaces` sends a field tracked per key as a whole `null`, under either `on_other_source`, nullable or not; the remedy named is a `null` per key, or `remove` of the field in `updates` under `overwrite` (`req-grift-partial-update` rule 10 in `spec-grift-v0.md`). Proposed, not built
 - `entity_type_mismatch`
 - `dangling_edge`
 - `batch_already_imported`
