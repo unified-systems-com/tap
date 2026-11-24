@@ -81,7 +81,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
         run: python3 scripts/sbom/declared_cdx.py --image "$IMAGE"
       - name: Scan declared components
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
         id: grype
         with:
           # The Grype binary, named rather than inherited from the action pin (v0.118.0 is
@@ -97,7 +97,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
         run: python3 scripts/sbom/sarif_locate.py --image "$IMAGE"
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4
         with:
           # The file the step above rewrote — named explicitly, not via the scanner's output
           # variable, so what reaches Code Scanning is the located document by construction.
