@@ -87,6 +87,29 @@ def test_a_type_nothing_registers_is_refused_by_name() -> None:
 
 
 @FLEET
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [('{"grift_version": "0"}', '{"grift_version": "1"}'), ('{"grift_version": "1"}', '{"grift_version": "0"}')],
+    ids=["0-then-1", "1-then-0"],
+)
+def test_a_repeated_top_level_metadata_is_refused(first: str, second: str) -> None:
+    """json.loads keeps the last "metadata" and the rewrite edits the first: refuse, never guess (PR 1352 review)."""
+    text, _ = _zero_document("restamp-repeated")
+    body = text.rstrip().removesuffix("}")
+    doubled = f'{{"metadata": {first},{body.lstrip().removeprefix("{")}, "metadata": {second}}}'
+    with pytest.raises(RestampRefused, match=r"repeats the top-level key\(s\) metadata"):
+        restamp_text(doubled)
+
+
+@FLEET
+def test_any_repeated_top_level_key_is_refused_by_name() -> None:
+    text, document = _zero_document("restamp-repeated-batches")
+    doubled = text.rstrip().removesuffix("}") + ', "batches": ' + json.dumps(document["batches"]) + "}"
+    with pytest.raises(RestampRefused, match=r"repeats the top-level key\(s\) batches"):
+        restamp_text(doubled)
+
+
+@FLEET
 def test_a_document_already_at_1_is_left_alone() -> None:
     text, _ = _zero_document("restamp-twice")
     once = restamp_text(text).text

@@ -12,6 +12,9 @@ Byte for byte: only the text of the top-level ``metadata`` value is replaced. Ev
 file (the records, their key order, the whitespace, the escapes) is the file's own. The keys the
 header already held keep their place; ``spine_version`` and ``type_versions`` follow them.
 
+A document that repeats a top-level key is refused: which of the values a reader takes is the
+parser's choice, and the header must describe the one that is kept.
+
 A document that names a type no installed model or edge definition registers is refused, naming the
 types: its version cannot be known to be 1 on this grid, and an import would refuse it anyway.
 """
@@ -19,6 +22,7 @@ types: its version cannot be known to be 1 on this grid, and an import would ref
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -91,12 +95,35 @@ def _render(header: dict[str, Any], original: str, text: str, start: int) -> str
     return rendered.replace("\n", "\n" + " " * indent)
 
 
+class _RepeatedKeys(dict[str, Any]):
+    """A parsed object that named some key more than once; ``repeated`` says which."""
+
+    repeated: list[str]
+
+
+def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj = dict(pairs)
+    if len(obj) == len(pairs):
+        return obj
+    flagged = _RepeatedKeys(obj)
+    flagged.repeated = sorted(key for key, count in Counter(key for key, _ in pairs).items() if count > 1)
+    return flagged
+
+
 def restamp_text(text: str, *, path: Path | None = None) -> RestampResult:
     """Restate one document's text at format ``"1"``. Raises :class:`RestampRefused` with the reason."""
     try:
-        document = json.loads(text)
+        document = json.loads(text, object_pairs_hook=_pairs)
     except json.JSONDecodeError as error:
         raise RestampRefused(f"not JSON: {error}") from error
+    if isinstance(document, _RepeatedKeys):
+        # json.loads keeps the LAST of a repeated key and metadata_span() edits the FIRST "metadata":
+        # the header would be computed from one value and written over another. Which one a reader
+        # takes is not ours to guess, so the document is refused.
+        raise RestampRefused(
+            f"the document repeats the top-level key(s) {', '.join(document.repeated)}; "
+            "a reader may take either value, so it cannot be restated: keep one and run again"
+        )
     metadata = document.get("metadata") if isinstance(document, dict) else None
     if not isinstance(metadata, dict):
         raise RestampRefused("the document has no metadata object")
