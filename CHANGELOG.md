@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.4.9](https://github.com/unified-systems-com/tap/compare/v0.4.8...v0.4.9) (2026-11-24)
+
+
+### Features
+
+* **boot:** refuse to start while a typed table lacks the spine-copy columns (Q57b) ([283eaca](https://github.com/unified-systems-com/tap/commit/283eaca51d439256f643a0a40ae5fa5e168942d3))
+* **fips:** a deployment outside any authorization boundary may turn the crypto-BOM scan off in its boot record ([2541da4](https://github.com/unified-systems-com/tap/commit/2541da43e900899d399103de4b83d2cd1c37d7a7))
+* **fips:** a deployment outside any authorization boundary may turn the crypto-BOM scan off in its boot record [via make-it-fast] ([b55beb4](https://github.com/unified-systems-com/tap/commit/b55beb4c8e1931b90ea652a8fdc572a80c1ce091))
+* **grid:** a natural key may name an identity dimension (form 3) ([231867b](https://github.com/unified-systems-com/tap/commit/231867bfee37567008ea0b8d5d2d00472273ba66))
+* **grid:** a natural key may name an identity dimension (form 3) [via dimensional-reload] ([5e01cad](https://github.com/unified-systems-com/tap/commit/5e01cad04bc0f5dba52a860e0d26f0295336878a))
+* **grid:** spine copies on every typed row, typed batch_id removed, spine version 2 ([978874f](https://github.com/unified-systems-com/tap/commit/978874fff096dcf272809dbc6eb55a74ae542dcf))
+* **grid:** spine copies on every typed row, typed batch_id removed, spine version 2 (+10 more) [via hard-things] ([b16ca86](https://github.com/unified-systems-com/tap/commit/b16ca8680c4533c7b96f7332d67f7c073d3ceb93))
+* **grift:** manage.py restamp_grift restates format "0" documents at "1" ([bb6aabe](https://github.com/unified-systems-com/tap/commit/bb6aabe5c9c185eb90abace15c32668417114470))
+
+
+### Bug Fixes
+
+* **codespace:** a wait ends strictly past its deadline, so the full wait is honoured ([73fb67f](https://github.com/unified-systems-com/tap/commit/73fb67f2ed46189348efaf1fc0fab9a5a51c498e))
+* **codespace:** retry the owner lookup and set the passkey origin, so a prebuilt Codespace can be signed into ([8a891a0](https://github.com/unified-systems-com/tap/commit/8a891a0ed48b7174a289e2e412e4ae312cd90978))
+* **codespace:** retry the owner lookup and set the passkey origin, so a prebuilt Codespace can be signed into [via make-it-fast] ([93861d3](https://github.com/unified-systems-com/tap/commit/93861d391cbea6c83bdd51883008f787860e920c))
+* **grid:** a direct create is held to key-dimension eligibility ([ddb60df](https://github.com/unified-systems-com/tap/commit/ddb60df7fe318259d1c71f6fc410525c24d7460c))
+* **grid:** a rollback past the spine-copy columns withdraws the table's pull trigger ([f059e9a](https://github.com/unified-systems-com/tap/commit/f059e9acfc48282e40831388da9a204b8c6053f2))
+* **grid:** compose the spine-copy installer's SQL with psycopg.sql ([6c8d0ac](https://github.com/unified-systems-com/tap/commit/6c8d0acf9e4b5317bf4dae80613d8aba419037c0))
+* **grid:** key-dimension checks hold on a direct save; a replace never adds a keyed value ([ccdbeac](https://github.com/unified-systems-com/tap/commit/ccdbeac408e71f54958b84be1651e358e57fb781))
+* **grid:** the spine-copies version steps refuse reversal ([238a2a7](https://github.com/unified-systems-com/tap/commit/238a2a73681a2b84ef4d0fb980dcdf96057a0056))
+* **grift:** a wildcard manifest edge is an installed type for restamp and import ([6366cde](https://github.com/unified-systems-com/tap/commit/6366cde3f031ca97525a36fe2c1fb94eef6ea094))
+* **grift:** restamp_grift refuses a document that repeats a top-level key ([45ce3eb](https://github.com/unified-systems-com/tap/commit/45ce3eb4a3cb30447bf3b566aa8b3a595c15d3c4))
+* **plugin-ci:** read the whole label stream so trailing output cannot kill the step ([575e81f](https://github.com/unified-systems-com/tap/commit/575e81f26b4fb655eddd04a3bcaed1df06af9da5))
+* **plugin-ci:** validate the makemigrations labels and pass them as argv ([82cc700](https://github.com/unified-systems-com/tap/commit/82cc700173040be770dbbee5d2e455151746e711))
+* **plugins:** the in-tree validation_sample fixture ships its spine-copies migration ([3dd8ae2](https://github.com/unified-systems-com/tap/commit/3dd8ae22967698f7781bd5510a8a2fafb7a2f2d8))
+
+
+### Documentation
+
+* **spec:** a batch's write identity is fixed; a window's evidence can be ambiguous ([f25bdd7](https://github.com/unified-systems-com/tap/commit/f25bdd7f1db4800577948873ace5d099bca4a8e5))
+* **spec:** collection window is the latest addressing batch's; one replace ownership rule; collector version stamps the open lifecycle batch ([02f60c8](https://github.com/unified-systems-com/tap/commit/02f60c82e4429fe50b2ca91b7adb4a17fad57c87))
+* **spec:** GRIFT patch sections, per-key provenance, collector version as built, copies locking [via hard-things] ([e03b183](https://github.com/unified-systems-com/tap/commit/e03b1836b95f1ecd49da8cacc95acf03e399d983))
+* **spec:** null stays an assertion, an explicit removal list releases a key; ownership identity set at the write boundary ([d79121a](https://github.com/unified-systems-com/tap/commit/d79121a9907a8ab0e52bb13b5fc4604be15950bf))
+* **spec:** restamp the claims the rulings' spec edits moved; sync the fragments ([8620a75](https://github.com/unified-systems-com/tap/commit/8620a75b4a921b7565887b9b9037ea4408032c17))
+* **spec:** restamp two claims after the rebase onto the later spec rounds; name the job's spine pointer ([8075c3b](https://github.com/unified-systems-com/tap/commit/8075c3b46c4d017657804506d71348e71c7e381a))
+* **spec:** schedule and schedule_fire have no event time, ruled (Q58a) ([f4af168](https://github.com/unified-systems-com/tap/commit/f4af1689910c6360f6fa50600027fb5684afce3c))
+* **spec:** stating a collection window in a GRIFT document; which runs have an event time ([eb56e59](https://github.com/unified-systems-com/tap/commit/eb56e59b29110039860c31a2e35b419d6828c6bc))
+* **spec:** the typed batch_id is gone; name the spine pointers and the history row's batch_id ([3d42aef](https://github.com/unified-systems-com/tap/commit/3d42aef5b3dd5c9034b54d39cef0a59fdc726eb9))
+* **spec:** whole-field remove and null on a tracked field; issue codes for the new refusals ([ee6b0d0](https://github.com/unified-systems-com/tap/commit/ee6b0d0d9eccd701e98c0ec8da11abb1a9b69b2a))
+
 ## [0.4.8](https://github.com/unified-systems-com/tap/compare/v0.4.7...v0.4.8) (2026-11-23)
 
 
