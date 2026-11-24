@@ -465,3 +465,18 @@ def test_required_in_the_environment_scans_despite_the_record(monkeypatch) -> No
 
     monkeypatch.setattr(crypto_bom, "system_fips_gate", _gate)
     assert crypto_bom.main(["--gate", "--profile", "p"]) == 0 and ran == ["p"]
+
+
+@pytest.mark.spec("req-fips-system-gate-opt-out-4")
+def test_no_boot_profile_tap_ships_turns_the_scan_off() -> None:
+    """The opt-out is a deployer's choice, for a deployment outside any authorization boundary.
+    tap's own profiles (dev, ci, soak, demo) are where the scan's evidence comes from, so none may
+    turn it off; a product's record, in its own repository, is where the choice is made."""
+    import json
+    from pathlib import Path
+
+    boot = Path(__file__).resolve().parents[2] / "boot"
+    profiles = sorted(boot.glob("*.boot.json"))
+    assert profiles, "no boot profiles found to check"
+    off = [p.name for p in profiles if (json.loads(p.read_text()).get("fips_system_gate") or {}).get("mode") == "off"]
+    assert off == [], f"tap-shipped profiles turn the crypto-BOM scan off: {off}"

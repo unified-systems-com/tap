@@ -270,6 +270,11 @@ nothing. A deployment inside a boundary that reuses an image whose record says o
 `TAP_FIPS_SYSTEM_GATE=required`, and the scan runs. Any other value of that variable refuses the
 boot, so nothing in the environment can turn the scan off, and a typo is never read as off.
 
+Nothing can tell a deployment outside a boundary from one inside, so the setting is an
+authority, not a check: whoever chooses the boot record decides, as with waivers. Two things bound it.
+tap's own profiles never set it, so CI's and development's scans keep running. And a deployment
+inside a boundary that reuses someone else's image sets `TAP_FIPS_SYSTEM_GATE=required`.
+
 FIPS mode, the FIPS provider and the `tap.fips` self-check are not part of this setting: they run as
 they always do. An image that is not in FIPS mode skips the scan already (`req-fips-crypto-bom-system-gate`).
 
@@ -280,6 +285,7 @@ they always do. An image that is not in FIPS mode skips the scan already (`req-f
 | req-fips-system-gate-opt-out-1 | Off Only With A Reason | Implemented | `fips_system_gate` absent or `on` runs the scan; `off` skips it only with a non-blank reason; a blank or missing reason, or an unknown mode, refuses the boot. | The schema says the same; the gate re-checks it, since it reads the record directly |
 | req-fips-system-gate-opt-out-2 | The Environment Only Tightens | Implemented | `TAP_FIPS_SYSTEM_GATE=required` runs the scan whatever the record says; any other non-empty value refuses the boot. | |
 | req-fips-system-gate-opt-out-3 | Skipped Out Loud | Implemented | A skipped scan prints the profile and the reason, scans nothing and exits 0; a malformed setting prints a TAP-ABORT and exits 1. | |
+| req-fips-system-gate-opt-out-4 | Not In tap's Own Profiles | Implemented | No boot profile shipped in tap (`boot/*.boot.json`) sets `fips_system_gate` `off`: those profiles are where the scan's evidence comes from, in CI and in development. A product sets it in its own record, in its own repository. | Raised by both review seats on tap#1350: nothing can tell a deployment outside a boundary from one inside, so the guard keeps tap's own evidence whole and leaves the choice to the deployer |
 
 ### Waivers Match Ownership, Not Path Fragments
 ----
