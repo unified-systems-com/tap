@@ -163,6 +163,35 @@ def classify(
     )
 
 
+def _refuse_keyed_dimension_change(entity_type: str, persisted: dict[str, Any], expected: dict[str, Any]) -> None:
+    """A replace never re-keys a row: a keyed dimension's stored value stays (``req-grid-entity-natural-key-31``,
+    unified-systems-com/tap#1186). Changing it, removing it, or adding it to a row stored without one raises
+    ``ServiceConstraintError``."""
+    from tap_grid.natural_key import constituting_properties, keyed_dimension_entries
+    from tap_grid.registry import get_model_class
+
+    try:
+        model = get_model_class(entity_type)
+    except KeyError:
+        return
+    entries = keyed_dimension_entries(model)
+    if not entries:
+        return
+    before = constituting_properties(entries, {}, persisted)
+    after = constituting_properties(entries, {}, expected)
+    # Any difference, including a value arriving on a row stored without one: a keyed row acquires its
+    # identity at create, never later (PR# 1356 - tap review, round 2).
+    moved = [entry for entry in entries if before[entry] != after[entry]]
+    if moved:
+        from tap_grid.exceptions import ServiceConstraintError
+
+        detail = ", ".join(f"{entry}: {before[entry]!r} -> {after[entry]!r}" for entry in moved)
+        raise ServiceConstraintError(
+            f"{entity_type}: a keyed dimension is fixed once written and a replace cannot change it ({detail}); "
+            "a different value is a different row (req-grid-entity-natural-key-31)."
+        )
+
+
 def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     """The spine values a caller's intent would change on the stored row: ``name``, ``dimensions``, or neither.
 
@@ -187,6 +216,8 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     except Entity.DoesNotExist:
         return {}
     stored_dims = intent_dimensions(intent, persisted["dimensions"] or {})
+
+    _refuse_keyed_dimension_change(intent.get("entity_type") or "", persisted["dimensions"] or {}, stored_dims)
 
     delta: dict[str, Any] = {}
     if envelope_name is not None and envelope_name != persisted["name"]:

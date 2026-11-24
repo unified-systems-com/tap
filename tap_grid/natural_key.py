@@ -67,11 +67,17 @@ __all__ = [
     "compose_natural_key",
     "constituting_properties",
     "declared_columns",
+    "DIMENSION_PREFIX",
     "declaration_problems",
+    "dimension_entry",
+    "dimension_name",
     "encode_key_part",
     "identity_lock_key",
     "index_expressions",
+    "is_dimension",
     "is_path",
+    "key_dimension",
+    "keyed_dimension_entries",
     "natural_key_prefix",
     "recipe_fingerprint",
     "row_natural_key",
@@ -84,6 +90,29 @@ __all__ = [
 #: A Django field name can never contain ``.``, so an entry with one is unambiguously a
 #: path and never a column (``req-grid-entity-natural-key-14``).
 PATH_SEPARATOR: Final[str] = "."
+
+#: Marks a NATURAL_KEY entry that names an identity dimension rather than a column or a path
+#: (form 3, ``req-grid-entity-natural-key-28``; unified-systems-com/tap#1355). A Django field name
+#: can never contain ``:``, so the prefix cannot collide with a column, and it is tested before the
+#: path grammar, since a dimension name itself contains dots.
+DIMENSION_PREFIX: Final[str] = "dimension:"
+
+
+def dimension_entry(name: str) -> str:
+    """The NATURAL_KEY entry naming identity dimension ``name``: ``dimension_entry("tap.x.y")``."""
+    if not name or name.startswith(DIMENSION_PREFIX):
+        raise ValueError(f"dimension_entry takes a dimension name, got {name!r}")
+    return f"{DIMENSION_PREFIX}{name}"
+
+
+def is_dimension(entry: str) -> bool:
+    """True when a declared NATURAL_KEY entry names an identity dimension."""
+    return entry.startswith(DIMENSION_PREFIX)
+
+
+def dimension_name(entry: str) -> str:
+    """The dimension name a dimension entry declares."""
+    return entry[len(DIMENSION_PREFIX) :]
 
 
 class Keyless:
@@ -130,7 +159,7 @@ class AmbiguousIdentity(LookupError):
 
 def is_path(name: str) -> bool:
     """True when a declared NATURAL_KEY entry names a place inside a JSON field."""
-    return PATH_SEPARATOR in name
+    return PATH_SEPARATOR in name and not is_dimension(name)
 
 
 def split_path(name: str) -> tuple[str, tuple[str, ...]]:
@@ -172,7 +201,29 @@ def _extract(payload: Mapping[str, object], name: str) -> object:
     return value
 
 
-def constituting_properties(declared: Sequence[str], payload: Mapping[str, object]) -> dict[str, object]:
+def _dimension_value(dimensions: Mapping[str, object] | None, entry: str) -> object:
+    """A dimension entry's value from a writer's map or a stored one; ``None`` when absent.
+
+    The map may be keyed by name or by dimension-node uuid (stored shape), and a value may be a
+    bare string or ``{"v": …, "src": …}``. A uuid key is matched through the live vocabulary, so a
+    row's own ``Entity.dimensions`` reads the same as the envelope that wrote it.
+    """
+    if not dimensions:
+        return None
+    name = dimension_name(entry)
+    raw = dimensions.get(name)
+    if raw is None:
+        from tap_grid.dimension_names import storage_key
+
+        raw = dimensions.get(storage_key(name))
+    if isinstance(raw, Mapping):
+        raw = raw.get("v")
+    return raw
+
+
+def constituting_properties(
+    declared: Sequence[str], payload: Mapping[str, object], dimensions: Mapping[str, object] | None = None
+) -> dict[str, object]:
     """The declared constituting values as a node payload carries them.
 
     An absent field is ``None`` — a hole — which ``find_existing`` answers with "not found"
@@ -180,8 +231,14 @@ def constituting_properties(declared: Sequence[str], payload: Mapping[str, objec
     explicit JSON ``null`` and a missing or non-object parent are that same hole, while ``""`` is a
     value like any other (Issue# 866 - tap). This is the one place a payload is read against the
     declaration, so the search and the lock (:func:`identity_lock_key`) see the same values.
+
+    A dimension entry (``dimension:<name>``, ``req-grid-entity-natural-key-28``) is read from
+    ``dimensions`` — the writer's envelope map or the row's stored ``Entity.dimensions`` — never
+    from the payload; with no map it is a hole.
     """
-    return {name: _extract(payload, name) for name in declared}
+    return {
+        name: _dimension_value(dimensions, name) if is_dimension(name) else _extract(payload, name) for name in declared
+    }
 
 
 def normalized_key_values(model: Any, properties: Mapping[str, object]) -> dict[str, object]:
@@ -213,10 +270,43 @@ def normalized_key_values(model: Any, properties: Mapping[str, object]) -> dict[
     return dict(result)
 
 
-def key_values(model: Any, payload: Mapping[str, object]) -> dict[str, object]:
-    """A type's constituting values read from ``payload`` (:func:`constituting_properties`) and normalised
-    (:func:`normalized_key_values`): what every identity reader hands to the lock and the lookup."""
-    return normalized_key_values(model, constituting_properties(model.NATURAL_KEY, payload))
+def key_values(
+    model: Any, payload: Mapping[str, object], dimensions: Mapping[str, object] | None = None
+) -> dict[str, object]:
+    """A type's constituting values read from ``payload`` and ``dimensions`` (:func:`constituting_properties`)
+    and normalised (:func:`normalized_key_values`): what every identity reader hands to the lock and the lookup."""
+    return normalized_key_values(model, constituting_properties(model.NATURAL_KEY, payload, dimensions))
+
+
+def key_dimension(model: Any, entry: str) -> str:
+    """The stored key (dimension-node uuid) of a type's dimension entry, refusing an ineligible one.
+
+    ``req-grid-dimension-knobs-3`` / ``req-grid-entity-natural-key-29``: the name must resolve to one
+    live Dimension node, and that node must set ``usable_in_keys``. Raised as ``LookupError`` for an
+    undeclared or ambiguous name, ``ValueError`` for an ineligible dimension, each naming the type.
+    """
+    from tap_grid.dimension_names import AmbiguousDimension, UnknownDimension, declared
+
+    name = dimension_name(entry)
+    where = getattr(model, "ENTITY_TYPE", getattr(model, "__name__", model))
+    try:
+        found = declared(name)
+    except (UnknownDimension, AmbiguousDimension) as exc:
+        raise LookupError(f"{where} NATURAL_KEY entry {entry!r}: {exc}") from exc
+    if not found.usable_in_keys:
+        raise ValueError(
+            f"{where} NATURAL_KEY entry {entry!r}: dimension {name!r} does not set usable_in_keys, so it "
+            "cannot carry identity (req-grid-dimension-knobs-3)."
+        )
+    return str(found.id)
+
+
+def keyed_dimension_entries(model: Any) -> list[str]:
+    """The dimension entries of a type's tuple declaration, in declared order."""
+    declared = getattr(model, "NATURAL_KEY", None)
+    if not isinstance(declared, tuple):
+        return []
+    return [entry for entry in declared if is_dimension(entry)]
 
 
 def _key_transform(name: str) -> Expression:
@@ -239,22 +329,28 @@ def index_expressions(declared: Sequence[str]) -> list[Any]:
     """The index over a declaration, one expression per entry, in declared order."""
     from django.db.models import F
 
-    return [_key_transform(name) if is_path(name) else F(name) for name in declared]
+    return [_key_transform(name) if is_path(name) else F(name) for name in declared if not is_dimension(name)]
 
 
 def search(queryset: QuerySet[Any], properties: Mapping[str, object]) -> QuerySet[Any]:
     """Narrow ``queryset`` to rows whose declared entries equal ``properties``: the ORM half of
     the generated search. Columns filter as themselves; each path becomes an alias of the same
-    expression :func:`index_expressions` puts in the index. No value here is ``None``."""
+    expression :func:`index_expressions` puts in the index; each dimension entry is a containment
+    test on the spine's ``dimensions``, which its GIN index serves (``-28``). No value here is ``None``."""
     aliases: dict[str, Expression] = {}
     lookups: dict[str, object] = {}
+    contained: dict[str, object] = {}
     for position, (name, value) in enumerate(properties.items()):
-        if is_path(name):
+        if is_dimension(name):
+            contained[key_dimension(queryset.model, name)] = {"v": value}
+        elif is_path(name):
             alias = f"_nk_path_{position}"
             aliases[alias] = _key_transform(name)
             lookups[alias] = value
         else:
             lookups[name] = value
+    if contained:
+        lookups["entity__dimensions__contains"] = contained
     return queryset.alias(**aliases).filter(**lookups) if aliases else queryset.filter(**lookups)
 
 
@@ -273,6 +369,12 @@ def declaration_problems(model: Any, declared: Sequence[str], *, check_schema: b
 
     problems: list[str] = []
     for name in declared:
+        if is_dimension(name):
+            # Eligibility is the dimension node's knob, read from the grid at resolution
+            # (key_dimension); statically only the spelling can be checked.
+            if not dimension_name(name) or dimension_name(name) != dimension_name(name).strip():
+                problems.append(f"{name!r}: a dimension entry needs a dimension name")
+            continue
         try:
             column, keys = split_path(name)
             field = model._meta.get_field(column)
@@ -390,6 +492,9 @@ def _coerced_text(model: Any, name: str, value: object) -> str | None:
     identities there, so they must be two keys (``req-grid-entity-natural-key-15``). ``None`` when
     the coerced value is a hole (an integer column given ``""`` coerces to ``None``).
     """
+    if is_dimension(name):
+        # A dimension value is a string (req-grid-dimension-reference); it composes verbatim.
+        return _scalar_text(value)
     column, keys = split_path(name)
     field = None
     if model is not None:
@@ -435,13 +540,16 @@ def compose_natural_key(model: Any, properties: Mapping[str, object]) -> str | N
     return KEY_SEPARATOR.join(encode_key_part(part) for part in parts)
 
 
-def row_natural_key(model: Any, row: Mapping[str, object]) -> str | None:
+def row_natural_key(
+    model: Any, row: Mapping[str, object], dimensions: Mapping[str, object] | None = None
+) -> str | None:
     """:func:`compose_natural_key` for a row: ``row`` maps each declared column to its value (a JSON
-    column as its decoded document). ``None`` for a type not keyed by a tuple."""
+    column as its decoded document) and ``dimensions`` is the row's stored ``Entity.dimensions``, read
+    for a dimension entry (``-32``). ``None`` for a type not keyed by a tuple."""
     declared = getattr(model, "NATURAL_KEY", None)
     if not isinstance(declared, tuple):
         return None
-    return compose_natural_key(model, constituting_properties(declared, row))
+    return compose_natural_key(model, constituting_properties(declared, row, dimensions))
 
 
 def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str | None:
@@ -528,6 +636,9 @@ def recipe_fingerprint(model: Any) -> str:
     fields: list[str] = []
     if isinstance(declared, tuple):
         for entry in declared:
+            if is_dimension(entry):
+                fields.append("dimension")
+                continue
             root = split_path(entry)[0] if is_path(entry) else entry
             try:
                 fields.append(_field_recipe(model._meta.get_field(root)))
@@ -550,4 +661,4 @@ def declared_columns(model: Any) -> list[str]:
     declared = getattr(model, "NATURAL_KEY", None)
     if not isinstance(declared, tuple):
         return []
-    return list(dict.fromkeys(split_path(name)[0] for name in declared))
+    return list(dict.fromkeys(split_path(name)[0] for name in declared if not is_dimension(name)))

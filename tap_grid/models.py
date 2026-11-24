@@ -41,6 +41,7 @@ from tap_grid.natural_key import (
     Keyless,
     declaration_problems,
     index_expressions,
+    is_dimension,
     is_path,
     normalized_key_values,
     search,
@@ -59,9 +60,10 @@ def _overrides(cls: type) -> set[str]:
 
 def _key_payload(instance: Any, declared: Sequence[str]) -> dict[str, object]:
     """The instance's own values for each column a declared entry reads (a JSON path reads its column)."""
-    from tap_grid.natural_key import split_path
+    from tap_grid.natural_key import is_dimension, split_path
 
-    return {column: getattr(instance, column, None) for column in {split_path(name)[0] for name in declared}}
+    columns = {split_path(name)[0] for name in declared if not is_dimension(name)}
+    return {column: getattr(instance, column, None) for column in columns}
 
 
 def _set_key_value(instance: Any, name: str, value: object) -> None:
@@ -1146,7 +1148,11 @@ def _install_natural_key_index(cls: type[BaseModel]) -> None:
     declared = getattr(cls, "NATURAL_KEY", None)
     if declared is None or isinstance(declared, Keyless):
         return
-    entries = list(declared)
+    # A dimension entry is searched on the spine's dimensions, which its GIN index serves
+    # (req-grid-entity-natural-key-28); the typed index covers the column and path entries.
+    entries = [entry for entry in declared if not is_dimension(entry)]
+    if not entries:
+        return
     # Only the new syntax is policed here; a column-only declaration behaves exactly as before.
     # The schema-properties check is the guard's (it is a lint on the declaration, not a reason
     # to refuse to boot).
@@ -1577,7 +1583,66 @@ class BaseModel(models.Model):
             column: getattr(self, getattr(meta.get_field(column), "attname", column))
             for column in declared_columns(type(self))
         }
-        return row_natural_key(type(self), row)
+        return row_natural_key(type(self), row, self.key_dimensions())
+
+    def key_dimensions(self) -> dict[str, Any] | None:
+        """The dimension map a dimension entry of this type's key reads (``req-grid-entity-natural-key-28``).
+
+        ``None`` for a type keyed on no dimension, so no other type pays a read. Before the spine row
+        exists it is the map a create stores: the type's declared defaults with the caller's
+        ``_initial_dimensions`` over them, both in stored shape. After, it is ``Entity.dimensions``,
+        which a keyed dimension never leaves (``-31``).
+        """
+        from tap_grid.natural_key import keyed_dimension_entries
+
+        if not keyed_dimension_entries(type(self)):
+            return None
+        if self.entity_id is not None:
+            return dict(Entity.objects.filter(pk=self.entity_id).values_list("dimensions", flat=True).first() or {})
+        from tap_grid.dimension_map import defaults
+
+        merged: dict[str, Any] = dict(defaults(getattr(type(self), "DEFAULT_DIMENSIONS", {}) or {}))
+        merged.update(getattr(self, "_initial_dimensions", None) or {})
+        return merged
+
+    @classmethod
+    def writer_key_dimensions(cls, raw: Any) -> dict[str, Any] | None:
+        """A writer's dimension map as a create of this type would store it, for identity (``-28``).
+
+        The type's declared defaults with the writer's map over them, in stored shape, so a lookup
+        reads exactly what the create would write. ``None`` for a type keyed on no dimension. A map
+        the vocabulary cannot settle is returned as given: the write that follows refuses it with
+        its own reason.
+        """
+        from tap_grid.natural_key import keyed_dimension_entries
+
+        if not keyed_dimension_entries(cls):
+            return None
+        from tap_grid.dimension_map import DimensionWriteError, defaults, supplied
+
+        try:
+            merged: dict[str, Any] = dict(defaults(getattr(cls, "DEFAULT_DIMENSIONS", {}) or {}))
+            merged.update(supplied(raw or {}))
+        except (DimensionWriteError, LookupError):
+            return dict(raw or {})
+        return merged
+
+    def missing_key_dimensions(self) -> list[str]:
+        """The dimension entries of this type's key a create would leave without a value (``-30``).
+
+        Each entry is resolved first (:func:`~tap_grid.natural_key.key_dimension`), so a create that
+        never searches is held to eligibility too (``-29``): an undeclared dimension raises
+        ``LookupError`` and one without ``usable_in_keys`` raises ``ValueError``.
+        """
+        from tap_grid.natural_key import constituting_properties, key_dimension, keyed_dimension_entries
+
+        entries = keyed_dimension_entries(type(self))
+        if not entries:
+            return []
+        for entry in entries:
+            key_dimension(type(self), entry)
+        values = constituting_properties(entries, {}, self.key_dimensions())
+        return [entry for entry in entries if values[entry] is None]
 
     def _stored_natural_key(self, update_fields: Iterable[str]) -> str | None:
         """The natural key after a partial save: constituting values the save wrote come from this
@@ -1597,7 +1662,7 @@ class BaseModel(models.Model):
             column: stored[attname] if attname in unsaved else getattr(self, attname)
             for column, attname in attnames.items()
         }
-        return row_natural_key(type(self), row)
+        return row_natural_key(type(self), row, self.key_dimensions())
 
     def _stored_event_time(self, update_fields: Iterable[str]) -> Any:
         """The event time after a partial save: declared values the save wrote come from this
@@ -1821,6 +1886,17 @@ class BaseModel(models.Model):
         event_time = derive_for_instance(self)
 
         if self.entity_id is None:
+            # A type keyed on a dimension is held to it on a direct save too, not only through the
+            # service layer: the dimension must be eligible and present (req-grid-entity-natural-key-29, -30).
+            try:
+                missing = self.missing_key_dimensions()
+            except (LookupError, ValueError) as error:
+                raise ValidationError(str(error)) from error
+            if missing:
+                raise ValidationError(
+                    f"{entity_type} is keyed on {missing}; a create must supply a value for each "
+                    "(req-grid-entity-natural-key-30)."
+                )
             with transaction.atomic():
                 # Defaults stamped src: default, the caller's values over them
                 # (req-grid-dimension-reference-3), then the grid's own `tap.time` dimension from
@@ -1972,9 +2048,15 @@ class BaseModel(models.Model):
             return
         from tap_grid.natural_key import constituting_properties
 
-        current = constituting_properties(declared, _key_payload(self, declared))
+        dimensions = self.key_dimensions()
+        current = constituting_properties(declared, _key_payload(self, declared), dimensions)
         for name, value in normalized_key_values(type(self), current).items():
             if value != current[name]:
+                if is_dimension(name):
+                    raise ImproperlyConfigured(
+                        f"{type(self).__name__}.normalize_natural_key changed dimension entry {name!r}: a dimension's "
+                        "spelling is its node's values list, not one type's rule (req-grid-entity-natural-key-28)."
+                    )
                 _set_key_value(self, name, value)
 
     def _prepare_for_write_checked(self) -> None:
@@ -1987,7 +2069,7 @@ class BaseModel(models.Model):
             return
         from tap_grid.natural_key import constituting_properties
 
-        current = constituting_properties(declared, _key_payload(self, declared))
+        current = constituting_properties(declared, _key_payload(self, declared), self.key_dimensions())
         if normalized_key_values(type(self), current) != current:
             raise ImproperlyConfigured(
                 f"{type(self).__name__}'s natural key is not in normalised form after prepare_for_write: an "

@@ -257,6 +257,8 @@ class TestNothingCallsTheSearchYet:
     ALLOWED_REFERENCES = {
         "tap_grid/tests/test_find_existing.py",
         "tap_grid/tests/test_natural_key_json_path.py",
+        # Exercises the search over a declared identity dimension (req-grid-entity-natural-key-28).
+        "tap_grid/tests/test_dimension_natural_key.py",
         "tap_grid/services/__init__.py",
         # Names the search only to read its source and prove it never touches the spine
         # column (req-grid-entity-natural-key-21); calls nothing.
