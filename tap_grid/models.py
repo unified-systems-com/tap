@@ -1886,6 +1886,17 @@ class BaseModel(models.Model):
         event_time = derive_for_instance(self)
 
         if self.entity_id is None:
+            # A type keyed on a dimension is held to it on a direct save too, not only through the
+            # service layer: the dimension must be eligible and present (req-grid-entity-natural-key-29, -30).
+            try:
+                missing = self.missing_key_dimensions()
+            except (LookupError, ValueError) as error:
+                raise ValidationError(str(error)) from error
+            if missing:
+                raise ValidationError(
+                    f"{entity_type} is keyed on {missing}; a create must supply a value for each "
+                    "(req-grid-entity-natural-key-30)."
+                )
             with transaction.atomic():
                 # Defaults stamped src: default, the caller's values over them
                 # (req-grid-dimension-reference-3), then the grid's own `tap.time` dimension from

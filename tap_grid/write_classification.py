@@ -165,7 +165,8 @@ def classify(
 
 def _refuse_keyed_dimension_change(entity_type: str, persisted: dict[str, Any], expected: dict[str, Any]) -> None:
     """A replace never re-keys a row: a keyed dimension's stored value stays (``req-grid-entity-natural-key-31``,
-    unified-systems-com/tap#1186). Changing or removing it raises ``ServiceConstraintError``."""
+    unified-systems-com/tap#1186). Changing it, removing it, or adding it to a row stored without one raises
+    ``ServiceConstraintError``."""
     from tap_grid.natural_key import constituting_properties, keyed_dimension_entries
     from tap_grid.registry import get_model_class
 
@@ -178,7 +179,9 @@ def _refuse_keyed_dimension_change(entity_type: str, persisted: dict[str, Any], 
         return
     before = constituting_properties(entries, {}, persisted)
     after = constituting_properties(entries, {}, expected)
-    moved = [entry for entry in entries if before[entry] is not None and before[entry] != after[entry]]
+    # Any difference, including a value arriving on a row stored without one: a keyed row acquires its
+    # identity at create, never later (PR# 1356 - tap review, round 2).
+    moved = [entry for entry in entries if before[entry] != after[entry]]
     if moved:
         from tap_grid.exceptions import ServiceConstraintError
 

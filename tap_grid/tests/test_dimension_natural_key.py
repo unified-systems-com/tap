@@ -149,6 +149,13 @@ class TestTheSearch:
         assert _create("p", "b").success
         assert Panel.find_existing(**{ENTRY: "a", "slug": "p"}) != Panel.find_existing(**{ENTRY: "b", "slug": "p"})
 
+    def test_create_node_takes_the_dimensions(self, keyed: tuple[str, ...]) -> None:
+        from tap_grid.services import create_node
+
+        result = create_node("panel", _panel_payload("p"), dimensions={"tap.graph": "web", ISSUER: "a"})
+        assert result.success, result.errors
+        assert Panel.find_existing(**{ENTRY: "a", "slug": "p"}) is not None
+
     def test_a_reference_spells_the_entry_as_declared(self, keyed: tuple[str, ...]) -> None:
         entity_id = _created_id(_create("p", "a"))
         assert find_by_natural_key("panel", {ENTRY: "a", "slug": "p"}) == uuid.UUID(entity_id)
@@ -220,6 +227,31 @@ class TestRequiredOnCreate:
         assert not result.success
 
 
+@SPEC_30
+class TestADirectSaveIsHeldToo:
+    """PR# 1356 - tap review round 2 (Codex): the checks are not the service layer's alone."""
+
+    def test_a_direct_save_without_the_keyed_dimension_is_refused(self, keyed: tuple[str, ...]) -> None:
+        from django.core.exceptions import ValidationError
+
+        from tap_grid.write_guard import unguarded_write
+
+        with unguarded_write(), pytest.raises(ValidationError, match="natural-key-30"):
+            Panel(**_panel_payload("p")).save()
+
+    def test_a_direct_save_naming_an_ineligible_dimension_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from django.core.exceptions import ValidationError
+
+        from tap_grid.write_guard import unguarded_write
+
+        _declare_dimension("tap.test.perspective", usable_in_keys=False)
+        monkeypatch.setattr(Panel, "NATURAL_KEY", (dimension_entry("tap.test.perspective"), "slug"))
+        panel = Panel(**_panel_payload("p"))
+        panel._initial_dimensions = {"tap.test.perspective": "a"}  # type: ignore[attr-defined]  # what the service layer sets
+        with unguarded_write(), pytest.raises(ValidationError, match="usable_in_keys"):
+            panel.save()
+
+
 @SPEC_28
 class TestResolvedThroughTheImporter:
     def test_reimport_finds_the_same_row_and_another_value_makes_a_new_one(self, keyed: tuple[str, ...]) -> None:
@@ -245,6 +277,17 @@ class TestAKeyedDimensionIsFixed:
         entity_id = _resolved(grift_import(_bundle("p", "a")))
         result = grift_import(_bundle("p", None, entity_id=entity_id))
         assert not result.success
+
+    def test_a_replace_that_adds_it_to_a_row_stored_without_it_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row from before the type keyed on the dimension does not acquire it by a replace (round 2)."""
+        _declare_dimension(ISSUER, usable_in_keys=True)
+        entity_id = str(_created_id(_create("p", None)))  # created while the type keys on slug alone
+        monkeypatch.setattr(Panel, "NATURAL_KEY", DECLARED)
+        result = grift_import(_bundle("p", "a", entity_id=entity_id))
+        assert not result.success
+        assert "req-grid-entity-natural-key-31" in str(result.errors)
 
     def test_a_replace_that_keeps_it_succeeds(self, keyed: tuple[str, ...]) -> None:
         entity_id = _resolved(grift_import(_bundle("p", "a")))

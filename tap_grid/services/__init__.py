@@ -455,6 +455,7 @@ def create_node(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    dimensions: Mapping[str, Any] | None = None,
 ) -> WriteResult:
     """Create a new domain object of the given type.
 
@@ -466,11 +467,15 @@ def create_node(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        dimensions: The new entity's dimensions, by name; a type keyed on a dimension
+            (``req-grid-entity-natural-key-28``) needs its value here.
 
     Returns:
         WriteResult with entity_id populated on success.
     """
-    op = WriteOperation(verb="create_node", type_slug=type_slug, payload=payload)
+    op = WriteOperation(
+        verb="create_node", type_slug=type_slug, payload=payload, dimensions=dict(dimensions) if dimensions else None
+    )
     batch_result = write_batch(
         [op],
         caller_context=caller_context,
@@ -1665,7 +1670,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@3713a6040002/d7f0d1307933 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@2974abe9ab69/d7f0d1307933 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
