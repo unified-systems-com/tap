@@ -654,6 +654,49 @@ def _profile_waivers(profile_id: str) -> list[Waiver]:
     return load_waivers(profile.get("fips_waivers", []) or [])
 
 
+class GateSettingError(ValueError):
+    """A malformed `fips_system_gate` in the boot profile (fail-closed: the boot refuses)."""
+
+
+def _profile_gate_setting(profile_id: str) -> dict[str, Any]:
+    """The boot profile's `fips_system_gate` object, or `{}` when it declares none (scan on)."""
+    path = profile_path(Path(__file__).resolve().parent.parent / "boot", profile_id) if profile_id else None
+    if path is None or not path.is_file():
+        return {}
+    with path.open("rb") as fh:
+        setting = json.load(fh).get("fips_system_gate") or {}
+    if not isinstance(setting, dict):
+        raise GateSettingError("fips_system_gate must be an object")
+    return setting
+
+
+def scan_declined(profile_id: str, *, setting: dict[str, Any] | None = None) -> str | None:
+    """The reason the boot record turns the crypto-BOM scan off, or None when the scan runs
+    (req-fips-system-gate-opt-out).
+
+    Only the boot record can turn it off, and only with a non-blank reason, the same authority and
+    the same rule as `fips_waivers`. The environment can only turn it back on:
+    `TAP_FIPS_SYSTEM_GATE=required` runs the scan whatever the record says, and any other value is
+    refused, so a typo can never be read as "off". FIPS mode, the provider and the `tap.fips`
+    self-check are not this setting's business; they run either way.
+    """
+    env = os.environ.get("TAP_FIPS_SYSTEM_GATE", "").strip()
+    if env not in ("", "required"):
+        raise GateSettingError(f"TAP_FIPS_SYSTEM_GATE must be empty or 'required', not {env!r}")
+    setting = _profile_gate_setting(profile_id) if setting is None else setting
+    mode = setting.get("mode", "on")
+    if mode not in ("on", "off"):
+        raise GateSettingError(f"fips_system_gate.mode must be 'on' or 'off', not {mode!r}")
+    if mode == "on":
+        return None
+    reason = setting.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise GateSettingError("fips_system_gate.mode 'off' needs a non-blank reason")
+    if env == "required":
+        return None
+    return reason.strip()
+
+
 def system_fips_gate(profile_id: str) -> tuple[int, Report]:
     """The boot-time GLOBAL FIPS validation (req-fips-crypto-bom): when the system is in FIPS mode,
     every crypto provider in the assembled environment — core AND every installed plugin — must be
@@ -764,6 +807,17 @@ def main(argv: list[str] | None = None) -> int:
             "here until you name the profile.",
             file=sys.stderr,
         )
+
+    try:
+        declined = scan_declined(args.profile) if _fips_mode_on() else None
+    except GateSettingError as exc:
+        print(f"TAP-ABORT: crypto-bom: {exc} (profile '{args.profile}')", file=sys.stderr)
+        return 1
+    if declined is not None:
+        # Off by the deployer's record, on the record: the reason is printed on every start.
+        print(f"==> crypto-BOM scan OFF by boot profile '{args.profile}' (fips_system_gate): {declined}")
+        print("==>   FIPS mode and the tap.fips self-check still apply; TAP_FIPS_SYSTEM_GATE=required turns the scan back on.")
+        return 0
 
     try:
         code, report = system_fips_gate(args.profile)

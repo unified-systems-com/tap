@@ -66,6 +66,7 @@ roles, and is the reason a plugin can never exempt itself:
 | req-fips-crypto-bom-system-gate | [Boot-Time System Gate](#boot-time-system-gate) | Implemented | Global validation at boot under `TAP_FIPS_MODE=1`: core + every plugin, TAP-ABORT on an unwaived non-validated provider. `python -m tap.crypto_bom --gate`. |
 | req-fips-single-openssl-core | [One OpenSSL Core Per Process](#one-openssl-core-per-process) | Implemented | Under `TAP_FIPS_MODE=1` the boot self-check refuses to start if more than one libcrypto is loaded in the process, before any crypto runs |
 | req-fips-crypto-bom-waivers | [Operator Waivers](#operator-waivers) | Implemented | The justified escape valve: boot-profile `fips_waivers`, deployment-controlled, mandatory reason, surfaced. |
+| req-fips-system-gate-opt-out | [The Scan Off, By The Record](#the-scan-off-by-the-record) | Implemented | A deployment outside any authorization boundary may turn the crypto-BOM scan off in its boot record, with a mandatory reason, printed on every start; the environment can only turn it back on; FIPS mode and the self-check stay. |
 | req-fips-crypto-bom-waiver-ownership | [Waivers Match Ownership, Not Path Fragments](#waivers-match-ownership-not-path-fragments) | Proposed | A `plugin:` waiver resolves through the installed distribution that OWNS the artifact (RECORD → dist → the plugin whose closure pulled it), never a path-segment string match; a shared dependency has a SET of owners and the match is membership; unmatched waivers are reported; attribution rides every finding. |
 | req-fips-crypto-bom-jvm | [JVM-Arrival Tripwire](#jvm-arrival-tripwire) | Implemented | Java is out of scope, but its arrival (runtime/executable/jar/bridge dist) fails the gate loudly — jars are not ELF, so nothing else catches it. |
 | req-fips-crypto-bom-source | [Source-Level Scan](#source-level-scan) | Implemented | The Python analog of the ELF fingerprinter: AST-scan TAP + plugin source for pure-Python crypto imports, bare weak-digest usage, and WASM-runtime imports — the crypto the native scan cannot see. |
@@ -248,6 +249,43 @@ manifest: authority to waive a system security property rests with the deployer,
 | req-fips-crypto-bom-waivers-1 | Waiver names target and reason | Implemented | Each `fips_waivers` entry names the plugin/artifact + provider being excused and carries a mandatory `reason`; a blank reason is rejected. | You cannot waive silently. |
 | req-fips-crypto-bom-waivers-2 | Waived findings stay auditable | Implemented | A waived finding stops failing but is recorded as WAIVED with its reason. | Exception, not erasure. |
 | req-fips-crypto-bom-waivers-3 | Operator-only authority | Implemented | Waivers live in the boot profile; a plugin's own manifest cannot waive. | The deployer holds the authority. |
+
+### The Scan Off, By The Record
+----
+RID: `req-fips-system-gate-opt-out`
+
+Status: `Implemented`
+
+The crypto-BOM system gate reads every ELF file and parses every source file of the assembled
+environment, so it is the longest step of a start that installs nothing: 12 s on a warm host and 49 s
+on a Codespace resumed from a prebuild, measured 2026-11-23. Inside an authorization boundary that
+scan is the evidence that no unvalidated crypto ships. Outside one, in a visitor's own Codespace or on
+a laptop, nobody relies on it. Ruled by George, 2026-11-24: there it may be dropped, and FIPS kept.
+
+The decision is the deployer's, and it is made where waivers are made, under the same rule: the boot
+profile's `fips_system_gate` object, `{"mode": "off", "reason": "…"}`, with a mandatory non-blank
+reason. With nothing declared, or `mode` `on`, the scan runs. Off, the gate prints
+`crypto-BOM scan OFF by boot profile '<id>' (fips_system_gate): <reason>` on every start and scans
+nothing. A deployment inside a boundary that reuses an image whose record says off sets
+`TAP_FIPS_SYSTEM_GATE=required`, and the scan runs. Any other value of that variable refuses the
+boot, so nothing in the environment can turn the scan off, and a typo is never read as off.
+
+Nothing can tell a deployment outside a boundary from one inside, so the setting is an
+authority, not a check: whoever chooses the boot record decides, as with waivers. Two things bound it.
+tap's own profiles never set it, so CI's and development's scans keep running. And a deployment
+inside a boundary that reuses someone else's image sets `TAP_FIPS_SYSTEM_GATE=required`.
+
+FIPS mode, the FIPS provider and the `tap.fips` self-check are not part of this setting: they run as
+they always do. An image that is not in FIPS mode skips the scan already (`req-fips-crypto-bom-system-gate`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-system-gate-opt-out-1 | Off Only With A Reason | Implemented | `fips_system_gate` absent or `on` runs the scan; `off` skips it only with a non-blank reason; a blank or missing reason, or an unknown mode, refuses the boot. | The schema says the same; the gate re-checks it, since it reads the record directly |
+| req-fips-system-gate-opt-out-2 | The Environment Only Tightens | Implemented | `TAP_FIPS_SYSTEM_GATE=required` runs the scan whatever the record says; any other non-empty value refuses the boot. | |
+| req-fips-system-gate-opt-out-3 | Skipped Out Loud | Implemented | A skipped scan prints the profile and the reason, scans nothing and exits 0; a malformed setting prints a TAP-ABORT and exits 1. | |
+| req-fips-system-gate-opt-out-4 | Not In tap's Own Profiles | Implemented | No boot profile shipped in tap (`boot/*.boot.json`) sets `fips_system_gate` `off`: those profiles are where the scan's evidence comes from, in CI and in development. A product sets it in its own record, in its own repository. | Raised by both review seats on tap#1350: nothing can tell a deployment outside a boundary from one inside, so the guard keeps tap's own evidence whole and leaves the choice to the deployer |
 
 ### Waivers Match Ownership, Not Path Fragments
 ----
