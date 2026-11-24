@@ -31,6 +31,7 @@ def _derive(
         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
         "GITHUB_API_URL": "http://127.0.0.1:9",  # no network: the owner stays unresolved, which is allowed
         "TAP_CODESPACE_NAME_WAIT": str(wait),
+        "TAP_CODESPACE_OWNER_WAIT": "0",  # one lookup, as before; the retry has its own test
     }
     if identity is not None:
         base["TAP_CODESPACE_IDENTITY"] = identity
@@ -197,3 +198,72 @@ def test_without_the_flag_the_workspace_key_is_kept(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     key = (tmp_path / "tree" / ".codespace-secret-key").read_text().strip()
     assert f"SECRET_KEY={key}" in (tmp_path / "out.env").read_text().splitlines()
+
+
+def _line(tmp_path: Path, key: str) -> str | None:
+    for line in (tmp_path / "out.env").read_text().splitlines():
+        if line.startswith(f"{key}="):
+            return line.removeprefix(f"{key}=")
+    return None
+
+
+@pytest.mark.spec("req-tap-serving-codespace-7")
+def test_an_owner_lookup_that_fails_at_first_is_retried(tmp_path: Path) -> None:
+    """A prebuilt Codespace's network may not answer in its first seconds; the lookup is retried."""
+    import http.server
+    import json as _json
+
+    calls: list[str] = []
+
+    class Api(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            calls.append(self.path)
+            if len(calls) < 3:
+                self.send_response(503)
+                self.end_headers()
+                return
+            body = _json.dumps({"login": "visitor", "id": 4242}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Api)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        ident = tmp_path / "identity.env"
+        ident.write_text(_full("cs-retry"))
+        proc = _derive(
+            tmp_path, str(ident), GITHUB_API_URL=f"http://127.0.0.1:{server.server_port}", TAP_CODESPACE_OWNER_WAIT="20"
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert len(calls) == 3 and all(c == "/users/visitor" for c in calls)
+    assert _line(tmp_path, "TAP_AUTH_INSTANCE_OWNER") == '{"login": "visitor", "user_id": "4242"}'
+
+
+@pytest.mark.spec("req-tap-serving-codespace-7")
+def test_a_lookup_that_never_answers_still_ends_empty(tmp_path: Path) -> None:
+    ident = tmp_path / "identity.env"
+    ident.write_text(_full("cs-down"))
+    started = time.monotonic()
+    proc = _derive(tmp_path, str(ident), TAP_CODESPACE_OWNER_WAIT="3")
+    assert proc.returncode == 0, proc.stderr
+    assert time.monotonic() - started >= 3, "the wait was honoured"
+    assert _line(tmp_path, "TAP_AUTH_INSTANCE_OWNER") == ""
+
+
+@pytest.mark.spec("req-tap-bake-hosts-5")
+def test_the_passkey_origin_is_the_forwarded_origin(tmp_path: Path) -> None:
+    """The first admin link, minted when no owner resolves, needs the exact passkey origin."""
+    ident = tmp_path / "identity.env"
+    ident.write_text(_full("cs-pk"))
+    proc = _derive(tmp_path, str(ident))
+    assert proc.returncode == 0, proc.stderr
+    assert _line(tmp_path, "TAP_PASSKEY_ORIGIN") == "https://cs-pk-8000.app.github.dev"
+    assert _line(tmp_path, "TAP_BASE_URL") == _line(tmp_path, "TAP_PASSKEY_ORIGIN")

@@ -232,16 +232,31 @@ owner_id=""
 
 _extract_id() { sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1; }
 
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  owner_id="$(curl -fsS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                   -H "Accept: application/vnd.github+json" \
-                   "${api}/user" 2>/dev/null | _extract_id || true)"
+# RETRIED for TAP_CODESPACE_OWNER_WAIT seconds (default 30). A Codespace made from a prebuild
+# resumes its containers before its network answers: on 2026-11-23 the one lookup failed 3 s into
+# the start and the same request answered 200 minutes later, so the owner stayed empty and every
+# login was denied. A transient failure is retried; a lookup that never answers still ends empty,
+# which denies, as above.
+owner_wait="${TAP_CODESPACE_OWNER_WAIT:-30}"
+if [[ ! "$owner_wait" =~ ^[0-9]{1,3}$ ]] || (( 10#$owner_wait > 300 )); then
+  echo "==> WARN: TAP_CODESPACE_OWNER_WAIT must be 0-300 seconds; waiting 30" >&2
+  owner_wait=30
 fi
-
-if [[ -z "$owner_id" && -n "$owner_login" ]]; then
-  owner_id="$(curl -fsS -H "Accept: application/vnd.github+json" \
-                   "${api}/users/${owner_login}" 2>/dev/null | _extract_id || true)"
-fi
+owner_deadline=$(( $(date +%s) + 10#$owner_wait ))
+while :; do
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    owner_id="$(curl -fsS --max-time 5 -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                     -H "Accept: application/vnd.github+json" \
+                     "${api}/user" 2>/dev/null | _extract_id || true)"
+  fi
+  if [[ -z "$owner_id" && -n "$owner_login" ]]; then
+    owner_id="$(curl -fsS --max-time 5 -H "Accept: application/vnd.github+json" \
+                     "${api}/users/${owner_login}" 2>/dev/null | _extract_id || true)"
+  fi
+  [[ -n "$owner_id" || -z "${GITHUB_TOKEN:-}${owner_login}" ]] && break
+  (( $(date +%s) >= owner_deadline )) && break
+  sleep 2
+done
 
 # The login is echoed into JSON, so it must not be able to break out of the
 # string. GitHub logins are [A-Za-z0-9-] and nothing else; anything that is not
@@ -337,6 +352,10 @@ TAP_SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
 
 # This instance's public identity, used to derive provider callback URLs.
 TAP_BASE_URL=${forwarded_origin}
+
+# The origin a passkey ceremony expects, exactly (req-tap-auth-passkey-webauthn-7). Without it the
+# initializer's first admin link, the way in when the owner could not be resolved, cannot be minted.
+TAP_PASSKEY_ORIGIN=${forwarded_origin}
 
 # Per-Codespace signing key, persisted so a restart does not log everyone out. Empty under
 # --no-secret-key, where the initializer supplies it.
