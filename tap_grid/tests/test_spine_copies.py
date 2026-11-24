@@ -58,7 +58,7 @@ def _spine(entity_id: Any) -> tuple[Any, Any]:
 
 def _sql(statement: str, params: list[Any] | None = None) -> list[tuple[Any, ...]]:
     with connection.cursor() as cursor:
-        cursor.execute(statement, params or [])
+        cursor.execute(statement, params or [])  # nosemgrep  # nosec B608 - test-owned statements
         return cursor.fetchall() if cursor.description else []
 
 

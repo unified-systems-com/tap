@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from django.db import DEFAULT_DB_ALIAS, connections, transaction
+from psycopg import sql
 
 logger = logging.getLogger(__name__)
 
@@ -164,15 +165,27 @@ def _entity_table() -> str:
     return Entity._meta.db_table
 
 
-def _functions_sql(quote: Any) -> list[str]:
-    entity = quote(_entity_table())
-    type_table = quote(TYPE_TABLE)
+def _run(cursor: Any, statement: sql.Composable, params: Iterable[Any] | None = None) -> None:
+    """Execute one composed statement: every identifier in it was quoted by psycopg, every value is bound.
+
+    Rendered to text against the cursor's own connection first, because the execute wrappers that
+    guard Django's connections read the statement as a string.
+    """
+    text = statement.as_string(cursor.connection)
+    cursor.execute(text, params)  # nosemgrep  # nosec B608 - psycopg.sql composition, values bound
+
+
+def _functions_sql() -> list[sql.Composable]:
+    entity = sql.Identifier(_entity_table())
+    type_table = sql.Identifier(TYPE_TABLE)
     return [
-        f"CREATE TABLE IF NOT EXISTS {type_table} (entity_type varchar(255) PRIMARY KEY, table_name text NOT NULL)",
+        sql.SQL(
+            "CREATE TABLE IF NOT EXISTS {type_table} (entity_type varchar(255) PRIMARY KEY, table_name text NOT NULL)"
+        ).format(type_table=type_table),
         # Rule 4: an entity row's deleted_at or dimensions changed -> both values to its typed row.
         # A type with no entry (its plugin is not installed) is left alone.
-        f"""
-CREATE OR REPLACE FUNCTION {PUSH_FUNCTION}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        sql.SQL("""
+CREATE OR REPLACE FUNCTION {push}() RETURNS trigger LANGUAGE plpgsql AS $fn$
 DECLARE target text;
 BEGIN
   SELECT table_name INTO target FROM {type_table} WHERE entity_type = NEW.entity_type;
@@ -182,13 +195,13 @@ BEGIN
   END IF;
   RETURN NULL;
 END
-$fn$""",
+$fn$""").format(push=sql.Identifier(PUSH_FUNCTION), type_table=type_table),
         # Rules 5 and 11: a typed row inserted or updated -> both copies from its entity row. An
         # insert reads the entity row FOR SHARE: a typed row that does not exist yet cannot make a
         # concurrent push wait, so the insert waits for the entity change instead. An update reads
         # plainly: the typed row is already locked, so a concurrent push waits for this statement.
-        f"""
-CREATE OR REPLACE FUNCTION {PULL_FUNCTION}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        sql.SQL("""
+CREATE OR REPLACE FUNCTION {pull}() RETURNS trigger LANGUAGE plpgsql AS $fn$
 DECLARE retired timestamptz; dims jsonb;
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -200,39 +213,48 @@ BEGIN
   NEW.spine_dimensions := COALESCE(dims, '{{}}'::jsonb);
   RETURN NEW;
 END
-$fn$""",
+$fn$""").format(pull=sql.Identifier(PULL_FUNCTION), entity=entity),
     ]
 
 
-def _push_trigger_sql(quote: Any) -> str:
-    return (
-        f"CREATE OR REPLACE TRIGGER {PUSH_TRIGGER} AFTER UPDATE OF deleted_at, dimensions ON {quote(_entity_table())} "
+def _push_trigger_sql() -> sql.Composable:
+    return sql.SQL(
+        "CREATE OR REPLACE TRIGGER {trigger} AFTER UPDATE OF deleted_at, dimensions ON {entity} "
         "FOR EACH ROW WHEN (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at OR OLD.dimensions IS DISTINCT FROM "
-        f"NEW.dimensions) EXECUTE FUNCTION {PUSH_FUNCTION}()"
+        "NEW.dimensions) EXECUTE FUNCTION {function}()"
+    ).format(
+        trigger=sql.Identifier(PUSH_TRIGGER),
+        entity=sql.Identifier(_entity_table()),
+        function=sql.Identifier(PUSH_FUNCTION),
     )
 
 
-def _pull_trigger_sql(quote: Any, table: str) -> str:
-    return (
-        f"CREATE OR REPLACE TRIGGER {PULL_TRIGGER} BEFORE INSERT OR UPDATE ON {quote(table)} "
-        f"FOR EACH ROW EXECUTE FUNCTION {PULL_FUNCTION}()"
+def _pull_trigger_sql(table: str) -> sql.Composable:
+    return sql.SQL(
+        "CREATE OR REPLACE TRIGGER {trigger} BEFORE INSERT OR UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION {function}()"
+    ).format(trigger=sql.Identifier(PULL_TRIGGER), table=sql.Identifier(table), function=sql.Identifier(PULL_FUNCTION))
+
+
+def _drop_pull_trigger_sql(table: str) -> sql.Composable:
+    return sql.SQL("DROP TRIGGER IF EXISTS {trigger} ON {table}").format(
+        trigger=sql.Identifier(PULL_TRIGGER), table=sql.Identifier(table)
     )
 
 
-def _fill_sql(quote: Any, table: str) -> str:
+def _fill_sql(table: str) -> sql.Composable:
     """Rule 9's one set-based statement: every row whose copies differ, brought into step."""
-    return (
-        f"UPDATE {quote(table)} t SET spine_deleted_at = e.deleted_at, spine_dimensions = e.dimensions "  # noqa: S608  # nosec B608 - quoted names from model metadata, no values
-        f"FROM {quote(_entity_table())} e WHERE e.id = t.entity_id AND "
+    return sql.SQL(
+        "UPDATE {table} t SET spine_deleted_at = e.deleted_at, spine_dimensions = e.dimensions "
+        "FROM {entity} e WHERE e.id = t.entity_id AND "
         "(t.spine_deleted_at IS DISTINCT FROM e.deleted_at OR t.spine_dimensions IS DISTINCT FROM e.dimensions)"
-    )
+    ).format(table=sql.Identifier(table), entity=sql.Identifier(_entity_table()))
 
 
-def _drift_sql(quote: Any, table: str) -> str:
-    return (
-        f"SELECT count(*) FROM {quote(table)} t JOIN {quote(_entity_table())} e ON e.id = t.entity_id "  # noqa: S608  # nosec B608 - quoted names from model metadata, no values
+def _drift_sql(table: str) -> sql.Composable:
+    return sql.SQL(
+        "SELECT count(*) FROM {table} t JOIN {entity} e ON e.id = t.entity_id "
         "WHERE t.spine_deleted_at IS DISTINCT FROM e.deleted_at OR t.spine_dimensions IS DISTINCT FROM e.dimensions"
-    )
+    ).format(table=sql.Identifier(table), entity=sql.Identifier(_entity_table()))
 
 
 def typed_tables() -> dict[str, str]:
@@ -405,7 +427,6 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
     if connection.vendor != "postgresql":
         report.skipped["*"] = f"the spine copies are kept by PostgreSQL triggers; {connection.vendor} has none"
         return report
-    quote = connection.ops.quote_name
     with connection.cursor() as cursor:
         if _entity_table() not in set(connection.introspection.table_names(cursor)):
             # A rollback of tap_grid to before its first migration: nothing to keep copies of.
@@ -413,21 +434,19 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
             return report
     ready, report.skipped, bare = _sort_tables(connection, typed_tables())
     with transaction.atomic(using=using), connection.cursor() as cursor:
-        for statement in _functions_sql(quote):
-            cursor.execute(statement)
+        for statement in _functions_sql():
+            _run(cursor, statement)
         for table in sorted(bare - set(ready.values())):
-            cursor.execute(f"DROP TRIGGER IF EXISTS {PULL_TRIGGER} ON {quote(table)}")
+            _run(cursor, _drop_pull_trigger_sql(table))
         for table in sorted(set(ready.values())):
-            cursor.execute(_pull_trigger_sql(quote, table))
-        cursor.execute(f"DELETE FROM {quote(TYPE_TABLE)}")  # noqa: S608  # nosec B608 - a constant name
+            _run(cursor, _pull_trigger_sql(table))
+        _run(cursor, sql.SQL("DELETE FROM {}").format(sql.Identifier(TYPE_TABLE)))
+        insert = sql.SQL("INSERT INTO {} (entity_type, table_name) VALUES (%s, %s)").format(sql.Identifier(TYPE_TABLE))
         for entity_type, table in sorted(ready.items()):
-            cursor.execute(
-                f"INSERT INTO {quote(TYPE_TABLE)} (entity_type, table_name) VALUES (%s, %s)",  # noqa: S608  # nosec B608
-                [entity_type, table],
-            )
-        cursor.execute(_push_trigger_sql(quote))
+            _run(cursor, insert, [entity_type, table])
+        _run(cursor, _push_trigger_sql())
         for table in sorted(set(ready.values())):
-            cursor.execute(_fill_sql(quote, table))
+            _run(cursor, _fill_sql(table))
             if cursor.rowcount:
                 report.filled[table] = cursor.rowcount
     report.tables = ready
@@ -514,7 +533,6 @@ def check(*, using: str = DEFAULT_DB_ALIAS) -> DriftReport:
     if connection.vendor != "postgresql":
         report.skipped["*"] = f"{connection.vendor} keeps no spine copies"
         return report
-    quote = connection.ops.quote_name
     ready, report.skipped = _ready_tables(connection, typed_tables())
     with connection.cursor() as cursor:
         cursor.execute(
@@ -526,7 +544,7 @@ def check(*, using: str = DEFAULT_DB_ALIAS) -> DriftReport:
         report.push_trigger = (_entity_table(), PUSH_TRIGGER) in triggers
         mapped: dict[str, str] = {}
         if TYPE_TABLE in set(connection.introspection.table_names(cursor)):
-            cursor.execute(f"SELECT entity_type, table_name FROM {quote(TYPE_TABLE)}")  # noqa: S608  # nosec B608
+            _run(cursor, sql.SQL("SELECT entity_type, table_name FROM {}").format(sql.Identifier(TYPE_TABLE)))
             mapped = dict(cursor.fetchall())
         for entity_type, table in sorted(ready.items()):
             if mapped.get(entity_type) != table:
@@ -535,7 +553,7 @@ def check(*, using: str = DEFAULT_DB_ALIAS) -> DriftReport:
                 report.untriggered.append(table)
             if table in report.checked:
                 continue
-            cursor.execute(_drift_sql(quote, table))
+            _run(cursor, _drift_sql(table))
             report.checked[table] = int(cursor.fetchone()[0])
     return report
 
