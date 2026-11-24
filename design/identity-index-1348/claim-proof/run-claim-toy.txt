@@ -1,0 +1,17 @@
+[mode=update] first  20,000 keys: s=0.128 locked=20000 lock_entries=5 advisory=0
+[mode=update] resend 20,000 keys: s=0.179 locked=20000 lock_entries=5 advisory=0
+[mode=update] after first+resend: ins=20000 upd=20000 hot_upd=0 dead=20000
+[mode=nothing] first  20,000 keys: s=0.191 locked=20000 lock_entries=7 advisory=0
+[mode=nothing] resend 20,000 keys: s=0.153 locked=20000 lock_entries=7 advisory=0
+[mode=nothing] after first+resend: ins=20000 upd=0 hot_upd=0 dead=0
+[size] 1,000,000 claims: heap=93.1 MB pkey=78.5 MB per_claim=172 bytes
+[re-entrant] re-claiming 3 held keys in the same transaction: s=0.0011, no wait
+[two writers mode=update sorted] rounds=5: ok=10 deadlock=0
+[two writers mode=update one-at-a-time, opposite orders] rounds=5: ok=5 deadlock=5
+[two writers mode=nothing sorted] rounds=5: ok=10 deadlock=0
+[two writers mode=nothing one-at-a-time, opposite orders] rounds=5: ok=5 deadlock=5
+[lazy caller vs sorted batch, advisory] {'lazy': 'ok', 'batch': 'deadlock'}
+[lazy caller vs sorted batch, claim] {'batch': 'deadlock', 'lazy': 'ok'}
+[prune] while 100 claims are held: pruned=900, left=100 (the held ones)
+[prune] claimant (DO UPDATE) racing an uncommitted prune: {'waited_s': 0.49, 'held': 10}
+[prune] DO NOTHING + FOR UPDATE with a prune between them: locked 0 of 10 (must re-claim)

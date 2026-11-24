@@ -1,0 +1,5 @@
+[default64-today] N=10000 panels, E=10000 edges, keys=20000
+[default64-today] first : ok=False s=36.5 peak_advisory=14872 peak_locks=14926 execution_failed: out of shared memory
+[default64-claim] N=10000 panels, E=10000 edges, keys=20000
+[default64-claim] first : ok=True s=171.8 peak_advisory=0 peak_locks=118 
+[default64-claim] resend: ok=True s=155.4 peak_advisory=0 peak_locks=102 

@@ -1,0 +1,6 @@
+[shared512-today] N=2500 panels, E=2500 edges, keys=5000
+[shared512-today] first : ok=True s=40.6 peak_advisory=5000 peak_locks=5108 
+[shared512-today] resend: ok=True s=39.9 peak_advisory=5000 peak_locks=5101 
+[shared512-claim] N=2500 panels, E=2500 edges, keys=5000
+[shared512-claim] first : ok=True s=40.1 peak_advisory=0 peak_locks=112 
+[shared512-claim] resend: ok=True s=38.3 peak_advisory=0 peak_locks=101 

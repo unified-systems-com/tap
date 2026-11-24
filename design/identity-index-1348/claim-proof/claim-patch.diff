@@ -1,0 +1,152 @@
+diff -ruN code-today/tap_grid/grift/importer.py code-claim/tap_grid/grift/importer.py
+--- code-today/tap_grid/grift/importer.py	2026-11-23 15:55:49.000000000 -0800
++++ code-claim/tap_grid/grift/importer.py	2026-11-23 16:17:05.170771956 -0800
+@@ -3853,9 +3853,9 @@
+     every batch acquires the locks it shares with another in the same order. Advisory transaction
+     locks are re-entrant within a session, so each verb's own lock call then returns at once.
+     """
+-    with connection.cursor() as cursor:
+-        for key in sorted(set(keys)):
+-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
++    from tap_grid.identity_claim import claim  # PROTOTYPE Issue 1348
++
++    claim(keys)
+ 
+ 
+ def _ref_node_lock_keys(batch_container: dict[str, Any], refs: dict[str, str]) -> list[str]:
+diff -ruN code-today/tap_grid/identity_claim.py code-claim/tap_grid/identity_claim.py
+--- code-today/tap_grid/identity_claim.py	1969-12-31 16:00:00.000000000 -0800
++++ code-claim/tap_grid/identity_claim.py	2026-11-23 16:30:23.506860677 -0800
+@@ -0,0 +1,77 @@
++"""PROTOTYPE (Issue 1348, scratch copy only): identity claims as row locks instead of advisory locks.
++
++One row per identity fingerprint in ``tap_identity_claim``. Claiming a set of identities is one
++statement in fingerprint order: a new fingerprint inserts its row (and holds it until commit as an
++uncommitted insert), an existing one is row-locked by ``DO UPDATE``. Row locks are kept in the tuple,
++not in the shared lock table, so a batch's lock-table use does not grow with its size.
++
++Mode (env TAP_CLAIM_MODE): ``update`` (default) or ``nothing`` (DO NOTHING, then SELECT ... FOR UPDATE
++in the same order).
++"""
++
++from __future__ import annotations
++
++import hashlib
++import os
++from collections.abc import Iterable
++
++from django.db import connection
++
++TABLE = "tap_identity_claim"
++RECIPE = 1
++_DDL = (
++    f"CREATE TABLE IF NOT EXISTS {TABLE} ("
++    " fingerprint bytea PRIMARY KEY,"
++    " entity_type varchar(255) NOT NULL,"
++    " recipe smallint NOT NULL,"
++    " claimed_at timestamptz NOT NULL DEFAULT now())"
++)
++_ready = False
++
++
++def fingerprint(key: str) -> bytes:
++    return hashlib.sha256(f"{RECIPE}\x1e{key}".encode()).digest()
++
++
++def _type_of(key: str) -> str:
++    return key.split("\x1f", 1)[0][:255]
++
++
++def claim(keys: Iterable[str]) -> None:
++    global _ready
++    rows = sorted({fingerprint(k): _type_of(k) for k in keys}.items())
++    if not rows:
++        return
++    with connection.cursor() as cursor:
++        if True:  # checked every call: a test transaction that created it may have rolled back
++            # Prototype only: the test database is built from the models, so the migration's RunSQL does
++            # not run there. Serialise the one-time creation on a single constant advisory lock.
++            cursor.execute("SELECT to_regclass(%s)", [TABLE])
++            if cursor.fetchone()[0] is None:
++                cursor.execute("SELECT pg_advisory_xact_lock(1348)")
++                cursor.execute(_DDL)
++            _ready = True
++        fps = [f for f, _ in rows]
++        types = [t for _, t in rows]
++        if os.environ.get("TAP_CLAIM_MODE", "update") == "nothing":
++            cursor.execute(
++                f"INSERT INTO {TABLE} (fingerprint, entity_type, recipe) "
++                "SELECT f, t, %s FROM unnest(%s::bytea[], %s::text[]) AS u(f, t) ORDER BY f "
++                "ON CONFLICT (fingerprint) DO NOTHING",
++                [RECIPE, fps, types],
++            )
++            cursor.execute(
++                f"SELECT count(*) FROM (SELECT 1 FROM {TABLE} WHERE fingerprint = ANY(%s::bytea[]) "
++                "ORDER BY fingerprint FOR UPDATE) l",
++                [fps],
++            )
++            got = cursor.fetchone()[0]
++            if got != len(fps):  # a claim pruned between the two statements: claim again
++                claim(keys)
++        else:
++            cursor.execute(
++                f"INSERT INTO {TABLE} (fingerprint, entity_type, recipe) "
++                "SELECT f, t, %s FROM unnest(%s::bytea[], %s::text[]) AS u(f, t) ORDER BY f "
++                "ON CONFLICT (fingerprint) DO UPDATE SET claimed_at = now()",
++                [RECIPE, fps, types],
++            )
+diff -ruN code-today/tap_grid/migrations/0023_identity_claim.py code-claim/tap_grid/migrations/0023_identity_claim.py
+--- code-today/tap_grid/migrations/0023_identity_claim.py	1969-12-31 16:00:00.000000000 -0800
++++ code-claim/tap_grid/migrations/0023_identity_claim.py	2026-11-23 16:28:05.853799860 -0800
+@@ -0,0 +1,10 @@
++"""PROTOTYPE (Issue 1348): the identity claim table. A plain table, not a model: flush leaves it."""
++
++from django.db import migrations
++
++from tap_grid.identity_claim import _DDL, TABLE
++
++
++class Migration(migrations.Migration):
++    dependencies = [("tap_grid", "0022_model_and_spine_versions")]
++    operations = [migrations.RunSQL(_DDL, f"DROP TABLE IF EXISTS {TABLE}")]
+diff -ruN code-today/tap_grid/services/__init__.py code-claim/tap_grid/services/__init__.py
+--- code-today/tap_grid/services/__init__.py	2026-11-23 15:55:49.000000000 -0800
++++ code-claim/tap_grid/services/__init__.py	2026-11-23 16:17:05.171591779 -0800
+@@ -1697,8 +1697,9 @@
+     properties = normalized_key_values(model_cls, constituting_properties(declared, payload))
+     key = identity_lock_key(type_slug, properties)
+     if key is not None:
+-        with connection.cursor() as cursor:
+-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
++        from tap_grid.identity_claim import claim  # PROTOTYPE Issue 1348
++
++        claim([key])
+     row = model_cls.find_existing(**properties)
+     if row is None:
+         return IdentityResolution(entity_id=assigned, found=False, key=key)
+@@ -1836,8 +1837,9 @@
+     if holes:
+         raise IncompleteEdgeKey(edge_type, holes)
+     key = edge_lock_key(edge_type, source, target, values)
+-    with connection.cursor() as cursor:
+-        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
++    from tap_grid.identity_claim import claim  # PROTOTYPE Issue 1348
++
++    claim([key])
+     rows = find_live_edges(edge_type, source, target, values)
+     if identity.keyless:
+         if rows:
+@@ -1919,10 +1921,9 @@
+     holes = incomplete_paths(values)
+     if holes:
+         raise IncompleteEdgeKey(edge_type, holes)
+-    with connection.cursor() as cursor:
+-        cursor.execute(
+-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [edge_lock_key(edge_type, source, target, values)]
+-        )
++    from tap_grid.identity_claim import claim  # PROTOTYPE Issue 1348
++
++    claim([edge_lock_key(edge_type, source, target, values)])
+     rows = find_live_edges(edge_type, source, target, values)
+     if len(rows) > 1:
+         raise AmbiguousIdentity(

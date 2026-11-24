@@ -1,0 +1,4 @@
+TAP_CLAIM_MODE=update (DO UPDATE): 72 passed in 36.33s
+TAP_CLAIM_MODE=nothing (DO NOTHING + FOR UPDATE): 72 passed in 36.44s
+files: test_grift_lock_order.py test_grift_identity.py test_grift_edge_identity.py test_batch_corpus_concurrency.py; throwaway server at defaults
+note: bench_import runs used TAP_CLAIM_MODE=update (the default)
