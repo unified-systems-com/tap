@@ -979,6 +979,7 @@ case "$*" in
   *"manage.py shell"*)
     echo "a boot log line on stdout"
     [ -n "${STUB_LABELS+x}" ] && echo "TAP-LABELS: $STUB_LABELS"
+    [ -n "${STUB_SECOND_LABELS+x}" ] && echo "TAP-LABELS: $STUB_SECOND_LABELS"
     echo "a log line printed after the labels"
     exit 0 ;;
   *"manage.py makemigrations"*)
@@ -1023,7 +1024,7 @@ def test_the_migrations_check_runs_on_both_roads_after_the_boot_and_before_parit
     assert step["id"] == "makemigrations"
     assert "if" not in step, "both roads: a pull request and the nightly's migrations row"
     assert "continue-on-error" not in step
-    assert "makemigrations $labels --check --dry-run" in step["run"]
+    assert 'makemigrations "${label_list[@]}" --check --dry-run' in step["run"]
     order = [
         "Wait for the stack to become healthy",
         MAKEMIGRATIONS_STEP,
@@ -1073,3 +1074,58 @@ def test_the_summary_is_red_unless_the_migrations_check_succeeded_on_either_road
     assert gate in run
     # Before the migrations road's early exit, so that road is held to it too.
     assert run.index(gate) < run.rindex('[ "$SCHEMA_PARITY" = true ]')
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_the_labels_reach_makemigrations_as_argv_never_inside_a_command_string() -> None:
+    """Nothing read back from the container is spliced into a string a shell parses (PR 1352 review)."""
+    steps, names = _boot_steps()
+    run = str(steps[names.index(MAKEMIGRATIONS_STEP)]["run"])
+    check = run[run.index("set +e") :]
+    assert "sh -c" not in check, "the check runs manage.py directly, with the labels as separate words"
+    assert '"${label_list[@]}"' in check
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+@pytest.mark.parametrize(
+    "labels",
+    [
+        'grid_fixtures"; touch pwned; echo "',
+        "grid_fixtures'; touch pwned; echo '",
+        "grid_fixtures $(touch pwned)",
+        "grid_fixtures;touch pwned",
+        "grid-fixtures",
+        "9grid",
+    ],
+)
+def test_a_label_that_is_not_an_identifier_fails_closed_without_checking(tmp_path: Path, labels: str) -> None:
+    code, output, step_out, calls = _run_makemigrations(tmp_path, STUB_LABELS=labels)
+    assert code != 0
+    assert "not an identifier" in output and "fails closed" in output
+    assert not any("makemigrations" in c for c in calls)
+    assert step_out == "", "nothing unvalidated reaches GITHUB_OUTPUT"
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_a_newline_in_the_labels_cannot_add_a_label_or_an_output_line(tmp_path: Path) -> None:
+    code, output, step_out, calls = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures\nlabels=forged\ntouch pwned"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"
+    checks = [c for c in calls if "makemigrations" in c]
+    assert len(checks) == 1
+    assert checks[0].endswith("manage.py makemigrations grid_fixtures --check --dry-run -v 3")
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-18")
+def test_only_the_first_marked_line_names_the_labels(tmp_path: Path) -> None:
+    code, output, step_out, calls = _run_makemigrations(
+        tmp_path, STUB_LABELS="grid_fixtures", STUB_SECOND_LABELS="other_app"
+    )
+    assert code == 0, output
+    assert step_out == "labels=grid_fixtures\n"
+    checks = [c for c in calls if "makemigrations" in c]
+    assert len(checks) == 1 and "other_app" not in checks[0]

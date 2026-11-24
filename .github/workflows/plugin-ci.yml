@@ -918,7 +918,11 @@ jobs:
       # are pinned releases with their own CI, and a label outside the plugin would make this
       # PR red for a migration it cannot write. Runs on both roads, after the boot has settled
       # (makemigrations reads the applied-migration history to check it is consistent). The
-      # labels line carries a marker so a log line the shell prints after it cannot be read as one.
+      # labels line carries a marker so a log line the shell prints cannot be read as one, and only
+      # the FIRST marked line counts. Every label must be a Python identifier (what Django allows
+      # an app label to be) or the step fails closed, and the labels reach makemigrations as
+      # separate argv words: nothing read back from the container is ever spliced into a command
+      # string the runner's shell or the container's would parse (PR 1352 review).
       - name: Migrations — the plugin's models need no new migration
         id: makemigrations
         env:
@@ -931,16 +935,24 @@ jobs:
           from django.apps import apps
           root = \"tap_plugin.\" + os.environ[\"PLUGIN_SLUG\"]
           print(\"TAP-LABELS:\", \" \".join(sorted(a.label for a in apps.get_app_configs() if a.name == root or a.name.startswith(root + \".\"))))
-          "' | sed -n 's/^TAP-LABELS: *//p' | tail -1)
-          if [ -z "$labels" ]; then
+          "' | sed -n '/^TAP-LABELS:/{s/^TAP-LABELS: *//p;q;}')
+          read -r -a label_list <<< "$labels"
+          if [ "${#label_list[@]}" = 0 ]; then
             echo "::error::no installed app is tap_plugin.$PLUGIN_SLUG or below it — nothing to check, so this fails closed"
             exit 1
           fi
+          for label in "${label_list[@]}"; do
+            if ! [[ "$label" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "::error::the app registry reported a label that is not an identifier — refusing to check, so this fails closed"
+              exit 1
+            fi
+          done
+          labels="${label_list[*]}"
           echo "checking app label(s): $labels"
           echo "labels=$labels" >> "$GITHUB_OUTPUT"
           set +e
-          docker compose --env-file .env exec -T web sh -c \
-            "cd /app && uv run --no-sync python manage.py makemigrations $labels --check --dry-run -v 3" \
+          docker compose --env-file .env exec -T -w /app web \
+            uv run --no-sync python manage.py makemigrations "${label_list[@]}" --check --dry-run -v 3 \
             2>&1 | tee makemigrations.log
           rc=${PIPESTATUS[0]}
           set -e
