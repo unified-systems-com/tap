@@ -8,6 +8,7 @@ migration's row cleanup on the upgrade path.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
@@ -330,7 +331,7 @@ class TestDropLandingPageMigration:
     """req-web-page-landing-14: the upgrade path cleans every obsolete spine row and keeps the page."""
 
     @pytest.fixture(autouse=True)
-    def _migrated_back_afterwards(self):
+    def _migrated_back_afterwards(self) -> Iterator[None]:
         """Put every migration the test reversed back, whatever the test did, and reinstall the copies.
 
         The test moves ``tap_web`` back past ``0005_spine_copies``, which drops the spine-copy columns.
@@ -344,7 +345,7 @@ class TestDropLandingPageMigration:
         spine_copies.install()
 
     @staticmethod
-    def _migrate(target):
+    def _migrate(target: tuple[str, str]) -> MigrationExecutor:
         """Move ``tap_web`` to ``target`` as ``manage.py migrate`` does, its post-migrate install included.
 
         ``MigrationExecutor`` sends no ``post_migrate``, so the spine-copy installer that a
