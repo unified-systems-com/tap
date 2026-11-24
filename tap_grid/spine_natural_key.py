@@ -99,6 +99,26 @@ def _decode(model: Any, columns: list[str], values: tuple[Any, ...]) -> dict[str
     return row
 
 
+def _dimensions(model: Any, raw: Any) -> dict[str, Any] | None:
+    """The spine's dimensions for a type keyed on a dimension (``req-grid-entity-natural-key-32``),
+    decoded; ``None`` for any other type, which reads no dimension."""
+    from tap_grid.natural_key import keyed_dimension_entries
+
+    if not keyed_dimension_entries(model):
+        return None
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _derive(model: Any, columns: list[str], raw_dimensions: Any, values: tuple[Any, ...]) -> str | None:
+    """A row's natural key from its stored columns and spine dimensions, as the save path derives it."""
+    dimensions = _dimensions(model, raw_dimensions)
+    if not columns and dimensions is None:
+        return None
+    return row_natural_key(model, _decode(model, columns, values), dimensions)
+
+
 def _undeclared(model: Any) -> str | None:
     """Why this type has no spine key to derive because it never declared one. Undeclared is never
     treated as keyless (``req-grid-entity-natural-key-5``), so the type is skipped, which keeps a check
@@ -130,7 +150,7 @@ def _rows_sql(connection: Any, model: Any, *, limit: int | None = None) -> str:
     quote = connection.ops.quote_name
     selected = "".join(f", t.{quote(model._meta.get_field(c).column)}" for c in declared_columns(model))
     sql = (
-        f"SELECT e.id, e.natural_key{selected} FROM {quote(model._meta.db_table)} t "  # noqa: S608  # nosec B608 - quoted names from model metadata, no values
+        f"SELECT e.id, e.natural_key, e.dimensions{selected} FROM {quote(model._meta.db_table)} t "  # noqa: S608  # nosec B608 - quoted names from model metadata, no values
         f"JOIN {quote('tap_entity')} e ON e.id = t.{quote('entity_id')}"
     )
     return sql if limit is None else f"{sql} ORDER BY random() LIMIT {int(limit)}"
@@ -200,9 +220,9 @@ def sync(
             reader.execute(_rows_sql(connection, model))
             while rows := reader.fetchmany(CHUNK):
                 changes = []
-                for entity_id, published, *values in rows:
+                for entity_id, published, raw_dimensions, *values in rows:
                     report.rows += 1
-                    derived = row_natural_key(model, _decode(model, columns, tuple(values))) if columns else None
+                    derived = _derive(model, columns, raw_dimensions, tuple(values))
                     if derived != published:
                         changes.append((derived, entity_id, published))
                 if changes:
@@ -290,9 +310,9 @@ def check(entity_types: Iterable[str] | None = None, *, sample: int = 200, using
         columns = declared_columns(model)
         with connection.cursor() as reader:
             reader.execute(_rows_sql(connection, model, limit=sample))
-            for entity_id, published, *values in reader.fetchall():
+            for entity_id, published, raw_dimensions, *values in reader.fetchall():
                 report.sampled += 1
-                derived = row_natural_key(model, _decode(model, columns, tuple(values))) if columns else None
+                derived = _derive(model, columns, raw_dimensions, tuple(values))
                 if derived != published:
                     report.drifted.setdefault(entity_type, []).append((str(entity_id), published, derived))
     return report

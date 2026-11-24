@@ -150,6 +150,8 @@ class TestSpineColumn:
         "tap_grid/tests/test_natural_key.py",
         "tap_grid/tests/test_spine_natural_key.py",
         "tap_grid/tests/test_core_serialization_contract.py",
+        # Reads the published key to prove it composes a keyed dimension (req-grid-entity-natural-key-32).
+        "tap_grid/tests/test_dimension_natural_key.py",
     }
     # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
     # scanned nothing until the missing-dir check below was made loud (Grok on #569).

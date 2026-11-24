@@ -161,6 +161,32 @@ def classify(
     )
 
 
+def _refuse_keyed_dimension_change(entity_type: str, persisted: dict[str, Any], expected: dict[str, Any]) -> None:
+    """A replace never re-keys a row: a keyed dimension's stored value stays (``req-grid-entity-natural-key-31``,
+    unified-systems-com/tap#1186). Changing or removing it raises ``ServiceConstraintError``."""
+    from tap_grid.natural_key import constituting_properties, keyed_dimension_entries
+    from tap_grid.registry import get_model_class
+
+    try:
+        model = get_model_class(entity_type)
+    except KeyError:
+        return
+    entries = keyed_dimension_entries(model)
+    if not entries:
+        return
+    before = constituting_properties(entries, {}, persisted)
+    after = constituting_properties(entries, {}, expected)
+    moved = [entry for entry in entries if before[entry] is not None and before[entry] != after[entry]]
+    if moved:
+        from tap_grid.exceptions import ServiceConstraintError
+
+        detail = ", ".join(f"{entry}: {before[entry]!r} -> {after[entry]!r}" for entry in moved)
+        raise ServiceConstraintError(
+            f"{entity_type}: a keyed dimension is fixed once written and a replace cannot change it ({detail}); "
+            "a different value is a different row (req-grid-entity-natural-key-31)."
+        )
+
+
 def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     """The spine values a caller's intent would change on the stored row: ``name``, ``dimensions``, or neither.
 
@@ -197,6 +223,8 @@ def spine_delta(intent: dict[str, Any] | None) -> dict[str, Any]:
     # re-import of a row that has one differ from the spine, be classified changed, and have the
     # post-pass strip the entry it just compared against.
     stored_dims = settle(type_defaults, envelope_dims, persisted=persisted["dimensions"] or {})
+
+    _refuse_keyed_dimension_change(intent.get("entity_type") or "", persisted["dimensions"] or {}, stored_dims)
 
     delta: dict[str, Any] = {}
     if envelope_name is not None and envelope_name != persisted["name"]:

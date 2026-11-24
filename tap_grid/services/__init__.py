@@ -1633,6 +1633,7 @@ def resolve_identity(
     *,
     caller_context: CallerContext | None = None,
     provisional: str | uuid.UUID | None = None,
+    dimensions: Mapping[str, Any] | None = None,
 ) -> IdentityResolution:
     """Find the live row a source object already has, or assign it a fresh id — under a lock.
 
@@ -1664,12 +1665,18 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@571d730b546d/31edfb02d83c (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@3713a6040002/d7f0d1307933 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
     """
-    from tap_grid.natural_key import Keyless, constituting_properties, identity_lock_key, normalized_key_values
+    from tap_grid.natural_key import (
+        AmbiguousIdentity,
+        Keyless,
+        constituting_properties,
+        identity_lock_key,
+        normalized_key_values,
+    )
     from tap_grid.registry import get_model_class
 
     try:
@@ -1694,12 +1701,22 @@ def resolve_identity(
             "so resolution and the write it precedes commit together."
         )
     # The type's own spelling before the lock, so two spellings of one new key take one lock (tap#1265).
-    properties = normalized_key_values(model_cls, constituting_properties(declared, payload))
-    key = identity_lock_key(type_slug, properties)
+    # A dimension entry reads the writer's dimension map, as the create would store it (-28).
+    key_dimensions = model_cls.writer_key_dimensions(dimensions)
+    try:
+        properties = normalized_key_values(model_cls, constituting_properties(declared, payload, key_dimensions))
+        key = identity_lock_key(type_slug, properties)
+    except LookupError as exc:  # an undeclared or ambiguous key dimension (-29)
+        raise ServiceValidationError(str(exc)) from exc
     if key is not None:
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
-    row = model_cls.find_existing(**properties)
+    try:
+        row = model_cls.find_existing(**properties)
+    except (LookupError, ValueError) as exc:
+        if isinstance(exc, AmbiguousIdentity):
+            raise
+        raise ServiceValidationError(str(exc)) from exc  # an ineligible key dimension (-29)
     if row is None:
         return IdentityResolution(entity_id=assigned, found=False, key=key)
     return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
@@ -1745,7 +1762,14 @@ def find_by_natural_key(
         raise ServiceValidationError(
             f"{type_slug} is found by exactly {list(model_cls.NATURAL_KEY)}; got {sorted(properties)}."
         )
-    row = model_cls.find_existing(**properties)
+    from tap_grid.natural_key import AmbiguousIdentity
+
+    try:
+        row = model_cls.find_existing(**properties)
+    except (LookupError, ValueError) as exc:
+        if isinstance(exc, AmbiguousIdentity):
+            raise
+        raise ServiceValidationError(str(exc)) from exc  # an undeclared or ineligible key dimension (-29)
     return None if row is None else row.entity_id
 
 

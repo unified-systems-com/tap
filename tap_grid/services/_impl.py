@@ -951,6 +951,19 @@ def _execute_write_pipeline(
             except (DimensionWriteError, LookupError) as error:
                 raise ServiceValidationError(str(error)) from error
 
+        # A type keyed on a dimension cannot be created without its value: a hole would mint a new
+        # row on every run instead of finding the last one (req-grid-entity-natural-key-30).
+        if op.verb == "create_node":
+            try:
+                missing = instance.missing_key_dimensions()
+            except LookupError as error:  # an undeclared default or key dimension
+                raise ServiceValidationError(str(error)) from error
+            if missing:
+                raise ServiceValidationError(
+                    f"{op.type_slug} is keyed on {missing}; a create must supply a value for each "
+                    "(req-grid-entity-natural-key-30)."
+                )
+
         # Step 8 (early): edge_type immutability — checked before schema validation so the
         # error code is "constraint_violation" rather than "validation_error".
         if op.verb in ("patch_edge", "replace_edge") and "edge_type" in payload:
