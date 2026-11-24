@@ -361,8 +361,9 @@ def assert_columns(*, using: str = DEFAULT_DB_ALIAS) -> None:
     from the models always has the columns, so every test database and every schema-from-models
     stack passes; only a database migrated with a plugin migration that predates them fails.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-copies (enforcement) — rule 20: a typed table without the
-        columns refuses the boot, naming the table and the remedy.
+    Carries no claim of its own: the requirement's enforcement claim is the write guard's
+    (``refuse_spine_copies``, rule 6), one per requirement and role; acceptance criterion 17's test
+    is this gate's evidence.
     """
     missing = missing_columns(using=using)
     if missing:
@@ -386,7 +387,7 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
     alone, and the next migrate installs it. Rows are filled after the triggers are in place, so a
     row written after this commits is kept by them.
 
-    TAP-IMPLEMENTS: req-grid-entity-spine-copies@85bf6510c873/9775d283d56b (derivation) — rules 8 and 9: the
+    TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/9775d283d56b (derivation) — rules 8 and 9: the
         one installer of the triggers and the type map, for core's and every plugin's tables.
     """
     connection = connections[using]

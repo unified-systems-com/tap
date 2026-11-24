@@ -23,7 +23,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-boot-app` | Implemented | Implemented | `<module>`, `<module>` | — |
-| `req-boot-phases` | Implemented | Verified | `<module>` | `req-boot-phases-5`, `req-boot-phases-6`, `req-boot-phases-7` |
+| `req-boot-phases` | Implemented | Verified | `<module>` | `req-boot-phases-5`, `req-boot-phases-6`, `req-boot-phases-7`, `req-boot-phases-8` |
 | `req-boot-profile` | Implemented | Verified | `<module>` | `req-boot-profile-6` |
 | `req-boot-required-secrets` | Implemented | Implemented | `<module>` | — |
 | `req-boot-schema-from-models` | Implemented | Verified | `<module>`, `<module>` | `req-boot-schema-from-models-1`, `req-boot-schema-from-models-2`, `req-boot-schema-from-models-3`, `req-boot-schema-from-models-4`, `req-boot-schema-from-models-5`, `req-boot-schema-from-models-6` |

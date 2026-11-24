@@ -18,7 +18,7 @@
 | `req-grid-entity-batch-pointers` | In Development | Implemented | `_pointer_batch` | — |
 | `req-grid-entity-collection-time` | In Development | Verified | `settle_window` | `req-grid-entity-collection-time-1` |
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
-| `req-grid-entity-event-time` | In Development | Implemented | `derive` | — |
+| `req-grid-entity-event-time` | In Development | Verified | `derive` | `req-grid-entity-event-time-39` |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
 | `req-grid-entity-model-version` | In Development | Verified | `complete_start_checks`, `register_type` | `req-grid-entity-model-version-23` |
 | `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18`, `req-grid-entity-natural-key-26`, `req-grid-entity-natural-key-27` |

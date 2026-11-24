@@ -771,7 +771,7 @@ def derive(declaration: Declaration, values: Any) -> Derived:
     Where the declaration names a reader function, the stored value goes through it first and
     what it returns is read as any declared value is (rules 23 to 25).
 
-    TAP-IMPLEMENTS: req-grid-entity-event-time@9b3980c2ca85/12c3b961652c (derivation) — rules 5 to 10 and 12: one pair,
+    TAP-IMPLEMENTS: req-grid-entity-event-time@eb785800c6df/12c3b961652c (derivation) — rules 5 to 10 and 12: one pair,
         widened to the unit a coarse value names, never defaulted, empty with a warning when it
         cannot be stored truthfully.
     """
