@@ -270,6 +270,37 @@ class TestInstaller:
         assert "makemigrations tap_grid" in report.skipped[plugin_like_model.ENTITY_TYPE]
         assert not spine_copies.check().clean
 
+    @AC[8]
+    def test_a_reversed_migration_leaves_a_table_that_still_takes_writes(self, plugin_like_model: Any) -> None:
+        """A rollback past the migration that added the columns withdraws the table's trigger.
+
+        Left in place, the pull trigger sets columns the table no longer has, and every insert and
+        update of the table fails (``record "new" has no field "spine_deleted_at"``).
+        """
+        table = plugin_like_model._meta.db_table
+        spine_copies.install()
+        made = create_node(plugin_like_model.ENTITY_TYPE, {"name": "before-rollback"})
+        assert made.success, made.errors
+        # What reversing the plugin's migration does to its table: both columns go, the trigger stays.
+        # (The insert's deferred foreign-key checks are run first: a table with pending ones cannot be altered.)
+        _sql("SET CONSTRAINTS ALL IMMEDIATE")
+        _sql(f"ALTER TABLE {table} DROP COLUMN spine_deleted_at, DROP COLUMN spine_dimensions")
+        spine_copies.install_after_migrate(None, using="default", plan=[(object(), True)])
+        triggers = _sql(
+            "SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE c.relname = %s "
+            "AND NOT t.tgisinternal",
+            [table],
+        )
+        assert (spine_copies.PULL_TRIGGER,) not in triggers
+        mapped = _sql(
+            f"SELECT table_name FROM {spine_copies.TYPE_TABLE} WHERE entity_type = %s",  # noqa: S608
+            [plugin_like_model.ENTITY_TYPE],
+        )
+        assert mapped == []
+        _sql(f"UPDATE {table} SET name = 'after-rollback' WHERE entity_id = %s", [made.entity_id])  # noqa: S608
+        # The entity's push has no map entry to follow, so a retirement does not reach the table either.
+        _sql("UPDATE tap_entity SET deleted_at = now() WHERE id = %s", [made.entity_id])
+
     @AC[17]
     def test_a_table_without_the_columns_refuses_the_boot_naming_it_and_the_remedy(
         self, plugin_like_model: Any, tmp_path: Path

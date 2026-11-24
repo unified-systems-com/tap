@@ -254,10 +254,17 @@ def typed_tables() -> dict[str, str]:
 
 def _ready_tables(connection: Any, wanted: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """The wanted tables that exist and hold both columns, and why each other one was skipped."""
+    ready, skipped, _bare = _sort_tables(connection, wanted)
+    return ready, skipped
+
+
+def _sort_tables(connection: Any, wanted: dict[str, str]) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    """:func:`_ready_tables`, and the tables that exist but lack a column (a trigger there would fail)."""
     with connection.cursor() as cursor:
         existing = set(connection.introspection.table_names(cursor))
         ready: dict[str, str] = {}
         skipped: dict[str, str] = {}
+        bare: set[str] = set()
         for entity_type, table in wanted.items():
             if table not in existing:
                 skipped[entity_type] = f"table {table} does not exist"
@@ -266,9 +273,10 @@ def _ready_tables(connection: Any, wanted: dict[str, str]) -> tuple[dict[str, st
             missing = sorted(SPINE_COPY_FIELDS - columns)
             if missing:
                 skipped[entity_type] = f"table {table} has no column {', '.join(missing)}; {_remedy(entity_type)}"
+                bare.add(table)
                 continue
             ready[entity_type] = table
-    return ready, skipped
+    return ready, skipped, bare
 
 
 def _app_label(entity_type: str) -> str:
@@ -384,8 +392,10 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
 
     Idempotent, one transaction. A registered type whose table does not exist yet or lacks the two
     columns is skipped and reported: it gets no trigger and no map entry, so the push leaves it
-    alone, and the next migrate installs it. Rows are filled after the triggers are in place, so a
-    row written after this commits is kept by them.
+    alone, and the next migrate installs it. A table that lacks the columns but still has the pull
+    trigger (a migration that added them was reversed) loses the trigger: it would set columns the
+    table no longer has, and every insert and update of the table would fail. Rows are filled after
+    the triggers are in place, so a row written after this commits is kept by them.
 
     TAP-IMPLEMENTS: req-grid-entity-spine-copies@422ff41127f4/9775d283d56b (derivation) — rules 8 and 9: the
         one installer of the triggers and the type map, for core's and every plugin's tables.
@@ -396,10 +406,17 @@ def install(*, using: str = DEFAULT_DB_ALIAS) -> InstallReport:
         report.skipped["*"] = f"the spine copies are kept by PostgreSQL triggers; {connection.vendor} has none"
         return report
     quote = connection.ops.quote_name
-    ready, report.skipped = _ready_tables(connection, typed_tables())
+    with connection.cursor() as cursor:
+        if _entity_table() not in set(connection.introspection.table_names(cursor)):
+            # A rollback of tap_grid to before its first migration: nothing to keep copies of.
+            report.skipped["*"] = f"table {_entity_table()} does not exist"
+            return report
+    ready, report.skipped, bare = _sort_tables(connection, typed_tables())
     with transaction.atomic(using=using), connection.cursor() as cursor:
         for statement in _functions_sql(quote):
             cursor.execute(statement)
+        for table in sorted(bare - set(ready.values())):
+            cursor.execute(f"DROP TRIGGER IF EXISTS {PULL_TRIGGER} ON {quote(table)}")
         for table in sorted(set(ready.values())):
             cursor.execute(_pull_trigger_sql(quote, table))
         cursor.execute(f"DELETE FROM {quote(TYPE_TABLE)}")  # noqa: S608  # nosec B608 - a constant name
@@ -427,10 +444,12 @@ def install_after_migrate(sender: Any, *, using: str = DEFAULT_DB_ALIAS, plan: A
     Connected to ``post_migrate`` for ``tap_grid``; Django sends it once the whole plan has applied,
     so plugin tables migrated in the same run are there. A build from the models sends it with an
     empty plan and is installed too. ``flush`` sends it with no plan: the triggers and the type map
-    are not model tables, so a flush leaves them in place, and nothing is done. A rollback is not
-    undone: its plan steps backwards, and the installer leaves the database as the reversal left it.
+    are not model tables, so a flush leaves them in place, and nothing is done. A rollback is
+    installed as well: a table it left without the columns loses its trigger and its map entry,
+    which would otherwise fail every write of the table (the functions stay; they touch nothing
+    without a trigger or an entry).
     """
-    if plan is None or any(backwards for _migration, backwards in plan):
+    if plan is None:
         return
     install(using=using)
 
