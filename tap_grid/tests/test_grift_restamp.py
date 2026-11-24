@@ -128,7 +128,7 @@ def _wildcard_edge(edge_type: str, from_id: str, to_id: str) -> dict[str, object
 def test_a_wildcard_manifest_edge_is_installed_and_restated_at_version_1() -> None:
     """A wildcard edge is installed although it registers no constraint (PR 1352 review): rule 11 reads it at 1."""
     a, b = _panel("restamp-wild-a", str(uuid.uuid4())), _panel("restamp-wild-b", str(uuid.uuid4()))
-    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])  # type: ignore[index]
+    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])
     edges = [_wildcard_edge(edge_type, *ends) for edge_type in WILDCARD_EDGES]
     text = json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=edges)]), indent=2)
     result = restamp_text(text)
@@ -175,7 +175,7 @@ def test_a_manifest_edge_with_no_endpoints_is_installed_at_its_declared_version(
     # A "0" document is read at version 1 whatever the installed version (rule 11), so that is what
     # its restated header says; the import then carries the record up the declared links.
     a, b = _panel("restamp-wild-c", str(uuid.uuid4())), _panel("restamp-wild-d", str(uuid.uuid4()))
-    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])  # type: ignore[index]
+    ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])
     edge = _wildcard_edge("RESTAMP_WILD_V2", *ends)
     result = restamp_text(json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=[edge])])))
     assert result.header["type_versions"]["RESTAMP_WILD_V2"] == 1
