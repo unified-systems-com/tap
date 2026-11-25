@@ -135,7 +135,6 @@ req-tap-cares-scheduler-dedupe
 req-tap-cares-scheduler-dependencies
 req-tap-cares-scheduler-edges
 req-tap-cares-scheduler-missed-count
-req-tap-cares-scheduler-scope
 req-tap-cares-scheduler-trigger-provenance
 req-tap-cares-secrets-conditional-validation
 req-tap-cares-secrets-consumer-scoping

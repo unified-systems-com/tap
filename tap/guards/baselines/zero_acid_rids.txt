@@ -52,7 +52,6 @@ req-tap-cares-scheduler-edges
 req-tap-cares-scheduler-fire-model
 req-tap-cares-scheduler-missed-count
 req-tap-cares-scheduler-model
-req-tap-cares-scheduler-scope
 req-tap-cares-scheduler-tick
 req-tap-cares-scheduler-trigger-provenance
 req-tap-cares-secrets-conditional-validation
