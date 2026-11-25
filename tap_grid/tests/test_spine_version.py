@@ -65,11 +65,16 @@ class TestTheRecord:
         assert spine_version.recorded_version() is None
 
     def test_the_schema_test_reads_the_recorded_migrations(self) -> None:
+        from django.db import connection
+        from django.db.migrations.loader import MigrationLoader
         from django.db.migrations.recorder import MigrationRecorder
 
         assert spine_version._schema_is_current("default")
+        # The newest recorded tap_grid migration is the graph's leaf, whichever migration that is
+        # (a fixed name here went stale with every core migration after it).
+        (leaf,) = MigrationLoader(connection).graph.leaf_nodes("tap_grid")
         latest = MigrationRecorder.Migration.objects.filter(app="tap_grid").order_by("-name").first()
-        assert latest is not None and latest.name == "0023_spine_copies"
+        assert latest is not None and latest.name == leaf[1]
         with transaction.atomic():
             latest.delete()
             assert not spine_version._schema_is_current("default")
