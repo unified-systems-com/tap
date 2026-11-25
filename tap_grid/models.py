@@ -25,6 +25,7 @@ from tap.jsonfiles import jsonschema_validate
 from tap_grid.event_time import (
     EVENT_PRECISIONS,
     NO_EVENT_TIME,
+    SPINE_EVENT_FIELDS,
     Interval,
     Moment,
     NoEventTime,
@@ -1202,6 +1203,11 @@ def _stores_event_fields(instance: Any, update_fields: Any) -> bool:
     return bool(declared & set(update_fields))
 
 
+def _entity_event_columns(entity: Any) -> dict[str, Any]:
+    """The three event columns as an entity row object holds them."""
+    return {name: getattr(entity, name, None) for name in SPINE_EVENT_FIELDS}
+
+
 def _pointer_batch(entity_type: str, active_batch_id: str | uuid.UUID | None) -> uuid.UUID | None:
     """The batch a save names on the spine as last to change and last to observe the row.
 
@@ -1920,7 +1926,13 @@ class BaseModel(models.Model):
                     # The window the creating batch stated, if it named itself on the row.
                     **(collected if pointer_batch is not None else {}),
                 )
-                with stash_history_copies(self, self.entity.deleted_at, self.entity.dimensions, active_batch_id):
+                with stash_history_copies(
+                    self,
+                    self.entity.deleted_at,
+                    self.entity.dimensions,
+                    active_batch_id,
+                    event_time=event_time.as_columns(),
+                ):
                     super().save(*args, **kwargs)
         else:
             self._confirm_entity()
@@ -1933,7 +1945,14 @@ class BaseModel(models.Model):
                 # logical create operation, so skip spine_updates to preserve
                 # the single-bump invariant — exactly one version increment
                 # per logical mutation.
-                with stash_history_copies(self, self.entity.deleted_at, self.entity.dimensions, active_batch_id):
+                # The pipeline wrote the derived event time on the entity row it created just now.
+                with stash_history_copies(
+                    self,
+                    self.entity.deleted_at,
+                    self.entity.dimensions,
+                    active_batch_id,
+                    event_time=_entity_event_columns(self.entity),
+                ):
                     super().save(*args, **kwargs)
                 return
 
@@ -1943,6 +1962,10 @@ class BaseModel(models.Model):
             # leaves out are read back from the row; this save does not write those columns, so the
             # row holds the same values before and after it.
             event_updates: dict[str, Any] = {}
+            # The event time the entity row holds after this save, which its history row records
+            # (req-grid-history-event-time rule 2): the stored one, unless the save stores what it
+            # is derived from.
+            settled_event_time: dict[str, Any] = _entity_event_columns(self.entity)
             time_update: Any = None
             stored_dims = self.entity.dimensions or {}
             settled_dims: dict[str, Any] = dict(stored_dims)
@@ -1950,6 +1973,7 @@ class BaseModel(models.Model):
             if _stores_event_fields(self, kwargs.get("update_fields")):
                 if kwargs.get("update_fields") is not None:
                     event_time = self._stored_event_time(kwargs["update_fields"])
+                settled_event_time = event_time.as_columns()
                 event_updates = {
                     name: value
                     for name, value in event_time.as_columns().items()
@@ -1969,7 +1993,9 @@ class BaseModel(models.Model):
                 from tap_grid.write_classification import intent_dimensions
 
                 settled_dims = intent_dimensions(spine_intent, settled_dims)
-            with stash_history_copies(self, self.entity.deleted_at, settled_dims, active_batch_id):
+            with stash_history_copies(
+                self, self.entity.deleted_at, settled_dims, active_batch_id, event_time=settled_event_time
+            ):
                 super().save(*args, **kwargs)
 
             # Spine sync. BaseModel is the source of truth for `name` (via

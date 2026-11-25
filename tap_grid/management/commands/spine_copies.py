@@ -43,12 +43,12 @@ class Command(BaseCommand):
         for table, rows in sorted(report.drifted.items()):
             self.stdout.write(f"out of step: {table}: {rows} row(s)")
         self.stdout.write(report.summary())
-        if not report.clean:
+        if not report.clean or missing:
             raise CommandError(
-                "the spine copies are not in step on every typed table (above). Rows out of step or a table "
-                "with no trigger: run spine_copies --repair. A table missing a column (boot refuses to start on "
-                "one): regenerate its app's migrations against this core (manage.py makemigrations "
-                f"{' '.join(sorted({gap.app_label for gap in missing})) or '<app>'}, depending on tap_grid "
-                "0023_spine_copies), raise the plugin's requires_tap to this core, and migrate. A table that does "
-                "not exist: migrate the app that owns it."
+                "the spine copies are not in step on every typed table, or a table lacks a column (above). Rows "
+                "out of step or a table with no trigger: run spine_copies --repair. A table missing a column (boot "
+                "refuses to start on one): regenerate its app's migrations against this core (manage.py "
+                f"makemigrations {' '.join(sorted({gap.app_label for gap in missing})) or '<app>'}, depending on "
+                "tap_grid 0023_spine_copies, and 0024_history_event_time for a history table), raise the plugin's "
+                "requires_tap to this core, and migrate. A table that does not exist: migrate the app that owns it."
             )

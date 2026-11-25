@@ -20,6 +20,7 @@ Grid history records how TAP's stored graph state changed over time. It exists t
 | req-grid-history-backend | [History Backend and Independence](#history-backend-and-independence) | Proposed | Initial backend may use `django-simple-history`, but the capability is specified independently of the backend |
 | req-grid-history-query | [Composable History Queries](#composable-history-queries) | Proposed | Query model must support bounded windows and latest-before semantics |
 | req-grid-history-time | [History Time Semantics](#history-time-semantics) | Proposed | `recorded_at` is system-owned; `observed_at` is source/world time where available |
+| req-grid-history-event-time | [History Rows Carry The Event Time](#history-rows-carry-the-event-time) | In Development | Every history row records the event time its version had (`event_start`, `event_end`, `event_precision`), set when the row is written; history-only, indexed for window search |
 | req-grid-history-version | [Revision Metadata](#revision-metadata) | Implemented | Canonical entities carry a simple revision counter for lifecycle/debug metadata |
 | req-grid-history-scope | [History Scope Configuration](#history-scope-configuration) | Proposed | History enablement and retention depth remain configurable per model/edge type |
 | req-grid-history-reobservation | [Re-Observation Is Not A Change](#re-observation-is-not-a-change) | In Development | A write that changes nothing and asserts nothing new creates no history row and no new version |
@@ -114,6 +115,8 @@ History must clearly distinguish TAP transaction time from source observation ti
 #### Status Details
 This requirement is design-level guidance for the first implementation. It prevents ambiguity later when perspective records and historical replay need to coexist.
 
+The source time this requirement calls `observed_at` is recorded on history rows as the event time (`event_start`, `event_end`, `event_precision`), by `req-grid-history-event-time`.
+
 #### Implementation
 The required semantics are:
 
@@ -142,6 +145,62 @@ Trying to collapse these into one timestamp would make both capabilities weaker.
 
 #### Future
 Later work may add richer temporal semantics such as validity ranges or separate support for asserted-at versus observed-at when TAP begins handling analyst judgments in addition to direct observations.
+
+### History Rows Carry The Event Time
+----
+RID: `req-grid-history-event-time`
+
+Status: `In Development`
+
+Every history row records the event time its version had, so that a search by event time can ask which versions of a node or edge had an event time in a window. Event time lives on the spine (`Entity.event_start`, `event_end`, `event_precision`, `req-grid-entity-event-time`), and the spine keeps no history, so without this a history row cannot say what the event time was at its version.
+
+#### Status Details
+Built in core (Issue# 1374 - tap, under Issue# 1284 - tap); In Development until the plugins regenerate their history migrations, the same convention as `req-grid-entity-spine-copies`. The three columns are declared on the history base every history model is built on (`HistoricalBatchRecord`, `tap_grid/history.py`) and set by the receiver that already sets the spine copies and the batch on each history row (`fill_history_row`, `tap_grid/spine_copies.py`). Core's history tables gain them in `tap_grid` `0024_history_event_time` and one migration in each of `tap_cares`, `tap_files`, `tap_viz` and `tap_web`; the `validation_sample` fixture plugin has its own. No typed table changes.
+
+Every plugin's history tables change too, because every history model is built on the same base. The plugins regenerate their migrations once, in the base-model release (Issue# 1288 - tap), with the spine copies (`req-grid-entity-spine-copies` rule 19). A plugin whose migration is generated against an earlier core has history tables without the columns, and its first history write would fail on them, so boot refuses to start on it (rule 9; ruled Q73b, 2026-11-25). Until the fixture plugins release, core_ci pins their unreleased branches that carry the migration, as it did for the spine copies (Q73a).
+
+Rows written before the migration hold no event time. With no field deployments (2026-11-13), a grid that needs them is reloaded, not backfilled.
+
+What exists today (read on core main, 2026-11-25): `req-grid-history-time` (Proposed) names a source time `observed_at` on history rows. This requirement is that time, under the name `req-grid-entity-event-time` uses, as that requirement's Status Details said it would be when either was built.
+
+#### Implementation
+
+| Field on every history row | Type | Meaning |
+| --- | --- | --- |
+| `event_start` | timestamp with time zone, nullable, indexed | `Entity.event_start` as it was once the write that added the row was done. |
+| `event_end` | timestamp with time zone, nullable | `Entity.event_end`, likewise. |
+| `event_precision` | short text, nullable | `Entity.event_precision`, likewise. |
+
+1. Every history row of a typed row, node or edge, carries `event_start`, `event_end` and `event_precision`: the event time the entity row holds once the write that adds the history row is done. The kind is not a fourth column: it is the `tap.time` entry of the history row's `spine_dimensions` (`req-grid-entity-spine-copies` rule 12).
+2. The values are set when the history row is written, from the event time the write settled on, and not read from the typed row object or taken from any caller. For a save that is the event time `BaseModel.save` derived from the declared fields; for a partial save that stores none of them, the event time already stored; for a create under a given id, the event time the write pipeline derived and wrote on the entity row it created. The save holds them with the spine copies and the batch (`stash_history_copies`) for the receiver that fills the history row.
+3. A history row written with no such values held (a path other than a save) takes them from the entity row as it stands in the same transaction, as the spine copies are taken.
+4. A history model without the columns is left alone: the receiver sets them only where the history model has them, and fails nothing.
+5. A retirement's final history row (`req-grid-entity-spine-copies` rule 13) carries the retiring row's event time as its entity row holds it, for the node and for every edge the retirement ends. A model-version migration's history row (`req-grid-entity-model-version`) carries the event time the entity row holds after the migration's write, where the migration state has the columns.
+6. They are history-only. They are declared on the history base, not on the base model, so no typed table gains a column and no Python path writes them onto a typed row. They are not part of a type's fingerprint (`req-grid-entity-model-version`) or of the spine's (`req-grid-entity-spine-version`), which cover typed and entity columns only, so no version moves with them. They are not editable and are on no service, GRIFT or CRUD surface.
+7. `event_start` is indexed on every history table, as it is on `Entity`. A window search over history uses the overlap test the grid publishes (`tap_grid.event_time.overlapping`, `req-grid-entity-event-time` rule 6) on the history model's own columns, unchanged. A composite index of `event_start` with `history_date` was considered and not chosen: the search this serves bounds event time and not transaction time; `history_date` already has its own index (django-simple-history's default), so a query that bounds both can combine the two; and the shape of the composable history queries is not settled (`req-grid-history-query`). Each index is paid on every history write, and every history table belongs to the app that owns its type, so an index added later is a migration in every plugin; one that fits a settled query shape is added then, not guessed now.
+8. A history row written before the columns existed holds none, which reads as not recorded. Nothing backfills them.
+9. Boot refuses to start while the history table of a registered type exists without any of the three columns, by the column gate that refuses a typed table without the spine copies (`req-grid-entity-spine-copies` rule 20), in the same `spine_columns` phase and before the first database write. Every history write of the type names the columns, so the instance would otherwise fail at the first write of that type. The refusal names each table, its app and the columns it lacks, and the remedy: regenerate the app's migrations against this core (the new migration depends on `tap_grid` `0024_history_event_time`), raise the plugin's `requires_tap` and migrate. `manage.py spine_copies` lists the same tables and exits non-zero. A history table that does not exist is not this rule's, as for rule 20.
+
+#### Development
+Two alternatives were weighed on Issue# 1374 - tap. Copies on the base model, as with the spine copies, would add a column to every typed table as well as every history table, and triggers to keep them; that is only worth it if a database policy needs event time on the typed row. Deriving the event time at query time from the history row's own fields through the type's declaration needs no schema change, but cannot be indexed, breaks for a declaration that reads something other than the row's own fields, and has no answer for a version written under an older declaration.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-history-event-time-1 | Recorded At Create | Implemented | A node created through the service layer with a declared event time has one history row holding the entity row's `event_start`, `event_end` and `event_precision`. | `tap_grid/tests/test_history_event_time.py`: `TestStamping` |
+| req-grid-history-event-time-2 | A Changed Event Time Is A New Row's | Implemented | An update that changes the field the event time is derived from adds a history row holding the new event time, and the row before it keeps the old one. | `TestStamping` |
+| req-grid-history-event-time-3 | An Update Leaving It Carries It | Implemented | An update that changes another field adds a history row holding the event time already stored; an identical re-write adds no row. | `TestStamping` |
+| req-grid-history-event-time-4 | No Event Time Is Empty | Implemented | A type declaring `NO_EVENT_TIME` writes history rows with all three columns empty. | `TestStamping` |
+| req-grid-history-event-time-5 | Retirement Carries It | Implemented | Retiring a node with an event time writes a final history row holding the event time the entity row held at retirement. | `TestStamping` |
+| req-grid-history-event-time-6 | Without A Stash, From The Entity Row | Implemented | A history row written with no values held by a save takes the event time from the entity row; a history model without the columns is filled without error. | `TestFallback` |
+| req-grid-history-event-time-7 | History-Only | Implemented | Every history model has the three columns, declared as on `Entity`; no typed model has any of them. | `TestColumns` |
+| req-grid-history-event-time-8 | Window Search | Implemented | `overlapping` filters a history model by event time and returns exactly the versions whose event time may fall in the window; `event_start` is indexed on every history table and a window query can use the index. | `TestWindowSearch` |
+| req-grid-history-event-time-9 | Model-Version Migration Carries It | Implemented | The history row a model-version migration writes holds the event time the entity row holds after the migration. | `TestVersionMigration` |
+| req-grid-history-event-time-10 | A History Table Without The Columns Refuses The Boot | Implemented | With a registered type whose history table lacks an event-time column, boot aborts at the `spine_columns` phase before `auth` with a message naming the history table, its app, the missing column and the remedy (`0024_history_event_time`, `requires_tap`), and `manage.py spine_copies` lists the table and exits non-zero; with every history table complete, the gate passes. | `TestBootGate` |
+
+#### Future
+A composite or range index for a settled query shape (`req-grid-history-query`).
 
 ### Revision Metadata
 ----

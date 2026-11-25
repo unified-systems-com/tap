@@ -48,6 +48,7 @@ from django.db import DEFAULT_DB_ALIAS, connections, models, transaction
 from django.utils import timezone
 
 from tap_grid import version_links
+from tap_grid.event_time import SPINE_EVENT_FIELDS
 from tap_grid.model_version import EDGE, FIRST_VERSION, NODE
 
 if TYPE_CHECKING:
@@ -728,6 +729,10 @@ def _carry_rows(
                 )
                 copied["spine_deleted_at"] = retired
                 copied["spine_dimensions"] = dimensions
+            # The event time the entity row holds after this write (req-grid-history-event-time
+            # rule 2), where the migration state has the history columns.
+            if _has_field(target.history, "event_start"):
+                copied.update(Entity.objects.using(using).values(*SPINE_EVENT_FIELDS).get(pk=entity.pk))
             target.history._default_manager.using(using).create(
                 **copied,
                 history_date=now,
