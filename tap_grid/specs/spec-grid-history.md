@@ -219,8 +219,8 @@ The revision metadata contract is:
 1. `Entity.version` starts at `1` on creation.
 2. The version increments on every canonical persisted mutation, including tombstone/delete transitions.
 3. The version counter is updated through the service layer as part of normal writes.
-4. The version counter does not replace history rows and is not used as the source of truth for point-in-time reconstruction.
-5. The version counter is metadata about the current canonical revision, not a guarantee of exact equivalence to history-row count.
+4. The version counter does not replace history rows; point-in-time reconstruction reads the history rows.
+5. **Invariant (Proposed, owner ruling 2026-11-25):** for every history-tracked entity, the count of its history rows equals `Entity.version`, and a history row's version is derived as its 1-based position among that entity's history rows ordered by (`history_date`, `history_id`). A writer that would break this is fixed to keep it; no version column is added. Run configurations pin and arm a revision by this derivation (`req-tap-cares-runconfig-model` in `tap_cares/specs/spec-tap-cares-run-configuration.md`). The case to verify first is a spine-only change: a re-import that changes only `name` or `dimensions` (`req-grid-entity-batch-pointers-9`, Issue# 1382 - tap).
 
 #### Development
 This gives TAP a cheap monotonic "what revision is this object at?" capability without forcing history to depend on it. It should be treated as helpful metadata, not temporal truth.
@@ -234,6 +234,9 @@ Delete lifecycle semantics, including tombstoning and `deleted_at`, are owned by
 | req-grid-history-version-1 | Version Starts At One | Implemented | Canonical entities begin at version `1` when first created. | `Entity.version` default=1 |
 | req-grid-history-version-2 | Version Increments On Mutation | Implemented | Every canonical mutation, including delete/tombstone, increments the entity's version. | `F("version") + 1` in BaseModel.save() and tombstone path |
 | req-grid-history-version-3 | Version Is Metadata Not Truth | Implemented | Historical reconstruction does not rely on the version counter as the authoritative source of prior state. | |
+| req-grid-history-version-4 | History Count Equals Version | Proposed | For every history-tracked entity, its history-row count equals `Entity.version`, and the row at 1-based position *n* in (`history_date`, `history_id`) order is version *n*. | Rule 5. |
+| req-grid-history-version-5 | Guard Across All Tracked Types | Proposed | A guard test writes each history-tracked type through every write path (create, patch, replace, tombstone, GRIFT re-import) and fails on any entity whose history-row count differs from `Entity.version`. | |
+| req-grid-history-version-6 | Spine-Only Change Keeps It | Proposed | A re-import that changes only the spine `name` or `dimensions` leaves history-row count equal to `Entity.version`. | `req-grid-entity-batch-pointers-9`, Issue# 1382 - tap. |
 
 #### Future
 If version metadata proves useful in APIs and the viewer shell, TAP may later expose it through response metadata or badges without changing history semantics.

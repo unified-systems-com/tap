@@ -827,7 +827,7 @@ That same check runs at the **other** end too, and the ordering is the substance
 
 #### Concurrency
 
-`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here — before CollectionJob creation, so a rejected request never produces a grid mutation. Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
+`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here, at kickoff, under the configuration row lock: an admitted request creates its job, which is the reservation, and enqueues it; a refused request is recorded as a closed job marked `overlap_refused` naming the blocking job, and enqueues nothing (two-phase admission). Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
 
 #### Acceptance Criteria
 
@@ -837,7 +837,7 @@ That same check runs at the **other** end too, and the ordering is the substance
 | req-tap-cares-collector-run-collection-2 | Service-Layer Routing | Proposed | All grid mutations performed by `run_collection` (CollectionJob create, HAS_COLLECTION_JOB create) route through the service layer or the trusted-internal create helper. No direct ORM writes for grid-managed types. | |
 | req-tap-cares-collector-run-collection-3 | CollectionJob Internal Create | Proposed | `run_collection` is the sole legal creator of CollectionJob rows, using `_create_node_internal` (since CollectionJob is INTERNAL_ONLY). | |
 | req-tap-cares-collector-run-collection-4 | Edge Through Service Layer | Proposed | The HAS_COLLECTION_JOB edge is created via `tap_grid.services.create_edge`. | |
-| req-tap-cares-collector-run-collection-5 | Concurrency Chokepoint | Proposed | `run_collection` is where the future concurrency guard (`req-tap-cares-collector-concurrency`) fires; manual, scheduled, and future API triggers all share it. | |
+| req-tap-cares-collector-run-collection-5 | Concurrency Chokepoint | Proposed | `run_collection` is where the future concurrency guard (`req-tap-cares-collector-concurrency`) fires; manual, scheduled, and future API triggers all share it. | The guard is now `req-tap-cares-runconfig-concurrency`'s two-phase admission. |
 | req-tap-cares-collector-run-collection-6 | Scheduler Is Caller, Not Owner | Proposed | The future scheduler subsystem invokes `run_collection`; it does not reach behind it to create CollectionJobs or enqueue tasks directly. | |
 | req-tap-cares-collector-run-collection-7 | Administrivia Caller Permitted In v0 | Proposed | The Administrivia HTMX panel handler is the permitted v0 caller. The path migrates to scheduler-mediated triggering when the scheduler spec lands; `run_collection`'s contract does not change. | See `spec-tap-cares-administrivia.md` `req-tap-cares-administrivia-manual-run`. |
 | req-tap-cares-collector-run-collection-8 | Post-Enqueue Return | Proposed | The function returns the CollectionJob in its post-enqueue state. Under ImmediateBackend the job reflects terminal status; under worker backends it reflects READY or RUNNING. | |

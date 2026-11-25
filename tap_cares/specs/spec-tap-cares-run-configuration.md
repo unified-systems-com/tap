@@ -50,7 +50,7 @@ Owner rulings 2026-11-25 on Issue# 907 - tap set every rule here; this spec is w
 | req-tap-cares-runconfig-emitter-arming | [Emitter Arming Binds The Configuration](#emitter-arming-binds-the-configuration) | Proposed | Arming moves to the configuration and binds code identity, revision and secret ref; any change re-arms; seeding never arms |
 | req-tap-cares-runconfig-web | [Web Surfaces](#web-surfaces) | Proposed | Configuration list and page, typed editor, "Not configurable" label, Run per configuration on the CARES landing page, configuration column on job tables |
 | req-tap-cares-runconfig-boot | [Boot Profile Configurations](#boot-profile-configurations) | Proposed | Profile `configurations` section addressed by uuid and validated offline in preflight; plugins seed configurations; step `secrets` stays strings |
-| req-tap-cares-runconfig-backlog | [Deferred Configuration Work](#deferred-configuration-work) | Backlog | One-off configurations, further tighten-only knobs, the configuration reference as a dimension, scoped grants (Issue# 1204 - tap), SIDE_EFFECTS (Issue# 1371 - tap), the rest of Issue# 907 - tap |
+| req-tap-cares-runconfig-backlog | [Deferred Configuration Work](#deferred-configuration-work) | Backlog | One-off configurations, refinements in Issue# 1394 - tap, the configuration reference as a dimension, scoped grants (Issue# 1204 - tap), SIDE_EFFECTS (Issue# 1371 - tap), the rest of Issue# 907 - tap |
 
 ## RunConfiguration Model
 ----
@@ -76,7 +76,7 @@ It is `NATURAL_KEY = KEYLESS` with the reason "authored, not observed" (`req-gri
 | `max_concurrent_runs` | integer, nullable | Optional tighten-only cap on live runs of this configuration; null means no extra cap (`req-tap-cares-runconfig-concurrency`) |
 | `send_authority`, `armed_emitter_version`, `armed_source_hash`, `armed_revision`, `armed_secret_ref` | | Emitter arming (`req-tap-cares-runconfig-emitter-arming`); written only by `arm_emitter`, empty on a collector's configuration |
 
-The configuration's **revision** is its entity's `version` (`Entity.version`, `tap_grid/models.py`), and each revision is a history row. Edits are ordinary history-tracked writes, recorded with their actor on their batch like any other write; there is no separate audit batch for them. Deletion is the service-layer tombstone, or a GRIFT `deletes` entry in a plugin's seed bundle.
+The configuration's **revision** is a history row's version, derived: its 1-based position among that entity's history rows ordered by (`history_date`, `history_id`), which equals `Entity.version` under the invariant of `req-grid-history-version` (`tap_grid/specs/spec-grid-history.md`). A run pins, and arming binds, configuration id plus that version, looked up that way; no new column is added. Edits are ordinary history-tracked writes, recorded with their actor on their batch like any other write; there is no separate audit batch for them. Deletion is the service-layer tombstone, or a GRIFT `deletes` entry in a plugin's seed bundle.
 
 ### Acceptance Criteria
 
@@ -411,7 +411,9 @@ Registration refuses a class that lacks either. They replace the Backlog `max_co
 
 **A tighten-only cap.** `RunConfiguration.max_concurrent_runs` is optional. Unset means no extra cap, and there is no default number. When set it is an integer of 1 or more and can only tighten. It is allowed only where the component declares `OVERLAP_WITHIN_CONFIGURATION = True`; a cap on a configuration whose code forbids overlap is refused at save, because it would be redundant or contradictory.
 
-**Atomic admission.** Admission happens under the same configuration row lock as the run-start snapshot (`req-tap-cares-runconfig-delivery`), and also under the component's row lock, taken second, when the across-configurations rule is checked. Under those locks core counts the live runs and either opens the run or records the refusal. Admission counts **live jobs**: a `CollectionJob` or `EmissionJob` is live until it is terminal. The existing reaper ends a job whose process is dead (`req-tap-cares-collector-job-reaper`, `req-tap-cares-run-mopup`), which frees its slot, so no new heartbeat, number or time limit is introduced. A job whose run was closed for its deadline but whose task is still executing stays live and holds its slot until the job finishes, keeping the existing slot hold for deadline-abandoned emissions (`req-tap-cares-scheduler-scope-4`).
+**Two-phase admission.** At kickoff, `run_collection` / `run_emission` lock the configuration row (and the component row, taken second, for the across rule), count occupancy, and either create the admitted job, which is the reservation, and enqueue it, or record the refusal and enqueue nothing; the worker then takes the revision snapshot (`req-tap-cares-runconfig-delivery`) on that same job. A queued job keeps its reservation if the cap is lowered while it waits (Backlog, Issue# 1394 - tap).
+
+**One occupancy predicate**, shared by admission and the scheduler's overlap count: a job occupies capacity while it is non-terminal, and also while it is a deadline-abandoned `EmissionJob` (its own run, `req-tap-cares-v0-emitter`) whose task is still claimed by a process within steady_queue's `process_alive_threshold`; it releases when that process stops or the task finishes. No new timeout is introduced (`req-tap-cares-run-mopup-5`).
 
 **Refused at the limit, never queued.** A run at a limit (within the configuration, across configurations, or the configuration's cap) is refused and the refusal recorded, naming the blocking run, the same way for manual and scheduled runs: its job is written and closed at once as failed with `overlap_refused` and the blocking job's id, no task is enqueued and no component code runs. A scheduled fire at the limit is also recorded `skipped` with a summary naming the blocking run; it is never queued and never caught up later. Nothing is replaced or cancelled, because that would break the configuration's series (`req-tap-cares-runconfig-series`). A schedule's own `max_active_runs` (`req-tap-cares-scheduler-concurrency`) applies as well.
 
@@ -428,9 +430,11 @@ Further tighten-only knobs (a cap across configurations, rate limits) are Backlo
 | req-tap-cares-runconfig-concurrency-3 | Across Configurations | Proposed | With `OVERLAP_ACROSS_CONFIGURATIONS = False`, a run of one configuration while another configuration of the same component has a live run is refused naming that run. | |
 | req-tap-cares-runconfig-concurrency-4 | Tighten-Only Cap | Proposed | With `OVERLAP_WITHIN_CONFIGURATION = True` and `max_concurrent_runs = 2`, a third live run is refused; `max_concurrent_runs` of 0, of a non-integer, or on a configuration whose component declares `OVERLAP_WITHIN_CONFIGURATION = False` is refused at save; unset adds no cap. | |
 | req-tap-cares-runconfig-concurrency-5 | Atomic Admission | Proposed | Of two concurrent starts that together exceed a limit, exactly one opens and the other is recorded refused naming it. | |
-| req-tap-cares-runconfig-concurrency-6 | Live Means A Non-Terminal Job | Proposed | A job the reaper has ended does not block admission; a deadline-abandoned run whose job is still executing does, until the job finishes; no admission rule reads a clock or a new timeout. | Keeps the deadline-abandoned slot hold. |
+| req-tap-cares-runconfig-concurrency-6 | One Occupancy Predicate | Proposed | A job the reaper has ended does not block admission; admission and the scheduler's overlap count use the same predicate; no admission rule reads a new clock or timeout. | |
 | req-tap-cares-runconfig-concurrency-7 | Refused, Recorded, Never Queued | Proposed | A manual run and a scheduled fire at the limit each leave a closed job naming the blocking run, with no task enqueued; the scheduled fire is `skipped` naming it; no later slot runs it, and no live run is cancelled. | |
 | req-tap-cares-runconfig-concurrency-8 | One Run Per Idempotency Key | Proposed | Two manual Run requests carrying the same idempotency key open one run; the landing page shows Run disabled with the blocking run named while the limit is reached. | |
+| req-tap-cares-runconfig-concurrency-9 | Deadline-Abandoned Emission Still Occupies | Proposed | A second manual start of an emitter configuration, after its emission is deadline-abandoned while that emission's task is still claimed by a live process, is refused naming it; once the process stops or the task finishes, a start is admitted. | |
+| req-tap-cares-runconfig-concurrency-10 | Refusal Enqueues Nothing | Proposed | A refused start leaves one closed job marked `overlap_refused` naming the blocking job and no enqueued task; an admitted start's job is the one the worker snapshots. | Two-phase admission. |
 
 ## Capabilities
 ----
@@ -556,7 +560,8 @@ RID: `req-tap-cares-runconfig-backlog`
 Status: `Backlog`
 
 - **One-off run configurations.** A likely shape: clone a configuration, edit it, run it, and mark it temporary or one-off. Not designed.
-- **Further tighten-only knobs** beside `max_concurrent_runs`, such as a cap across a component's configurations, or rate limits (`req-tap-cares-runconfig-concurrency`).
+- **Refinements in Issue# 1394 - tap:** a cap lowered while a job is queued; resetting watermarks when a scope is widened (in v0, run a full refresh, `req-tap-cares-progressive-watermark-9`); a `secret_ref` changed A→B→A; cross-configuration caps and rate limits; further race tests.
+- **A history version column** comes back as its own fleet wave if the history-count invariant (`req-grid-history-version`) cannot be held.
 - **The configuration reference as a dimension.** The reference a run and its batches carry feels adjacent to a dimension (owner ruling 2026-11-25). It stays a standard column and metadata field for now; whether it should become one is open.
 - **Scoped grants** (Issue# 1204 - tap): grants per component or per configuration, and a per-credential "use" grant.
 - **A collector-side analogue of emitter arming**, and options such as no self-approval (the person who edits a configuration may not arm it) (Issue# 1204 - tap).
