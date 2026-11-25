@@ -55,7 +55,9 @@ The scheduler is a trigger system. It must not:
 - create `HAS_COLLECTION_JOB` edges directly
 - mutate collector output or GRIFT batches
 
-When a schedule fires successfully, it invokes `tap_cares.services.run_collection(...)` for a target `Collector`, or `tap_cares.services.run_emission(emitter, dry_run=False)` for a target `Emitter` (`spec-tap-cares-v0.md` `req-tap-cares-v0-emitter`). The same prohibitions apply to the emitter path: no direct `run_emitter` enqueue, no direct `EmissionJob` or `HAS_EMISSION_JOB` write. A fire whose target is of any other type fails with a `summary` naming the type. For an emitter target, the overlap guard's active runs are the `EmissionJob`s reached through `ScheduleFire --TRIGGERED_EMISSION-->` whose status is `READY` or `RUNNING`. Whether an emitter run actually sends is the emitter's own arming rule, not the scheduler's (`req-tap-cares-v0-emitter-12`).
+When a schedule fires successfully, it invokes `tap_cares.services.run_collection(...)` for a target `Collector`, or `tap_cares.services.run_emission(emitter, dry_run=False)` for a target `Emitter` (`spec-tap-cares-v0.md` `req-tap-cares-v0-emitter`). The same prohibitions apply to the emitter path: no direct `run_emitter` enqueue, no direct `EmissionJob` or `HAS_EMISSION_JOB` write. A fire whose target is of any other type fails with a `summary` naming the type. For an emitter target, the overlap guard's active runs are the `EmissionJob`s reached through `ScheduleFire --TRIGGERED_EMISSION-->` whose status is `running` (an `EmissionJob` follows the run convention, `spec-tap-cares-run.md`, where `running` covers queued and executing). Whether an emitter run actually sends is the emitter's own arming rule, not the scheduler's (`req-tap-cares-v0-emitter-12`).
+
+Pointing a schedule at an emitter is gated: writing a `SCHEDULED_TARGET` edge whose target is an `Emitter`, whether creating a schedule or retargeting one, is refused for an actor without the capability `cares.schedule_emitters` (`req-tap-cares-v0-emitter-22`). Collector targets are not gated by it.
 
 ### Acceptance Criteria
 
@@ -64,7 +66,8 @@ When a schedule fires successfully, it invokes `tap_cares.services.run_collectio
 | req-tap-cares-scheduler-scope-1 | Collector Or Emitter v0 | Proposed | v0 schedules can target `Collector` or `Emitter` nodes and no other CARES capability type; any other target type fails the fire. | Was collector-only; emitter added by Issue# 1357 - tap. |
 | req-tap-cares-scheduler-scope-2 | Uses run_collection | Implemented | Successful scheduled execution invokes `run_collection(...)`; the scheduler does not reach behind that boundary. | See `spec-tap-cares-collector.md` `req-tap-cares-collector-run-collection`. |
 | req-tap-cares-scheduler-scope-3 | No Direct Task Enqueue | Implemented | The scheduler never calls `run_collector.enqueue(...)` directly. | |
-| req-tap-cares-scheduler-scope-4 | Emitter Target Uses run_emission | Proposed | A fire whose target is an `Emitter` invokes `run_emission(emitter, dry_run=False)` and links the result with `TRIGGERED_EMISSION`; its overlap count is that schedule's `READY`/`RUNNING` `EmissionJob`s. The scheduler never enqueues `run_emitter` or writes `EmissionJob` directly. | Emitter schedules are operator-authored; no GRIFT bundle can target an emitter (`req-tap-cares-v0-emitter-4`). |
+| req-tap-cares-scheduler-scope-4 | Emitter Target Uses run_emission | Proposed | A fire whose target is an `Emitter` invokes `run_emission(emitter, dry_run=False)` and links the result with `TRIGGERED_EMISSION`; its overlap count is that schedule's `running` `EmissionJob`s. The scheduler never enqueues `run_emitter` or writes `EmissionJob` directly. | Emitter schedules are operator-authored; no GRIFT bundle can target an emitter (`req-tap-cares-v0-emitter-4`). |
+| req-tap-cares-scheduler-scope-5 | Emitter Targets Need cares.schedule_emitters | Proposed | A `SCHEDULED_TARGET` write (create or retarget) whose target is an `Emitter` is refused for an actor lacking `cares.schedule_emitters`; the same write onto a `Collector` is unaffected. | Mirrors `req-tap-cares-v0-emitter-22`. |
 
 ## Minute Tick
 ----

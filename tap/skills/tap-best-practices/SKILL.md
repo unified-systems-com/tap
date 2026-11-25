@@ -74,6 +74,22 @@ only). Rules with a candidate are the backlog for guard rails.
 
 - **Key identity on stable columns and record null for unobserved.** AGENTS.md items 4 and 5. Guard: the
   `NATURAL_KEY`-or-`KEYLESS` requirement. Audit: catalogue entries 10 and 11.
+- **Runs: a run node, plus a `run_id` field on what the run mints.** A run (a scanner pass, an evaluation run)
+  is its own node holding the run's information, with no edges to its results. Every node the run *mints*
+  carries `run_id`: the run node's entity id, a plain indexed UUID field, written once and part of the
+  `NATURAL_KEY`. It is not a foreign key, because there are none between typed node tables
+  (`tap_grid/specs/spec-grid-service-delete.md`, "Cascade First"), and like core's batch pointers it is a plain id
+  (`spec-grid-entity.md`, `req-grid-history-reobservation`). It is not a dimension either: dimensions gather
+  diverse types from different plugins into one bucket, and a run's output sits in one or a few house tables.
+  Nor is it an edge per result, because thousands of edges to one run node make a super-node. A persistent node
+  that many runs re-observe never carries `run_id`. Re-stamping it would hide earlier runs in history or write
+  a history row every run, so core's `last_observed_batch_id` answers which run last saw it. "Every run that
+  saw X" comes from the per-run nodes keyed on (X, run). A one-value-per-row classifier within one table, such
+  as an algorithm, is a key field too, not a dimension. The convention is canon in
+  `tap_cares/specs/spec-tap-cares-run.md`; plugins build run nodes with the tap_cares run helper (`open_run` and
+  `RunMixin`) rather than by hand. *owner ruling 2026-11-25 (regscale session, Q39).* Candidate: flag an edge type
+  whose source is a run node and whose targets are minted per run, and a `run_id` written to a node that a later
+  batch re-observes.
 
 ### Dimensions and tags
 
