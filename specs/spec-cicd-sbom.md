@@ -846,7 +846,8 @@ needs a fallback branch because every package draws the edge.
 * **C. Which assetTypes after providers, and from which source?** Decision 1 lists candidates; none is chosen. Recommendation: stop at providers until a consumer asks.
 * **D. What is the host for an image?** Settled by computing_core: an image digest is a `host` whose
   `tap.computing.host_type` dimension is `oci-digest` and whose `stable_id` is the sha256 digest
-  (`req-computing-core-host-4`). `host` is keyed on that dimension and `stable_id`; the earlier
+  ([computing-core-tap `spec-computing-core-v0.md`](https://github.com/unified-systems-com/computing-core-tap/blob/main/specs/spec-computing-core-v0.md),
+  host requirement 4). `host` is keyed on that dimension and `stable_id`; the earlier
   `realm` field is retired (unified-systems-com/tap#1355). What remains open is only drawing
   `INSTALLS_PACKAGE` from that host.
 
