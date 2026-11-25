@@ -84,9 +84,13 @@ OSSL_SIGNING_PRIMARY=B146647E45A7B33947AB226B2A2C87D161692D40
 #   #4985 — OpenSSL FIPS Provider 3.1.2, FIPS 140-3 level 1, Active, sunset 2030-03-10
 #           https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4985
 #           (OpenSSL's own certificate; #5102 is Chainguard's rebrand of the same module)
-# Observed 2026-09-02. A sunset date that has passed does NOT delete the entry: the version
+#   #5586 — OpenSSL FIPS Provider 3.5.9, FIPS 140-3 level 1, Active, sunset 2031-11-12
+#           https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5586
+#           (validated 2026-11-13; the security policy names fips.so 3.5.9; its tested
+#           operational environments are Ubuntu 22.04/24.04, not Wolfi; tap#1389, decision D20)
+# Observed 2026-09-02; #5586 observed 2026-11-25. A sunset date that has passed does NOT delete the entry: the version
 # was validated; the derived posture reports the certificate as sunset.
-OSSL_CMVP_VALIDATED="3.0.8=4282/140-2/2026-09-21 3.0.9=4282/140-2/2026-09-21 3.1.2=4985/140-3/2030-03-10"
+OSSL_CMVP_VALIDATED="3.0.8=4282/140-2/2026-09-21 3.0.9=4282/140-2/2026-09-21 3.1.2=4985/140-3/2030-03-10 3.5.9=5586/140-3/2031-11-12"
 
 # ---------------------------------------------------------------------------- layout
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
