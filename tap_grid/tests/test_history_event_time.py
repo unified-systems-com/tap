@@ -7,8 +7,12 @@ unconstrained ``PG_LINKS`` edge for the model-version migration.
 
 from __future__ import annotations
 
+import io
+import json
+import re
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -18,7 +22,7 @@ from django.db import connection, models, transaction
 from django.db.migrations.state import ProjectState
 from tap_plugin.grid_fixtures.models.pg_node import PgNode
 
-from tap_grid import event_time, version_links, version_migration
+from tap_grid import event_time, spine_copies, version_links, version_migration
 from tap_grid import model_version as mv
 from tap_grid.caller_context import CallerContext
 from tap_grid.event_time import NO_EVENT_TIME, SPINE_EVENT_FIELDS, Moment, overlapping
@@ -26,11 +30,12 @@ from tap_grid.models import BASE_HISTORY, BaseModel, Edge, Entity
 from tap_grid.registry import get_model_class, list_entity_types
 from tap_grid.services import create_edge, create_node, delete_node, patch_node
 from tap_grid.spine_copies import fill_history_row, stash_history_copies
+from tap_grid.tests.test_spine_copies import plugin_like_model  # noqa: F401 - a fixture, used by name
 from tap_grid.version_links import Step
 
 pytestmark = pytest.mark.django_db
 
-AC = {n: pytest.mark.spec(f"req-grid-history-event-time-{n}") for n in range(1, 10)}
+AC = {n: pytest.mark.spec(f"req-grid-history-event-time-{n}") for n in range(1, 11)}
 NODE = "grid_fixtures__node"
 LINK = "PG_LINKS__grid_fixtures"
 
@@ -291,3 +296,83 @@ class TestVersionMigration:
         assert report.changed == 1 and report.history_rows == 1
         assert _spine(made.entity_id) == (_utc(2026, 12, 1), _utc(2026, 12, 1), "second")
         assert _rows(Edge, made.entity_id) == [(None, None, None), _spine(made.entity_id)]
+
+
+# ---------------------------------------------------------------------------
+# Rule 9: the boot gate refuses a history table without the columns
+# ---------------------------------------------------------------------------
+
+
+def _drop(table: str, column: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(f'ALTER TABLE "{table}" DROP COLUMN {column}')  # nosemgrep  # nosec B608 - test-owned names
+
+
+class TestBootGate:
+    @AC[10]
+    def test_a_history_table_without_a_column_refuses_the_boot_naming_it_and_the_remedy(
+        self,
+        plugin_like_model: Any,  # noqa: F811 - the fixture imported above
+        tmp_path: Path,
+    ) -> None:
+        from tap_boot.orchestrator import BootError, run_boot
+        from tap_boot.record import BootRecord
+
+        history = plugin_like_model.history.model._meta.db_table
+        spine_copies.assert_columns()  # a database built from the models has them everywhere
+        _drop(history, "event_end")
+        # The typed table is complete; only the history table is found, and it is named as one.
+        [gap] = spine_copies.missing_columns()
+        assert (gap.table, gap.app_label, gap.columns, gap.history) == (history, "tap_grid", ("event_end",), True)
+        with pytest.raises(spine_copies.SpineColumnsMissing) as raised:
+            spine_copies.assert_columns()
+        message = str(raised.value)
+        for named in (
+            history,
+            "event_end",
+            "history table",
+            "makemigrations tap_grid",
+            "0024_history_event_time",
+            "requires_tap",
+        ):
+            assert named in message, named
+        assert "0023_spine_copies" not in message  # the typed table lacks nothing
+
+        record = BootRecord("test", base_dir=tmp_path)
+        with pytest.raises(BootError, match=re.escape(history)) as aborted:
+            run_boot(None, record=record)
+        assert aborted.value.detail == {"failed_step": "spine_columns", "tables": [history]}
+        data = json.loads(record.path.read_text(encoding="utf-8"))
+        assert [phase["phase"] for phase in data["phases"]] == ["posture", "plugin_data", "files", "spine_columns"]
+
+    @AC[10]
+    def test_a_typed_and_a_history_gap_are_both_named_with_both_migrations(
+        self,
+        plugin_like_model: Any,  # noqa: F811 - the fixture imported above
+    ) -> None:
+        typed, history = plugin_like_model._meta.db_table, plugin_like_model.history.model._meta.db_table
+        _drop(typed, "spine_dimensions")
+        for column in SPINE_EVENT_FIELDS:
+            _drop(history, column)
+        gaps = {(gap.table, gap.history): gap.columns for gap in spine_copies.missing_columns()}
+        assert gaps == {(typed, False): ("spine_dimensions",), (history, True): tuple(sorted(SPINE_EVENT_FIELDS))}
+        message = str(spine_copies.SpineColumnsMissing(spine_copies.missing_columns()))
+        assert "0023_spine_copies and 0024_history_event_time" in message
+
+    @AC[10]
+    def test_the_command_lists_a_history_table_without_a_column_and_exits_non_zero(
+        self,
+        plugin_like_model: Any,  # noqa: F811 - the fixture imported above
+    ) -> None:
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        history = plugin_like_model.history.model._meta.db_table
+        _drop(history, "event_start")
+        out = io.StringIO()
+        with pytest.raises(CommandError, match="0024_history_event_time"):
+            call_command("spine_copies", stdout=out)
+        assert (
+            f"missing columns: history table {history} (app tap_grid; {plugin_like_model.ENTITY_TYPE}) has no column event_start"
+            in out.getvalue()
+        )

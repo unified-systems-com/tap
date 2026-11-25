@@ -30,7 +30,9 @@ What this module holds:
   can legitimately stop short of the migration that adds them), but boot refuses to start on it:
   :func:`assert_columns`, called by the boot's ``spine_columns`` phase, raises
   :class:`SpineColumnsMissing` naming each table and the remedy. ``manage.py spine_copies`` lists
-  the same tables.
+  the same tables. The same gate refuses a history table without the event-time columns
+  (``req-grid-history-event-time`` rule 9): every history write names them, so such a table would
+  fail the first write of its type.
 - **The drift check and the repair** (rule 10). The check counts, per typed table, the rows whose
   copies differ from their entity row, and the tables that lack a trigger. It reports and fails
   nothing at boot (a non-critical health probe, ``grid.spine_copies``, and ``manage.py
@@ -57,10 +59,18 @@ from typing import Any
 from django.db import DEFAULT_DB_ALIAS, connections, transaction
 from psycopg import sql
 
+from tap_grid.event_time import SPINE_EVENT_FIELDS
+
 logger = logging.getLogger(__name__)
 
 #: The two columns. Declared on ``BaseModel``; written by the triggers alone.
 SPINE_COPY_FIELDS: frozenset[str] = frozenset({"spine_deleted_at", "spine_dimensions"})
+#: The event-time columns every history table carries (req-grid-history-event-time), declared on
+#: ``tap_grid.history.HistoricalBatchRecord``; the boot gate refuses a history table without them.
+HISTORY_EVENT_FIELDS: frozenset[str] = frozenset(SPINE_EVENT_FIELDS)
+#: The core migration each set of columns arrived with, which a regenerated plugin migration follows.
+SPINE_COPIES_MIGRATION = "0023_spine_copies"
+HISTORY_EVENT_MIGRATION = "0024_history_event_time"
 
 #: The table that maps an entity type to its typed table, read by the push trigger. Not a Django
 #: model, so ``flush`` (which empties every model table) leaves it alone and the triggers keep
@@ -80,8 +90,6 @@ PULL_TRIGGER = PULL_FUNCTION
 
 def _event_columns(values: Mapping[str, Any]) -> dict[str, Any]:
     """The three event columns from a mapping that holds them (req-grid-history-event-time)."""
-    from tap_grid.event_time import SPINE_EVENT_FIELDS
-
     return {name: values.get(name) for name in SPINE_EVENT_FIELDS}
 
 
@@ -126,7 +134,7 @@ def fill_history_row(sender: Any, *, instance: Any, history_instance: Any, **kwa
     and the batch from the caller's context. Never from the typed row object's own copies. The event
     time is set only on a history model that has its columns (``req-grid-history-event-time``).
 
-    TAP-IMPLEMENTS: req-grid-history-event-time@38a7d71b7546/df7415bd6d29 (derivation) — rules 2 to 4: the one
+    TAP-IMPLEMENTS: req-grid-history-event-time@4049995dd4c7/f5159ae40bbf (derivation) — rules 2 to 4: the one
         place a history row's event time is set, from the write's stash or from the entity row.
     """
     if not hasattr(history_instance, "spine_dimensions"):
@@ -134,7 +142,6 @@ def fill_history_row(sender: Any, *, instance: Any, history_instance: Any, **kwa
     stashed = getattr(instance, "_spine_history", None)
     if stashed is None:
         from tap_grid.caller_context import get_caller_context
-        from tap_grid.event_time import SPINE_EVENT_FIELDS
         from tap_grid.models import Entity
 
         row = Entity.objects.using(kwargs.get("using") or DEFAULT_DB_ALIAS).filter(pk=instance.entity_id)
@@ -165,7 +172,6 @@ def write_retirement_history(model_cls: type, entity_ids: Iterable[Any], *, reas
     retirement copy and the retirement's reason (``req-grid-service-delete-reason-2``). A type that
     keeps no history (``req-grid-history-optout``) writes none. Returns the number written.
     """
-    from tap_grid.event_time import SPINE_EVENT_FIELDS
     from tap_grid.history import is_history_enabled
     from tap_grid.models import BASE_HISTORY, Entity
 
@@ -354,73 +360,126 @@ def _remedy(entity_type: str) -> str:
 
 @dataclass(frozen=True)
 class MissingColumns:
-    """A registered typed table that exists without one or both copy columns (rule 20)."""
+    """A registered type's table that exists without columns the base models declare.
+
+    A typed table without one or both copy columns (rule 20), or, with ``history`` set, the type's
+    history table without an event-time column (``req-grid-history-event-time`` rule 9).
+    """
 
     table: str
     app_label: str
     entity_types: tuple[str, ...]
     columns: tuple[str, ...]
+    history: bool = False
 
     def describe(self) -> str:
         types = "" if self.entity_types == (self.table,) else f"; {', '.join(self.entity_types)}"
-        return f"{self.table} (app {self.app_label}{types}) has no column {', '.join(self.columns)}"
+        kind = "history table " if self.history else ""
+        return f"{kind}{self.table} (app {self.app_label}{types}) has no column {', '.join(self.columns)}"
+
+
+def _history_tables() -> dict[str, str]:
+    """Every registered entity type that keeps history, and its history table."""
+    from tap_grid.history import is_history_enabled
+    from tap_grid.registry import get_model_class
+
+    tables: dict[str, str] = {}
+    for entity_type in typed_tables():
+        model = get_model_class(entity_type)
+        if is_history_enabled(model):
+            tables[entity_type] = model.history.model._meta.db_table  # type: ignore[attr-defined]
+    return tables
 
 
 def missing_columns(*, using: str = DEFAULT_DB_ALIAS) -> list[MissingColumns]:
-    """Every registered typed table that exists but lacks a copy column, one entry per table.
+    """Every registered typed table that exists but lacks a copy column, and every history table of
+    a registered type that exists but lacks an event-time column, one entry per table.
 
     A table that does not exist is not listed: that is an app not migrated yet, which the critical
     ``migrations`` and ``grid.tables`` probes report. Changes nothing; empty on a database that is
     not PostgreSQL, which keeps no copies (rule 18).
+
+    TAP-IMPLEMENTS: req-grid-history-event-time@4049995dd4c7/2444d54b7454 (enforcement) — rule 9: the one
+        check that finds a history table without the event-time columns, which boot refuses.
     """
     connection = connections[using]
     if connection.vendor != "postgresql":
         return []
-    by_table: dict[str, list[str]] = {}
+    wanted: dict[tuple[str, bool], list[str]] = {}
     for entity_type, table in typed_tables().items():
-        by_table.setdefault(table, []).append(entity_type)
+        wanted.setdefault((table, False), []).append(entity_type)
+    for entity_type, table in _history_tables().items():
+        wanted.setdefault((table, True), []).append(entity_type)
     found: list[MissingColumns] = []
     with connection.cursor() as cursor:
         existing = set(connection.introspection.table_names(cursor))
-        for table, entity_types in sorted(by_table.items()):
+        for (table, history), entity_types in sorted(wanted.items()):
             if table not in existing:
                 continue
             columns = {c.name for c in connection.introspection.get_table_description(cursor, table)}
-            missing = tuple(sorted(SPINE_COPY_FIELDS - columns))
+            missing = tuple(sorted((HISTORY_EVENT_FIELDS if history else SPINE_COPY_FIELDS) - columns))
             if missing:
                 types = tuple(sorted(entity_types))
-                found.append(MissingColumns(table, _app_label(types[0]), types, missing))
+                found.append(MissingColumns(table, _app_label(types[0]), types, missing, history=history))
     return found
 
 
+def _by_app(missing: list[MissingColumns], every: tuple[str, ...]) -> str:
+    """The tables of each app, each with the columns it lacks where it does not lack them all."""
+    by_app = []
+    for label in sorted({m.app_label for m in missing}):
+        named = [
+            m.table + ("" if m.columns == every else f" (no {', '.join(m.columns)})")
+            for m in missing
+            if m.app_label == label
+        ]
+        by_app.append(f"app {label}: {', '.join(named)}")
+    return "; ".join(by_app)
+
+
 class SpineColumnsMissing(RuntimeError):
-    """A registered typed table lacks the copy columns, so the instance must not start (rule 20)."""
+    """A registered type's table lacks columns the base models declare, so the instance must not start.
+
+    A typed table without the copy columns (req-grid-entity-spine-copies rule 20), or a history
+    table without the event-time columns (req-grid-history-event-time rule 9).
+    """
 
     def __init__(self, missing: list[MissingColumns]) -> None:
         self.missing = missing
+        typed = [m for m in missing if not m.history]
+        history = [m for m in missing if m.history]
+        parts = []
+        if typed:
+            both = tuple(sorted(SPINE_COPY_FIELDS))
+            parts.append(
+                f"{len(typed)} typed table(s) lack the spine-copy columns ({', '.join(both)}) — "
+                f"{_by_app(typed, both)}. Every read and write of these types names the columns."
+            )
+        if history:
+            every = tuple(sorted(HISTORY_EVENT_FIELDS))
+            parts.append(
+                f"{len(history)} history table(s) lack the event-time columns ({', '.join(every)}) — "
+                f"{_by_app(history, every)}. Every history write of these types names the columns "
+                "(req-grid-history-event-time rule 9)."
+            )
         labels = sorted({m.app_label for m in missing})
-        both = tuple(sorted(SPINE_COPY_FIELDS))
-        by_app = []
-        for label in labels:
-            named = [
-                m.table + ("" if m.columns == both else f" (no {', '.join(m.columns)})")
-                for m in missing
-                if m.app_label == label
-            ]
-            by_app.append(f"app {label}: {', '.join(named)}")
-        tables = "; ".join(by_app)
+        follows = " and ".join(
+            name
+            for name, needed in ((SPINE_COPIES_MIGRATION, typed), (HISTORY_EVENT_MIGRATION, history))
+            if needed
+        )
         super().__init__(
-            f"{len(missing)} typed table(s) lack the spine-copy columns ({', '.join(both)}) — {tables}. Every "
-            "read and write of these types names the columns, so the instance refuses to start rather than fail on them later. "
-            "The app's migrations were generated before the base-model release: regenerate them against this "
+            " ".join(parts) + " The instance refuses to start rather than fail on them later. "
+            "The app's migrations were generated against an older core: regenerate them against this "
             f"core (manage.py makemigrations {' '.join(labels)}; the new migration depends on tap_grid "
-            "0023_spine_copies), raise the plugin's requires_tap to this core, release it and migrate. "
+            f"{follows}), raise the plugin's requires_tap to this core, release it and migrate. "
             "manage.py spine_copies lists these tables (req-grid-entity-spine-copies rule 20)."
         )
 
 
 def assert_columns(*, using: str = DEFAULT_DB_ALIAS) -> None:
-    """Raise :class:`SpineColumnsMissing` when any registered typed table lacks a copy column.
+    """Raise :class:`SpineColumnsMissing` when any registered typed table lacks a copy column, or
+    any registered type's history table lacks an event-time column.
 
     The boot's ``spine_columns`` phase calls it before the first write (rule 20). A database built
     from the models always has the columns, so every test database and every schema-from-models
