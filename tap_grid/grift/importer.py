@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-GRIFT_VERSION = "0"
+GRIFT_VERSION = "1"
 IMPORT_MODE = "upsert"
 _GRIFT_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "grift-document.schema.json"
 

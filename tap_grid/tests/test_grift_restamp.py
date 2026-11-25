@@ -28,14 +28,25 @@ from tap_web.models import Panel
 
 FLEET = pytest.mark.spec("req-grift-header-versions-8")
 REPO = Path(__file__).resolve().parents[2]
-CORE_DOCUMENTS = [
-    REPO / "tap_grid/data/dimensions.grift.json",
-    REPO / "tap_grid/tests/data/test_dimensions.grift.json",
-]
+#: Every committed GRIFT batch document in core. ``tap_web/data/entity-*.grift.json`` are synthetic-page
+#: subgraph descriptors (no ``batches``), read by ``tap_web.synthetic.load_subgraph`` and no importer.
+CORE_DOCUMENTS = sorted(
+    path
+    for path in REPO.glob("tap_*/**/*.grift.json")
+    if isinstance(json.loads(path.read_text(encoding="utf-8")).get("batches"), list)
+)
+
+
+def _unversioned(document: dict[str, object]) -> dict[str, object]:
+    """The document at format "0", the input a restamp restates (the helpers build it at "1")."""
+    document["metadata"] = {"grift_version": "0"}
+    return document
 
 
 def _zero_document(*panels: str) -> tuple[str, dict[str, object]]:
-    document = _minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[_panel(p, str(uuid.uuid4())) for p in panels])])
+    document = _unversioned(
+        _minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[_panel(p, str(uuid.uuid4())) for p in panels])])
+    )
     return json.dumps(document, indent=2), document
 
 
@@ -55,14 +66,18 @@ def test_only_the_header_changes_and_it_states_version_1_for_everything() -> Non
 
 
 @FLEET
-@pytest.mark.parametrize("path", CORE_DOCUMENTS, ids=lambda p: p.name)
-def test_a_committed_core_document_keeps_every_record_byte_for_byte(path: Path) -> None:
+@pytest.mark.parametrize("path", CORE_DOCUMENTS, ids=lambda p: str(p.relative_to(REPO)))
+def test_every_committed_core_document_states_format_1_and_a_restamp_leaves_it(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
+    assert json.loads(text)["metadata"]["grift_version"] == "1"
     result = restamp_text(text)
-    assert result.changed
-    assert _outside_header(result.text) == _outside_header(text)
-    assert json.loads(result.text)["batches"] == json.loads(text)["batches"]
-    assert json.loads(result.text)["metadata"]["grift_version"] == "1"
+    assert not result.changed
+    assert result.text == text
+
+
+def test_the_core_documents_are_found() -> None:
+    names = {path.relative_to(REPO).as_posix() for path in CORE_DOCUMENTS}
+    assert {"tap_grid/data/dimensions.grift.json", "tap_grid/tests/data/test_dimensions.grift.json"} <= names
 
 
 @FLEET
@@ -130,7 +145,9 @@ def test_a_wildcard_manifest_edge_is_installed_and_restated_at_version_1() -> No
     a, b = _panel("restamp-wild-a", str(uuid.uuid4())), _panel("restamp-wild-b", str(uuid.uuid4()))
     ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])
     edges = [_wildcard_edge(edge_type, *ends) for edge_type in WILDCARD_EDGES]
-    text = json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=edges)]), indent=2)
+    text = json.dumps(
+        _unversioned(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=edges)])), indent=2
+    )
     result = restamp_text(text)
     assert result.changed
     assert result.header["type_versions"] == {"batch": 1, "panel": 1, **dict.fromkeys(WILDCARD_EDGES, 1)}
@@ -177,7 +194,9 @@ def test_a_manifest_edge_with_no_endpoints_is_installed_at_its_declared_version(
     a, b = _panel("restamp-wild-c", str(uuid.uuid4())), _panel("restamp-wild-d", str(uuid.uuid4()))
     ends = (a["entity"]["entity_id"], b["entity"]["entity_id"])
     edge = _wildcard_edge("RESTAMP_WILD_V2", *ends)
-    result = restamp_text(json.dumps(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=[edge])])))
+    result = restamp_text(
+        json.dumps(_unversioned(_minimal_doc([_batch_container(str(uuid.uuid4()), nodes=[a, b], edges=[edge])])))
+    )
     assert result.header["type_versions"]["RESTAMP_WILD_V2"] == 1
 
 

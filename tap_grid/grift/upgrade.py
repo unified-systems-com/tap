@@ -16,11 +16,11 @@ the database.
 
 The unversioned format
 ----------------------
-Format ``"0"`` states no versions. It is read as it always was, with no upgrade, which is to
-read the spine and every type at version 1 (``req-grift-header-versions`` rule 11). It is
-refused, naming the version, under ``TAP_REQUIRE_GRIFT_VERSIONS=1``; that becomes the default
-with the release that moves the fleet's documents and collectors to ``"1"`` (rule 12,
-Issue# 1288 - tap).
+Format ``"0"`` states no versions. It is refused by default, naming the version (rule 12,
+Issue# 1288 - tap): the fleet's committed documents and the producers that build documents in
+code state ``"1"``. ``TAP_REQUIRE_GRIFT_VERSIONS=0`` reads it again as it always was, with no
+upgrade, which is to read the spine and every type at version 1 (``req-grift-header-versions``
+rule 11), for an instance pinned to a plugin release that still ships or builds one.
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ from tap_grid.version_links import Break, RecordRefused, Step
 #: The format that states no versions, and the one that states them.
 UNVERSIONED_FORMAT = "0"
 VERSIONED_FORMAT = "1"
-#: Set to ``1`` to refuse a document at the unversioned format (rule 12).
+#: A document at the unversioned format is refused by default (rule 12). Setting this to ``0`` reads
+#: it again, as the spine and every type at version 1: an operator's way back for a pinned plugin
+#: release that still ships or builds one. Any other value, or none, refuses it.
 REQUIRE_VERSIONS_ENV = "TAP_REQUIRE_GRIFT_VERSIONS"
 
 SPINE_VERSION_KEY = "spine_version"
@@ -58,7 +60,7 @@ STEP_FAILED = "upgrade_step_failed"
 
 def formats_read() -> tuple[str, ...]:
     """The format versions this importer reads now."""
-    refused = {UNVERSIONED_FORMAT} if os.environ.get(REQUIRE_VERSIONS_ENV, "") == "1" else set()
+    refused = set() if os.environ.get(REQUIRE_VERSIONS_ENV, "") == "0" else {UNVERSIONED_FORMAT}
     return tuple(version for version in (UNVERSIONED_FORMAT, VERSIONED_FORMAT) if version not in refused)
 
 
@@ -486,7 +488,7 @@ def build_header(document: Any, *, using: str = "default", unversioned: bool = F
 
     For the exporter, and for any producer in core or a plugin that builds a document in code.
 
-    TAP-IMPLEMENTS: req-grift-header-versions@845735e37fe5/78c1febc624b (derivation) — rules 1, 2, 4 and 6: the header a
+    TAP-IMPLEMENTS: req-grift-header-versions@0e194216f3f9/78c1febc624b (derivation) — rules 1, 2, 4 and 6: the header a
         document written by this grid carries, with an entry for every type the document carries
         or names.
     """

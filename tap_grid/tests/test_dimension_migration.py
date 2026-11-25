@@ -174,6 +174,7 @@ class TestTheMigrationsSeedReader:
 def _doc(entity_id: str, dims: dict[str, Any], name: str = "replace-me") -> dict[str, Any]:
     import uuid
 
+    from tap_grid.grift.upgrade import build_header
     from tap_grid.tests.test_grift import _batch_container, _minimal_doc
 
     doc = _minimal_doc([_batch_container(str(uuid.uuid7()))])
@@ -185,6 +186,7 @@ def _doc(entity_id: str, dims: dict[str, Any], name: str = "replace-me") -> dict
         }
     ]
     batch["edges"] = []
+    doc["metadata"] = build_header(doc, unversioned=True)
     return doc
 
 

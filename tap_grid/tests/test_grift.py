@@ -9,7 +9,14 @@ from tap_grid.dimension_names import view
 from tap_grid.grift import (
     grift_import,
 )
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Batch, Edge, Entity
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,11 +37,11 @@ def _edge_entity_id() -> str:
 
 def _minimal_doc(batches: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Minimal valid GRIFT document."""
-    return {
-        "metadata": {"grift_version": "0"},
+    return _stated({
+        "metadata": {},
         "_reserved": {},
         "batches": batches or [],
-    }
+    })
 
 
 def _batch_container(
@@ -101,7 +108,7 @@ class TestGriftDocumentSchema:
     def test_empty_doc_succeeds(self):
         result = grift_import(_minimal_doc())
         assert result.success
-        assert result.grift_version == "0"
+        assert result.grift_version == "1"
 
     def test_invalid_json_string(self):
         result = grift_import("{ not valid json }")
@@ -116,7 +123,7 @@ class TestGriftDocumentSchema:
         assert any(e.code == "schema_validation_failed" and "metadata" in e.message for e in result.errors)
 
     def test_missing_batches_key(self):
-        doc = {"metadata": {"grift_version": "0"}, "_reserved": {}}
+        doc = {"metadata": {"grift_version": "1", "spine_version": 1, "type_versions": {}}, "_reserved": {}}
         result = grift_import(doc)
         assert not result.success
         assert any(e.code == "schema_validation_failed" for e in result.errors)
@@ -454,7 +461,7 @@ class TestGriftProvenance:
         assert batch.description_json["format"] == "tap.grift.import.v0"
         data = batch.description_json["data"]
         assert data["importer"] == "grift"
-        assert data["grift_version"] == "0"
+        assert data["grift_version"] == "1"
         assert data["import_mode"] == "upsert"
         assert data["source_batch_entity_id"] == bid
 
@@ -485,7 +492,7 @@ class TestGriftProvenance:
         # Importer metadata lives under the reserved key.
         importer = data["_tap_grift_import"]
         assert importer["importer"] == "grift"
-        assert importer["grift_version"] == "0"
+        assert importer["grift_version"] == "1"
         assert importer["import_mode"] == "upsert"
         assert importer["source_batch_entity_id"] == bid
 

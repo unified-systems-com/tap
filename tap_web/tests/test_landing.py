@@ -18,12 +18,20 @@ from django.db.migrations.executor import MigrationExecutor
 from tap.pytest_harness import make_admin_client
 from tap_grid import spine_copies
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Entity
 from tap_grid.registry import retired_entity_reason
 from tap_health.results import ProbeStatus
 from tap_web.health import probe_web_landing
 from tap_web.models import Page
 from tap_web.page import resolve_landing
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
+
 
 _LAYOUT = {
     "full_bleed": True,
@@ -206,32 +214,34 @@ class TestRetiredStrip:
     @pytest.mark.django_db
     def test_strip_drops_retired_nodes_and_their_edges_only(self):
         page_id, landing_id = str(uuid.uuid4()), str(uuid.uuid4())
-        doc: dict[str, Any] = {
-            "metadata": {"grift_version": "0"},
-            "batches": [
-                {
-                    "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "b"},
-                    "nodes": [
-                        {"entity": {"entity_id": page_id, "entity_type": "page"}, "node": {"slug": "/p"}},
-                        {"entity": {"entity_id": landing_id, "entity_type": "landing_page"}, "node": {"name": "L"}},
-                    ],
-                    "edges": [
-                        {
-                            "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge"},
-                            "edge": {
-                                "from_entity_id": landing_id,
-                                "to_entity_id": page_id,
-                                "edge_type": "USES_LANDING_PAGE",
+        doc: dict[str, Any] = _stated(
+            {
+                "metadata": {},
+                "batches": [
+                    {
+                        "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "b"},
+                        "nodes": [
+                            {"entity": {"entity_id": page_id, "entity_type": "page"}, "node": {"slug": "/p"}},
+                            {"entity": {"entity_id": landing_id, "entity_type": "landing_page"}, "node": {"name": "L"}},
+                        ],
+                        "edges": [
+                            {
+                                "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge"},
+                                "edge": {
+                                    "from_entity_id": landing_id,
+                                    "to_entity_id": page_id,
+                                    "edge_type": "USES_LANDING_PAGE",
+                                },
                             },
-                        },
-                        {
-                            "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge"},
-                            "edge": {"from_entity_id": page_id, "to_entity_id": page_id, "edge_type": "USES_PANEL"},
-                        },
-                    ],
-                }
-            ],
-        }
+                            {
+                                "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge"},
+                                "edge": {"from_entity_id": page_id, "to_entity_id": page_id, "edge_type": "USES_PANEL"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
         stripped_doc, report = strip_retired_types(doc)
         assert report.stripped and report.nodes == (("landing_page", landing_id),) and report.edges == 1
         batch: dict[str, Any] = stripped_doc["batches"][0]
@@ -244,38 +254,40 @@ class TestRetiredStrip:
         """Grok on PR# 597 - tap: the seeding boundary reads raw bundles, which may carry batch-local
         refs (req-grid-import-grift-identity-3). A ref-addressed retired node is stripped by its
         ref; a retained ref node is not mistaken for it, and neither is an id 'None'."""
-        doc: dict[str, Any] = {
-            "metadata": {"grift_version": "0"},
-            "batches": [
-                {
-                    "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "b"},
-                    "nodes": [
-                        {"entity": {"ref": "p", "entity_type": "page"}, "node": {"slug": "/p"}},
-                        {"entity": {"ref": "old", "entity_type": "landing_page"}, "node": {"name": "L"}},
-                    ],
-                    "edges": [
-                        {
-                            "entity": {"ref": "old-p", "entity_type": "edge"},
-                            "edge": {"from_ref": "old", "to_ref": "p", "edge_type": "USES_LANDING_PAGE"},
-                        },
-                        {
-                            "entity": {"ref": "p-p", "entity_type": "edge"},
-                            "edge": {"from_ref": "p", "to_ref": "p", "edge_type": "USES_PANEL"},
-                        },
-                    ],
-                },
-                {
-                    "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "c"},
-                    "nodes": [{"entity": {"ref": "old", "entity_type": "page"}, "node": {"slug": "/q"}}],
-                    "edges": [
-                        {
-                            "entity": {"ref": "e", "entity_type": "edge"},
-                            "edge": {"from_ref": "old", "to_ref": "old", "edge_type": "USES_PANEL"},
-                        }
-                    ],
-                },
-            ],
-        }
+        doc: dict[str, Any] = _stated(
+            {
+                "metadata": {},
+                "batches": [
+                    {
+                        "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "b"},
+                        "nodes": [
+                            {"entity": {"ref": "p", "entity_type": "page"}, "node": {"slug": "/p"}},
+                            {"entity": {"ref": "old", "entity_type": "landing_page"}, "node": {"name": "L"}},
+                        ],
+                        "edges": [
+                            {
+                                "entity": {"ref": "old-p", "entity_type": "edge"},
+                                "edge": {"from_ref": "old", "to_ref": "p", "edge_type": "USES_LANDING_PAGE"},
+                            },
+                            {
+                                "entity": {"ref": "p-p", "entity_type": "edge"},
+                                "edge": {"from_ref": "p", "to_ref": "p", "edge_type": "USES_PANEL"},
+                            },
+                        ],
+                    },
+                    {
+                        "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "c"},
+                        "nodes": [{"entity": {"ref": "old", "entity_type": "page"}, "node": {"slug": "/q"}}],
+                        "edges": [
+                            {
+                                "entity": {"ref": "e", "entity_type": "edge"},
+                                "edge": {"from_ref": "old", "to_ref": "old", "edge_type": "USES_PANEL"},
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
         stripped_doc, report = strip_retired_types(doc)
         assert report.nodes == (("landing_page", "ref:old"),) and report.edges == 1
         first, second = stripped_doc["batches"]

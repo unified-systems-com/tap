@@ -16,6 +16,15 @@ from typing import Any
 import pytest
 from django.core.management import CommandError, call_command
 
+from tap_grid.grift.upgrade import build_header
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
+
+
 pytestmark = [pytest.mark.spec("req-tap-plugin-load-v0-upsert-7"), pytest.mark.django_db]
 
 _TEST_DIMENSION_SEED = (
@@ -38,37 +47,39 @@ seed = "grift/seed.grift.json"
 
 
 def _probe_document() -> dict[str, Any]:
-    return {
-        "metadata": {"grift_version": "0"},
-        "_reserved": {},
-        "batches": [
-            {
-                "batch_entity": {
-                    "entity_id": _PROBE_BATCH,
-                    "entity_type": "batch",
-                    "name": "vocab_probe seed",
-                    "dimensions": {},
-                },
-                "batch_node": {
-                    "source": "vocab_probe",
-                    "name": "vocab_probe seed",
-                    "description": "One node stamping a core dimension.",
-                },
-                "nodes": [
-                    {
-                        "entity": {
-                            "entity_id": _PROBE_NODE,
-                            "entity_type": "grid_fixtures__constrained_source",
-                            "name": "Probe",
-                            "dimensions": {_CORE_TAP_GRAPH: "probe"},
-                        },
-                        "node": {"name": "Probe", "description": "Stamps tap.graph."},
-                    }
-                ],
-                "edges": [],
-            }
-        ],
-    }
+    return _stated(
+        {
+            "metadata": {},
+            "_reserved": {},
+            "batches": [
+                {
+                    "batch_entity": {
+                        "entity_id": _PROBE_BATCH,
+                        "entity_type": "batch",
+                        "name": "vocab_probe seed",
+                        "dimensions": {},
+                    },
+                    "batch_node": {
+                        "source": "vocab_probe",
+                        "name": "vocab_probe seed",
+                        "description": "One node stamping a core dimension.",
+                    },
+                    "nodes": [
+                        {
+                            "entity": {
+                                "entity_id": _PROBE_NODE,
+                                "entity_type": "grid_fixtures__constrained_source",
+                                "name": "Probe",
+                                "dimensions": {_CORE_TAP_GRAPH: "probe"},
+                            },
+                            "node": {"name": "Probe", "description": "Stamps tap.graph."},
+                        }
+                    ],
+                    "edges": [],
+                }
+            ],
+        }
+    )
 
 
 @pytest.fixture

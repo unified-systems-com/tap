@@ -18,6 +18,13 @@ from tap_auth.actors import BOOTLOADER
 from tap_auth.models import Capability
 from tap_boot.orchestrator import BootError, run_boot
 from tap_boot.profile import BootProfile, FireCollectorStep, RequiredSecret, SeedPluginStep
+from tap_grid.grift.upgrade import build_header
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
 
 # A real registered collector key, fired with no credentials in these tests by mocking
 # the fire op. These are boot-ORCHESTRATOR tests (FireCollectorStep mechanics), not
@@ -510,8 +517,8 @@ class TestCoreVocabulary:
 
         run_boot(None)
         node_id = str(uuid.uuid7())
-        doc = {
-            "metadata": {"grift_version": "0"},
+        doc = _stated({
+            "metadata": {},
             "_reserved": {},
             "batches": [
                 {
@@ -526,7 +533,7 @@ class TestCoreVocabulary:
                     "edges": [],
                 }
             ],
-        }
+        })
         result = grift_import(doc)
         assert result.success, [(i.code, i.path, i.message) for i in result.errors]
 
