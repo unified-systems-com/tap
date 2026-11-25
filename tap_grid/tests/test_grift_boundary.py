@@ -136,6 +136,22 @@ class TestParseBoundary:
         assert result.imported_batches == [] and result.skipped_batches == []
         assert _snapshot() == before
 
+    def test_a_validator_that_runs_out_of_stack_is_a_refusal_not_a_raise(self, monkeypatch) -> None:
+        """The CI runner's path for the 100 000-deep case: the decoder reads it and the schema
+        validator (or the repr in its error) exhausts the stack. The container's shallower stack
+        never gets there, so the overflow is forced here."""
+        from tap_grid.grift import importer
+
+        def overflow(*_args: object, **_kwargs: object) -> None:
+            raise RecursionError("Stack overflow while getting the repr of an object")
+
+        monkeypatch.setattr(importer, "jsonschema_validate", overflow)
+        before = _snapshot()
+        result = grift_import(VALID)
+        assert not result.success
+        assert [(e.code, e.phase, e.path) for e in result.errors] == [("schema_validation_failed", "schema", "$")]
+        assert _snapshot() == before
+
     def test_the_refusal_names_what_the_decoder_could_not_read(self) -> None:
         """The message carries the exception class and the decoder's own position, so a producer can find the byte."""
         result = grift_import(b'{"metadata": {"grift_version": "\xff"}, "_reserved": {}, "batches": []}')

@@ -1631,7 +1631,7 @@ def _validate_removal_section(
                 issues.append(
                     _issue(
                         "duplicate_removal_target",
-                        f"Removal target entity_id {normalized_eid} appears more than once " f"in {sub_path}",
+                        f"Removal target entity_id {normalized_eid} appears more than once in {sub_path}",
                         "preflight",
                         f"{target_path}.entity_id",
                         entity_id=normalized_eid,
@@ -1763,6 +1763,20 @@ def _validate_document_schema(document: dict[str, Any], issues: list[GriftIssue]
     try:
         jsonschema_validate(document, schema)
         return True
+    except RecursionError:
+        # A document deep enough to exhaust the C stack inside the validator, or inside the repr
+        # jsonschema builds for its error (observed on Python 3.14.10 on the CI runner, whose deeper
+        # stack lets the decoder read a 100 000-deep array the container's cannot). Same class of
+        # outcome as the decoder's own give-up: one structured refusal at the root, never a raise.
+        issues.append(
+            _issue(
+                "schema_validation_failed",
+                "GRIFT document schema validation failed: the document is nested too deeply to validate",
+                "schema",
+                "$",
+            )
+        )
+        return False
     except jsonschema.ValidationError as exc:
         message = exc.message
         if exc.validator == "oneOf" and exc.context:
@@ -2819,7 +2833,7 @@ def _check_and_lock_removal_targets(
                 issues.append(
                     _issue(
                         "removal_target_tombstoned_warned",
-                        f"Delete target {target.entity_id} is already tombstoned; " f"on_tombstoned=warn — skipping.",
+                        f"Delete target {target.entity_id} is already tombstoned; on_tombstoned=warn — skipping.",
                         "execution",
                         target.path,
                         entity_id=target.entity_id,
@@ -3654,7 +3668,7 @@ def _execute_grift_batch(
                         issues.append(
                             _issue(
                                 "removal_execution_failed",
-                                f"Purge of {target.kind} {target.entity_id} failed: " f"{type(exc).__name__}: {exc}",
+                                f"Purge of {target.kind} {target.entity_id} failed: {type(exc).__name__}: {exc}",
                                 "execution",
                                 target.path,
                                 entity_id=target.entity_id,
@@ -5435,7 +5449,7 @@ def _grift_import_impl(
             errors=[
                 _issue(
                     "force_reimport_refused_production",
-                    "Force re-import is permitted if and only if DEBUG=True. " "Refusing the invocation.",
+                    "Force re-import is permitted if and only if DEBUG=True. Refusing the invocation.",
                     "preflight",
                     "$",
                 )
@@ -5457,7 +5471,7 @@ def _grift_import_impl(
             errors=[
                 _issue(
                     "sweep_purge_refused_production",
-                    "--purge is permitted if and only if DEBUG=True. " "Refusing the invocation.",
+                    "--purge is permitted if and only if DEBUG=True. Refusing the invocation.",
                     "preflight",
                     "$",
                 )
