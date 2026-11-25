@@ -142,7 +142,7 @@ Initial columns:
 | Last Run | latest finished `CollectionJob.status` | `successful`, `failed`, or `never run` |
 | Last Run At | latest finished `CollectionJob.finished_at` | Empty for never run |
 | Summary | latest finished `CollectionJob.summary` | At-a-glance one-liner describing the last run (success or failure); collector-authored on success, count-derived fallback on failure. Empty for collectors that don't set one. |
-| Action | Administrivia panel POST | Self-test button and Manual Run button |
+| Action | Administrivia panel POST | Self-test button and Manual Run button. Under run configurations both move to one row per configuration, replacing the per-collector Run (`req-tap-cares-runconfig-web-3`) |
 
 The Status column is distinct from run history. A collector can have a successful previous run and still be `misconfigured` today because a secret file was removed, a binary disappeared, or a required upstream is unreachable. Conversely, a collector can be `ready` even if it has never been run.
 
@@ -219,7 +219,7 @@ Status: `Implemented`
 
 Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
-The CARES administrivia surface provides a manual Run action for a collector.
+The CARES administrivia surface provides a manual Run action for a collector. Under run configurations the Run action is per configuration and passes it to `run_collection`; the per-collector button is replaced (`req-tap-cares-runconfig-web`, `spec-tap-cares-run-configuration.md`).
 
 The Run action is a human-triggered POST. It must:
 
@@ -457,7 +457,7 @@ The table auto-refreshes via a quiet HTMX GET poll every 5 seconds, same pattern
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-administrivia-schedule-table-1 | All Schedules Listed | Implemented | Table includes every on-grid `Schedule` node. | |
-| req-tap-cares-administrivia-schedule-table-2 | Target Linked | Implemented | Each row links to the schedule's target `Collector` detail page via the `SCHEDULED_TARGET` edge. | |
+| req-tap-cares-administrivia-schedule-table-2 | Target Linked | Implemented | Each row links to the schedule's target `Collector` detail page via the `SCHEDULED_TARGET` edge. | When the target becomes a `RunConfiguration` (`req-tap-cares-runconfig-selection-1`), the row links to the configuration page. |
 | req-tap-cares-administrivia-schedule-table-3 | Last Fire Summarized | Implemented | Table shows the most recent `ScheduleFire` status, slot, and summary for each schedule. | |
 | req-tap-cares-administrivia-schedule-table-4 | Active Runs Visible | Implemented | Active-run count and `max_active_runs` cap are displayed per row. | |
 | req-tap-cares-administrivia-schedule-table-5 | Row Drilldown | Implemented | Clicking a schedule row opens the schedule detail page. | |

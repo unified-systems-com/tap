@@ -72,7 +72,7 @@ On-grid objects may later store non-secret references such as `aws:prod-readonly
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-secrets-scope-1 | Off-Grid Material | Implemented | Secret values live outside the TAP grid in mounted files. | |
-| req-tap-cares-secrets-scope-2 | References Only | Implemented | On-grid objects may store secret references, but not secret values. | Future collector config/authenticator work. |
+| req-tap-cares-secrets-scope-2 | References Only | Implemented | On-grid objects may store secret references, but not secret values. | First consumer: `RunConfiguration.secret_ref` (`req-tap-cares-runconfig-credential`, Proposed); still no on-grid `SecretReference` model. |
 | req-tap-cares-secrets-scope-3 | No Direct File Reads | Implemented | Collectors and other consumers resolve secrets through tap-cares, not by reading secret files directly. | |
 
 ## Secret Files

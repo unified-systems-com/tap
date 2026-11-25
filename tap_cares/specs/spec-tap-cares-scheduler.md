@@ -55,6 +55,8 @@ The scheduler is a trigger system. It must not:
 - create `HAS_COLLECTION_JOB` edges directly
 - mutate collector output or GRIFT batches
 
+**Run configurations.** A schedule targets one `RunConfiguration`, and the collector or emitter it `CONFIGURES` is what runs, with that configuration and no overrides of the schedule's own (`req-tap-cares-runconfig-selection` in `spec-tap-cares-run-configuration.md`). Where this section says a schedule's target is a `Collector` or an `Emitter`, read the component its target configuration configures. Scheduling a collector's configuration stays gated by the existing `cares.manage_schedules` and `cares.toggle_schedules`; an emitter's by `cares.schedule_emitters` (`req-tap-cares-runconfig-capabilities-3`).
+
 When a schedule fires successfully, it invokes `tap_cares.services.run_collection(...)` for a target `Collector`, or `tap_cares.services.run_emission(emitter, dry_run=False)` for a target `Emitter` (`spec-tap-cares-v0.md` `req-tap-cares-v0-emitter`). The same prohibitions apply to the emitter path: no direct `run_emitter` enqueue, no direct `EmissionJob` or `HAS_EMISSION_JOB` write. A fire whose target is of any other type fails with a `summary` naming the type. For an emitter target, the overlap guard's active runs are the `EmissionJob`s reached through `ScheduleFire --TRIGGERED_EMISSION-->` whose status is `running` (an `EmissionJob` follows the run convention, `spec-tap-cares-run.md`, where `running` covers queued and executing). Whether an emitter run actually sends is the emitter's own arming rule, not the scheduler's (`req-tap-cares-v0-emitter-12`).
 
 Pointing a schedule at an emitter, and changing when it fires, is gated: writing a `SCHEDULED_TARGET` edge whose target is an `Emitter` (creating a schedule or retargeting one), or changing `cron`, `enabled` or `max_active_runs` on a schedule whose target is an `Emitter`, is refused for an actor without the capability `cares.schedule_emitters` (`req-tap-cares-v0-emitter-22`). Collector targets are not gated by it.
@@ -65,11 +67,11 @@ An emitter schedule's overlap count holds the slot of a run abandoned at its dea
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-scheduler-scope-1 | Collector Or Emitter v0 | Proposed | v0 schedules can target `Collector` or `Emitter` nodes and no other CARES capability type; any other target type fails the fire. | Was collector-only; emitter added by Issue# 1357 - tap. |
+| req-tap-cares-scheduler-scope-1 | Collector Or Emitter v0 | Proposed | v0 schedules can target `Collector` or `Emitter` nodes and no other CARES capability type; any other target type fails the fire. | Was collector-only; emitter added by Issue# 1357 - tap. The edge's target becomes the component's `RunConfiguration` (`req-tap-cares-runconfig-selection-1`). |
 | req-tap-cares-scheduler-scope-2 | Uses run_collection | Implemented | Successful scheduled execution invokes `run_collection(...)`; the scheduler does not reach behind that boundary. | See `spec-tap-cares-collector.md` `req-tap-cares-collector-run-collection`. |
 | req-tap-cares-scheduler-scope-3 | No Direct Task Enqueue | Implemented | The scheduler never calls `run_collector.enqueue(...)` directly. | |
 | req-tap-cares-scheduler-scope-4 | Emitter Target Uses run_emission | Proposed | A fire whose target is an `Emitter` invokes `run_emission(emitter, dry_run=False)` and links the result with `TRIGGERED_EMISSION`; its overlap count is that schedule's `running` `EmissionJob`s plus any closed `abandoned` with `failure_kind = deadline_exceeded` whose steady_queue task has not finished. The scheduler never enqueues `run_emitter` or writes `EmissionJob` directly. | Emitter schedules are operator-authored; no GRIFT bundle can target an emitter (`req-tap-cares-v0-emitter-4`). |
-| req-tap-cares-scheduler-scope-5 | Emitter Targets Need cares.schedule_emitters | Proposed | A `SCHEDULED_TARGET` write (create or retarget) whose target is an `Emitter`, or a change to `cron`, `enabled` or `max_active_runs` on a schedule whose target is an `Emitter`, is refused for an actor lacking `cares.schedule_emitters`; the same writes for a `Collector` target are unaffected. | Mirrors `req-tap-cares-v0-emitter-22`. |
+| req-tap-cares-scheduler-scope-5 | Emitter Targets Need cares.schedule_emitters | Proposed | A `SCHEDULED_TARGET` write (create or retarget) whose target is an `Emitter`, or a change to `cron`, `enabled` or `max_active_runs` on a schedule whose target is an `Emitter`, is refused for an actor lacking `cares.schedule_emitters`; the same writes for a `Collector` target are unaffected. | Mirrors `req-tap-cares-v0-emitter-22`. Collector configuration targets keep the existing `cares.manage_schedules` / `cares.toggle_schedules` (`req-tap-cares-runconfig-capabilities-3`). |
 
 ## Minute Tick
 ----
@@ -240,7 +242,8 @@ Status: `Implemented`
 The v0 scheduler graph uses these edges:
 
 ```text
-Schedule --SCHEDULED_TARGET--> Collector | Emitter
+Schedule --SCHEDULED_TARGET--> Collector | Emitter      (as built)
+Schedule --SCHEDULED_TARGET--> RunConfiguration         (req-tap-cares-runconfig-selection, Proposed)
 Schedule --HAS_FIRED--> ScheduleFire
 ScheduleFire --TRIGGERED_JOB--> CollectionJob
 ScheduleFire --TRIGGERED_EMISSION--> EmissionJob
@@ -275,7 +278,7 @@ Collector --HAS_COLLECTION_JOB--> CollectionJob
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-scheduler-edges-1 | SCHEDULED_TARGET Edge | Implemented | tap-cares declares `SCHEDULED_TARGET` from `Schedule` to `Collector` for v0. | Implemented via the `add-edge` skill. Gains `Emitter` as a target type under `req-tap-cares-scheduler-scope-1` (Proposed). |
+| req-tap-cares-scheduler-edges-1 | SCHEDULED_TARGET Edge | Implemented | tap-cares declares `SCHEDULED_TARGET` from `Schedule` to `Collector` for v0. | Implemented via the `add-edge` skill. Gains `Emitter` as a target type under `req-tap-cares-scheduler-scope-1` (Proposed); the target becomes a `RunConfiguration` under `req-tap-cares-runconfig-selection-1` (Proposed). |
 | req-tap-cares-scheduler-edges-2 | One Target Per Schedule | Implemented | v0 requires exactly one `SCHEDULED_TARGET` edge per Schedule. | Multiple targets with ordering are backlog. |
 | req-tap-cares-scheduler-edges-3 | HAS_FIRED Edge | Implemented | tap-cares declares `HAS_FIRED` from `Schedule` to `ScheduleFire`. | |
 | req-tap-cares-scheduler-edges-4 | TRIGGERED_JOB Edge | Implemented | tap-cares declares `TRIGGERED_JOB` from `ScheduleFire` to `CollectionJob`. | Only present for triggered fires. |

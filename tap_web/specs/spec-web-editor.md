@@ -205,6 +205,7 @@ The editor system starts with Django Forms / ModelForms for ordinary fields and 
 - Typical scalar fields should use standard Django form fields and widgets.
 - Structured embedded objects should not force immediate adoption of a full schema-form system.
 - If embedded object editing becomes necessary, TAP may add a focused structured-object widget later.
+- The first is bounded: run configurations get one generic `EditorDescriptor` that builds a typed Django form from a component's `CONFIG_SCHEMA`, restricted at registration to a form-safe JSON Schema subset (`req-tap-cares-runconfig-schema`, `req-tap-cares-runconfig-web` in `tap_cares/specs/spec-tap-cares-run-configuration.md`). It is not a general schema-form system for other types.
 
 #### Development
 This keeps the initial editor stack aligned with TAP's server-rendered Django + HTMX approach and avoids overcommitting to schema-form tooling that often becomes awkward for authored domain objects.
