@@ -488,7 +488,7 @@ def build_header(document: Any, *, using: str = "default", unversioned: bool = F
 
     For the exporter, and for any producer in core or a plugin that builds a document in code.
 
-    TAP-IMPLEMENTS: req-grift-header-versions@0e194216f3f9/78c1febc624b (derivation) — rules 1, 2, 4 and 6: the header a
+    TAP-IMPLEMENTS: req-grift-header-versions@490670565893/78c1febc624b (derivation) — rules 1, 2, 4 and 6: the header a
         document written by this grid carries, with an entry for every type the document carries
         or names.
     """
