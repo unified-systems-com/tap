@@ -44,12 +44,13 @@ Owner rulings 2026-11-25 on Issue# 907 - tap set every rule here; this spec is w
 | req-tap-cares-runconfig-delivery | [Delivery To Code](#delivery-to-code) | Proposed | `CollectorConfig` and `EmitterConfig` always carry the configuration id, revision, settings and secret ref, from one coherent snapshot read under the row lock at run start |
 | req-tap-cares-runconfig-traceability | [The Four-Part Run Record](#the-four-part-run-record) | Proposed | Each job and each batch it writes records the configuration uuid and revision and the component uuid and code version; no node or plugin-table field, no hash |
 | req-tap-cares-runconfig-series | [The Configuration Is The Observation Series](#the-configuration-is-the-observation-series) | Proposed | The previous run, and all state carried between runs, is the same configuration's; a new `secret_ref` starts a new series; emitters carry none |
+| req-tap-cares-runconfig-concurrency | [Declared Overlap, Refused At The Limit](#declared-overlap-refused-at-the-limit) | Proposed | Every component declares `OVERLAP_WITHIN_CONFIGURATION` and `OVERLAP_ACROSS_CONFIGURATIONS`; an optional tighten-only `max_concurrent_runs` per configuration; atomic admission; a run at the limit is refused and recorded, never queued |
 | req-tap-cares-runconfig-capabilities | [Capabilities](#capabilities) | Proposed | `cares.configure`; `cares.run_collectors` widened, `cares.run_emitters`; collector schedules keep `cares.manage_schedules` / `cares.toggle_schedules`, emitter schedules `cares.schedule_emitters`; grid-wide in v0 |
-| req-tap-cares-runconfig-self-test | [Readiness Takes The Configuration](#readiness-takes-the-configuration) | Proposed | Core's `misconfigured` check on every run of either kind; a collector's `self_test(config)` takes the configuration; concurrency stays per component |
+| req-tap-cares-runconfig-self-test | [Readiness Takes The Configuration](#readiness-takes-the-configuration) | Proposed | Core's `misconfigured` check on every run of either kind; a collector's `self_test(config)` takes the configuration |
 | req-tap-cares-runconfig-emitter-arming | [Emitter Arming Binds The Configuration](#emitter-arming-binds-the-configuration) | Proposed | Arming moves to the configuration and binds code identity, revision and secret ref; any change re-arms; seeding never arms |
 | req-tap-cares-runconfig-web | [Web Surfaces](#web-surfaces) | Proposed | Configuration list and page, typed editor, "Not configurable" label, Run per configuration on the CARES landing page, configuration column on job tables |
 | req-tap-cares-runconfig-boot | [Boot Profile Configurations](#boot-profile-configurations) | Proposed | Profile `configurations` section addressed by uuid and validated offline in preflight; plugins seed configurations; step `secrets` stays strings |
-| req-tap-cares-runconfig-backlog | [Deferred Configuration Work](#deferred-configuration-work) | Backlog | One-off configurations, per-configuration concurrency, the configuration reference as a dimension, scoped grants (Issue# 1204 - tap), SIDE_EFFECTS (Issue# 1371 - tap), the rest of Issue# 907 - tap |
+| req-tap-cares-runconfig-backlog | [Deferred Configuration Work](#deferred-configuration-work) | Backlog | One-off configurations, further tighten-only knobs, the configuration reference as a dimension, scoped grants (Issue# 1204 - tap), SIDE_EFFECTS (Issue# 1371 - tap), the rest of Issue# 907 - tap |
 
 ## RunConfiguration Model
 ----
@@ -72,6 +73,7 @@ It is `NATURAL_KEY = KEYLESS` with the reason "authored, not observed" (`req-gri
 | `schema_id` | short text | The `$id` of the `CONFIG_SCHEMA` the settings were validated against; empty when `not_configurable` |
 | `schema_version` | integer, nullable | The `CONFIG_SCHEMA_VERSION` the settings were validated against; null when `not_configurable` |
 | `secret_ref` | short text | The envelope this configuration uses, as `scope:key` (`req-tap-cares-runconfig-credential`); empty when it names none |
+| `max_concurrent_runs` | integer, nullable | Optional tighten-only cap on live runs of this configuration; null means no extra cap (`req-tap-cares-runconfig-concurrency`) |
 | `send_authority`, `armed_emitter_version`, `armed_source_hash`, `armed_revision`, `armed_secret_ref` | | Emitter arming (`req-tap-cares-runconfig-emitter-arming`); written only by `arm_emitter`, empty on a collector's configuration |
 
 The configuration's **revision** is its entity's `version` (`Entity.version`, `tap_grid/models.py`), and each revision is a history row. Edits are ordinary history-tracked writes, recorded with their actor on their batch like any other write; there is no separate audit batch for them. Deletion is the service-layer tombstone, or a GRIFT `deletes` entry in a plugin's seed bundle.
@@ -380,6 +382,7 @@ A run compares itself only with runs of the **same configuration**. Two configur
 - **Revisions of one configuration are one series.** An edit that narrows a configuration's scope is compared with the run before it and still produces `scope_withdrawn` candidates.
 - **A new `secret_ref` starts a new series.** The series boundary is found from the record: a previous run counts only if the revision it recorded names the same `secret_ref` as this run's. Pointing a configuration at another account therefore has no previous run, and never proposes withdrawing what the old account saw.
 - **All state carried from one run to the next is keyed the same way**, by configuration and within it by `secret_ref`, wherever core or a component keeps it.
+- **Full refresh.** A per-configuration full-refresh action, gated by `cares.run_collectors`, starts one run of that configuration that ignores its watermarks, recorded on its job as a full refresh (`req-tap-cares-progressive-watermark-9`).
 - **Emitters.** Core keeps no previous-run comparison or carried state for an emitter: each run is new, retries live inside a run, and delivery identity is the emitter's own (`req-tap-cares-v0-emitter`). An emitter that keeps state of its own between runs keys it by configuration in the same way.
 
 ### Acceptance Criteria
@@ -390,6 +393,44 @@ A run compares itself only with runs of the **same configuration**. Two configur
 | req-tap-cares-runconfig-series-2 | Edits Stay In The Series | Proposed | A run after a revision that narrowed the scope compares with the run before the edit and records `scope_withdrawn` candidates for what fell out of scope. | |
 | req-tap-cares-runconfig-series-3 | New Credential, New Series | Proposed | A run after a revision that changed `secret_ref` has no previous run (`previous: null`) and records no `scope_withdrawn` candidate. | |
 | req-tap-cares-runconfig-series-4 | Emitters Carry None | Proposed | No emission reads an earlier emission's record to decide what it does. | |
+
+## Declared Overlap, Refused At The Limit
+----
+RID: `req-tap-cares-runconfig-concurrency`
+
+Status: `Proposed`
+
+**Declared, no default.** Every collector and emitter class declares two required booleans in code:
+
+```python
+OVERLAP_WITHIN_CONFIGURATION: ClassVar[bool]   # may two runs of one configuration be live at once
+OVERLAP_ACROSS_CONFIGURATIONS: ClassVar[bool]  # may runs of two of its configurations be live at once
+```
+
+Registration refuses a class that lacks either. They replace the Backlog `max_concurrent_runs` field on `Collector` (`req-tap-cares-collector-concurrency`) and, for runs of collectors and emitters, the run convention's "overlap allowed by default" (`req-tap-cares-run-overlap`).
+
+**A tighten-only cap.** `RunConfiguration.max_concurrent_runs` is optional. Unset means no extra cap, and there is no default number. When set it is an integer of 1 or more and can only tighten. It is allowed only where the component declares `OVERLAP_WITHIN_CONFIGURATION = True`; a cap on a configuration whose code forbids overlap is refused at save, because it would be redundant or contradictory.
+
+**Atomic admission.** Admission happens under the same configuration row lock as the run-start snapshot (`req-tap-cares-runconfig-delivery`), and also under the component's row lock, taken second, when the across-configurations rule is checked. Under those locks core counts the live runs and either opens the run or records the refusal. A run is **live** until it is terminal; a run the existing reaper has closed (`req-tap-cares-run-mopup`) is not live, so no new heartbeat, number or time limit is introduced.
+
+**Refused at the limit, never queued.** A run at a limit (within the configuration, across configurations, or the configuration's cap) is refused and the refusal recorded, naming the blocking run, the same way for manual and scheduled runs: its job is written and closed at once as failed with `overlap_refused` and the blocking job's id, no task is enqueued and no component code runs. A scheduled fire at the limit is also recorded `skipped` with a summary naming the blocking run; it is never queued and never caught up later. Nothing is replaced or cancelled, because that would break the configuration's series (`req-tap-cares-runconfig-series`). A schedule's own `max_active_runs` (`req-tap-cares-scheduler-concurrency`) applies as well.
+
+**Manual runs.** A manual Run request carries a client-generated idempotency key; a second request with the same key returns the run the first one opened. The landing page disables Run while the limit is reached and names the blocking run (`req-tap-cares-runconfig-web`).
+
+Further tighten-only knobs (a cap across configurations, rate limits) are Backlog (`req-tap-cares-runconfig-backlog`).
+
+### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-runconfig-concurrency-1 | Both Declared | Proposed | A collector or emitter class lacking `OVERLAP_WITHIN_CONFIGURATION` or `OVERLAP_ACROSS_CONFIGURATIONS` is refused at registration; nothing defaults either. | |
+| req-tap-cares-runconfig-concurrency-2 | Within One Configuration | Proposed | With `OVERLAP_WITHIN_CONFIGURATION = False`, a second run of a configuration with a live run is refused naming the live run; a run of another configuration of the same component is not refused by this rule. | |
+| req-tap-cares-runconfig-concurrency-3 | Across Configurations | Proposed | With `OVERLAP_ACROSS_CONFIGURATIONS = False`, a run of one configuration while another configuration of the same component has a live run is refused naming that run. | |
+| req-tap-cares-runconfig-concurrency-4 | Tighten-Only Cap | Proposed | With `OVERLAP_WITHIN_CONFIGURATION = True` and `max_concurrent_runs = 2`, a third live run is refused; `max_concurrent_runs` of 0, of a non-integer, or on a configuration whose component declares `OVERLAP_WITHIN_CONFIGURATION = False` is refused at save; unset adds no cap. | |
+| req-tap-cares-runconfig-concurrency-5 | Atomic Admission | Proposed | Of two concurrent starts that together exceed a limit, exactly one opens and the other is recorded refused naming it. | |
+| req-tap-cares-runconfig-concurrency-6 | Reaper-Closed Is Not Live | Proposed | A run the reaper has closed does not block admission; no admission rule reads a clock or a new timeout. | |
+| req-tap-cares-runconfig-concurrency-7 | Refused, Recorded, Never Queued | Proposed | A manual run and a scheduled fire at the limit each leave a closed job naming the blocking run, with no task enqueued; the scheduled fire is `skipped` naming it; no later slot runs it, and no live run is cancelled. | |
+| req-tap-cares-runconfig-concurrency-8 | One Run Per Idempotency Key | Proposed | Two manual Run requests carrying the same idempotency key open one run; the landing page shows Run disabled with the blocking run named while the limit is reached. | |
 
 ## Capabilities
 ----
@@ -428,7 +469,7 @@ Before any component code runs, the task body of either kind checks the configur
 
 A collector's self-test hook becomes `self_test(cls, config)`, receiving the same `CollectorConfig` the run will get; the no-argument form is dropped, since there is always a configuration. This retires the "single ambient configuration" of `req-tap-cares-collector-self-test-15`. An emitter has no core self-test hook today (it checks itself in `emit`, `req-tap-cares-v0-emitter`); if one is added it takes the configuration the same way.
 
-Concurrency stays per component in v0 (`req-tap-cares-collector-concurrency`; per run type for emitters, `req-tap-cares-run-overlap`); per-configuration concurrency is Backlog.
+Whether a run may start beside others is `req-tap-cares-runconfig-concurrency`.
 
 ### Acceptance Criteria
 
@@ -473,7 +514,7 @@ Status: `Proposed`
 - **List.** A run configurations list: every configuration of every collector and emitter, with its component, name, description, configurability, schema version and whether it is valid.
 - **Page.** A configuration page: its settings, its secret ref (the reference only, never envelope contents), its revision history, a flag when it is invalid, contradictory or awaits migration, and a table of the runs that used it with the revision each used. A `not_configurable` configuration is labelled "Not configurable", with a line saying the component runs without settings, and offers no edit.
 - **Edit.** Create and edit through the generic editor (`spec-web-editor.md`): one generic `EditorDescriptor` builds a typed Django form from the component's `CONFIG_SCHEMA`, so the editor's typed-first rule holds and raw JSON stays the fallback (`req-web-editor-typed-4`). Save goes through the configuration service and shows its refusals per field.
-- **Run.** On the CARES landing page a Run button per configuration replaces the per-collector Run button (amending `req-tap-cares-administrivia-manual-run`); the Self-test button sits beside a collector configuration's. A not-configurable component's row is its one configuration, labelled "Not configurable". Emitter Run controls are Backlog with the emitter table (`req-tap-cares-v0-emitter-14`); when they land they are per configuration too.
+- **Run.** Each Run request carries a client-generated idempotency key, so a double-click opens one run; while a configuration is at its limit, Run is disabled and names the blocking run (`req-tap-cares-runconfig-concurrency`). A Full refresh action sits beside Run for a configuration whose component uses watermarks. On the CARES landing page a Run button per configuration replaces the per-collector Run button (amending `req-tap-cares-administrivia-manual-run`); the Self-test button sits beside a collector configuration's. A not-configurable component's row is its one configuration, labelled "Not configurable". Emitter Run controls are Backlog with the emitter table (`req-tap-cares-v0-emitter-14`); when they land they are per configuration too.
 - **Job tables.** Each component's job tables, collection and emission, gain a configuration column linking to the configuration page at the revision the run used.
 
 The pages are hosted by the Administrivia plugin (`req-tap-cares-administrivia-ownership`).
@@ -515,7 +556,7 @@ RID: `req-tap-cares-runconfig-backlog`
 Status: `Backlog`
 
 - **One-off run configurations.** A likely shape: clone a configuration, edit it, run it, and mark it temporary or one-off. Not designed.
-- **Per-configuration concurrency.** v0 concurrency is per component (`req-tap-cares-runconfig-self-test`).
+- **Further tighten-only knobs** beside `max_concurrent_runs`, such as a cap across a component's configurations, or rate limits (`req-tap-cares-runconfig-concurrency`).
 - **The configuration reference as a dimension.** The reference a run and its batches carry feels adjacent to a dimension (owner ruling 2026-11-25). It stays a standard column and metadata field for now; whether it should become one is open.
 - **Scoped grants** (Issue# 1204 - tap): grants per component or per configuration, and a per-credential "use" grant.
 - **A collector-side analogue of emitter arming**, and options such as no self-approval (the person who edits a configuration may not arm it) (Issue# 1204 - tap).
@@ -553,5 +594,6 @@ What moves and what stays, under `req-tap-cares-runconfig-credential` (inventory
 
 - **Airbyte connector specification.** A JSON Schema subset its UI renders as a form, `oneOf` discriminated by a constant, `order` and `multiline` hints, and secrets marked in the schema. Borrowed: the subset and the hints. Changed: a secret-marked field is refused here rather than stored, because secrets never enter a configuration.
 - **Airbyte attempts, SLSA provenance, Airflow 3 bundle versions** (surveyed on Issue# 907 - tap, 2026-11-21): the run points at the exact configuration it ran with. That is the id and revision on the job and the batch.
+- **Airbyte and Fivetran** forbid sharing a cursor across connections (data loss or corruption), and Fivetran re-syncs after a permission change: hence per-configuration watermarks and a new series on a new `secret_ref`.
 - **Meltano** keys incremental state by a state ID per pipeline, not per extractor; the series here is the configuration, not the collector.
 - **Issue# 308 - tap.** zizmor's plugin-owned settings node, user-creatable on the `Schedule` precedent, is the shape this generalizes.

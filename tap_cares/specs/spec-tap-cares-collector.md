@@ -31,7 +31,7 @@ Status messages and richer event records remain backlog (`req-tap-cares-collecto
 | req-tap-cares-collector-model | [Collector Model](#collector-model) | Refactoring | On-grid dual-existence capability node; INTERNAL_ONLY |
 | req-tap-cares-collector-registry | [Collector Registry](#collector-registry) | Implemented | Scoped registry mapping collector keys to registered runner code |
 | req-tap-cares-collector-registration | [Collector Registration](#collector-registration) | Proposed | `register_collector(...)` registers the runner read-only at `ready()`; `reconcile_collector_nodes()` materializes the on-grid Collector node under a bound actor |
-| req-tap-cares-collector-concurrency | [Collector Concurrency Policy](#collector-concurrency-policy) | Backlog | Future per-collector maximum simultaneous run count |
+| req-tap-cares-collector-concurrency | [Collector Concurrency Policy](#collector-concurrency-policy) | Deprecated | Superseded by `req-tap-cares-runconfig-concurrency`: declared overlap, a tighten-only per-configuration cap |
 | req-tap-cares-collector-module-class | [Collector Module Class](#collector-module-class) | Implemented | Registered collector classes instantiated by tap-cares |
 | req-tap-cares-collector-packaging | [Collector Packaging](#collector-packaging) | Refactoring | Each collector is a self-contained `collectors/<name>_collector/` package |
 | req-tap-cares-collector-config | [CollectorConfig](#collectorconfig) | Implemented | JSON-safe collector configuration object |
@@ -281,38 +281,20 @@ When the dual-existence pattern lands a second concrete consumer (Emitter, Actio
 ----
 RID: `req-tap-cares-collector-concurrency`
 
-Status: `Backlog`
+Status: `Deprecated`
 
-Each `Collector` should eventually declare how many simultaneous runs of that collector may be active.
-
-Possible future model field:
-
-```python
-max_concurrent_runs = models.PositiveIntegerField(default=1)
-```
-
-This requirement is intentionally Backlog until the collector enqueue path, scheduler behavior, and future API trigger surface are untangled together. Concurrency touches all three: manual runs, scheduled runs, and any future externally-triggered collection request need one authoritative policy.
-
-The likely shape is a field stored on the on-grid `Collector` node. Concurrency would be evaluated per `Collector` entity: before enqueuing a new collection job, tap-cares would count active `CollectionJob` records linked from that collector through `HAS_COLLECTION_JOB` whose status is `RUNNING`. If the active count is greater than or equal to `Collector.max_concurrent_runs`, the service layer would refuse to enqueue another job.
-
-The expected default is `1` because most collectors are safer as singleton execution paths until a concrete need for parallel collection exists. The FedRAMP 20x KSI catalog collector should remain singleton; there is no useful reason to refresh the same catalog source multiple times at once.
-
-`max_concurrent_runs` must be a positive integer. `0` is not a disablement mechanism; capability enable/disable is separately tracked as backlog work in `spec-tap-cares-v0.md`.
-
-When implemented, the service layer must be authoritative. Administrative pages may disable or guard Run buttons based on this field, but UI behavior is advisory. Manual runs, future scheduler-triggered runs, and any API-triggered runs must all route through the same concurrency guard.
-
-This requirement intentionally scopes v0 concurrency to one `Collector` node, and run configurations do not change that: two configurations of one collector share its limit (`req-tap-cares-runconfig-self-test`; per-configuration concurrency is `req-tap-cares-runconfig-backlog`). Today `collector_registry` is unique, so a collector node and a registered runner are effectively one-to-one. If future per-instance configuration allows multiple Collector nodes to share one runner, a later requirement should decide whether concurrency remains per node or moves to a shared `concurrency_key` / runner-level policy.
+**Superseded by `req-tap-cares-runconfig-concurrency`** (`spec-tap-cares-run-configuration.md`, owner ruling 2026-11-25). There is no `max_concurrent_runs` field on `Collector` and no default of 1. Every collector and emitter declares `OVERLAP_WITHIN_CONFIGURATION` and `OVERLAP_ACROSS_CONFIGURATIONS` in code, with no default; a configuration may add an optional, tighten-only `max_concurrent_runs`; admission is atomic in `run_collection` / `run_emission` under the configuration and component row locks; and a run at a limit is refused and recorded naming the blocking run, never queued. The criteria below are kept to show where each moved.
 
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-collector-concurrency-1 | Field Declared | Backlog | `Collector` declares a positive integer `max_concurrent_runs` field with default `1`. | |
-| req-tap-cares-collector-concurrency-2 | Positive Value Required | Backlog | `max_concurrent_runs` must be greater than or equal to `1`; `0` is invalid. | Disablement remains a separate backlog concern. |
-| req-tap-cares-collector-concurrency-3 | Service-Layer Guard | Backlog | `run_collection()` refuses to create/enqueue a new job when linked `RUNNING` jobs meet or exceed the collector limit. | |
-| req-tap-cares-collector-concurrency-4 | UI Reflects Policy | Backlog | Administrivia surfaces disable, guard, or explain manual Run actions when the concurrency limit is already reached. | Service layer remains authoritative. |
-| req-tap-cares-collector-concurrency-5 | KSI Singleton | Backlog | The FedRAMP 20x KSI collector is configured for one simultaneous run. | |
-| req-tap-cares-collector-concurrency-6 | Future Shared Runner Scope Deferred | Backlog | Any runner-level or shared-key concurrency across multiple Collector nodes is deferred until per-instance collector configuration exists. | |
+| req-tap-cares-collector-concurrency-1 | Field Declared | Deprecated | `Collector` declares a positive integer `max_concurrent_runs` field with default `1`. | Moved: the declaration and the optional per-configuration cap, `req-tap-cares-runconfig-concurrency-1`, `-4`. |
+| req-tap-cares-collector-concurrency-2 | Positive Value Required | Deprecated | `max_concurrent_runs` must be greater than or equal to `1`; `0` is invalid. | Moved: `req-tap-cares-runconfig-concurrency-4` (an integer of 1 or more, tighten-only). |
+| req-tap-cares-collector-concurrency-3 | Service-Layer Guard | Deprecated | `run_collection()` refuses to create/enqueue a new job when linked `RUNNING` jobs meet or exceed the collector limit. | Moved: `req-tap-cares-runconfig-concurrency-2`, `-3`, `-5`, `-7`. |
+| req-tap-cares-collector-concurrency-4 | UI Reflects Policy | Deprecated | Administrivia surfaces disable, guard, or explain manual Run actions when the concurrency limit is already reached. | Moved: `req-tap-cares-runconfig-concurrency-8`, `req-tap-cares-runconfig-web`. |
+| req-tap-cares-collector-concurrency-5 | KSI Singleton | Proposed | The FedRAMP 20x KSI collector declares `OVERLAP_WITHIN_CONFIGURATION = False` and `OVERLAP_ACROSS_CONFIGURATIONS = False`. | Now the KSI collector's declaration (`req-tap-cares-runconfig-concurrency`); there is no useful reason to refresh one catalog source twice at once. |
+| req-tap-cares-collector-concurrency-6 | Future Shared Runner Scope Deferred | Deprecated | Any runner-level or shared-key concurrency across multiple Collector nodes is deferred until per-instance collector configuration exists. | Moved: `OVERLAP_ACROSS_CONFIGURATIONS`, `req-tap-cares-runconfig-concurrency-3`. |
 
 ## Collector Module Class
 ----
@@ -766,7 +748,7 @@ def run_collection(
     0. Open the one batch that carries this run's own lifecycle writes
        (req-tap-cares-collector-run-collection-10); a caller-supplied batch
        scope is not inherited for them.
-    1. Enforce concurrency policy (req-tap-cares-collector-concurrency, Backlog).
+    1. Enforce concurrency policy (req-tap-cares-runconfig-concurrency, Proposed).
     2. Create a CollectionJob node via _create_node_internal
        (since CollectionJob is INTERNAL_ONLY), persisting `manual_run` and
        `manual_run_source` on the row.
@@ -845,7 +827,7 @@ That same check runs at the **other** end too, and the ordering is the substance
 
 #### Concurrency
 
-`run_collection` is the authoritative point for collector concurrency enforcement. When `req-tap-cares-collector-concurrency` lands, the guard fires here — before CollectionJob creation, so a rejected request never produces a grid mutation. Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
+`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here — before CollectionJob creation, so a rejected request never produces a grid mutation. Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
 
 #### Acceptance Criteria
 
