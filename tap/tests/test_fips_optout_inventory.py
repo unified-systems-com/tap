@@ -115,7 +115,7 @@ def test_an_undispositioned_opt_out_fails_the_gate(tmp_path) -> None:
 @pytest.mark.spec("req-fips-optout-inventory-2")
 def test_a_reviewed_opt_out_is_recorded_not_failed(tmp_path, monkeypatch) -> None:
     _pyfile(tmp_path, "cachekey.py", "import hashlib\nhashlib.md5(b'x', usedforsecurity=False)\n")
-    reviewed = Disposition("*/cachekey.py::", FIPS_OPT_OUT, Boundary.NON_SECURITY_USE, "cache key", "rid")
+    reviewed = Disposition("*/cachekey.py::", FIPS_OPT_OUT, Boundary.NON_SECURITY_USE, "cache key", "rid", count=1)
     monkeypatch.setattr(crypto_bom, "FIPS_OPT_OUTS", (reviewed,))
     [finding] = crypto_bom._optout_findings([tmp_path])
     assert finding.boundary is Boundary.NON_SECURITY_USE and not finding.is_failure
@@ -133,12 +133,38 @@ def test_a_review_covers_one_function_not_the_whole_file(tmp_path, monkeypatch) 
         "def sign_session(r):\n    return md5(r, usedforsecurity=False)\n",
     )
     reviewed = Disposition(
-        "django/utils/cache.py::set_response_etag", FIPS_OPT_OUT, Boundary.NON_SECURITY_USE, "etag", "rid"
+        "django/utils/cache.py::set_response_etag", FIPS_OPT_OUT, Boundary.NON_SECURITY_USE, "etag", "rid", count=1
     )
     monkeypatch.setattr(crypto_bom, "FIPS_OPT_OUTS", (reviewed,))
     by_line = {f.artifact.rsplit(":", 1)[1]: f for f in crypto_bom._optout_findings([tmp_path])}
     assert not by_line["3"].is_failure, "the reviewed function stays reviewed"
     assert by_line["5"].is_failure and "sign_session" in by_line["5"].detail, "a new function is a new finding"
+
+
+@pytest.mark.spec("req-fips-optout-inventory-2")
+def test_an_opt_out_added_inside_a_reviewed_function_fails(tmp_path, monkeypatch) -> None:
+    (tmp_path / "django" / "utils").mkdir(parents=True)
+    _pyfile(
+        tmp_path / "django" / "utils",
+        "cache.py",
+        "from hashlib import md5\n"
+        "def set_response_etag(r):\n"
+        "    Q = 'provider=default'\n"
+        "    return md5(r, usedforsecurity=False)\n",
+    )
+    reviewed = Disposition(
+        "django/utils/cache.py::set_response_etag", FIPS_OPT_OUT, Boundary.NON_SECURITY_USE, "etag", "rid", count=1
+    )
+    monkeypatch.setattr(crypto_bom, "FIPS_OPT_OUTS", (reviewed,))
+    findings = crypto_bom._optout_findings([tmp_path])
+    assert len(findings) == 2 and all(f.is_failure for f in findings)
+    assert "2 opt-outs" in findings[0].detail and "1 were reviewed" in findings[0].detail
+
+
+@pytest.mark.spec("req-fips-optout-inventory-1")
+def test_a_long_string_is_still_parsed(tmp_path) -> None:
+    _pyfile(tmp_path, "long.py", "Q = 'fips=no,' + 'a' * 0\nR = '" + "fips=no," + "a" * 200 + "'\n")
+    assert [f for f in crypto_bom._optout_findings([tmp_path]) if f.is_failure]
 
 
 @pytest.mark.spec("req-fips-optout-inventory-2")
@@ -149,6 +175,7 @@ def test_every_reviewed_opt_out_carries_a_reason() -> None:
         path, sep, scope = d.artifact.partition("::")
         assert sep and scope and ":" not in path, f"name a file and its function, never a line: {d.artifact}"
         assert len(d.rationale.split()) >= 8, f"{d.artifact}: a reason, not a label"
+        assert isinstance(d.count, int) and d.count >= 1, f"{d.artifact}: state how many opt-outs were reviewed"
 
 
 @pytest.mark.spec("req-fips-optout-inventory-2")

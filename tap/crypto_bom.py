@@ -442,7 +442,7 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
 _OPTOUT_PREFILTER = (b"usedforsecurity", b"fips", b"provider")
 
 
-def _optout_finding(artifact: str, scope: str, how: str) -> Finding:
+def _optout_finding(artifact: str, scope: str, how: str) -> tuple[Finding, Disposition | None]:
     """An explicit FIPS opt-out, classified against the reviewed FIPS_OPT_OUTS table (first match).
 
     A disposition names a file AND the enclosing function (`<path>::<qualname>`), never a whole
@@ -453,7 +453,7 @@ def _optout_finding(artifact: str, scope: str, how: str) -> Finding:
         None,
     )
     if disp is None:
-        return Finding(
+        unreviewed = Finding(
             artifact,
             FIPS_OPT_OUT,
             None,
@@ -462,7 +462,8 @@ def _optout_finding(artifact: str, scope: str, how: str) -> Finding:
             "a security function (tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
             None,
         )
-    return Finding(artifact, FIPS_OPT_OUT, disp.boundary, disp.rationale, disp.rid)
+        return unreviewed, None
+    return Finding(artifact, FIPS_OPT_OUT, disp.boundary, disp.rationale, disp.rid), disp
 
 
 def _is_literal_true(node: ast.expr) -> bool:
@@ -475,7 +476,7 @@ class _OptOutVisitor(ast.NodeVisitor):
     def __init__(self, spath: str) -> None:
         self.spath = spath
         self.stack: list[str] = []
-        self.findings: list[Finding] = []
+        self.findings: list[tuple[Finding, Disposition | None]] = []
 
     def _scoped(self, node: ast.AST) -> None:
         self.stack.append(getattr(node, "name", ""))
@@ -499,7 +500,7 @@ class _OptOutVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
-        if isinstance(node.value, str) and len(node.value) < 120:
+        if isinstance(node.value, str):
             if node.value == "usedforsecurity":
                 self._add(node, "the 'usedforsecurity' key built dynamically")
             elif is_optout_propquery(node.value):
@@ -516,6 +517,7 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
     here; the ELF layer covers bundled crypto, and the system libraries TAP loads pass no property
     query of their own."""
     findings: list[Finding] = []
+    classified: list[tuple[Finding, Disposition | None]] = []
     seen: set[Path] = set()
     for root in roots:
         if not root.exists():
@@ -557,8 +559,32 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
                 continue
             visitor = _OptOutVisitor(spath)
             visitor.visit(tree)
-            findings.extend(visitor.findings)
+            classified.extend(visitor.findings)
+    findings.extend(_over_count_fails(classified))
     return findings
+
+
+def _over_count_fails(classified: list[tuple[Finding, Disposition | None]]) -> list[Finding]:
+    """A reviewed scope holding MORE opt-outs than its disposition's `count` fails every one of them:
+    the extra one is unreviewed, and which of them it is cannot be told from the scope alone."""
+    seen: dict[int, int] = {}
+    for _, disp in classified:
+        if disp is not None:
+            seen[id(disp)] = seen.get(id(disp), 0) + 1
+    out: list[Finding] = []
+    for finding, disp in classified:
+        reviewed = disp.count if disp is not None else None
+        if disp is not None and reviewed is not None and seen[id(disp)] > reviewed:
+            finding = replace(
+                finding,
+                boundary=None,
+                detail=f"{seen[id(disp)]} opt-outs in {disp.artifact} where {reviewed} were reviewed — an opt-out "
+                "was added inside a reviewed function. Review it and update the entry's count "
+                "(tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
+                rid=None,
+            )
+        out.append(finding)
+    return out
 
 
 def _dependency_source_roots() -> tuple[Path, ...]:

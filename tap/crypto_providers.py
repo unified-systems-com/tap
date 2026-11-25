@@ -134,6 +134,10 @@ class Disposition:
     #: True for the OpenSSL-routed entries: `boundary` is a placeholder and the real disposition comes
     #: from `system_openssl_boundary()` at classification time (lazy — see there).
     derived: bool = False
+    #: Opt-out entries only (FIPS_OPT_OUTS): how many opt-outs the reviewed scope holds. One more than
+    #: reviewed fails every finding in that scope, so an opt-out added inside an already-reviewed
+    #: function is a new review, not an inherited approval.
+    count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -379,6 +383,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "MD5 shortens long index and constraint names during migrate, on every boot. An identifier, "
         "not a protection (assessment record §5.1).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/utils/cache.py::set_response_etag",
@@ -387,6 +392,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "An MD5 ETag over a response body the server already holds: a change detector, not a "
         "protection. Unreached today (no ConditionalGetMiddleware).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/utils/cache.py::_generate_cache_key",
@@ -395,6 +401,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "An MD5 cache key over the request URL and varying headers: a lookup key, not a protection. "
         "Unreached today (no cache_page or per-site cache).",
         OPTOUT_RID,
+        count=2,
     ),
     Disposition(
         "django/utils/cache.py::_generate_cache_header_key",
@@ -403,6 +410,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "An MD5 cache key for the stored header list of a cached URL: a lookup key, not a protection. "
         "Unreached today (no cache_page or per-site cache).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/core/cache/utils.py::make_template_fragment_key",
@@ -411,6 +419,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "A cache lookup key for a template fragment, computed from its name and vary-on values. "
         "Unreached today (no {% cache %} tag).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/core/cache/backends/filebased.py::FileBasedCache._key_to_file",
@@ -419,6 +428,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "The file-based cache names each entry's file by an MD5 of its key, a lookup path only. "
         "Unreached today (TAP uses DatabaseCache).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/contrib/staticfiles/storage.py::HashedFilesMixin.file_hash",
@@ -427,6 +437,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "Hashed static file names for cache busting, a content fingerprint in a URL that protects "
         "nothing. Unreached today (not ManifestStaticFilesStorage).",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "django/test/runner.py::Shuffler._hash_text",
@@ -434,6 +445,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         Boundary.NON_SECURITY_USE,
         "The test runner hashes test names to derive a shuffle order: test tooling, never on a serving path.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "lark/load_grammar.py::sha256_digest",
@@ -442,6 +454,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "lark hashes grammar text to key its parser cache; the function's own docstring names FIPS "
         "systems as the reason for the flag. A cache key, not a protection.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "coverage/misc.py::Hasher.__init__",
@@ -450,6 +463,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "coverage.py's Hasher fingerprints measurement settings to key its data: a development tool, "
         "never on a serving path.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "coverage/data.py::hash_for_data_file",
@@ -457,6 +471,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         Boundary.NON_SECURITY_USE,
         "coverage.py hashes a data file to tell combined runs apart: a development tool, never on a serving path.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "coverage/files.py::flat_rootname",
@@ -465,6 +480,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "coverage.py hashes a source directory into a flat report file name: a development tool, "
         "never on a serving path.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "coverage/lcovreport.py::line_hash",
@@ -473,6 +489,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "The LCOV file format specifies an MD5 per source line; coverage.py writes it: a development "
         "tool, never on a serving path.",
         OPTOUT_RID,
+        count=1,
     ),
     Disposition(
         "requests/auth.py::HTTPDigestAuth.build_digest_header*",
@@ -483,6 +500,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "in TAP or any installed plugin constructs HTTPDigestAuth, and the source scan fails any that "
         "does (REACHED_OPT_OUT_TRIPWIRES).",
         OPTOUT_RID,
+        count=5,
     ),
 )
 
