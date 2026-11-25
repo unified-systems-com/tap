@@ -425,10 +425,14 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
 _OPTOUT_PREFILTER = (b"usedforsecurity", b"fips", b"provider")
 
 
-def _optout_finding(artifact: str, how: str) -> Finding:
-    """An explicit FIPS opt-out, classified against the reviewed FIPS_OPT_OUTS table (first match)."""
+def _optout_finding(artifact: str, scope: str, how: str) -> Finding:
+    """An explicit FIPS opt-out, classified against the reviewed FIPS_OPT_OUTS table (first match).
+
+    A disposition names a file AND the enclosing function (`<path>::<qualname>`), never a whole
+    file: a dependency upgrade that adds an opt-out to a different function of an already-reviewed
+    file is a new, unclassified finding, not an inherited approval."""
     disp = next(
-        (d for d in FIPS_OPT_OUTS if fnmatch.fnmatch(artifact, d.artifact) or fnmatch.fnmatch(artifact, f"*/{d.artifact}")),
+        (d for d in FIPS_OPT_OUTS if fnmatch.fnmatch(scope, d.artifact) or fnmatch.fnmatch(scope, f"*/{d.artifact}")),
         None,
     )
     if disp is None:
@@ -436,21 +440,64 @@ def _optout_finding(artifact: str, how: str) -> Finding:
             artifact,
             FIPS_OPT_OUT,
             None,
-            f"{how} — an explicit FIPS opt-out with no reviewed disposition. With the default provider "
-            "loaded it can reach ANY algorithm; record why it is not a security function "
-            "(tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
+            f"{how} in {scope.rsplit('::', 1)[-1] or '<module>'} — an explicit FIPS opt-out with no reviewed "
+            "disposition. With the default provider loaded it can reach ANY algorithm; record why it is not "
+            "a security function (tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
             None,
         )
     return Finding(artifact, FIPS_OPT_OUT, disp.boundary, disp.rationale, disp.rid)
 
 
+def _is_literal_true(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+class _OptOutVisitor(ast.NodeVisitor):
+    """Collect opt-outs with the qualified name of the function or class that encloses each one."""
+
+    def __init__(self, spath: str) -> None:
+        self.spath = spath
+        self.stack: list[str] = []
+        self.findings: list[Finding] = []
+
+    def _scoped(self, node: ast.AST) -> None:
+        self.stack.append(getattr(node, "name", ""))
+        self.generic_visit(node)
+        self.stack.pop()
+
+    visit_FunctionDef = _scoped
+    visit_AsyncFunctionDef = _scoped
+    visit_ClassDef = _scoped
+
+    def _add(self, node: ast.AST, how: str) -> None:
+        scope = f"{self.spath}::{'.'.join(self.stack)}"
+        self.findings.append(_optout_finding(f"{self.spath}:{getattr(node, 'lineno', 0)}", scope, how))
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for kw in node.keywords:
+            # Anything but a literal True: `False`, `0`, `bool(0)`, a variable. A `**mapping` that may
+            # carry the key is caught by the string-constant rule below.
+            if kw.arg == "usedforsecurity" and not _is_literal_true(kw.value):
+                self._add(node, f"usedforsecurity={ast.unparse(kw.value)}")
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and len(node.value) < 120:
+            if node.value == "usedforsecurity":
+                self._add(node, "the 'usedforsecurity' key built dynamically")
+            elif OPTOUT_PROPQUERY_RE.match(node.value):
+                self._add(node, f"property query {node.value!r}")
+
+
 def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
     """Inventory every explicit FIPS opt-out in Python source under `roots` (req-fips-optout-inventory):
-    a call passing `usedforsecurity=False`, and a string constant that is an OpenSSL property query
-    stepping outside `fips=yes` (`-fips`, `fips=no`, `provider=default`). Unlike the import/weak-digest
-    scan this one also covers installed THIRD-PARTY source, because a dependency's opt-out reaches the
-    same `default` provider TAP's would. Native code is out of reach here; the ELF layer covers bundled
-    crypto, and the system libraries TAP loads pass no property query of their own."""
+    a `usedforsecurity=` argument that is anything but a literal `True`, the `"usedforsecurity"` key
+    spelled as a string (a `**{...}` call or `getattr` route), and a string constant that is an
+    OpenSSL property query stepping outside `fips=yes` (`-fips`, `fips=no`, `provider=default`).
+    Unlike the import/weak-digest scan this one also covers installed THIRD-PARTY source, because a
+    dependency's opt-out reaches the same `default` provider TAP's would. Native code is out of reach
+    here; the ELF layer covers bundled crypto, and the system libraries TAP loads pass no property
+    query of their own."""
     findings: list[Finding] = []
     seen: set[Path] = set()
     for root in roots:
@@ -461,7 +508,8 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
             if path.suffix != ".py" or path in seen:
                 continue
             seen.add(path)
-            if _skip_source_file(path):
+            # The scanner names the keyword it looks for; it is not an opt-out.
+            if _skip_source_file(path) or str(path).endswith("/tap/crypto_bom.py"):
                 continue
             try:
                 data = path.read_bytes()
@@ -473,19 +521,9 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
                 tree = ast.parse(data)
             except SyntaxError, ValueError:
                 continue
-            spath = str(path)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call):
-                    for kw in node.keywords:
-                        if kw.arg == "usedforsecurity" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
-                            findings.append(_optout_finding(f"{spath}:{node.lineno}", "usedforsecurity=False"))
-                elif (
-                    isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
-                    and len(node.value) < 120
-                    and OPTOUT_PROPQUERY_RE.match(node.value)
-                ):
-                    findings.append(_optout_finding(f"{spath}:{node.lineno}", f"property query {node.value!r}"))
+            visitor = _OptOutVisitor(str(path))
+            visitor.visit(tree)
+            findings.extend(visitor.findings)
     return findings
 
 
