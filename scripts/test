@@ -26,6 +26,10 @@
 #   scripts/test --fast-relevant --plugins a,b [--no-core]   ALSO run those installed plugin suites
 #                           (`auto` = the suites this diff can reach: imports + declared pins).
 #                           (--no-core: skip the core walk, just those suites).
+#   scripts/test --spec-readers  The SPECS-TIER lane (tap#1373): only the core test files that read
+#                           the specs (tap/spec_reader_tests.txt, measured by tap.spec_read_audit),
+#                           no plugin suites, no corpus — exactly what CI's core_ci runs for a
+#                           specs-tier diff (core-ci.yml `specs_only`). The promote picks it.
 #   scripts/test --stop     Stop the run holding this stack's pytest lock (whole process group).
 #   scripts/test <args...>  Extra args pass through to pytest, e.g.
 #                           scripts/test tap_auth -k login
@@ -65,6 +69,12 @@ if [[ "${1:-}" == "--gryphon" ]]; then
   shift
 elif [[ "${1:-}" == "--fast" ]]; then
   gryphon_mode="off"
+  shift
+elif [[ "${1:-}" == "--spec-readers" ]]; then
+  # The specs-tier lane (tap#1373, req-dev-validation-product-line-lanes-7): mirrors CI's narrowing
+  # for a specs-only diff. A spec-text diff cannot red a test that never reads a spec, and the list
+  # of tests that do is measured on every other core_ci line, so this is the server's own set.
+  gryphon_mode="spec-readers"
   shift
 elif [[ "${1:-}" == "--fast-relevant" ]]; then
   # The promote lane (#254): fast, EXCEPT the corpus runs when the diff touches
@@ -131,6 +141,9 @@ if [[ "$gryphon_mode" == "on" ]]; then
 elif [[ "$gryphon_mode" == "off" ]]; then
   run_gryphon=0
   echo "gryphon corpus SKIPPED (--fast): local accelerator, not a gate." >&2
+elif [[ "$gryphon_mode" == "spec-readers" ]]; then
+  run_gryphon=0
+  echo "gryphon corpus SKIPPED (--spec-readers): the specs tier runs only the spec-reader core files, as CI does." >&2
 elif [[ "$gryphon_mode" == "" && ! -t 1 ]]; then
   # Non-interactive with NO explicit mode (piped / CI) — never auto-skip a gate.
   # Fail toward correctness. --fast-relevant falls through: it asked for the
@@ -177,7 +190,7 @@ pytest_args=(-n "${TAP_TEST_JOBS:-auto}" --dist worksteal)
 if [[ "${TAP_TEST_REUSE_DB:-0}" == "1" ]]; then
   # Only the scoped promote lane and focused runs may reuse DBs: the full, --gryphon, --fast and bare
   # lanes are gates (or the promote's fallback authority) and always build a fresh schema.
-  if [[ "$gryphon_mode" == "relevance" || $# -gt 0 ]]; then
+  if [[ "$gryphon_mode" == "relevance" || "$gryphon_mode" == "spec-readers" || $# -gt 0 ]]; then
     pytest_args+=(--reuse-db)
   else
     echo "scripts/test: TAP_TEST_REUSE_DB ignored — this lane is a gate and builds a fresh test DB." >&2
@@ -212,7 +225,9 @@ fi
 # corpus when the relevance gate chose it, and no other plugin suite. A plugin's own suite belongs
 # to its repo's CI (plugins float; core_ci is fixtures-only), so running every installed one on a
 # core promote cost tens of minutes in the shadow of the server gate. The other lanes keep theirs.
-if [[ "$gryphon_mode" == "relevance" ]]; then
+if [[ "$gryphon_mode" == "spec-readers" ]]; then
+  lane_args+=(--no-plugins --core-files tap/spec_reader_tests.txt)
+elif [[ "$gryphon_mode" == "relevance" ]]; then
   only_slugs=(${extra_plugins[@]+"${extra_plugins[@]}"})
   [[ "$run_gryphon" -eq 1 ]] && only_slugs+=("$GRYPHON_CORPUS_SLUG")
   if [[ ${#only_slugs[@]} -gt 0 ]]; then
