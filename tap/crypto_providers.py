@@ -325,21 +325,46 @@ WEAK_DIGEST_CALLS: frozenset[str] = frozenset({"md5"})
 OPTOUT_RID = "req-fips-optout-inventory"
 #: The provider name every opt-out finding carries.
 FIPS_OPT_OUT = "fips-opt-out"
-#: The property-query clauses that step outside `default_properties = fips=yes`, compared with all
-#: whitespace removed (OpenSSL ignores it).
-_OPTOUT_CLAUSES = frozenset({"-fips", "fips=no", "provider=default"})
+#: Characters a property-query clause may contain (OpenSSL property syntax: names, `-`, `?`, `=`,
+#: `!=`, and quoted values). A string with anything else is prose, not a query.
+_PROPQUERY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_.=?!'\"")
+#: Values that AFFIRM the fips property; any other comparison steps outside `fips=yes`.
+_FIPS_AFFIRMED = frozenset({"yes", "true", "1"})
+#: Providers a `provider=` clause may name without leaving the FIPS boundary.
+_BOUNDARY_PROVIDERS = frozenset({"fips", "base"})
+
+
+def _clause_opts_out(clause: str) -> bool:
+    """One normalised clause: does it remove, negate or bypass `fips=yes`?"""
+    body = clause.removeprefix("?")  # an optional clause opts out exactly as a required one does
+    if body.startswith("-"):  # `-fips` removes the requirement
+        return body[1:] == "fips"
+    name, op, value = body, "", ""
+    for candidate in ("!=", "="):
+        if candidate in body:
+            name, value = body.split(candidate, 1)
+            op = candidate
+            break
+    value = value.strip("'\"")
+    if name == "fips":
+        return not (op == "" or (op == "=" and value in _FIPS_AFFIRMED))
+    if name == "provider":
+        return op == "!=" or (op == "=" and value not in _BOUNDARY_PROVIDERS)
+    return False
 
 
 def is_optout_propquery(text: str) -> bool:
-    """True if `text` is an OpenSSL property query with a clause that opts out of `fips=yes`.
+    """True if `text` is an OpenSSL property query with a clause that steps outside `fips=yes`.
 
-    Clause by clause over the whole string, so prose that merely mentions FIPS is not a query: every
-    comma-separated clause must look like a property clause (`name`, `-name`, `name=value`), and at
-    least one must be an opt-out. A plain split, not a regex (no backtracking on long input)."""
-    clauses = ["".join(c.split()) for c in text.split(",")]
-    if not all(c and all(ch.isalnum() or ch in "-_.=?" for ch in c) for c in clauses):
+    Every clause is parsed rather than matched against known spellings, so `-fips`, `fips=no`,
+    `fips!=yes`, `?fips=no` and `fips="no"` are all caught, as is a `provider` clause naming anything
+    but `fips` or `base` (`provider=default`, `provider=legacy`, `provider!=fips`). Each comma-
+    separated clause must look like a property clause, so prose that merely mentions FIPS is not a
+    query. A plain split, not a regex (no backtracking on long input)."""
+    clauses = ["".join(c.split()).lower() for c in text.split(",")]
+    if not all(c and set(c) <= _PROPQUERY_CHARS for c in clauses):
         return False
-    return any(c.lower() in _OPTOUT_CLAUSES for c in clauses)
+    return any(_clause_opts_out(c) for c in clauses)
 
 
 #: Every reviewed opt-out: an fnmatch glob over `<path>::<enclosing qualname>` and the reason the
