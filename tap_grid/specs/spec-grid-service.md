@@ -503,7 +503,7 @@ set on CallerContext itself" direction in `spec-tap-auth-v0.md`
 | req-grid-service-pipeline-context-7 | Unbound Context Fails Closed | Implemented | `require_caller_context()` raises `NoCallerContextError` when no context is bound, rather than returning an invented or anonymous identity. | A route outside the middleware is a wiring bug — loud. |
 
 #### Future
-Add role, permission scope, or realm context to CallerContext when the authorization specification is written.
+Add role, permission scope, or dimension scope to CallerContext when the authorization specification is written.
 
 
 ## Status Vocabulary

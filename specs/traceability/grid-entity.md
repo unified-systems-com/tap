@@ -21,7 +21,7 @@
 | `req-grid-entity-event-time` | In Development | Verified | `derive` | `req-grid-entity-event-time-39` |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
 | `req-grid-entity-model-version` | In Development | Verified | `complete_start_checks`, `register_type` | `req-grid-entity-model-version-23` |
-| `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18`, `req-grid-entity-natural-key-26`, `req-grid-entity-natural-key-27` |
+| `req-grid-entity-natural-key` | Proposed | Verified | `resolve_identity` | `req-grid-entity-natural-key-13`, `req-grid-entity-natural-key-14`, `req-grid-entity-natural-key-15`, `req-grid-entity-natural-key-16`, `req-grid-entity-natural-key-17`, `req-grid-entity-natural-key-18`, `req-grid-entity-natural-key-26`, `req-grid-entity-natural-key-27`, `req-grid-entity-natural-key-28`, `req-grid-entity-natural-key-29`, `req-grid-entity-natural-key-30`, `req-grid-entity-natural-key-31`, `req-grid-entity-natural-key-32` |
 | `req-grid-entity-resolve` | Implemented | Tested | — | `req-grid-entity-resolve-2`, `req-grid-entity-resolve-3`, `req-grid-entity-resolve-4` |
 | `req-grid-entity-spine` | Implemented | Tested | — | `req-grid-entity-spine-4` |
 | `req-grid-entity-spine-copies` | In Development | Verified | `install`, `refuse_spine_copies` | `req-grid-entity-spine-copies-6` |

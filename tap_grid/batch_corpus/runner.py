@@ -38,6 +38,7 @@ from tap_grid.batch_corpus.loader import Scenario
 from tap_grid.cascade_corpus.runner import BuildError, event_counts, event_delta, labelled, snapshot
 from tap_grid.grift import grift_import
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Batch, BatchEvent, BatchStatus, Edge, Entity
 from tap_grid.registry import get_model_class
 from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node, get_node
@@ -181,7 +182,10 @@ def _document(scenario: Scenario, imp: dict[str, Any], built: Built) -> dict[str
                 ]
             container[section] = out
         batches.append(container)
-    return {"metadata": {"grift_version": "0"}, "_reserved": {}, "batches": batches}
+    document: dict[str, Any] = {"_reserved": {}, "batches": batches}
+    # The header this grid writes (req-grift-header-versions rule 12): format "1" with the spine and
+    # every carried type at the versions applied here, so the import reads it with no upgrade.
+    return {"metadata": build_header(document), **document}
 
 
 def _import(scenario: Scenario, imp: dict[str, Any], built: Built) -> Observed:

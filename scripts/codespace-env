@@ -179,7 +179,7 @@ if [[ -n "$identity" ]]; then
       complete=true
       break
     fi
-    (( $(date +%s) >= deadline )) && break
+    (( $(date +%s) > deadline )) && break  # strictly past, as for the owner wait below
     sleep 1
   done
   if [[ "$complete" == true ]]; then
@@ -254,7 +254,9 @@ while :; do
                      "${api}/users/${owner_login}" 2>/dev/null | _extract_id || true)"
   fi
   [[ -n "$owner_id" || -z "${GITHUB_TOKEN:-}${owner_login}" ]] && break
-  (( $(date +%s) >= owner_deadline )) && break
+  # Strictly past: `date +%s` truncates, so `>=` could stop up to a second short of the wait
+  # (measured 2.4 s of a 3 s wait in CI on PR# 1356 - tap). `>` guarantees the full wait.
+  (( $(date +%s) > owner_deadline )) && break
   sleep 2
 done
 

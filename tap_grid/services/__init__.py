@@ -455,6 +455,7 @@ def create_node(
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
     batch_name: str | None = None,
     batch_description: str | None = None,
+    dimensions: Mapping[str, Any] | None = None,
 ) -> WriteResult:
     """Create a new domain object of the given type.
 
@@ -466,11 +467,15 @@ def create_node(
         result_mode: Controls WriteResult detail level.
         batch_name: Name for the batch this call mints (see ``write_batch``).
         batch_description: Description for that batch (see ``write_batch``).
+        dimensions: The new entity's dimensions, by name; a type keyed on a dimension
+            (``req-grid-entity-natural-key-28``) needs its value here.
 
     Returns:
         WriteResult with entity_id populated on success.
     """
-    op = WriteOperation(verb="create_node", type_slug=type_slug, payload=payload)
+    op = WriteOperation(
+        verb="create_node", type_slug=type_slug, payload=payload, dimensions=dict(dimensions) if dimensions else None
+    )
     batch_result = write_batch(
         [op],
         caller_context=caller_context,
@@ -1633,6 +1638,7 @@ def resolve_identity(
     *,
     caller_context: CallerContext | None = None,
     provisional: str | uuid.UUID | None = None,
+    dimensions: Mapping[str, Any] | None = None,
 ) -> IdentityResolution:
     """Find the live row a source object already has, or assign it a fresh id — under a lock.
 
@@ -1664,12 +1670,18 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@571d730b546d/31edfb02d83c (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@2974abe9ab69/d7f0d1307933 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
     """
-    from tap_grid.natural_key import Keyless, constituting_properties, identity_lock_key, normalized_key_values
+    from tap_grid.natural_key import (
+        AmbiguousIdentity,
+        Keyless,
+        constituting_properties,
+        identity_lock_key,
+        normalized_key_values,
+    )
     from tap_grid.registry import get_model_class
 
     try:
@@ -1694,12 +1706,22 @@ def resolve_identity(
             "so resolution and the write it precedes commit together."
         )
     # The type's own spelling before the lock, so two spellings of one new key take one lock (tap#1265).
-    properties = normalized_key_values(model_cls, constituting_properties(declared, payload))
-    key = identity_lock_key(type_slug, properties)
+    # A dimension entry reads the writer's dimension map, as the create would store it (-28).
+    key_dimensions = model_cls.writer_key_dimensions(dimensions)
+    try:
+        properties = normalized_key_values(model_cls, constituting_properties(declared, payload, key_dimensions))
+        key = identity_lock_key(type_slug, properties)
+    except LookupError as exc:  # an undeclared or ambiguous key dimension (-29)
+        raise ServiceValidationError(str(exc)) from exc
     if key is not None:
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
-    row = model_cls.find_existing(**properties)
+    try:
+        row = model_cls.find_existing(**properties)
+    except (LookupError, ValueError) as exc:
+        if isinstance(exc, AmbiguousIdentity):
+            raise
+        raise ServiceValidationError(str(exc)) from exc  # an ineligible key dimension (-29)
     if row is None:
         return IdentityResolution(entity_id=assigned, found=False, key=key)
     return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
@@ -1745,7 +1767,14 @@ def find_by_natural_key(
         raise ServiceValidationError(
             f"{type_slug} is found by exactly {list(model_cls.NATURAL_KEY)}; got {sorted(properties)}."
         )
-    row = model_cls.find_existing(**properties)
+    from tap_grid.natural_key import AmbiguousIdentity
+
+    try:
+        row = model_cls.find_existing(**properties)
+    except (LookupError, ValueError) as exc:
+        if isinstance(exc, AmbiguousIdentity):
+            raise
+        raise ServiceValidationError(str(exc)) from exc  # an undeclared or ineligible key dimension (-29)
     return None if row is None else row.entity_id
 
 

@@ -844,8 +844,12 @@ needs a fallback branch because every package draws the edge.
 * **A. Do the dependency links become edges?** DECIDED 2026-10-15 (George): yes for now, provisional; see `req-cicd-sbom-28`. The documents hold 458 `dependsOn` links on arm64 (356 apk to apk, 88 pypi to pypi, 14 npm to npm) and 420 on amd64 (318 apk) (ran). The options and recommendation first written here (none; a new edge; pypi/npm only) are superseded.
 * **B. Who owns the SBOM node and the parser?** DECIDED 2026-10-15 (George): `computing_core`; see `req-cicd-sbom-24`. The recommendation first written here, a new `*_core` plugin depending downward on `computing_core`, is superseded, and no new plugin is created.
 * **C. Which assetTypes after providers, and from which source?** Decision 1 lists candidates; none is chosen. Recommendation: stop at providers until a consumer asks.
-* **D. What is the host for an image?** `host` is keyed `(realm, stable_id)` and a container is a host with `kind: container`; an image digest is not a running container. Needs a ruling on a `realm` for an image
-  digest before `INSTALLS_PACKAGE` is drawn.
+* **D. What is the host for an image?** Settled by computing_core: an image digest is a `host` whose
+  `tap.computing.host_type` dimension is `oci-digest` and whose `stable_id` is the sha256 digest
+  ([computing-core-tap `spec-computing-core-v0.md`](https://github.com/unified-systems-com/computing-core-tap/blob/main/specs/spec-computing-core-v0.md),
+  host requirement 4). `host` is keyed on that dimension and `stable_id`; the earlier
+  `realm` field is retired (unified-systems-com/tap#1355). What remains open is only drawing
+  `INSTALLS_PACKAGE` from that host.
 
 #### Acceptance Criteria
 

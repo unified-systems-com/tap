@@ -43,9 +43,16 @@ from tap_grid.cascade_corpus.timing import (
     wait_until_blocked_by,
 )
 from tap_grid.grift import grift_import
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Batch, BatchEventType, Edge, Entity
 from tap_grid.services import create_node, delete_node, replace_node, resolve_identity
 from tap_web.models import Panel
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
 
 pytestmark = [pytest.mark.batch_corpus, pytest.mark.django_db(transaction=True)]
 
@@ -95,7 +102,7 @@ def _doc_with(
     }
     if deletes is not None:
         container["deletes"] = deletes
-    return {"metadata": {"grift_version": "0"}, "_reserved": {}, "batches": [container]}
+    return _stated({"metadata": {}, "_reserved": {}, "batches": [container]})
 
 
 def _edge(edge_id: str, from_id: str, to_id: str) -> dict[str, Any]:

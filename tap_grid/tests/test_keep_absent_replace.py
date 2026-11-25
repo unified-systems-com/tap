@@ -17,9 +17,17 @@ from tap_plugin.grid_fixtures.models.pg_node import PgNode
 
 from tap_grid.caller_context import CallerContext
 from tap_grid.grift import grift_import
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Edge
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import create_node, replace_edge, replace_node, write_batch
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
+
 
 _TYPE = "grid_fixtures__node"
 _OBSERVED = "2026-01-01T00:00:00Z"
@@ -137,18 +145,26 @@ class TestKeepAbsentReplace:
 
 
 def _doc(batch_id: str, nodes: list[dict[str, Any]], edges: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return {
-        "metadata": {"grift_version": "0"},
-        "_reserved": {},
-        "batches": [
-            {
-                "batch_entity": {"entity_id": batch_id, "entity_type": "batch", "name": "b", "dimensions": {}},
-                "batch_node": {"name": "b", "description": "", "description_json": None, "source": "t", "metadata": {}},
-                "nodes": nodes,
-                "edges": edges or [],
-            }
-        ],
-    }
+    return _stated(
+        {
+            "metadata": {},
+            "_reserved": {},
+            "batches": [
+                {
+                    "batch_entity": {"entity_id": batch_id, "entity_type": "batch", "name": "b", "dimensions": {}},
+                    "batch_node": {
+                        "name": "b",
+                        "description": "",
+                        "description_json": None,
+                        "source": "t",
+                        "metadata": {},
+                    },
+                    "nodes": nodes,
+                    "edges": edges or [],
+                }
+            ],
+        }
+    )
 
 
 def _node(entity_id: str, node: dict[str, Any]) -> dict[str, Any]:

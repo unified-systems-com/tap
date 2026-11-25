@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/19ccbbcfd82d (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/01d48705f3ec (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-GRIFT_VERSION = "0"
+GRIFT_VERSION = "1"
 IMPORT_MODE = "upsert"
 _GRIFT_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "grift-document.schema.json"
 
@@ -3842,7 +3842,8 @@ def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
     declared = model_cls.NATURAL_KEY
     if declared is None or isinstance(declared, Keyless):
         return None
-    return identity_lock_key(model_cls.ENTITY_TYPE, key_values(model_cls, node_obj["node"]))
+    dimensions = model_cls.writer_key_dimensions(node_obj["entity"].get("dimensions"))
+    return identity_lock_key(model_cls.ENTITY_TYPE, key_values(model_cls, node_obj["node"], dimensions))
 
 
 def _take_identity_locks(keys: Iterable[str]) -> None:
@@ -3961,7 +3962,7 @@ def _resolve_ref_identities(
     row to this one — sequential batches, not a collision. Resolving searches the live grid
     and reports what it finds, so a batch with a ref node first authorises ``grid.read``.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/2f191f4abd80 (enforcement) — a ref
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@2f2ad067d7b6/83c95c586449 (enforcement) — a ref
         node's search of the live grid runs only after grid.read is authorised (acceptance -5).
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
@@ -4004,7 +4005,11 @@ def _resolve_ref_identities(
         path = f"{batch_path}.nodes[{node_idx}].entity.ref"
         try:
             resolution = resolve_identity(  # TAP-AUTHZ-COV: gated by grift_import + grid.read above
-                entity_type, node_obj["node"], caller_context=ctx, provisional=provisional
+                entity_type,
+                node_obj["node"],
+                caller_context=ctx,
+                provisional=provisional,
+                dimensions=node_obj["entity"].get("dimensions"),
             )
         except ServiceValidationError as exc:
             issues.append(
@@ -4216,10 +4221,11 @@ def _batch_node_keys(batch_container: dict[str, Any]) -> dict[str, list[str]]:
     batch_keys: dict[str, list[str]] = {}
     for node_obj in batch_container.get("nodes", []):
         entity_type = node_obj["entity"]["entity_type"]
-        model_cls = get_model_class(entity_type)
+        model_cls = cast(type[BaseModel], get_model_class(entity_type))
         if not isinstance(getattr(model_cls, "NATURAL_KEY", None), tuple):
             continue
-        key = identity_lock_key(entity_type, key_values(model_cls, node_obj["node"]))
+        dimensions = model_cls.writer_key_dimensions(node_obj["entity"].get("dimensions"))
+        key = identity_lock_key(entity_type, key_values(model_cls, node_obj["node"], dimensions))
         if key is not None:
             batch_keys.setdefault(key, []).append(node_obj["entity"]["entity_id"])
     return batch_keys

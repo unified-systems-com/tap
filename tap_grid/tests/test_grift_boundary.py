@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from tap_grid.grift import grift_import
+from tap_grid.grift.upgrade import REQUIRE_VERSIONS_ENV, build_header
 from tap_grid.models import Batch, BatchEvent, Edge, Entity
 from tap_grid.tests.test_grift import (
     _batch_container,
@@ -159,7 +160,7 @@ class TestParseBoundary:
         """Ruling 4: bytes decode as ``json.loads`` auto-detects them; the hooks refuse nothing legal."""
         result = grift_import(raw)
         assert result.success, result.errors
-        assert result.grift_version == "0"
+        assert result.grift_version == "1"
 
 
 ROOT_SHAPES: list[tuple[str, str, str]] = [
@@ -180,7 +181,7 @@ class TestRootShape:
 
 
 # ---------------------------------------------------------------------------
-# Ruling 3 — the document version is pinned to "0"
+# Ruling 3 — the document version is pinned; "0" is refused by default (req-grift-header-versions rule 12)
 # ---------------------------------------------------------------------------
 
 
@@ -195,7 +196,7 @@ class TestGriftVersionPinned:
         assert result.grift_version == version, "the result still reports what the file declared"
         # The refusal names the version it was given and the versions it reads.
         assert repr(version) in result.errors[0].message
-        assert "'0'" in result.errors[0].message and "'1'" in result.errors[0].message
+        assert "'1'" in result.errors[0].message
 
     def test_a_non_string_version_is_the_schema_s_refusal(self) -> None:
         before = _snapshot()
@@ -203,10 +204,14 @@ class TestGriftVersionPinned:
         doc["metadata"]["grift_version"] = 0
         _refused(grift_import(doc), "schema_validation_failed", "schema", "$.metadata.grift_version", before)
 
-    def test_version_0_imports(self) -> None:
-        result = grift_import(
-            _minimal_doc([_batch_container(_batch_entity_id(), nodes=[_character_node(_node_entity_id())])])
-        )
+    def test_version_0_is_refused_unless_asked_for(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(REQUIRE_VERSIONS_ENV, raising=False)
+        before = _snapshot()
+        doc = _minimal_doc([_batch_container(_batch_entity_id(), nodes=[_character_node(_node_entity_id())])])
+        doc["metadata"] = {"grift_version": "0"}
+        _refused(grift_import(doc), "unsupported_grift_version", "preflight", "$.metadata.grift_version", before)
+        monkeypatch.setenv(REQUIRE_VERSIONS_ENV, "0")
+        result = grift_import(doc)
         assert result.success, result.errors
         assert result.counts.nodes_imported == 1
 
@@ -282,6 +287,7 @@ class TestOneSpellingPerId:
         )
         # SCHEMA_LINK needs a dual_endpoint target; SYMMETRIC_LINK joins two constrained sources.
         doc["batches"][0]["edges"][0]["edge"]["edge_type"] = "SYMMETRIC_LINK__grid_fixtures"
+        doc["metadata"] = build_header(doc, unversioned=True)
         result = grift_import(doc)
         assert result.success, result.errors
         assert result.counts.edges_imported == 1 and result.counts.edges_skipped == 0

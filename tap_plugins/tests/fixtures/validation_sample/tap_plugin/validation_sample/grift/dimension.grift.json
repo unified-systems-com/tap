@@ -1,6 +1,11 @@
 {
   "metadata": {
-    "grift_version": "0"
+    "grift_version": "1",
+    "spine_version": 1,
+    "type_versions": {
+      "batch": 1,
+      "dimension": 1
+    }
   },
   "_reserved": {},
   "batches": [

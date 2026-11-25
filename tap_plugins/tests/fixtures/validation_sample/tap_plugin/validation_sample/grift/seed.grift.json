@@ -1,6 +1,12 @@
 {
   "metadata": {
-    "grift_version": "0"
+    "grift_version": "1",
+    "spine_version": 1,
+    "type_versions": {
+      "SAMPLE_LINK__validation_sample": 1,
+      "batch": 1,
+      "validation_sample__sample_node": 1
+    }
   },
   "_reserved": {},
   "batches": [

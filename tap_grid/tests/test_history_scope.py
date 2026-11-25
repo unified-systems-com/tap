@@ -24,10 +24,17 @@ from tap_plugin.grid_fixtures.models import ConstrainedSource
 
 from tap_grid.grid_tables import history_tables, read_guarded_tables
 from tap_grid.grift.importer import grift_import
+from tap_grid.grift.upgrade import build_header
 from tap_grid.history import HistoryNotTracked, get_history_service, is_history_enabled
 from tap_grid.models import BaseModel, Batch, BatchEvent, Dimension, Edge, Entity, Keystone, Search
 from tap_grid.registry import _entity_model_registry
 from tap_grid.services import create_node, delete_node, patch_node, purge_node
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
 
 UNTRACKED_TYPE = "tap_grid__history_scope_untracked"
 UNTRACKED_TABLE = "tap_grid__history_scope_untracked"
@@ -255,8 +262,8 @@ def test_grift_import_and_re_import(untracked_table: Any) -> None:
     node_id = str(uuid.uuid4())
 
     def doc(status: str) -> dict[str, Any]:
-        return {
-            "metadata": {"grift_version": "0"},
+        return _stated({
+            "metadata": {},
             "_reserved": {},
             "batches": [
                 {
@@ -281,7 +288,7 @@ def test_grift_import_and_re_import(untracked_table: Any) -> None:
                     "edges": [],
                 }
             ],
-        }
+        })
 
     first = grift_import(doc("one"))
     assert first.success, first.errors
@@ -341,8 +348,8 @@ def test_grift_sweep_purge_on_an_untracked_type(untracked_table: Any, settings: 
     node_id = str(uuid.uuid4())
 
     def doc(nodes: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
-            "metadata": {"grift_version": "0"},
+        return _stated({
+            "metadata": {},
             "_reserved": {},
             "batches": [
                 {
@@ -352,7 +359,7 @@ def test_grift_sweep_purge_on_an_untracked_type(untracked_table: Any, settings: 
                     "edges": [],
                 }
             ],
-        }
+        })
 
     node = {
         "entity": {"entity_id": node_id, "entity_type": UNTRACKED_TYPE, "name": "zeta", "dimensions": {}},

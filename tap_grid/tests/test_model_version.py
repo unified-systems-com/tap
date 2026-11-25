@@ -377,6 +377,8 @@ class TestAgreement:
             }
         ]
         document = _minimal_doc([_batch_container(str(uuid.uuid7()), nodes=nodes)])
+        # The record is stated at the declared version, so no upgrade runs: the refusal is the catalog's.
+        document["metadata"]["type_versions"][_TYPE] = 2
         result = grift_import(document)
         assert not result.success
         codes = [issue.code for issue in result.errors]
