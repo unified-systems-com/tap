@@ -25,6 +25,7 @@ fails-closed rather than missing it.
 from __future__ import annotations
 
 import functools
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -49,6 +50,12 @@ class Boundary(StrEnum):
     #: Present in the artifact but never executes a security operation (e.g. a Go binary linked with
     #: crypto/tls from the stdlib that only ever setuids). Must carry a reachability argument.
     UNREACHED = "unreached"
+    #: An explicit FIPS opt-out (`usedforsecurity=False`, or a `-fips`/`fips=no`/`provider=default`
+    #: property query) reviewed as NOT a security function: the non-approved algorithm it reaches
+    #: protects nothing (FIPS 140-3 IG 2.4.A). With the `default` provider loaded beside `fips`, an
+    #: opt-out can reach ANY algorithm, so each one is inventoried and needs this recorded reason
+    #: (req-fips-optout-inventory, decision D21). Not a failure; an undispositioned opt-out is.
+    NON_SECURITY_USE = "non-security-use"
     #: Non-validated crypto inside the operational boundary — the gate FAILS on this. It is recorded
     #: (not merely absent) so a known-bad provider is tracked with its remediation, not silently green.
     MUST_FIX = "must-fix"
@@ -314,6 +321,102 @@ NONVALIDATED_CRYPTO_IMPORTS: dict[str, str] = {
 #: a hash, so it is NOT flagged. `usedforsecurity=False` (the auditor-recognized non-security signal)
 #: is exempt.
 WEAK_DIGEST_CALLS: frozenset[str] = frozenset({"md5"})
+
+# --- FIPS opt-out inventory (req-fips-optout-inventory, decision D21) --------------------------------
+OPTOUT_RID = "req-fips-optout-inventory"
+#: The provider name every opt-out finding carries.
+FIPS_OPT_OUT = "fips-opt-out"
+#: An OpenSSL property query that steps outside `default_properties = fips=yes`. Matched against whole
+#: string constants, clause by clause, so prose that merely mentions FIPS is not a query.
+OPTOUT_PROPQUERY_RE = re.compile(r"^\s*(?:[^,]*,\s*)*(?:-fips|fips\s*=\s*no|provider\s*=\s*default)\s*(?:,[^,]*)*$")
+
+#: Every reviewed opt-out: an fnmatch glob over the finding's `<path>:<line>` artifact and the reason
+#: the algorithm it reaches is not protecting anything. Path globs, never line numbers, so an upstream
+#: edit that moves a call does not churn this table; a NEW file with an opt-out is a new finding.
+FIPS_OPT_OUTS: tuple[Disposition, ...] = (
+    Disposition(
+        "django/db/backends/utils.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "names_digest(): MD5 shortens long index and constraint names during migrate, on every boot. "
+        "An identifier, not a protection (assessment record §5.1).",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "django/utils/cache.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "ETag and cache-key digests: a change detector and a lookup key over content the server "
+        "already holds, protecting nothing. Unreached today (no ConditionalGetMiddleware or cache_page).",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "django/core/cache/utils.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "make_template_fragment_key(): a cache lookup key for a template fragment. Unreached today "
+        "(no {% cache %} tag).",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "django/core/cache/backends/filebased.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "The file-based cache names each entry's file by an MD5 of its key, a lookup path only. "
+        "Unreached today (TAP uses DatabaseCache).",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "django/contrib/staticfiles/storage.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "Hashed static file names for cache busting, a content fingerprint in a URL that protects "
+        "nothing. Unreached today (not ManifestStaticFilesStorage).",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "django/test/runner.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "The test runner hashes test names to derive a shuffle order: test tooling, never on a "
+        "serving path.",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "lark/load_grammar.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "lark hashes grammar text to key its parser cache; the function's own docstring names FIPS "
+        "systems as the reason for the flag. A cache key, not a protection.",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "coverage/*.py:*",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "coverage.py fingerprints data files and source paths, and LCOV's format requires MD5 line "
+        "hashes: a development tool, never on a serving path.",
+        OPTOUT_RID,
+    ),
+    Disposition(
+        "requests/auth.py:*",
+        FIPS_OPT_OUT,
+        Boundary.UNREACHED,
+        "HTTPDigestAuth computes MD5/SHA-1 with usedforsecurity=False inside an AUTHENTICATION protocol, "
+        "which IS a security use, so this is not a non-security disposition. It is unreached: nothing "
+        "in TAP or any installed plugin constructs HTTPDigestAuth, and the source scan fails any that "
+        "does (REACHED_OPT_OUT_TRIPWIRES).",
+        OPTOUT_RID,
+    ),
+)
+
+#: Names whose use in TAP or plugin source would REACH an opt-out that serves a security function.
+#: The opt-out itself sits in a dependency and is dispositioned UNREACHED above; touching the name
+#: turns it into a must-fix finding instead of a silent non-security claim.
+REACHED_OPT_OUT_TRIPWIRES: dict[str, str] = {
+    "HTTPDigestAuth": "requests' HTTP Digest auth hashes credentials with MD5/SHA-1 under "
+    "usedforsecurity=False — a security use FIPS mode does not permit",
+}
 
 # --- WASM-runtime tripwire (req-fips-crypto-bom-source) ---------------------------------------------
 # WebAssembly crypto cannot execute without a host runtime, and in Python that runtime is a package —

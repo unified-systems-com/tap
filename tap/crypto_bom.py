@@ -37,6 +37,8 @@ from typing import Any
 from tap.boot_naming import profile_path
 from tap.crypto_providers import (
     DISPOSITIONS,
+    FIPS_OPT_OUT,
+    FIPS_OPT_OUTS,
     JVM_ARTIFACT_SUFFIXES,
     JVM_EXECUTABLES,
     JVM_RUNTIME_FILES,
@@ -44,6 +46,9 @@ from tap.crypto_providers import (
     KNOWN_NONFIPS_DISTRIBUTIONS,
     KNOWN_WASM_DISTRIBUTIONS,
     NONVALIDATED_CRYPTO_IMPORTS,
+    OPTOUT_PROPQUERY_RE,
+    OPTOUT_RID,
+    REACHED_OPT_OUT_TRIPWIRES,
     SIGNATURES,
     WASM_RUNTIME_IMPORTS,
     WEAK_DIGEST_CALLS,
@@ -399,7 +404,95 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
                     f = _weak_digest_finding(spath, node)
                     if f is not None:
                         findings.append(f)
+                if isinstance(node, (ast.Name, ast.Attribute, ast.alias)):
+                    name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else node.name
+                    why = REACHED_OPT_OUT_TRIPWIRES.get(name)
+                    if why is not None:
+                        findings.append(
+                            Finding(
+                                f"{spath}:{getattr(node, 'lineno', 0)}",
+                                f"{FIPS_OPT_OUT}-reached",
+                                Boundary.MUST_FIX,
+                                f"uses {name}: {why}. Remove it, or run this plugin outside FIPS mode.",
+                                OPTOUT_RID,
+                            )
+                        )
     return findings
+
+
+#: Bytes that must appear in a file before it is worth parsing for an opt-out — keeps the dependency
+#: scan to the handful of files that can contain one (a full AST parse of site-packages is not cheap).
+_OPTOUT_PREFILTER = (b"usedforsecurity", b"fips", b"provider")
+
+
+def _optout_finding(artifact: str, how: str) -> Finding:
+    """An explicit FIPS opt-out, classified against the reviewed FIPS_OPT_OUTS table (first match)."""
+    disp = next(
+        (d for d in FIPS_OPT_OUTS if fnmatch.fnmatch(artifact, d.artifact) or fnmatch.fnmatch(artifact, f"*/{d.artifact}")),
+        None,
+    )
+    if disp is None:
+        return Finding(
+            artifact,
+            FIPS_OPT_OUT,
+            None,
+            f"{how} — an explicit FIPS opt-out with no reviewed disposition. With the default provider "
+            "loaded it can reach ANY algorithm; record why it is not a security function "
+            "(tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
+            None,
+        )
+    return Finding(artifact, FIPS_OPT_OUT, disp.boundary, disp.rationale, disp.rid)
+
+
+def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
+    """Inventory every explicit FIPS opt-out in Python source under `roots` (req-fips-optout-inventory):
+    a call passing `usedforsecurity=False`, and a string constant that is an OpenSSL property query
+    stepping outside `fips=yes` (`-fips`, `fips=no`, `provider=default`). Unlike the import/weak-digest
+    scan this one also covers installed THIRD-PARTY source, because a dependency's opt-out reaches the
+    same `default` provider TAP's would. Native code is out of reach here; the ELF layer covers bundled
+    crypto, and the system libraries TAP loads pass no property query of their own."""
+    findings: list[Finding] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        files = (root,) if root.is_file() else root.rglob("*.py")
+        for path in files:
+            if path.suffix != ".py" or path in seen:
+                continue
+            seen.add(path)
+            if _skip_source_file(path):
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+            if not any(marker in data for marker in _OPTOUT_PREFILTER):
+                continue
+            try:
+                tree = ast.parse(data)
+            except SyntaxError, ValueError:
+                continue
+            spath = str(path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    for kw in node.keywords:
+                        if kw.arg == "usedforsecurity" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                            findings.append(_optout_finding(f"{spath}:{node.lineno}", "usedforsecurity=False"))
+                elif (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and len(node.value) < 120
+                    and OPTOUT_PROPQUERY_RE.match(node.value)
+                ):
+                    findings.append(_optout_finding(f"{spath}:{node.lineno}", f"property query {node.value!r}"))
+    return findings
+
+
+def _dependency_source_roots() -> tuple[Path, ...]:
+    """Every installed distribution's Python source: the venv's site-packages (which includes the
+    plugin namespace; `_optout_findings` de-duplicates files reached twice)."""
+    return tuple((_VENV_ROOT / "lib").glob("python*/site-packages"))
 
 
 def _wasm_dist_findings(dist_names: Iterable[str]) -> list[Finding]:
@@ -433,6 +526,7 @@ def scan(
     libcrypto_roots: Iterable[Path] = (),
     jvm_roots: Iterable[Path] = (),
     source_roots: Iterable[Path] = (),
+    optout_roots: Iterable[Path] = (),
 ) -> Report:
     """Scan the given roots and distributions, returning a Report. This is the reusable core — the
     same call scans core's environment or a single plugin's closure, only the roots differ."""
@@ -451,6 +545,7 @@ def scan(
     report.findings.extend(_distribution_findings(dist_names))
     report.findings.extend(_jvm_findings(jvm_roots, dist_names))
     report.findings.extend(_source_findings(source_roots))
+    report.findings.extend(_optout_findings(optout_roots))
     report.findings.extend(_wasm_dist_findings(dist_names))
     return report
 
@@ -467,6 +562,7 @@ def core_report() -> Report:
         libcrypto_roots=_LIBCRYPTO_ROOTS,
         jvm_roots=(_VENV_ROOT, *_BINARY_ROOTS, *_LIBCRYPTO_ROOTS),
         source_roots=(*core_src, *_plugin_source_roots()),
+        optout_roots=(*core_src, *_dependency_source_roots()),
     )
 
 
@@ -540,6 +636,7 @@ def scan_plugin(plugin_root: Path, dist_names: Iterable[str] = (), extra_native_
         libcrypto_roots=(root,),
         jvm_roots=(root, *extra),
         source_roots=(root,),
+        optout_roots=(root,),
     )
 
 
@@ -758,6 +855,7 @@ def format_report(report: Report) -> str:
     order = {
         None: 0,
         Boundary.MUST_FIX: 1,
+        Boundary.NON_SECURITY_USE: 2,
         Boundary.UNREACHED: 2,
         Boundary.OUT_OF_BOUNDARY: 3,
         Boundary.FIPS_MODE_UNVALIDATED_BUILD: 4,
