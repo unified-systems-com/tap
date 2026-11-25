@@ -74,9 +74,9 @@ It is `NATURAL_KEY = KEYLESS` with the reason "authored, not observed" (`req-gri
 | `schema_version` | integer, nullable | The `CONFIG_SCHEMA_VERSION` the settings were validated against; null when `not_configurable` |
 | `secret_ref` | short text | The envelope this configuration uses, as `scope:key` (`req-tap-cares-runconfig-credential`); empty when it names none |
 | `max_concurrent_runs` | integer, nullable | Optional tighten-only cap on live runs of this configuration; null means no extra cap (`req-tap-cares-runconfig-concurrency`) |
-| `send_authority`, `armed_emitter_version`, `armed_source_hash`, `armed_revision`, `armed_secret_ref` | | Emitter arming (`req-tap-cares-runconfig-emitter-arming`); written only by `arm_emitter`, empty on a collector's configuration |
+| `send_authority`, `armed_emitter_version`, `armed_source_hash`, `armed_history_id`, `armed_version`, `armed_secret_ref` | | Emitter arming (`req-tap-cares-runconfig-emitter-arming`); written only by `arm_emitter`, empty on a collector's configuration |
 
-The configuration's **revision** is a history row's version, derived: its 1-based position among that entity's history rows ordered by (`history_date`, `history_id`), which equals `Entity.version` under the invariant of `req-grid-history-version` (`tap_grid/specs/spec-grid-history.md`). A run pins, and arming binds, configuration id plus that version, looked up that way; no new column is added. Edits are ordinary history-tracked writes, recorded with their actor on their batch like any other write; there is no separate audit batch for them. Deletion is the service-layer tombstone, or a GRIFT `deletes` entry in a plugin's seed bundle.
+The configuration's **revision** is the exact history row read, pinned by its simple_history `history_id` (an assigned row id), with `Entity.version` recorded beside it for display (owner ruling 2026-11-25). A run, its batches and emitter arming pin `history_id`, and every lookup ("what did this run use", arming's binding) goes by it. A time-travel ordinal, version N, maps to the Nth history row ordered by `history_id` alone, never by `history_date`; it equals `Entity.version` under the invariant of `req-grid-history-version` (`tap_grid/specs/spec-grid-history.md`). Edits are ordinary history-tracked writes, recorded with their actor on their batch like any other write; there is no separate audit batch for them. Deletion is the service-layer tombstone, or a GRIFT `deletes` entry in a plugin's seed bundle.
 
 ### Acceptance Criteria
 
@@ -84,7 +84,7 @@ The configuration's **revision** is a history row's version, derived: its 1-base
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-runconfig-model-1 | One Generic Type | Proposed | `tap_cares` declares `RunConfiguration` with the fields in the table, `KEYLESS` with a stated reason and no natural key; no plugin declares a configuration node type of its own. | Per-component types are out unless a reason appears later. |
 | req-tap-cares-runconfig-model-2 | User-Creatable Through One Service | Proposed | `RunConfiguration` is not `INTERNAL_ONLY`; a create or patch of a `configurable` configuration through the CRUD API, the editor, boot and GRIFT all pass through the same validation. | `Schedule` precedent. |
-| req-tap-cares-runconfig-model-3 | Revision Is The Entity Version | Proposed | Each write that changes a configuration increments its `Entity.version` and leaves a history row carrying the settings, the secret ref and the actor of that write. | |
+| req-tap-cares-runconfig-model-3 | Revision Is A Pinned History Row | Proposed | Each write that changes a configuration increments its `Entity.version` and leaves one history row carrying the settings, the secret ref and the actor of that write; a pinned `history_id` retrieves exactly that row. | |
 | req-tap-cares-runconfig-model-4 | Addressed By Its Own UUIDv7 | Proposed | A configuration seeded by a plugin bundle or a boot profile carries the author-minted UUIDv7 written there, and the same id on every reimport; no id is derived from a name or a component. | `req-grift-seed-ids-real`. |
 | req-tap-cares-runconfig-model-5 | No Secret Material | Proposed | No field of `RunConfiguration` holds secret material; `secret_ref` is a reference (`req-tap-cares-secrets-scope-2`). | |
 | req-tap-cares-runconfig-model-6 | Configurability Matches The Declaration | Proposed | A write whose `configurability` is not the one its component's declaration requires is refused. | Named for what it means. |
@@ -312,7 +312,8 @@ class CollectorConfig:                         # EmitterConfig: emitter_entity_i
     collector_entity_id: UUID
     collection_job_entity_id: UUID
     run_configuration_entity_id: UUID          # never None: every run has a configuration
-    run_configuration_revision: int
+    run_configuration_history_id: int          # the exact history row read: the pin
+    run_configuration_version: int             # Entity.version at that row, for display
     settings: dict                             # validated (and migrated) settings; {} when not_configurable
     secret_ref: str                            # "" when the configuration names none
 ```
@@ -322,7 +323,7 @@ The task payload carries only the configuration's entity id. The task body (`run
 1. It reads the configuration under its row lock.
 2. It applies any migration (`req-tap-cares-runconfig-schema-migration`) with `entity_expected_version`, so a stale migration cannot overwrite a newer edit.
 3. It validates the snapshot, checks its envelope (`req-tap-cares-runconfig-credential`) and, for an emitter, evaluates arming (`req-tap-cares-runconfig-emitter-arming`), all against that same snapshot.
-4. It records that exact revision on the job (`req-tap-cares-runconfig-traceability`) and builds the config object from it.
+4. It records that exact revision on the job, its `history_id` and version (`req-tap-cares-runconfig-traceability`), and builds the config object from it.
 5. It releases the lock before any plugin code runs.
 
 So the settings and `secret_ref` a component receives are exactly those of the revision its job records, and an edit that commits during the start lands as the next revision, for the next run. A settings change therefore takes effect on the next run with no restart; a change to the envelope's contents still needs one (`req-tap-cares-secrets-rotation`).
@@ -335,7 +336,7 @@ So the settings and `secret_ref` a component receives are exactly those of the r
 | req-tap-cares-runconfig-delivery-2 | Read At Run Start | Proposed | A configuration edited after a job is enqueued and before it starts is run at the edited revision, and the job records that revision. | |
 | req-tap-cares-runconfig-delivery-3 | No Restart For Settings | Proposed | An edit to settings is seen by the next run in the same running process. | |
 | req-tap-cares-runconfig-delivery-4 | Not Configurable, Same Shape | Proposed | A not-configurable component's run receives its seeded configuration's id and revision, `settings = {}` and the seed's secret ref; no run receives a null configuration id. | |
-| req-tap-cares-runconfig-delivery-5 | Edit Racing A Run's Start | Proposed | With an edit committed concurrently with a run's start, the revision the job records retrieves from history exactly the settings and `secret_ref` the component received. | |
+| req-tap-cares-runconfig-delivery-5 | Edit Racing A Run's Start | Proposed | With an edit committed concurrently with a run's start, the `history_id` the job records retrieves exactly the settings and `secret_ref` the component received. | |
 | req-tap-cares-runconfig-delivery-6 | Two Workers Racing A Migration | Proposed | Two runs starting together on a configuration that needs migrating produce exactly one migration revision, and an edit committed meanwhile is not lost. | |
 | req-tap-cares-runconfig-delivery-7 | Lock Released Before Plugin Code | Proposed | No plugin hook runs while the configuration's row lock is held. | |
 
@@ -350,25 +351,26 @@ Every `CollectionJob` and `EmissionJob`, and every batch it writes, records four
 | Part | On the job | On each batch it writes |
 | --- | --- | --- |
 | Configuration uuid | `run_configuration_id` (UUID, new) | `metadata.run_configuration.entity_id` |
-| Configuration revision | `run_configuration_revision` (integer, new) | `metadata.run_configuration.revision` |
+| Configuration revision | `run_configuration_history_id` (the pin: the simple_history `history_id` read) and `run_configuration_version` (`Entity.version` at that row, for display), both new | `metadata.run_configuration.history_id` and `.version` |
 | Component uuid | the job's one inbound `HAS_COLLECTION_JOB` / `HAS_EMISSION_JOB` edge, written by `run_collection` / `run_emission` | the component's entity id in its identity key (`metadata.collector` or `metadata.emitter`) |
 | Component code version | an emitter's `emitter_version` and `source_hash` with its build stamp (`req-tap-cares-v0-emitter-20`); a collector's build stamp (plugin slug, release, commit) and authored `COLLECTOR_VERSION` | the same, in the same key |
 
-The task body writes the job's two new columns in the same write that moves the run to `RUNNING`, beside the code identity. The batch keys are written to every batch the run imports and to its lifecycle batch, by the same rules and with the same refusals that `req-tap-cares-collector-version` rules 6 to 8 give the `collector` key; `run_configuration` and `emitter` are reserved keys like it. Runs opened with `open_run` reach all four through their owner job (`req-tap-cares-run-node`). **The collector code-version half is Issue# 1307 - tap's ruled shape** (`req-tap-cares-collector-version`), built in the same collector pass as the cut-over; this spec states the record shape and does not re-specify it.
+`run_configuration_id` is written at kickoff with the admitted job (the reservation, `req-tap-cares-runconfig-concurrency`) and never changes; the task body binds `run_configuration_history_id` and `run_configuration_version` at worker start, in the write that moves the run to `RUNNING`, beside the code identity. The batch keys are written to every batch the run imports and to its lifecycle batch, by the same rules and with the same refusals that `req-tap-cares-collector-version` rules 6 to 8 give the `collector` key; `run_configuration` and `emitter` are reserved keys like it. Runs opened with `open_run` reach all four through their owner job (`req-tap-cares-run-node`). **The collector code-version half is Issue# 1307 - tap's ruled shape** (`req-tap-cares-collector-version`), built in the same collector pass as the cut-over; this spec states the record shape and does not re-specify it.
 
-A node reaches the configuration it was written under the way it reaches the code version: from its spine pointers `last_changed_batch_id` or `last_observed_batch_id` (`req-grid-entity-batch-pointers`) to the batch, then to the run (`req-tap-cares-collector-version` rule 9), then to the configuration's history row at the recorded revision. A run-minted node reaches it through its `run_id` (`req-tap-cares-run-id`) and the run's owner job.
+A node reaches the configuration it was written under the way it reaches the code version: from its spine pointers `last_changed_batch_id` or `last_observed_batch_id` (`req-grid-entity-batch-pointers`) to the batch, then to the run (`req-tap-cares-collector-version` rule 9), then to the configuration's history row by the recorded `history_id`. A run-minted node reaches it through its `run_id` (`req-tap-cares-run-id`) and the run's owner job.
 
-What is not added: no node gets a configuration field, no plugin table gets a column, and the run carries no hash of the configuration's content. The revision is the pin. The two job columns land in core's tables in the same version record as the collector-version fields, so core 0.5.0 migrates the fleet once.
+What is not added: no node gets a configuration field, no plugin table gets a column, and the run carries no hash of the configuration's content. The `history_id` is the pin. The three job columns land in core's tables in the same version record as the collector-version fields, so core 0.5.0 migrates the fleet once.
 
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-runconfig-traceability-1 | Job Records Four Parts | Proposed | After every run, of a collector or an emitter, its job yields the configuration's entity id, the revision the task body read, the component's entity id and its code version. | |
-| req-tap-cares-runconfig-traceability-2 | Every Batch Carries Them | Proposed | Every batch a run imports, and its lifecycle batch, has `metadata.run_configuration` with the id and revision and the component's identity key with its entity id and code version; a caller or a component's document that sets either key itself is refused. | Mirrors `req-tap-cares-collector-version-6`, `-7`. |
+| req-tap-cares-runconfig-traceability-1 | Job Records Four Parts | Proposed | After every run, of a collector or an emitter, its job yields the configuration's entity id, the `history_id` and version the task body read, the component's entity id and its code version. | |
+| req-tap-cares-runconfig-traceability-2 | Every Batch Carries Them | Proposed | Every batch a run imports, and its lifecycle batch, has `metadata.run_configuration` with the entity id, `history_id` and version, and the component's identity key with its entity id and code version; a caller or a component's document that sets either key itself is refused. | Mirrors `req-tap-cares-collector-version-6`, `-7`. |
 | req-tap-cares-runconfig-traceability-3 | Reached From A Row | Proposed | From a row a run's import last changed, a query reaches the configuration's history row at the revision that run used. | |
 | req-tap-cares-runconfig-traceability-4 | Nothing On Nodes Or Plugin Tables | Proposed | No core or plugin node type gains a configuration field or column; plugin migrations are unchanged by this requirement. | Hard constraint for 0.5.0. |
 | req-tap-cares-runconfig-traceability-5 | No Content Hash | Proposed | Neither the job nor the batch records a hash of the settings. | Owner ruling 2026-11-21, Issue# 907 - tap. |
+| req-tap-cares-runconfig-traceability-6 | Reservation Records Its Configuration | Proposed | With workers held off from dequeuing, an admitted kickoff's job already carries `run_configuration_id` and no history pin; a second kickoff of the same configuration (with `OVERLAP_WITHIN_CONFIGURATION = False`) sees that reservation and is refused naming it. | |
 
 ## The Configuration Is The Observation Series
 ----
@@ -492,7 +494,7 @@ Status: `Proposed`
 This is where emitters and collectors really differ: an emitter's effect lands on someone else's system, so its configuration is armed by an operator before it sends (`req-tap-cares-v0-emitter`). Arming moves from the `Emitter` to the `RunConfiguration` (amending `req-tap-cares-v0-emitter-12`). `manage.py arm_emitter <run configuration entity id> --on|--off --as <username>` is the one writer of the configuration's arming fields, gated by `cares.arm_emitters` and written on a batch of its own whose metadata is the audit record, as today. Arming `--on` binds:
 
 - the code identity: `EMITTER_VERSION` and `source_hash` (`armed_emitter_version`, `armed_source_hash`);
-- the configuration revision (`armed_revision`): the revision the arm write itself produces, so the next write leaves it behind;
+- the configuration revision (`armed_history_id`, with `armed_version` beside it for display): the `history_id` of the history row the arm write itself produces, so the next write leaves it behind;
 - the secret ref (`armed_secret_ref`).
 
 At each run, any difference between the present and what was armed (version, source hash, revision, secret ref) makes the run a dry run with `dry_run_reason = arm_stale` until re-armed. Narrowing counts as a change; any change re-arms. An unarmed configuration's runs are dry runs with `dry_run_reason = unarmed`. Each configuration of one emitter is armed separately.

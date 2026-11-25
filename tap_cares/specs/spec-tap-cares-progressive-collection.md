@@ -309,7 +309,7 @@ named, not assumed away.
 | req-tap-cares-progressive-watermark-8 | Only Successful Jobs, New Series Starts Empty | Proposed | A failed or partial run's batches do not advance the watermark; after a revision that changes `secret_ref`, the next run has no watermark; a row re-observed by another configuration lowers, never raises, this configuration's watermark. | Re-fetch, never skip. |
 | req-tap-cares-progressive-watermark-9 | Full Refresh | Proposed | An actor with `cares.run_collectors` can start a full-refresh run of a configuration; it ignores the watermark and its job records that it was a full refresh; an actor without the capability cannot. | |
 | req-tap-cares-progressive-watermark-10 | No Core Lookback | Proposed | Core applies no lookback window; a component declaring one cites the measurement behind it. | No-arbitrary-limits rule. |
-| req-tap-cares-progressive-watermark-11 | Failed Job Leaves It Unchanged | Proposed | Commit a result batch, fail its job, compute the next watermark: it equals the watermark before that run. | Partial-run contract. |
+| req-tap-cares-progressive-watermark-11 | A Failed Run Never Advances It | Proposed | Commit a result batch, fail its job, compute the next watermark: it may stay the same or drop, never rise. | Partial-run contract; re-observation can lower it. |
 
 ### Ordered-Listing Early Cutoff
 ----
