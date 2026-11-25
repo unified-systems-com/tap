@@ -25,7 +25,6 @@ fails-closed rather than missing it.
 from __future__ import annotations
 
 import functools
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -326,9 +325,22 @@ WEAK_DIGEST_CALLS: frozenset[str] = frozenset({"md5"})
 OPTOUT_RID = "req-fips-optout-inventory"
 #: The provider name every opt-out finding carries.
 FIPS_OPT_OUT = "fips-opt-out"
-#: An OpenSSL property query that steps outside `default_properties = fips=yes`. Matched against whole
-#: string constants, clause by clause, so prose that merely mentions FIPS is not a query.
-OPTOUT_PROPQUERY_RE = re.compile(r"^\s*(?:[^,]*,\s*)*(?:-fips|fips\s*=\s*no|provider\s*=\s*default)\s*(?:,[^,]*)*$")
+#: The property-query clauses that step outside `default_properties = fips=yes`, compared with all
+#: whitespace removed (OpenSSL ignores it).
+_OPTOUT_CLAUSES = frozenset({"-fips", "fips=no", "provider=default"})
+
+
+def is_optout_propquery(text: str) -> bool:
+    """True if `text` is an OpenSSL property query with a clause that opts out of `fips=yes`.
+
+    Clause by clause over the whole string, so prose that merely mentions FIPS is not a query: every
+    comma-separated clause must look like a property clause (`name`, `-name`, `name=value`), and at
+    least one must be an opt-out. A plain split, not a regex (no backtracking on long input)."""
+    clauses = ["".join(c.split()) for c in text.split(",")]
+    if not all(c and all(ch.isalnum() or ch in "-_.=?" for ch in c) for c in clauses):
+        return False
+    return any(c.lower() in _OPTOUT_CLAUSES for c in clauses)
+
 
 #: Every reviewed opt-out: an fnmatch glob over `<path>::<enclosing qualname>` and the reason the
 #: algorithm it reaches protects nothing. A file AND a function, never a line number, so an upstream
@@ -395,8 +407,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "django/test/runner.py::Shuffler._hash_text",
         FIPS_OPT_OUT,
         Boundary.NON_SECURITY_USE,
-        "The test runner hashes test names to derive a shuffle order: test tooling, never on a "
-        "serving path.",
+        "The test runner hashes test names to derive a shuffle order: test tooling, never on a serving path.",
         OPTOUT_RID,
     ),
     Disposition(
@@ -419,8 +430,7 @@ FIPS_OPT_OUTS: tuple[Disposition, ...] = (
         "coverage/data.py::hash_for_data_file",
         FIPS_OPT_OUT,
         Boundary.NON_SECURITY_USE,
-        "coverage.py hashes a data file to tell combined runs apart: a development tool, never on a "
-        "serving path.",
+        "coverage.py hashes a data file to tell combined runs apart: a development tool, never on a serving path.",
         OPTOUT_RID,
     ),
     Disposition(

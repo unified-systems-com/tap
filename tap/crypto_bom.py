@@ -46,7 +46,6 @@ from tap.crypto_providers import (
     KNOWN_NONFIPS_DISTRIBUTIONS,
     KNOWN_WASM_DISTRIBUTIONS,
     NONVALIDATED_CRYPTO_IMPORTS,
-    OPTOUT_PROPQUERY_RE,
     OPTOUT_RID,
     REACHED_OPT_OUT_TRIPWIRES,
     SIGNATURES,
@@ -55,6 +54,7 @@ from tap.crypto_providers import (
     Boundary,
     Disposition,
     Waiver,
+    is_optout_propquery,
     system_openssl_boundary,
 )
 
@@ -405,7 +405,13 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
                     if f is not None:
                         findings.append(f)
                 if isinstance(node, (ast.Name, ast.Attribute, ast.alias)):
-                    name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else node.name
+                    name = (
+                        node.id
+                        if isinstance(node, ast.Name)
+                        else node.attr
+                        if isinstance(node, ast.Attribute)
+                        else node.name
+                    )
                     why = REACHED_OPT_OUT_TRIPWIRES.get(name)
                     if why is not None:
                         findings.append(
@@ -485,7 +491,7 @@ class _OptOutVisitor(ast.NodeVisitor):
         if isinstance(node.value, str) and len(node.value) < 120:
             if node.value == "usedforsecurity":
                 self._add(node, "the 'usedforsecurity' key built dynamically")
-            elif OPTOUT_PROPQUERY_RE.match(node.value):
+            elif is_optout_propquery(node.value):
                 self._add(node, f"property query {node.value!r}")
 
 
@@ -508,8 +514,8 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
             if path.suffix != ".py" or path in seen:
                 continue
             seen.add(path)
-            # The scanner names the keyword it looks for; it is not an opt-out.
-            if _skip_source_file(path) or str(path).endswith("/tap/crypto_bom.py"):
+            # The scanner and its registry name the keyword and clauses they look for; neither is an opt-out.
+            if _skip_source_file(path) or str(path).endswith(("/tap/crypto_bom.py", "/tap/crypto_providers.py")):
                 continue
             try:
                 data = path.read_bytes()
@@ -952,7 +958,9 @@ def main(argv: list[str] | None = None) -> int:
     if declined is not None:
         # Off by the deployer's record, on the record: the reason is printed on every start.
         print(f"==> crypto-BOM scan OFF by boot profile '{args.profile}' (fips_system_gate): {declined}")
-        print("==>   FIPS mode and the tap.fips self-check still apply; TAP_FIPS_SYSTEM_GATE=required turns the scan back on.")
+        print(
+            "==>   FIPS mode and the tap.fips self-check still apply; TAP_FIPS_SYSTEM_GATE=required turns the scan back on."
+        )
         return 0
 
     try:
