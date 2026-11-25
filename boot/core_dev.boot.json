@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/grid-fixtures-tap",
-          "rev": "75f05f00a10b170c1eb835910c49374fd2b119e8",
-          "commit": "75f05f00a10b170c1eb835910c49374fd2b119e8"
+          "rev": "v0.3.7",
+          "commit": "36fa9722838c2a1a872e986a7388285b01ab26dd"
         },
         "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the core test suites build fixtures from. No GRIFT seed, no cross-plugin deps. The only thing above the core baseline in this tier."
       }
