@@ -246,6 +246,20 @@ run_local_gates() {
   # code, a record's editable path). The server runs the full battery for it; the
   # boot gates run here too, regardless of mode.
   tier="$(scripts/change-tier origin/main)"
+  # Specs tier (tap#1373): in `fast` mode run only the spec-conformance subset, the core files that
+  # read the specs (tap/spec_reader_tests.txt) — the same set CI's core_ci runs for a specs-tier diff
+  # (core-ci.yml `specs_only`), so what would red the server lane reds here first, without the full
+  # core walk. `full` mode (cloud gate inactive, local is the sole authority) still runs everything.
+  if [[ "$mode" == "fast" && "$tier" == "specs" ]]; then
+    if ! scripts/dc ps --status running --services 2>/dev/null | grep -qx web; then
+      warn "Validation gate requires this session's stack to be up (scripts/dc up -d)."
+      return 1
+    fi
+    info "Specs-tier diff — local pytest narrowed to the spec readers (scripts/test --spec-readers, as CI's specs tier); boot gates are CI-owned ..."
+    TAP_TEST_JOBS="${TAP_TEST_JOBS:-3}" scripts/test --spec-readers || return 1
+    info "Spec-reader subset GREEN."
+    return 0
+  fi
   if [[ "$tier" == "boot" ]]; then
     info "Boot-tier diff (tap/bom_inputs.py) — running the local boot gates too (TAP_PROMOTE_LOCAL_BOOT_GATES=1)."
     export TAP_PROMOTE_LOCAL_BOOT_GATES=1
