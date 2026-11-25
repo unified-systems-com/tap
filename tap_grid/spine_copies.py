@@ -39,7 +39,9 @@ What this module holds:
 - **The history values** (rules 12 and 13). A history row records both copies as they are after
   the write that adds it, from the values the write settles on, not from the typed row object
   (which the triggers wrote behind its back). A retirement writes one final history row for the row
-  it retires and for each edge it ends.
+  it retires and for each edge it ends. The same values carry the event time the write leaves on the
+  entity row, so each history row also records the event time its version had
+  (``req-grid-history-event-time``): history-only columns, never on the typed row.
 
 PostgreSQL only (rule 18).
 """
@@ -48,7 +50,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -76,21 +78,39 @@ PULL_TRIGGER = PULL_FUNCTION
 # ---------------------------------------------------------------------------
 
 
+def _event_columns(values: Mapping[str, Any]) -> dict[str, Any]:
+    """The three event columns from a mapping that holds them (req-grid-history-event-time)."""
+    from tap_grid.event_time import SPINE_EVENT_FIELDS
+
+    return {name: values.get(name) for name in SPINE_EVENT_FIELDS}
+
+
 @contextlib.contextmanager
 def stash_history_copies(
-    instance: Any, deleted_at: Any, dimensions: dict[str, Any] | None, batch_id: Any = None
+    instance: Any,
+    deleted_at: Any,
+    dimensions: dict[str, Any] | None,
+    batch_id: Any = None,
+    *,
+    event_time: Mapping[str, Any],
 ) -> Iterator[None]:
-    """Hold, for the save inside, the copies and the batch the history row it writes records.
+    """Hold, for the save inside, the copies, the event time and the batch the history row it writes records.
 
     ``BaseModel.save`` opens it around ``super().save()``: the values are the entity's ``deleted_at``
     and the dimension map the write settles on, worked out before the typed row is saved. The typed
     row object cannot give them: the triggers write the typed columns inside the database, and on a
     change of dimensions the typed row is saved before the entity row is written (rule 12).
+
+    ``event_time`` holds the three event columns the entity row has once the write is done
+    (``req-grid-history-event-time``): the event time the save derived, or the stored one where the
+    save does not store what it is derived from. Required, so no writer can leave it out by accident.
+    The kind needs no column of its own: it is the ``tap.time`` entry of ``dimensions``.
     """
     instance._spine_history = {
         "deleted_at": deleted_at,
         "dimensions": dict(dimensions or {}),
         "batch_id": "" if batch_id is None else str(batch_id),
+        "event_time": _event_columns(event_time),
     }
     try:
         yield
@@ -99,31 +119,43 @@ def stash_history_copies(
 
 
 def fill_history_row(sender: Any, *, instance: Any, history_instance: Any, **kwargs: Any) -> None:
-    """Set a history row's copies and batch before it is inserted (``pre_create_historical_record``).
+    """Set a history row's copies, event time and batch before it is inserted (``pre_create_historical_record``).
 
     From the values the write stashed (:func:`stash_history_copies`); where it stashed none (a
     history row written by some other path), from the entity row as it stands in this transaction,
-    and the batch from the caller's context. Never from the typed row object's own copies.
+    and the batch from the caller's context. Never from the typed row object's own copies. The event
+    time is set only on a history model that has its columns (``req-grid-history-event-time``).
+
+    TAP-IMPLEMENTS: req-grid-history-event-time@f0337aebffe3/df7415bd6d29 (derivation) — rules 2 to 4: the one
+        place a history row's event time is set, from the write's stash or from the entity row.
     """
     if not hasattr(history_instance, "spine_dimensions"):
         return  # a history model that is not a typed row's (none in core today)
     stashed = getattr(instance, "_spine_history", None)
     if stashed is None:
         from tap_grid.caller_context import get_caller_context
+        from tap_grid.event_time import SPINE_EVENT_FIELDS
         from tap_grid.models import Entity
 
         row = Entity.objects.using(kwargs.get("using") or DEFAULT_DB_ALIAS).filter(pk=instance.entity_id)
-        found = row.values("deleted_at", "dimensions").first() or {"deleted_at": None, "dimensions": {}}
+        found = row.values("deleted_at", "dimensions", *SPINE_EVENT_FIELDS).first() or {
+            "deleted_at": None,
+            "dimensions": {},
+        }
         ctx = get_caller_context()
         stashed = {
             "deleted_at": found["deleted_at"],
             "dimensions": found["dimensions"] or {},
             "batch_id": str(ctx.batch_id) if ctx is not None and ctx.batch_id else "",
+            "event_time": _event_columns(found),
         }
     history_instance.spine_deleted_at = stashed["deleted_at"]
     history_instance.spine_dimensions = stashed["dimensions"]
     if hasattr(history_instance, "batch_id"):
         history_instance.batch_id = stashed["batch_id"]
+    for name, value in stashed["event_time"].items():
+        if hasattr(history_instance, name):
+            setattr(history_instance, name, value)
 
 
 def write_retirement_history(model_cls: type, entity_ids: Iterable[Any], *, reason: str, batch_id: Any) -> int:
@@ -133,6 +165,7 @@ def write_retirement_history(model_cls: type, entity_ids: Iterable[Any], *, reas
     retirement copy and the retirement's reason (``req-grid-service-delete-reason-2``). A type that
     keeps no history (``req-grid-history-optout``) writes none. Returns the number written.
     """
+    from tap_grid.event_time import SPINE_EVENT_FIELDS
     from tap_grid.history import is_history_enabled
     from tap_grid.models import BASE_HISTORY, Entity
 
@@ -140,7 +173,8 @@ def write_retirement_history(model_cls: type, entity_ids: Iterable[Any], *, reas
     if not ids or not is_history_enabled(model_cls):
         return 0
     spine = {
-        row["pk"]: row for row in Entity.objects.filter(pk__in=ids).values("pk", "deleted_at", "dimensions")
+        row["pk"]: row
+        for row in Entity.objects.filter(pk__in=ids).values("pk", "deleted_at", "dimensions", *SPINE_EVENT_FIELDS)
     }
     written = 0
     for row in model_cls.all_objects.filter(entity_id__in=ids).order_by("entity_id"):  # type: ignore[attr-defined]
@@ -148,7 +182,8 @@ def write_retirement_history(model_cls: type, entity_ids: Iterable[Any], *, reas
         if entity is None:
             continue
         row._change_reason = reason[:100]
-        with stash_history_copies(row, entity["deleted_at"], entity["dimensions"], batch_id):
+        # The retiring row's event time, as its entity row holds it (req-grid-history-event-time rule 5).
+        with stash_history_copies(row, entity["deleted_at"], entity["dimensions"], batch_id, event_time=entity):
             BASE_HISTORY.create_historical_record(row, "~")
         written += 1
     return written

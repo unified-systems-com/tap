@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 from django.db import models
 from simple_history.models import HistoricalRecords
 
+from tap_grid.event_time import EVENT_PRECISIONS
+
 if TYPE_CHECKING:
     # Generic over AUTH_USER_MODEL — not the concrete tap_auth.User
     # (req-tap-auth-user-model-5).
@@ -100,6 +102,11 @@ class HistoricalBatchRecord(models.Model):
     their rows, and no history migration changes. It is set when the row is written, from the
     batch in the caller's context (``tap_grid.spine_copies.fill_history_row``); empty where a write
     ran with no batch.
+
+    It also carries the event time each version had (``req-grid-history-event-time``, Issue# 1374 -
+    tap): the spine keeps no history, so without these columns a history row could not say what the
+    event time was at its version. They are history-only, declared as on ``Entity``
+    (``req-grid-entity-event-time``), set by the same receiver, and never copied onto a typed row.
     """
 
     batch_id = models.CharField(
@@ -108,6 +115,35 @@ class HistoricalBatchRecord(models.Model):
         default="",
         db_index=True,
         help_text="UUIDv7 of the batch this change was included in.",
+    )
+    # Indexed as on Entity, for window search (req-grid-history-event-time rule 7). The kind is the
+    # `tap.time` entry of the row's `spine_dimensions`.
+    event_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text="When the thing happened, or began to hold, at this version. Inclusive. Empty when no time was derived.",
+    )
+    event_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "When it stopped holding, at this version. Exclusive. Equal to `event_start` for an exact moment; "
+            "empty when no end was derived."
+        ),
+    )
+    event_precision = models.CharField(  # noqa: DJ001
+        max_length=8,
+        null=True,
+        blank=True,
+        editable=False,
+        choices=[(level, level) for level in EVENT_PRECISIONS],
+        help_text=(
+            "How exact the source value was at this version: year, month, day or second. Coarser than second "
+            "means the stored pair is the interval the unit covers."
+        ),
     )
 
     class Meta:
