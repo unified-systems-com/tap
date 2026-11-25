@@ -20,7 +20,7 @@ Grid history records how TAP's stored graph state changed over time. It exists t
 | req-grid-history-backend | [History Backend and Independence](#history-backend-and-independence) | Proposed | Initial backend may use `django-simple-history`, but the capability is specified independently of the backend |
 | req-grid-history-query | [Composable History Queries](#composable-history-queries) | Proposed | Query model must support bounded windows and latest-before semantics |
 | req-grid-history-time | [History Time Semantics](#history-time-semantics) | Proposed | `recorded_at` is system-owned; `observed_at` is source/world time where available |
-| req-grid-history-event-time | [History Rows Carry The Event Time](#history-rows-carry-the-event-time) | Implemented | Every history row records the event time its version had (`event_start`, `event_end`, `event_precision`), set when the row is written; history-only, indexed for window search |
+| req-grid-history-event-time | [History Rows Carry The Event Time](#history-rows-carry-the-event-time) | In Development | Every history row records the event time its version had (`event_start`, `event_end`, `event_precision`), set when the row is written; history-only, indexed for window search |
 | req-grid-history-version | [Revision Metadata](#revision-metadata) | Implemented | Canonical entities carry a simple revision counter for lifecycle/debug metadata |
 | req-grid-history-scope | [History Scope Configuration](#history-scope-configuration) | Proposed | History enablement and retention depth remain configurable per model/edge type |
 | req-grid-history-reobservation | [Re-Observation Is Not A Change](#re-observation-is-not-a-change) | In Development | A write that changes nothing and asserts nothing new creates no history row and no new version |
@@ -150,12 +150,12 @@ Later work may add richer temporal semantics such as validity ranges or separate
 ----
 RID: `req-grid-history-event-time`
 
-Status: `Implemented`
+Status: `In Development`
 
 Every history row records the event time its version had, so that a search by event time can ask which versions of a node or edge had an event time in a window. Event time lives on the spine (`Entity.event_start`, `event_end`, `event_precision`, `req-grid-entity-event-time`), and the spine keeps no history, so without this a history row cannot say what the event time was at its version.
 
 #### Status Details
-Implemented in core (Issue# 1374 - tap, under Issue# 1284 - tap). The three columns are declared on the history base every history model is built on (`HistoricalBatchRecord`, `tap_grid/history.py`) and set by the receiver that already sets the spine copies and the batch on each history row (`fill_history_row`, `tap_grid/spine_copies.py`). Core's history tables gain them in `tap_grid` `0024_history_event_time` and one migration in each of `tap_cares`, `tap_files`, `tap_viz` and `tap_web`; the `validation_sample` fixture plugin has its own. No typed table changes.
+Built in core (Issue# 1374 - tap, under Issue# 1284 - tap); In Development until the plugins regenerate their history migrations, the same convention as `req-grid-entity-spine-copies`. The three columns are declared on the history base every history model is built on (`HistoricalBatchRecord`, `tap_grid/history.py`) and set by the receiver that already sets the spine copies and the batch on each history row (`fill_history_row`, `tap_grid/spine_copies.py`). Core's history tables gain them in `tap_grid` `0024_history_event_time` and one migration in each of `tap_cares`, `tap_files`, `tap_viz` and `tap_web`; the `validation_sample` fixture plugin has its own. No typed table changes.
 
 Every plugin's history tables change too, because every history model is built on the same base. The plugins regenerate their migrations once, in the base-model release (Issue# 1288 - tap), with the spine copies (`req-grid-entity-spine-copies` rule 19). A plugin whose migration is generated against an earlier core has history tables without the columns, and its first history write fails on them. The boot's column gate (`req-grid-entity-spine-copies` rule 20) checks the typed tables' copy columns and does not check history tables, so it does not refuse such a plugin; whether it should is left to the maintainer.
 

@@ -126,7 +126,7 @@ def fill_history_row(sender: Any, *, instance: Any, history_instance: Any, **kwa
     and the batch from the caller's context. Never from the typed row object's own copies. The event
     time is set only on a history model that has its columns (``req-grid-history-event-time``).
 
-    TAP-IMPLEMENTS: req-grid-history-event-time@f0337aebffe3/df7415bd6d29 (derivation) — rules 2 to 4: the one
+    TAP-IMPLEMENTS: req-grid-history-event-time@38a7d71b7546/df7415bd6d29 (derivation) — rules 2 to 4: the one
         place a history row's event time is set, from the write's stash or from the entity row.
     """
     if not hasattr(history_instance, "spine_dimensions"):

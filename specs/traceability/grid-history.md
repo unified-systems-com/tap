@@ -13,6 +13,6 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-grid-history-event-time` | Implemented | Implemented | `fill_history_row` | — |
+| `req-grid-history-event-time` | In Development | Implemented | `fill_history_row` | — |
 | `req-grid-history-optout` | Implemented | Verified | `TapHistoricalRecords.finalize`, `history_agreement_problems` | `req-grid-history-optout-1`, `req-grid-history-optout-10`, `req-grid-history-optout-2`, `req-grid-history-optout-3`, `req-grid-history-optout-4`, `req-grid-history-optout-5`, `req-grid-history-optout-6`, `req-grid-history-optout-7`, `req-grid-history-optout-8`, `req-grid-history-optout-9` |
 | `req-grid-history-reobservation` | In Development | Implemented | `classify` | — |
