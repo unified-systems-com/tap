@@ -96,8 +96,10 @@ tools, and they are critical to the project's success.
 2. **Query and interchange are first-class graph concepts.** A native graph query surface (Gryphon) and a
    native graph interchange surface (GRIFT), rather than ad hoc payloads in either direction.
 3. **Dimensions.** Multiple graph contexts, namespaces and perspectives on one spine, without
-   fragmenting the node/edge model. Other scoping concepts — realms, environments, pocket dimensions —
-   may be explored later.
+   fragmenting the node/edge model. Other scoping concepts — environments, pocket dimensions — may be
+   explored later. Identity scoping already rides dimensions: one declared `usable_in_keys`
+   (`req-grid-dimension-knobs-3`) can be named in a type's natural key (`req-grid-entity-natural-key-28`),
+   which retired the realm field (ruled 2026-11-24, `tap#1355`).
 4. **Visualization.** Humans view and interact with the data graphically: Google Maps meets Visio.
 5. **Plugin system.** Rather than over-specifying the domains the platform can serve, the core implements
    first principles that apply to all systems — graph and traversal, history, schema management,
@@ -136,6 +138,14 @@ should extend this convention rather than invent a competing one.
 **Dimensions become nodes** (ruled 2026-09-20, epic `tap#708`). Dimensions gain assigned identity as
 nodes that nothing points at — no inbound edges — rather than remaining only a flat JSON object on the
 spine. The concept keeps its role; its representation changes.
+
+**Identity-bearing dimensions replace realms** (ruled 2026-11-24, `tap#1355`;
+`tap_grid/specs/spec-grid-dimension.md`, `tap_grid/specs/spec-grid-entity.md`). A dimension declared
+`usable_in_keys` may be named in a natural key as `dimension:<name>`; it is required on create and fixed
+afterwards (`req-grid-entity-natural-key-28`, `req-grid-entity-natural-key-29`,
+`req-grid-entity-natural-key-30`, `req-grid-entity-natural-key-31`). A key that needs scoping names a
+specific dimension such as `tap.computing.host_type`, whose values are open conventions, never a bounded
+list.
 
 **Keystone** (`tap_grid/specs/spec-grid-keystone.md`). An instance is self-describing: a keystone node
 carries human prose plus structured context and the schema documenting it, so anyone landing cold learns

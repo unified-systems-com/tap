@@ -22,7 +22,7 @@ tap_grid defines the foundational data model and graph contracts: Entity, Edge, 
 
 **No unique constraint on Edge.** Multiple edges of the same type between entities are valid. Uniqueness enforced at service layer if needed.
 
-**Realm/Environment deferred.** These are tap_flip concerns (step 6). BaseModel is the extension point.
+**Environment deferred.** It is a tap_flip concern (step 6). BaseModel is the extension point. Realms are retired (unified-systems-com/tap#1355): a key that needs scoping names an identity-bearing dimension (`usable_in_keys`, `req-grid-dimension-knobs-3`), never a generic realm field.
 
 **Gryphon is the graph-native read language.** Traversal- and neighborhood-oriented read behavior should be expressed through TAP search execution, with Gryphon as the graph query surface for read-only graph retrieval.
 
@@ -104,5 +104,5 @@ The `{"type": "..."}` structure (rather than plain strings) enables future exten
 - **tap_api**: API routing, versioning, auth middleware
 - **tap_web**: Templates, static assets, dashboards
 - **tap_viz**: Cytoscape, graph visualization
-- **tap_flip**: Provenance, history, realms, environments
+- **tap_flip**: Provenance, history, environments
 - **tap_ai**: RAG surfaces, summarization, suggestions
