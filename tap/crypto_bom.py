@@ -369,6 +369,22 @@ def _weak_digest_finding(artifact: str, node: ast.Call) -> Finding | None:
     )
 
 
+def _tripwire_name(node: ast.AST) -> str | None:
+    """The REACHED_OPT_OUT_TRIPWIRES name this node uses, if any: a bare name, an attribute, an
+    import alias, or the name spelled as a string (`getattr(requests.auth, "HTTPDigestAuth")`)."""
+    if isinstance(node, ast.Name):
+        name = node.id
+    elif isinstance(node, ast.Attribute):
+        name = node.attr
+    elif isinstance(node, ast.alias):
+        name = node.name.rsplit(".", 1)[-1]
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        name = node.value
+    else:
+        return None
+    return name if name in REACHED_OPT_OUT_TRIPWIRES else None
+
+
 def _source_findings(roots: Iterable[Path]) -> list[Finding]:
     """AST-scan `.py` source under roots for non-validated crypto imports, WASM-runtime imports, and
     bare weak-digest usage — the Python analog of the ELF fingerprinter (req-fips-crypto-bom-source).
@@ -386,6 +402,8 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
             if _skip_source_file(path):
                 continue
             spath = str(path)
+            # The scanner and its registry name the tripwires they look for; neither reaches them.
+            is_registry = spath.endswith(("/tap/crypto_bom.py", "/tap/crypto_providers.py"))
             try:
                 tree = ast.parse(path.read_bytes())
             except OSError, SyntaxError, ValueError:
@@ -404,25 +422,18 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
                     f = _weak_digest_finding(spath, node)
                     if f is not None:
                         findings.append(f)
-                if isinstance(node, (ast.Name, ast.Attribute, ast.alias)):
-                    name = (
-                        node.id
-                        if isinstance(node, ast.Name)
-                        else node.attr
-                        if isinstance(node, ast.Attribute)
-                        else node.name
-                    )
-                    why = REACHED_OPT_OUT_TRIPWIRES.get(name)
-                    if why is not None:
-                        findings.append(
-                            Finding(
-                                f"{spath}:{getattr(node, 'lineno', 0)}",
-                                f"{FIPS_OPT_OUT}-reached",
-                                Boundary.MUST_FIX,
-                                f"uses {name}: {why}. Remove it, or run this plugin outside FIPS mode.",
-                                OPTOUT_RID,
-                            )
+                tripwire = _tripwire_name(node)
+                if tripwire is not None and not is_registry:
+                    findings.append(
+                        Finding(
+                            f"{spath}:{getattr(node, 'lineno', 0)}",
+                            f"{FIPS_OPT_OUT}-reached",
+                            Boundary.MUST_FIX,
+                            f"uses {tripwire}: {REACHED_OPT_OUT_TRIPWIRES[tripwire]}. Remove it, or run this "
+                            "plugin outside FIPS mode.",
+                            OPTOUT_RID,
                         )
+                    )
     return findings
 
 
@@ -517,17 +528,34 @@ def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
             # The scanner and its registry name the keyword and clauses they look for; neither is an opt-out.
             if _skip_source_file(path) or str(path).endswith(("/tap/crypto_bom.py", "/tap/crypto_providers.py")):
                 continue
+            spath = str(path)
             try:
                 data = path.read_bytes()
-            except OSError:
+            except OSError as exc:
+                # Contents unknown, so it cannot be cleared: fail closed (never a silent skip).
+                findings.append(
+                    Finding(f"{spath}:0", FIPS_OPT_OUT, None, f"unreadable, so not inventoried: {exc}", None)
+                )
                 continue
-            if not any(marker in data for marker in _OPTOUT_PREFILTER):
+            if not any(marker in data.lower() for marker in _OPTOUT_PREFILTER):
                 continue
             try:
                 tree = ast.parse(data)
             except SyntaxError, ValueError:
+                # A candidate this interpreter cannot parse cannot be imported by it either, so its
+                # opt-outs never run here. Recorded (visible in the report), not silently skipped.
+                findings.append(
+                    Finding(
+                        f"{spath}:0",
+                        FIPS_OPT_OUT,
+                        Boundary.UNREACHED,
+                        "names an opt-out marker but does not parse under this interpreter, so it cannot be "
+                        "imported and its opt-outs cannot run",
+                        OPTOUT_RID,
+                    )
+                )
                 continue
-            visitor = _OptOutVisitor(str(path))
+            visitor = _OptOutVisitor(spath)
             visitor.visit(tree)
             findings.extend(visitor.findings)
     return findings

@@ -579,6 +579,9 @@ RUN printf '%s\n' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+# The same proof the system activation runs: fips=yes governs with `default` loaded (D21).
+COPY docker/prove-fips-governs.sh /opt/ossl/prove-fips-governs.sh
+RUN sh /opt/ossl/prove-fips-governs.sh
 
 # Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
@@ -599,7 +602,7 @@ LABEL org.tap.fips="true"
 # ============================================================================
 FROM fips-1-base AS fips-1-system
 
-COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+COPY docker/activate-fips-system-wide.sh docker/prove-fips-governs.sh /opt/ossl/
 RUN sh /opt/ossl/activate-fips-system-wide.sh
 
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1

@@ -237,19 +237,6 @@ tls_groups="$(openssl list -tls-groups -tls1_3 2>&1 || true)"
 echo "$tls_groups"
 echo "$tls_groups" | grep -q 'SecP256r1MLKEM768' || { echo "FATAL: the edited [crypto_policy] does not yield a usable TLS group list" >&2; exit 1; }
 
-# Functional check that fips=yes still governs with `default` loaded (D21): an ordinary
-# request for a non-approved algorithm must be REFUSED, and only an explicit non-security
-# opt-out may reach it. Presence of the providers proves nothing about which one answers.
-# The two MD5 invocations below hash the constant "x" as probes -- one must be refused, one
-# must succeed -- so the weak-hash warning they draw (Sonar S4790) is suppressed on each line.
-echo "=== functional check: an ordinary request is served by the FIPS module only ==="
-if printf x | openssl dgst -md5 >/dev/null 2>&1; then  # NOSONAR (S4790) — a refusal probe, see above
-  echo "FATAL: a plain MD5 request succeeded -- fips=yes is not governing every fetch" >&2; exit 1
-fi
-if printf x | openssl enc -chacha20 -K "$(printf '0%.0s' $(seq 64))" -iv "$(printf '0%.0s' $(seq 32))" >/dev/null 2>&1; then
-  echo "FATAL: a plain ChaCha20 request succeeded -- a non-approved cipher is reachable without opting out" >&2; exit 1
-fi
-printf x | openssl dgst -md5 -propquery '-fips' >/dev/null 2>&1 || {  # NOSONAR (S4790) — a probe, see above
-  echo "FATAL: an explicit non-security MD5 request (-propquery -fips) failed -- usedforsecurity=False callers (Django's names_digest) would crash" >&2; exit 1
-}
-echo "ok: plain MD5 and ChaCha20 refused; explicit non-security MD5 served"
+# Functional check that fips=yes still governs with `default` loaded (D21). It lives in its own
+# script because the rollback activation (TAP_FIPS_ACTIVATION=legacy, both Dockerfiles) runs it too.
+sh "$(dirname "$0")/prove-fips-governs.sh"

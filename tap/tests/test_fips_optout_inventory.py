@@ -25,6 +25,7 @@ from tap.crypto_providers import FIPS_OPT_OUT, FIPS_OPT_OUTS, Boundary, Disposit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ACTIVATION_SCRIPT = REPO_ROOT / "docker" / "activate-fips-system-wide.sh"
+PROOF_SCRIPT = REPO_ROOT / "docker" / "prove-fips-governs.sh"
 DOCKERFILES = (REPO_ROOT / "Dockerfile", REPO_ROOT / "docker" / "postgres" / "Dockerfile")
 
 
@@ -52,6 +53,8 @@ def _pyfile(root: Path, name: str, body: str) -> Path:
         ("Q = 'provider=fips'\n", False),
         ("Q = 'provider=base,fips=yes'\n", False),
         ("Q = 'fips'\n", False),
+        ("Q = 'FIPS=no'\n", True),
+        ("Q = 'PROVIDER=default'\n", True),
         ("import hashlib\nhashlib.md5(b'x', usedforsecurity=0)\n", True),
         ("import hashlib\nhashlib.md5(b'x', usedforsecurity=bool(0))\n", True),
         ("import hashlib\nflag = False\nhashlib.md5(b'x', usedforsecurity=flag)\n", True),
@@ -68,6 +71,28 @@ def test_every_opt_out_is_a_finding(tmp_path, body: str, flagged: bool) -> None:
     assert bool(findings) is flagged
     for f in findings:
         assert f.artifact.startswith(str(tmp_path / "m.py") + ":")
+
+
+@pytest.mark.spec("req-fips-optout-inventory-1")
+def test_a_candidate_that_does_not_parse_is_recorded_not_skipped(tmp_path) -> None:
+    _pyfile(tmp_path, "py2.py", "Q = 'fips=no'\nprint 'not python 3'\n")
+    [finding] = crypto_bom._optout_findings([tmp_path])
+    assert finding.boundary is Boundary.UNREACHED and "does not parse" in finding.detail
+
+
+@pytest.mark.spec("req-fips-optout-inventory-1")
+def test_an_unreadable_candidate_fails_closed(tmp_path, monkeypatch) -> None:
+    path = _pyfile(tmp_path, "locked.py", "Q = 'fips=no'\n")
+    real_read_bytes = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self == path:
+            raise PermissionError("denied")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    [finding] = crypto_bom._optout_findings([tmp_path])
+    assert finding.boundary is None and finding.is_failure and "unreadable" in finding.detail
 
 
 @pytest.mark.spec("req-fips-optout-inventory-1")
@@ -132,6 +157,7 @@ def test_every_reviewed_opt_out_carries_a_reason() -> None:
     [
         "from requests.auth import HTTPDigestAuth\n",
         "import requests\nrequests.get('u', auth=requests.auth.HTTPDigestAuth('a', 'b'))\n",
+        "import requests.auth\nauth = getattr(requests.auth, 'HTTPDigestAuth')('u', 'p')\n",
     ],
 )
 def test_reaching_a_security_opt_out_is_must_fix(tmp_path, body: str) -> None:
@@ -152,17 +178,26 @@ def test_activation_keeps_default_behind_fips_yes() -> None:
     text = ACTIVATION_SCRIPT.read_text(encoding="utf-8")
     assert "require 'default = default_sect'" in text
     assert "require 'default_properties = fips=yes'" in text
-    assert "openssl dgst -md5 >/dev/null" in text, "the build must prove a plain MD5 request is refused"
-    assert "openssl enc -chacha20" in text, "the build must prove a plain non-approved cipher is refused"
-    assert "-propquery '-fips'" in text, "the build must prove the explicit non-security path works"
     assert "require_absent 'legacy = legacy_sect'" in text, "Chainguard's legacy provider must stay off"
+    assert 'sh "$(dirname "$0")/prove-fips-governs.sh"' in text, "the system activation must run the proof"
+
+
+@pytest.mark.spec("req-fips-optout-inventory-3")
+def test_the_proof_has_refusals_and_positive_controls() -> None:
+    text = PROOF_SCRIPT.read_text(encoding="utf-8")
+    assert "if md5; then fatal" in text and "if chacha20; then fatal" in text, "plain requests must be refused"
+    assert "md5 -propquery '-fips' || fatal" in text, "the explicit non-security MD5 path must work"
+    assert "chacha20 -propquery '-fips' || fatal" in text, "the ChaCha20 refusal needs its positive control"
+    assert "$(seq" not in text, "no tool whose absence turns a probe into a false pass"
 
 
 @pytest.mark.spec("req-fips-optout-inventory-3")
 @pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda p: str(p.relative_to(REPO_ROOT)))
-def test_the_rollback_activation_also_loads_default(dockerfile: Path) -> None:
+def test_both_activations_load_default_and_run_the_proof(dockerfile: Path) -> None:
     text = dockerfile.read_text(encoding="utf-8")
     assert "'default = default_sect'" in text and "'default_properties = fips=yes'" in text, dockerfile
+    assert "RUN sh /opt/ossl/prove-fips-governs.sh" in text, f"{dockerfile}: the rollback activation must run the proof"
+    assert "COPY docker/activate-fips-system-wide.sh docker/prove-fips-governs.sh /opt/ossl/" in text, dockerfile
 
 
 # Exit codes: 0 = as required, 1 = an ordinary request reached a non-approved algorithm,
