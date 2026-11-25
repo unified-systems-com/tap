@@ -104,6 +104,7 @@ RunConfiguration --CONFIGURES--> Collector | Emitter
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-runconfig-edge-1 | Exactly One Target | Proposed | A `RunConfiguration` with no `CONFIGURES` edge, or with two, is refused at the close of the write that would leave it so; the target is a `Collector` or an `Emitter` and nothing else. | |
 | req-tap-cares-runconfig-edge-2 | Many Per Component | Proposed | Two configurations of one configurable collector, or of one configurable emitter, each with its own settings, can both exist and each can run. | Issue# 907 - tap reason 3: two accounts on one grid. |
+| req-tap-cares-runconfig-edge-3 | Binding Is Fixed | Proposed | A configuration's `CONFIGURES` edge is written once, when the configuration is created, and is never retargeted or replaced; a write that would point an existing configuration at another component is refused, whatever capabilities the actor holds. To configure a different component, create a new configuration. So what a schedule dispatches changes only through `SCHEDULED_TARGET` writes, which the schedule gates cover. | Closes a path around the schedule gates (unified AI review of PR# 1388 - tap). |
 
 ## Declared Configurability
 ----
@@ -362,7 +363,7 @@ Status: `Proposed`
 
 | Capability | Gates |
 | --- | --- |
-| `cares.configure` (new) | Creating, editing and deleting a `configurable` `RunConfiguration` of a collector or an emitter, and writing its `CONFIGURES` edge; refused on a `not_configurable` one |
+| `cares.configure` (new) | Creating, editing and deleting a `configurable` `RunConfiguration` of a collector or an emitter, and writing its `CONFIGURES` edge at creation (the edge is fixed after that, `req-tap-cares-runconfig-edge-3`); refused on a `not_configurable` one |
 | `cares.run_collectors` (widened) | Running a collector with a chosen configuration, manually or as a self-test-only run |
 | `cares.run_emitters` | Running an emitter with a chosen configuration (`req-tap-cares-v0-emitter-12`) |
 | `cares.manage_schedules` (existing) | Writing a `SCHEDULED_TARGET` edge to a collector's configuration (create or retarget), and changing `cron_expression` or `max_active_runs` on such a schedule |
