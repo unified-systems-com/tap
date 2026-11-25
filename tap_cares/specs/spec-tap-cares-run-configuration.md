@@ -41,8 +41,9 @@ Owner rulings 2026-11-25 on Issue# 907 - tap set every rule here; this spec is w
 | req-tap-cares-runconfig-credential | [Credential Reference And The Destination Rule](#credential-reference-and-the-destination-rule) | Proposed | A configuration names its secret by `scope:key`, of a kind the component declares; where a credential is sent stays in the envelope |
 | req-tap-cares-runconfig-credential-deviation | [Destination Deviation](#destination-deviation) | Backlog | A mechanism to deviate from the destination rule, proposed when someone hits the pain point |
 | req-tap-cares-runconfig-selection | [Which Configuration A Run Uses](#which-configuration-a-run-uses) | Proposed | Every schedule targets one configuration by uuid; a manual run picks one; one configuration needs no choice; no launch-time overrides; current revision only |
-| req-tap-cares-runconfig-delivery | [Delivery To Code](#delivery-to-code) | Proposed | `CollectorConfig` and `EmitterConfig` always carry the configuration id, revision, settings and secret ref, read fresh at run start |
+| req-tap-cares-runconfig-delivery | [Delivery To Code](#delivery-to-code) | Proposed | `CollectorConfig` and `EmitterConfig` always carry the configuration id, revision, settings and secret ref, from one coherent snapshot read under the row lock at run start |
 | req-tap-cares-runconfig-traceability | [The Four-Part Run Record](#the-four-part-run-record) | Proposed | Each job and each batch it writes records the configuration uuid and revision and the component uuid and code version; no node or plugin-table field, no hash |
+| req-tap-cares-runconfig-series | [The Configuration Is The Observation Series](#the-configuration-is-the-observation-series) | Proposed | The previous run, and all state carried between runs, is the same configuration's; a new `secret_ref` starts a new series; emitters carry none |
 | req-tap-cares-runconfig-capabilities | [Capabilities](#capabilities) | Proposed | `cares.configure`; `cares.run_collectors` widened, `cares.run_emitters`; collector schedules keep `cares.manage_schedules` / `cares.toggle_schedules`, emitter schedules `cares.schedule_emitters`; grid-wide in v0 |
 | req-tap-cares-runconfig-self-test | [Readiness Takes The Configuration](#readiness-takes-the-configuration) | Proposed | Core's `misconfigured` check on every run of either kind; a collector's `self_test(config)` takes the configuration; concurrency stays per component |
 | req-tap-cares-runconfig-emitter-arming | [Emitter Arming Binds The Configuration](#emitter-arming-binds-the-configuration) | Proposed | Arming moves to the configuration and binds code identity, revision and secret ref; any change re-arms; seeding never arms |
@@ -224,7 +225,7 @@ RID: `req-tap-cares-runconfig-schema-migration`
 
 Status: `Proposed`
 
-When a configurable component raises `CONFIG_SCHEMA_VERSION`, it may ship migration functions, one per step, each taking the settings at one version and returning them at the next. They are pure: no grid read, no write, no I/O. When a run reads a configuration whose `schema_version` is lower than the component's current one, core applies the steps in order, validates the result against the current schema, and writes it as a new revision authored by the component's program actor, before the run goes on; the run records that new revision.
+When a configurable component raises `CONFIG_SCHEMA_VERSION`, it may ship migration functions, one per step, each taking the settings at one version and returning them at the next. They are pure: no grid read, no write, no I/O. When a run reads a configuration whose `schema_version` is lower than the component's current one, core applies the steps in order, validates the result against the current schema, and writes it as a new revision authored by the component's program actor, before the run goes on; the run records that new revision. The read and the migration happen inside the run-start snapshot (`req-tap-cares-runconfig-delivery`): the migration write carries `entity_expected_version` equal to the revision it migrated from, so a migration computed from a stale revision is refused rather than overwriting a newer edit, and of two workers racing to migrate the same revision exactly one write lands; the other re-reads and finds the configuration current.
 
 A configuration is **invalid** when its settings fail the current schema, when it cannot be migrated (a missing step, a step that raises, a result that fails the schema), or when its `schema_version` is higher than the code's. An invalid configuration:
 
@@ -240,6 +241,7 @@ A configuration is **invalid** when its settings fail the current schema, when i
 | req-tap-cares-runconfig-schema-migration-2 | Unmigratable Is Invalid | Proposed | With no step, a step that raises, or a result failing the schema, the run ends `misconfigured`, writes no batch, and the configuration is unchanged. | |
 | req-tap-cares-runconfig-schema-migration-3 | Never Run With Fields Dropped | Proposed | Settings carrying a field the current schema does not allow fail validation; no run strips the field and proceeds. | |
 | req-tap-cares-runconfig-schema-migration-4 | Newer Than The Code | Proposed | A configuration whose `schema_version` is above the component's current version is invalid and is not rewritten. | A downgrade does not migrate backwards. |
+| req-tap-cares-runconfig-schema-migration-5 | Migration Cannot Overwrite An Edit | Proposed | A migration whose `entity_expected_version` no longer matches the configuration's version is refused and writes nothing; an edit made between the read and the migration survives. | |
 
 ## Credential Reference And The Destination Rule
 ----
@@ -313,7 +315,15 @@ class CollectorConfig:                         # EmitterConfig: emitter_entity_i
     secret_ref: str                            # "" when the configuration names none
 ```
 
-The task payload carries only the configuration's entity id. The task body (`run_collector`, `run_emitter`) reads the configuration fresh at run start, before any component code: its current revision, migrated if it must be (`req-tap-cares-runconfig-schema-migration`), validated, and resolved into the config object. A settings change therefore takes effect on the next run with no restart; a change to the envelope's contents still needs one (`req-tap-cares-secrets-rotation`).
+The task payload carries only the configuration's entity id. The task body (`run_collector`, `run_emitter`) reads the configuration fresh at run start, before any component code, as **one coherent snapshot**:
+
+1. It reads the configuration under its row lock.
+2. It applies any migration (`req-tap-cares-runconfig-schema-migration`) with `entity_expected_version`, so a stale migration cannot overwrite a newer edit.
+3. It validates the snapshot, checks its envelope (`req-tap-cares-runconfig-credential`) and, for an emitter, evaluates arming (`req-tap-cares-runconfig-emitter-arming`), all against that same snapshot.
+4. It records that exact revision on the job (`req-tap-cares-runconfig-traceability`) and builds the config object from it.
+5. It releases the lock before any plugin code runs.
+
+So the settings and `secret_ref` a component receives are exactly those of the revision its job records, and an edit that commits during the start lands as the next revision, for the next run. A settings change therefore takes effect on the next run with no restart; a change to the envelope's contents still needs one (`req-tap-cares-secrets-rotation`).
 
 ### Acceptance Criteria
 
@@ -323,6 +333,9 @@ The task payload carries only the configuration's entity id. The task body (`run
 | req-tap-cares-runconfig-delivery-2 | Read At Run Start | Proposed | A configuration edited after a job is enqueued and before it starts is run at the edited revision, and the job records that revision. | |
 | req-tap-cares-runconfig-delivery-3 | No Restart For Settings | Proposed | An edit to settings is seen by the next run in the same running process. | |
 | req-tap-cares-runconfig-delivery-4 | Not Configurable, Same Shape | Proposed | A not-configurable component's run receives its seeded configuration's id and revision, `settings = {}` and the seed's secret ref; no run receives a null configuration id. | |
+| req-tap-cares-runconfig-delivery-5 | Edit Racing A Run's Start | Proposed | With an edit committed concurrently with a run's start, the revision the job records retrieves from history exactly the settings and `secret_ref` the component received. | |
+| req-tap-cares-runconfig-delivery-6 | Two Workers Racing A Migration | Proposed | Two runs starting together on a configuration that needs migrating produce exactly one migration revision, and an edit committed meanwhile is not lost. | |
+| req-tap-cares-runconfig-delivery-7 | Lock Released Before Plugin Code | Proposed | No plugin hook runs while the configuration's row lock is held. | |
 
 ## The Four-Part Run Record
 ----
@@ -354,6 +367,29 @@ What is not added: no node gets a configuration field, no plugin table gets a co
 | req-tap-cares-runconfig-traceability-3 | Reached From A Row | Proposed | From a row a run's import last changed, a query reaches the configuration's history row at the revision that run used. | |
 | req-tap-cares-runconfig-traceability-4 | Nothing On Nodes Or Plugin Tables | Proposed | No core or plugin node type gains a configuration field or column; plugin migrations are unchanged by this requirement. | Hard constraint for 0.5.0. |
 | req-tap-cares-runconfig-traceability-5 | No Content Hash | Proposed | Neither the job nor the batch records a hash of the settings. | Owner ruling 2026-11-21, Issue# 907 - tap. |
+
+## The Configuration Is The Observation Series
+----
+RID: `req-tap-cares-runconfig-series`
+
+Status: `Proposed`
+
+A run compares itself only with runs of the **same configuration**. Two configurations of one collector are two observation series: they may watch different accounts, regions or scopes, and neither run's absence of something says anything about what the other saw.
+
+- **The previous run** of a collection is the most recently finished successful `CollectionJob` whose recorded configuration (`req-tap-cares-runconfig-traceability`) is this run's configuration and whose recorded revision carries this run's `secret_ref`, other than this run. Today `_previous_run` (`tap_cares/tasks.py`) walks `Collector --HAS_COLLECTION_JOB-->` and takes the collector's latest successful job; it becomes this lookup. Candidate derivation (`tap_grid/candidates.py`) compares scope, and derives `scope_withdrawn`, only against that run (`req-grid-reconcile-previous-run`).
+- **Revisions of one configuration are one series.** An edit that narrows a configuration's scope is compared with the run before it and still produces `scope_withdrawn` candidates.
+- **A new `secret_ref` starts a new series.** The series boundary is found from the record: a previous run counts only if the revision it recorded names the same `secret_ref` as this run's. Pointing a configuration at another account therefore has no previous run, and never proposes withdrawing what the old account saw.
+- **All state carried from one run to the next is keyed the same way**, by configuration and within it by `secret_ref`, wherever core or a component keeps it.
+- **Emitters.** Core keeps no previous-run comparison or carried state for an emitter: each run is new, retries live inside a run, and delivery identity is the emitter's own (`req-tap-cares-v0-emitter`). An emitter that keeps state of its own between runs keys it by configuration in the same way.
+
+### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-runconfig-series-1 | Previous Run Of The Same Configuration | Proposed | With two configurations of one collector, each run's previous run is the latest successful run of its own configuration, never the other's, whichever finished last. | |
+| req-tap-cares-runconfig-series-2 | Edits Stay In The Series | Proposed | A run after a revision that narrowed the scope compares with the run before the edit and records `scope_withdrawn` candidates for what fell out of scope. | |
+| req-tap-cares-runconfig-series-3 | New Credential, New Series | Proposed | A run after a revision that changed `secret_ref` has no previous run (`previous: null`) and records no `scope_withdrawn` candidate. | |
+| req-tap-cares-runconfig-series-4 | Emitters Carry None | Proposed | No emission reads an earlier emission's record to decide what it does. | |
 
 ## Capabilities
 ----
@@ -517,4 +553,5 @@ What moves and what stays, under `req-tap-cares-runconfig-credential` (inventory
 
 - **Airbyte connector specification.** A JSON Schema subset its UI renders as a form, `oneOf` discriminated by a constant, `order` and `multiline` hints, and secrets marked in the schema. Borrowed: the subset and the hints. Changed: a secret-marked field is refused here rather than stored, because secrets never enter a configuration.
 - **Airbyte attempts, SLSA provenance, Airflow 3 bundle versions** (surveyed on Issue# 907 - tap, 2026-11-21): the run points at the exact configuration it ran with. That is the id and revision on the job and the batch.
+- **Meltano** keys incremental state by a state ID per pipeline, not per extractor; the series here is the configuration, not the collector.
 - **Issue# 308 - tap.** zizmor's plugin-owned settings node, user-creatable on the `Schedule` precedent, is the shape this generalizes.

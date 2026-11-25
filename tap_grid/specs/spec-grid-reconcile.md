@@ -28,6 +28,7 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | req-grid-reconcile-observation-lifetime | [Retirement Ends An Observation, Not A Thing](#retirement-ends-an-observation-not-a-thing) | Proposed | `DROPPED_FROM_OBSERVATION` under a named scope; terminal; never rendered as "deleted" |
 | req-grid-reconcile-evidence | [Evidence Is Six Attributes, Not One Word](#evidence-is-six-attributes-not-one-word) | Implemented | Scope, enumeration, source consistency, interval, admission, application — recorded per surface as a completeness statement |
 | req-grid-reconcile-candidates | [Candidate Derivation And Prerequisites](#candidate-derivation-and-prerequisites) | Implemented | Fan-out from the parent; prerequisite read per parent; withdrawal is not absence — derived and recorded on the run's Batch, authority off |
+| req-grid-reconcile-previous-run | [The Previous Run Is The Same Configuration's](#the-previous-run-is-the-same-configurations) | Proposed | The previous run that withdrawal compares against is the latest successful run of the same run configuration with the same `secret_ref` |
 | req-grid-reconcile-falsifier | [Per-Type Falsifiers And Their Verdicts](#per-type-falsifiers-and-their-verdicts) | Implemented | Manifest-registered probe; five verdicts; probe compares identity and owner, not HTTP status; no falsifier means not reconcilable. Slice 3 landed the contract, registry, classification and the recorded verdicts (authority off); the writes are the verb's (slice 4) |
 | req-grid-reconcile-verb | [Service-Owned Reconciliation](#service-owned-reconciliation) | Implemented | One `reconcile` verb, run-config authority default off, budget, fence against stale verdicts. Slice 4 (Issue# 652 - tap): `grid.reconcile` capability, per-collector authority and budget, verdicts applied behind the fence, collectors never retire |
 | req-grid-reconcile-hysteresis | [No Time-Based Hysteresis](#no-time-based-hysteresis) | Proposed | The completeness gate is the hysteresis; corroboration is a second *independent* observation, not a clock |
@@ -216,6 +217,23 @@ The first contradiction had narrowing-out-of-scope both receiving "the same tomb
 
 #### Future
 Perspectives. When a grid holds observations from more than one observer, the candidate set must be scoped to the observing perspective so one observer's pass cannot retire another's rows. That work is blocked on a dimension-vocabulary cleanup: the dimension keys in use today mix perspective, facet and locator, and at least one is applied inconsistently by code path — evidence recorded in the design document.
+
+---
+
+### The Previous Run Is The Same Configuration's
+----
+RID: `req-grid-reconcile-previous-run`
+
+Status: `Proposed`
+
+Where this spec says "the previous run" or "the previous statement" (the scope comparison of `req-grid-reconcile-candidates`, and `scope_withdrawn` in `-candidates-4`), it means the previous run **of the same run configuration**: the most recently finished successful run whose recorded configuration is this run's, and whose recorded revision names this run's `secret_ref` (`req-tap-cares-runconfig-series` in `tap_cares/specs/spec-tap-cares-run-configuration.md`). As built, `_previous_run` (`tap_cares/tasks.py`) takes the collector's latest successful job; this requirement replaces that when run configurations are built. A run with no such previous run records `previous: null`, as today: withdrawal not observable.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-reconcile-previous-run-1 | Same Configuration Only | Proposed | With two configurations of one collector, a run's candidates compare its scope only with the latest successful run of its own configuration. | |
+| req-grid-reconcile-previous-run-2 | New Credential Compares Nothing | Proposed | A run whose configuration's `secret_ref` differs from the one its previous run recorded has `previous: null` and no `scope_withdrawn` candidate. | |
 
 ---
 
