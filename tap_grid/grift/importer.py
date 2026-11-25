@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/2782820e6cd8 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/01d48705f3ec (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-GRIFT_VERSION = "0"
+GRIFT_VERSION = "1"
 IMPORT_MODE = "upsert"
 _GRIFT_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "grift-document.schema.json"
 

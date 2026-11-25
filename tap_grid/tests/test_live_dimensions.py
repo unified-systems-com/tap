@@ -18,29 +18,39 @@ from django.test.utils import CaptureQueriesContext
 from tap_grid import dimension_names, live_dimensions
 from tap_grid.dimension_map import DimensionWriteError, supplied
 from tap_grid.dimension_names import UnknownDimension
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Dimension, Entity
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
+
 
 META = "01a1d14c-d80b-725d-8002-eb0b3e272f1d"  # tap.meta, core's dimension bundle
 
 
 def _document(*nodes: dict[str, Any], batch: str | None = None) -> dict[str, Any]:
-    return {
-        "metadata": {"grift_version": "0"},
-        "_reserved": {},
-        "batches": [
-            {
-                "batch_entity": {
-                    "entity_id": batch or str(uuid.uuid7()),
-                    "entity_type": "batch",
-                    "name": "live dims",
-                    "dimensions": {},
-                },
-                "batch_node": {"source": "tests", "name": "live dims", "description": "d"},
-                "nodes": list(nodes),
-                "edges": [],
-            }
-        ],
-    }
+    return _stated(
+        {
+            "metadata": {},
+            "_reserved": {},
+            "batches": [
+                {
+                    "batch_entity": {
+                        "entity_id": batch or str(uuid.uuid7()),
+                        "entity_type": "batch",
+                        "name": "live dims",
+                        "dimensions": {},
+                    },
+                    "batch_node": {"source": "tests", "name": "live dims", "description": "d"},
+                    "nodes": list(nodes),
+                    "edges": [],
+                }
+            ],
+        }
+    )
 
 
 def _dimension(name: str, ident: str | None = None, **knobs: Any) -> dict[str, Any]:

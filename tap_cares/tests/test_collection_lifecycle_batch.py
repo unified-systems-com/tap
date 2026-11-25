@@ -32,7 +32,15 @@ from tap_cares.registry import reconcile_collector_nodes, register_collector
 from tap_cares.services import LIFECYCLE_BATCH_SOURCE, run_collection
 from tap_cares.tests.fakes import BoomCollector, HappyCollector
 from tap_grid.batch import AUTO_BATCH_SOURCE
+from tap_grid.grift.upgrade import build_header
 from tap_grid.models import Batch, BatchStatus
+
+
+def _stated(document: dict[str, Any]) -> dict[str, Any]:
+    """State the format "1" header a restamp gives a hand-built document: the spine and every type at 1."""
+    document["metadata"] = build_header(document, unversioned=True)
+    return document
+
 
 SCOPE = "tap_cares.tests.test_collection_lifecycle_batch"
 
@@ -62,29 +70,31 @@ class _GriftCollector(CollectorBase):
 
     def run(self) -> None:
         self.submit_grift(
-            {
-                "metadata": {"grift_version": "0"},
-                "_reserved": {},
-                "batches": [
-                    {
-                        "batch_entity": {
-                            "entity_id": str(uuid.uuid4()),
-                            "entity_type": "batch",
-                            "name": "Imported data",
-                            "dimensions": {},
-                        },
-                        "batch_node": {
-                            "name": "Imported data",
-                            "description": "",
-                            "description_json": None,
-                            "source": "lifecycle-batch-test-source",
-                            "metadata": {},
-                        },
-                        "nodes": [],
-                        "edges": [],
-                    }
-                ],
-            }
+            _stated(
+                {
+                    "metadata": {},
+                    "_reserved": {},
+                    "batches": [
+                        {
+                            "batch_entity": {
+                                "entity_id": str(uuid.uuid4()),
+                                "entity_type": "batch",
+                                "name": "Imported data",
+                                "dimensions": {},
+                            },
+                            "batch_node": {
+                                "name": "Imported data",
+                                "description": "",
+                                "description_json": None,
+                                "source": "lifecycle-batch-test-source",
+                                "metadata": {},
+                            },
+                            "nodes": [],
+                            "edges": [],
+                        }
+                    ],
+                }
+            )
         )
 
 

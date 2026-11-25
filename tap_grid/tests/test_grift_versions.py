@@ -97,6 +97,12 @@ def _edge(from_id: str, to_id: str, edge_type: str = LINK, **properties: Any) ->
     }
 
 
+def _unversioned(document: dict[str, Any]) -> dict[str, Any]:
+    """The document at format "0", which states no versions."""
+    document["metadata"] = {"grift_version": "0"}
+    return document
+
+
 def _document(
     *,
     nodes: list[dict[str, Any]] | None = None,
@@ -200,7 +206,7 @@ class TestHeader:
 
     @HV[2]
     def test_the_schema_holds_each_format_to_its_own_header(self) -> None:
-        unversioned = _minimal_doc()
+        unversioned = _unversioned(_minimal_doc())
         assert validate_grift_document(unversioned) == []
         unversioned["metadata"]["spine_version"] = 1
         assert validate_grift_document(unversioned), "format 0 states no versions"
@@ -256,18 +262,24 @@ class TestHeader:
 
     @HV[6]
     @HV[7]
+    @HV[8]
     def test_the_two_formats_and_what_refuses_each(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Format "0" is still read until the switch is set; an unknown format names what is read."""
-        assert grift_upgrade.formats_read() == ("0", "1")
-        assert grift_import(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("old form")])])).success
-
-        monkeypatch.setenv(grift_upgrade.REQUIRE_VERSIONS_ENV, "1")
+        """Format "0" is refused with no switch set, naming what is read; ``=0`` reads it again (rule 12)."""
+        monkeypatch.delenv(grift_upgrade.REQUIRE_VERSIONS_ENV, raising=False)
         assert grift_upgrade.formats_read() == ("1",)
-        refused = grift_import(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("refused form")])]))
+        refused = grift_import(_unversioned(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("refused form")])])))
         assert not refused.success and _codes(refused) == ["unsupported_grift_version"]
         assert "'0'" in refused.errors[0].message and "'1'" in refused.errors[0].message
         assert not Entity.objects.filter(name="refused form").exists()
         assert grift_import(_document(nodes=[_node("new form")])).success
+
+        for other in ("1", "yes", ""):
+            monkeypatch.setenv(grift_upgrade.REQUIRE_VERSIONS_ENV, other)
+            assert grift_upgrade.formats_read() == ("1",), other
+
+        monkeypatch.setenv(grift_upgrade.REQUIRE_VERSIONS_ENV, "0")
+        assert grift_upgrade.formats_read() == ("0", "1")
+        assert grift_import(_unversioned(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("old form")])]))).success
 
     @HV[5]
     def test_stated_versions_reach_no_row(self) -> None:
@@ -302,8 +314,10 @@ class TestNothingToUpgrade:
         assert outcome.upgraded == {} and outcome.dropped == {}
         assert len(queries) == 0
 
-    def test_an_unversioned_document_is_returned_untouched(self) -> None:
-        document = _minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("as before")])])
+    def test_an_unversioned_document_is_returned_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Read under ``TAP_REQUIRE_GRIFT_VERSIONS=0``, a "0" document comes back as it was, with no query."""
+        monkeypatch.setenv(grift_upgrade.REQUIRE_VERSIONS_ENV, "0")
+        document = _unversioned(_minimal_doc([_batch_container(_batch_entity_id(), nodes=[_node("as before")])]))
         with CaptureQueriesContext(connection) as queries:
             outcome = grift_upgrade.upgrade_document(document)
         assert outcome.document is document and not outcome.refused and len(queries) == 0
