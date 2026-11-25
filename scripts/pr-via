@@ -6,13 +6,37 @@
 # ("promote: <session> → main"); ad-hoc/feature-branch PRs append this suffix:
 #     gh pr create --title "feat: thing $(scripts/pr-via)" ...
 # The label is DERIVED, never hand-typed: .env.local's COMPOSE_PROJECT_NAME
-# (tap_<label>, written by spawn-session) with the worktree basename as the
-# settings-free fallback.
+# (tap_<label>, written by spawn-session).
+#
+# A worktree nested inside a session's worktree (a side branch or a sub-agent's
+# checkout) has no .env.local of its own. Its label is the spawning session's,
+# then the worktree's own name: "<session>.<worktree>", e.g. a worktree
+# `.wtrepin` inside session hard-things prints "[via hard-things.wtrepin]"
+# (George 2026-11-25). A worktree already named "<session>.<purpose>" is not
+# doubled. With no session anywhere above it, the worktree basename is the
+# settings-free fallback, as before.
 set -euo pipefail
+
+session_label() {  # the COMPOSE_PROJECT_NAME label in $1/.env.local, or nothing
+  [[ -f "$1/.env.local" ]] || return 0
+  sed -n 's/^COMPOSE_PROJECT_NAME=tap[_-]//p' "$1/.env.local" | head -1
+}
+
 root="$(git rev-parse --show-toplevel)"
-label=""
-if [[ -f "$root/.env.local" ]]; then
-  label="$(sed -n 's/^COMPOSE_PROJECT_NAME=tap[_-]//p' "$root/.env.local" | head -1)"
+label="$(session_label "$root")"
+if [[ -z "$label" ]]; then
+  name="$(basename "$root")"
+  name="${name#.}"
+  dir="$(dirname "$root")"
+  parent=""
+  while [[ "$dir" != "/" && -z "$parent" ]]; do
+    parent="$(session_label "$dir")"
+    [[ -n "$parent" ]] || dir="$(dirname "$dir")"
+  done
+  if [[ -n "$parent" ]]; then
+    label="${parent}.${name#"${parent}".}"
+  else
+    label="$name"
+  fi
 fi
-[[ -n "$label" ]] || label="$(basename "$root")"
 printf '[via %s]\n' "$label"

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.5.0](https://github.com/unified-systems-com/tap/compare/v0.4.9...v0.5.0) (2026-11-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **release:** Upgrading to 0.5.0. (1) GRIFT documents stating format "0" are refused by default (PR# 1368 - tap). Every collector stamps its header with tap_grid.grift.upgrade.build_header, and every fleet plugin has released at format "1". An instance pinned to an older plugin release can set TAP_REQUIRE_GRIFT_VERSIONS=0 to read "0" documents again. (2) History rows carry the event time each version had, and boot refuses a plugin whose history tables lack event_start, event_end or event_precision (PR# 1375 - tap). Each model-bearing plugin regenerates one migration against tap_grid 0024_history_event_time and raises requires_tap to >=0.5.0. History rows written before the upgrade hold no event time, and an existing grid is reloaded rather than backfilled.
+
+### Features
+
+* **grid:** boot refuses a history table without the event-time columns (Q73b) ([f016d0a](https://github.com/unified-systems-com/tap/commit/f016d0a5b60bb8daf5c82c0194c6c9b09bcf1227))
+* **grid:** history rows carry the event time (req-grid-history-event-time) ([e135eb5](https://github.com/unified-systems-com/tap/commit/e135eb590c81d79a74611cbe6b92e2774d7f3073))
+* **grift:** refuse format "0" by default; GRIFT_VERSION is "1" ([dafdac9](https://github.com/unified-systems-com/tap/commit/dafdac954662af6055da8636a794f8862beae6b6))
+* **grift:** refuse format "0" by default; GRIFT_VERSION is "1" (+1 more) [via .q65b-wt] ([26488a8](https://github.com/unified-systems-com/tap/commit/26488a8eb7d009f7369a3a481e328875ed40a944))
+
+
+### Documentation
+
+* core docs name identity-bearing dimensions, not realms ([9ee5a2c](https://github.com/unified-systems-com/tap/commit/9ee5a2c4a66e8a1c9429eb9aae5dce51f029a319))
+* **spec:** a service write sets dimensions only at create; format "0" is refused by default ([d7abf08](https://github.com/unified-systems-com/tap/commit/d7abf085731fb02ebbdf28f7cfd5a93fcc4fe604))
+* **spec:** a service write sets dimensions only at create; format "0" is refused by default [via .wtspec] ([fd07c61](https://github.com/unified-systems-com/tap/commit/fd07c61f67b8493e835f264181509e7fb1e62e9f))
+* **spec:** cite computing-core's host requirement by link, not a bare RID ([9259018](https://github.com/unified-systems-com/tap/commit/9259018b77ccc075a583f2b30a844f6b98f1a77b))
+* **spec:** GRIFT format "0" producers have all released at "1" ([927e1ee](https://github.com/unified-systems-com/tap/commit/927e1ee80f603ea6d3e0b7e02e3ed08a4195fda9))
+* **spec:** req-grid-history-event-time — history rows carry the event time ([cfa5222](https://github.com/unified-systems-com/tap/commit/cfa5222b2cdc589a1c65d30c44d88ca79bc11fca))
+* **spec:** req-grid-history-event-time — history rows carry the event time (+6 more) [via .wt1374] ([f1a17a3](https://github.com/unified-systems-com/tap/commit/f1a17a375cd9e24f7b5e6c9fdcfd0796d04092a8))
+* **spec:** req-grid-history-event-time stays In Development until the plugins regenerate ([5c867d0](https://github.com/unified-systems-com/tap/commit/5c867d021b6d2995e505ec275a9bf9ec0021ec54))
+* **spec:** SBOM decision D is settled by the oci-digest host type, not a realm ([812ab93](https://github.com/unified-systems-com/tap/commit/812ab930a233ff14d0bffad8426e4260e7ec2443))
+* **spec:** SBOM decision D is settled by the oci-digest host type, not a realm (+1 more) [via dimensional-reload] ([591baae](https://github.com/unified-systems-com/tap/commit/591baae6a3326ae56008cc327d674862d103e097))
+* **spec:** spine copies carry no CRUD or validation schema; plugin field sweeps exclude non-editable fields ([848d6c1](https://github.com/unified-systems-com/tap/commit/848d6c178189bb424214a7a9be587866aae1dca1))
+
+
+### Miscellaneous Chores
+
+* **release:** the next tap release is 0.5.0 ([3d3b289](https://github.com/unified-systems-com/tap/commit/3d3b289f8cbb1e57560d12a9ace776313bc6f2b8))
+
 ## [0.4.9](https://github.com/unified-systems-com/tap/compare/v0.4.8...v0.4.9) (2026-11-24)
 
 
