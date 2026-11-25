@@ -31,7 +31,7 @@ The tap-best-practices skill carries the short form of this rule ("Runs: a run n
 | req-tap-cares-run-helper | [The `open_run` Helper](#the-open_run-helper) | Proposed | Context manager that mints, opens, stamps, counts, classifies and conditionally closes, and registers the type for mop-up |
 | req-tap-cares-run-graceful-close | [Close In `finally`, Best-Effort](#close-in-finally-best-effort) | Proposed | The run closes itself on the way out when it can; the steady_queue limitation is named; the reaper is the guarantee |
 | req-tap-cares-run-mopup | [Mop-Up By The Reaper](#mop-up-by-the-reaper) | Proposed | Extends `req-tap-cares-collector-job-reaper`: a `running` run whose owner job is terminal or dead is closed `abandoned`, at the scheduler tick and at the next open of its type; no new numbers |
-| req-tap-cares-run-abort-cleanup | [Abort Clean-Up Hook](#abort-clean-up-hook) | Proposed | Optional `on_abort(run)` on collectors and emitters, enqueued as its own task when the reaper abandons a run; idempotent, outcome recorded, not retried |
+| req-tap-cares-run-abort-cleanup | [Abort Clean-Up Hook](#abort-clean-up-hook) | Proposed | Optional `on_abort(run)` on collectors and emitters, only after a recorded effect and only against recorded destinations; dispatched through a pending-row outbox at the tick and at open; a lost dispatch is recovered, a hook that ran is never retried |
 | req-tap-cares-run-overlap | [Overlap Per Run Type](#overlap-per-run-type) | Proposed | Allowed by default; a type may refuse overlap with a transaction-scoped advisory lock at open |
 | req-tap-cares-run-backlog | [Deferred Run Work](#deferred-run-work) | Backlog | Cooperative stop signal, retention of failed and abandoned runs, `CollectionJob` adopting the convention |
 
@@ -53,14 +53,16 @@ A plugin declares each of its run node types as an ordinary `BaseModel` (via `ad
 | `failure_kind` | short text, nullable | An open list. Core uses `error`, `invalid_output`, `abandoned`, `cancelled` and `deadline_exceeded`; a plugin may add its own values and documents them in its spec |
 | `failure` | text, nullable | What went wrong, passed through the secrets redaction (`req-tap-cares-secrets-redaction`) before it is stored. No length cap |
 | `results_written` | integer | Nodes this run created and stamped with its `run_id`, counted by the helper |
-| `cleanup_status` | short text, nullable | `enqueued`, `succeeded` or `failed` once an abort clean-up is involved (`req-tap-cares-run-abort-cleanup`); empty otherwise |
+| `cleanup_status` | short text, nullable | `pending`, `enqueued`, `succeeded` or `failed` once an abort clean-up is involved (`req-tap-cares-run-abort-cleanup`); empty otherwise |
+| `cleanup_task_id` | short text, nullable | The task id of the clean-up task the dispatcher enqueued |
+| `cleanup_started_at` | datetime, nullable | Written by the clean-up task immediately before it calls the hook; once set, the clean-up is never dispatched again |
 | `cleanup_failure` | text, nullable | The redacted failure of a clean-up that failed. No length cap |
 
 A plugin declares further counts as its own integer fields and names them in the run type's `RUN_COUNTS` tuple; the helper increments them on request and writes them at close.
 
 **What the run node does not copy.** Who or what started the run (the schedule fire, the manual operator, the actor) and which code ran (plugin slug, release, commit, source hash, the capability's authored version) are already on the owner job: a `CollectionJob` carries `req-tap-cares-collector-version`'s fields, and an `EmissionJob` carries the same set (`req-tap-cares-v0-emitter`). A run node reaches them through `owner_job_id` and never holds a second copy that could disagree.
 
-**Owner job.** Every run is executed by exactly one tap_cares job, and the open refuses an `owner_job_id` that does not resolve to an existing `CollectionJob` or `EmissionJob` that is not terminal. An `EmissionJob` is itself a run under this convention as well as a job (`req-tap-cares-v0-emitter`); its `owner_job_id` is its own entity id.
+**Owner job.** Every run is executed by exactly one tap_cares job, and the open refuses an `owner_job_id` that does not resolve to an existing `CollectionJob` or `EmissionJob` that is not terminal. **The self-owning bootstrap.** An `EmissionJob` is itself a run under this convention as well as a job (`req-tap-cares-v0-emitter`); its `owner_job_id` is its own entity id. That is the one exception to the rule above, and it is atomic: the `EmissionJob` is created in one write together with its own owner identity, so the owner-must-exist check is satisfied by that same creation rather than by an earlier row. No other run type may own itself.
 
 ### Acceptance Criteria
 
@@ -70,6 +72,7 @@ A plugin declares further counts as its own integer fields and names them in the
 | req-tap-cares-run-node-2 | Owner Job Required And Live | Proposed | Opening a run with an `owner_job_id` that resolves to no `CollectionJob` or `EmissionJob`, or to a terminal one, is refused before any write. | |
 | req-tap-cares-run-node-3 | No Copied Provenance | Proposed | The mixin declares no trigger, actor, plugin release, commit, source hash or capability version field; a test reaches each through `owner_job_id`. | One place for each fact. |
 | req-tap-cares-run-node-4 | Failure Text Redacted, Uncapped | Proposed | `failure` and `cleanup_failure` pass through the secrets redaction before storage and are stored whole; a test stores a failure longer than any existing summary bound and reads it back unchanged. | |
+| req-tap-cares-run-node-5 | Self-Owning Bootstrap | Proposed | An `EmissionJob` is created in one write with `owner_job_id` equal to its own entity id, and that creation satisfies the owner check; any other run type naming itself as owner is refused. | The one exception to `-node-2`. |
 
 ## Lifecycle And States
 ----
@@ -162,7 +165,7 @@ with open_run(RunType, owner_job_id=job_id, **fields) as run:
 2. runs the mop-up for `RunType`'s own `running` rows (`req-tap-cares-run-mopup`) and, for a type that refuses overlap, takes its lock (`req-tap-cares-run-overlap`);
 3. validates `owner_job_id` (`req-tap-cares-run-node-2`), mints the UUIDv7 id and writes the open;
 4. yields a handle whose `submit_grift` fills `run_id` on every node of a type that declares it, refuses a node of such a type that names a different `run_id`, and adds the created count to `results_written`;
-5. on leaving the block, closes the run with the conditional write: `complete` on a normal exit; `failed` when the block raised an `Exception`, with `failure_kind` taken from the exception's `failure_kind` attribute when it has one and `error` otherwise; `cancelled` when it raised a `BaseException` that is not an `Exception`; or the state `run.fail(...)` set. The exception is re-raised after the close.
+5. on leaving the block, closes the run with the conditional write: `complete` on a normal exit; `failed` when the block raised an `Exception`, with `failure_kind` taken from the exception's `failure_kind` attribute when it has one and `error` otherwise; `failed` with `failure_kind = cancelled` when it raised a `BaseException` that is not an `Exception` (there is no `cancelled` state); or the state `run.fail(...)` set. The exception is re-raised after the close.
 
 The helper never swallows the run's exception and never retries. A run that should be retried is a new run.
 
@@ -187,12 +190,17 @@ A run closes itself on the way out whenever its process is still able to run cod
 
 A cooperative stop signal that would let a run close itself on shutdown is Backlog (`req-tap-cares-run-backlog`).
 
+**Timeouts stay the plugin's.** Core adds no bounded-I/O requirement: connect, read and call timeouts are optional and chosen by each plugin, as the emitter section states for emitters.
+
+**Named accepted risk: stuck workers.** A run whose code hangs (a read with no timeout, a wedged library) keeps its worker thread. The mop-up can close it `abandoned` (its owner job's process is still heartbeating, so this happens only through a deadline), but closing the row does not free the thread. The shared default queue has a small fixed thread pool (three threads today, `tap/serving.py` `QUEUE_THREADS`), so a few hung runs can occupy every thread, and anything queued behind them, abort clean-ups included, waits. The documented operational response is to restart the worker; the mop-up then closes what the restart killed, and pending clean-ups are dispatched afresh (`req-tap-cares-run-abort-cleanup`).
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-run-graceful-close-1 | Close On The Way Out | Proposed | A block that raises still writes its terminal state before the exception leaves the helper. | |
 | req-tap-cares-run-graceful-close-2 | No TAP Grace Period | Proposed | No TAP setting or code path waits on shutdown for a running run; a run killed with its process is closed only by the mop-up. | |
+| req-tap-cares-run-graceful-close-3 | Stuck Workers Named | Proposed | The spec names hung runs holding worker threads after they are closed `abandoned` as an accepted risk, with restarting the worker as the documented response; core adds no timeout requirement. | Timeouts stay optional and plugin-owned. |
 
 ## Mop-Up By The Reaper
 ----
@@ -219,6 +227,8 @@ An `EmissionJob`, being its own owner, goes straight to the reaper's derive step
 
 **The write.** The abandon is the conditional close of `req-tap-cares-run-lifecycle` with `closed_by = mop_up`, `finished_at = now`, and a `failure` beginning `Abandoned:` naming which step fired. It is written under the program actor of the capability that owns the job, on a batch of its own labelled `Run mop-up`.
 
+**Clean-up dispatch rides the same two moments.** At the tick and at open, after closing runs, the mop-up dispatches pending abort clean-ups and recovers lost ones (`req-tap-cares-run-abort-cleanup`).
+
 **No new numbers.** The mop-up uses the reaper's existing 30-minute flat-age fallback and steady_queue's own `process_alive_threshold`, read from steady_queue as the reaper already does. It adds no interval, no timeout and no threshold. There is no resume: an abandoned run stays abandoned, and a retry is a new run. Abandoned and failed rows are kept; their retention is a later decision (`req-tap-cares-run-backlog`).
 
 ### Acceptance Criteria
@@ -241,11 +251,18 @@ Status: `Proposed`
 
 A collector or emitter class may supply `on_abort(self, run)`. The default is a no-op. It exists for side effects a run leaves behind that only the plugin understands: a multipart upload to cancel, a lease to release, a half-written remote draft to delete.
 
-**When the reaper fires it.** Only for a run closed from outside (`closed_by = mop_up`). When the mop-up abandons a run whose capability class overrides `on_abort`, it sets `cleanup_status = enqueued` in the same write and enqueues a clean-up task after commit. The clean-up is never run inline in the reaper. For an emitter, the hook fires once for the `EmissionJob`; the emitter's own run nodes that the same act abandons through the cascade do not fire it again, since the job is the outermost run. For a collector, it fires once for each of its run nodes the mop-up abandons.
+**When it runs at all.** Only for a run closed from outside (`closed_by = mop_up`) **that recorded at least one effect**. A run type defines what counts as a recorded effect through `RunMixin.recorded_effects(run)`; the default is `results_written > 0`, and an emitter's is at least one send record made with a proceeding permit (a non-dry-run `record_send`, `req-tap-cares-v0-emitter`). So the hook never runs after a dry run, nor after a run that was unarmed, `arm_stale` or `destination_unapproved`, because those runs record no effect. For an emitter it fires once, for the `EmissionJob`; the emitter's own run nodes that the same act abandons through the cascade do not fire it again, since the job is the outermost run. For a collector, it fires once for each of its run nodes the mop-up abandons.
 
-**What it receives.** The task's payload is the run type and the run's entity id, nothing else. The task loads the persisted run and its owner job, resolves the capability class from the job's `Collector` or `Emitter` node, constructs it with its configuration exactly as a run does (its envelope resolved and validated), and calls `on_abort(run)`. No in-memory state of the dead run is available, by design.
+**Dispatch is recoverable (a transactional outbox).** The reaper never runs the hook inline and never enqueues it directly. In the same transaction as the abandon, it sets `cleanup_status = pending`. The pending row is the outbox: it commits with the abandon or not at all, so no clean-up is lost between deciding on it and dispatching it. The scheduler tick, and the next open of the run's type, turn pending rows into tasks: each pending row is locked, a task is enqueued carrying only the run type and run id, its id is written to `cleanup_task_id`, and the row is marked `enqueued`. Dispatch is deduplicated by run id: a row that is not `pending` under the lock is skipped, so one run never has two live clean-up tasks.
 
-**What it must be.** Idempotent, and safe when the run was actually alive: a deadline abandon closes a run whose thread may still be running. The outcome is recorded on the run: `cleanup_status = succeeded`, or `failed` with the redacted `cleanup_failure`. A failed clean-up is not retried.
+**What is recovered and what is not.** The two cases are told apart by `cleanup_started_at`, which the task writes immediately before calling the hook.
+
+- *Recovered:* a task that was lost or never started. An `enqueued` row with no `cleanup_started_at` whose task the reaper's existing derive steps find gone or dead (no steady_queue `Job`, a `FailedExecution`, a finished `Job`, a claim past `process_alive_threshold`, or the flat-age fallback for an id steady_queue cannot resolve) is set back to `pending` and dispatched again. Nothing plugin-side has run, so this is safe.
+- *Not retried:* a hook that ran. Once `cleanup_started_at` is set the clean-up is never dispatched again. A hook that returned or raised a failure is recorded `failed` with the redacted `cleanup_failure`. A task that died after `cleanup_started_at` was set is recorded `failed` by the sweep, naming the evidence, because the hook may have done part of its work.
+
+**What it receives.** The task's payload is the run type and the run's entity id, nothing else. The task loads the persisted run and its owner job, resolves the capability class from the job's `Collector` or `Emitter` node, and constructs it with the **current** credentials from its envelope (so a rotated credential is used) but **only the destinations the run recorded**, never the destinations the current envelope names. Credential rotation is fine; silent retargeting is not. No in-memory state of the dead run is available, by design.
+
+**What it must be.** Idempotent, and safe when the run was actually alive: a deadline abandon closes a run whose thread may still be running. The outcome is recorded on the run: `cleanup_status = succeeded`, or `failed` with the redacted `cleanup_failure`.
 
 **In-process failures are the plugin's.** Plugin code that fails in its own process handles its own clean-up there, and may call its own `on_abort` to do so. The reaper does not fire the hook for a run its own code closed.
 
@@ -253,11 +270,13 @@ A collector or emitter class may supply `on_abort(self, run)`. The default is a 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-run-abort-cleanup-1 | Enqueued, Never Inline | Proposed | Abandoning a run whose class overrides `on_abort` enqueues one clean-up task after commit, carrying only the run type and id, and sets `cleanup_status = enqueued`; the reaper itself calls no plugin code. | |
+| req-tap-cares-run-abort-cleanup-1 | Pending In The Abandon, Dispatched Later | Proposed | Abandoning a run whose class overrides `on_abort` and that recorded an effect sets `cleanup_status = pending` in the abandon's own transaction; the reaper calls no plugin code and enqueues nothing; the next tick or open of the type enqueues one task carrying only the run type and id, records `cleanup_task_id`, and marks the row `enqueued`. | Transactional outbox. |
 | req-tap-cares-run-abort-cleanup-2 | Outside Endings Only | Proposed | A run closed `failed` or `complete` by its own code never gets a clean-up task from the reaper. | |
-| req-tap-cares-run-abort-cleanup-3 | Outcome Recorded, Not Retried | Proposed | A clean-up that raises leaves `cleanup_status = failed` with redacted text and is not enqueued again; one that returns leaves `succeeded`. | |
-| req-tap-cares-run-abort-cleanup-4 | Persisted Records Only | Proposed | The hook receives the persisted run; the task reconstructs the class from the owner job's capability node and its configuration. | |
+| req-tap-cares-run-abort-cleanup-3 | Outcome Recorded, Not Retried | Proposed | A clean-up whose hook raises or reports failure leaves `cleanup_status = failed` with redacted text and is never dispatched again; one that returns leaves `succeeded`; a task that died after `cleanup_started_at` was set is recorded `failed`, not re-dispatched. | |
+| req-tap-cares-run-abort-cleanup-4 | Persisted Records, Recorded Destinations | Proposed | The hook receives the persisted run; the task reconstructs the class from the owner job's capability node with current credentials and only the destinations the run recorded; a test changes the envelope's destination after the abandon and observes the hook given the recorded one. | Rotation yes, retargeting no. |
 | req-tap-cares-run-abort-cleanup-5 | Default No-Op | Proposed | A class that does not override `on_abort` gets no clean-up task and its run's `cleanup_status` stays empty. | |
+| req-tap-cares-run-abort-cleanup-6 | Only After A Recorded Effect | Proposed | An abandoned run for which `recorded_effects(run)` is false (for an emitter: a dry run, or an unarmed, `arm_stale` or `destination_unapproved` run) gets no clean-up and `cleanup_status` stays empty. | |
+| req-tap-cares-run-abort-cleanup-7 | Lost Dispatch Recovered | Proposed | An `enqueued` row with no `cleanup_started_at` whose task the reaper's derive steps find gone or dead returns to `pending` and is dispatched once more; at no time does one run have two live clean-up tasks. | Uses only the reaper's existing evidence and numbers. |
 
 ## Overlap Per Run Type
 ----
@@ -265,7 +284,11 @@ RID: `req-tap-cares-run-overlap`
 
 Status: `Proposed`
 
-Overlap is declared per run type with `ALLOW_OVERLAP`, default `True`: two runs of the same type may be `running` at once. A type that sets it to `False` refuses overlap at open. The open takes a transaction-scoped PostgreSQL advisory lock keyed on the run type, runs the mop-up for that type, and refuses the open (`RunOverlapRefused`) if a `running` row of the type remains; otherwise it writes the open in the same transaction. The lock is released when that transaction ends and is never held for the run's duration.
+Overlap is declared per run type with `ALLOW_OVERLAP`, default `True`: two runs of the same type may execute at once. A type that sets it to `False` refuses overlap at open.
+
+**What counts is what is still executing, not only what is `running`.** A run is executing while its status is `running`, and also while it was closed from outside (`closed_by = mop_up`) but its owner job's task has not finished: the reaper's derive steps still find that task claimed by a live process. A deadline-abandoned run whose thread is still working is the case this covers. This is the same rule the scheduler uses to hold a slot for a deadline-abandoned emission (`req-tap-cares-run-mopup-4`), so `ALLOW_OVERLAP = False` and the scheduler's overlap count agree.
+
+The open takes a transaction-scoped PostgreSQL advisory lock keyed on the run type, runs the mop-up for that type, and refuses the open (`RunOverlapRefused`) if an executing run of the type remains; otherwise it writes the open in the same transaction. The lock is released when that transaction ends and is never held for the run's duration.
 
 The advisory lock is PostgreSQL-specific. A future SQLite shape needs its own serialization here (`tap_grid/specs/spec-grid-sqlite-portability-BACKLOG.md`).
 
@@ -274,7 +297,7 @@ The advisory lock is PostgreSQL-specific. A future SQLite shape needs its own se
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-run-overlap-1 | Allowed By Default | Proposed | Two concurrent opens of a type that does not set `ALLOW_OVERLAP = False` both succeed. | |
-| req-tap-cares-run-overlap-2 | Refused Under The Lock | Proposed | For a type with `ALLOW_OVERLAP = False`, of two concurrent opens exactly one succeeds and the other raises `RunOverlapRefused`; a stale `running` row of a dead job is mopped up first and does not block the open. | |
+| req-tap-cares-run-overlap-2 | Refused Under The Lock | Proposed | For a type with `ALLOW_OVERLAP = False`, of two concurrent opens exactly one succeeds and the other raises `RunOverlapRefused`; a stale `running` row of a dead job is mopped up first and does not block the open; a deadline-abandoned run whose owner task is still claimed by a live process does block it. | Matches the scheduler's slot hold. |
 
 ## Deferred Run Work
 ----

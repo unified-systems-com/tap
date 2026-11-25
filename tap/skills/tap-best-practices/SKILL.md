@@ -86,8 +86,9 @@ only). Rules with a candidate are the backlog for guard rails.
   a history row every run, so core's `last_observed_batch_id` answers which run last saw it. "Every run that
   saw X" comes from the per-run nodes keyed on (X, run). A one-value-per-row classifier within one table, such
   as an algorithm, is a key field too, not a dimension. The convention is canon in
-  `tap_cares/specs/spec-tap-cares-run.md`; plugins build run nodes with the tap_cares run helper (`open_run` and
-  `RunMixin`) rather than by hand. *owner ruling 2026-11-25 (regscale session, Q39).* Candidate: flag an edge type
+  `tap_cares/specs/spec-tap-cares-run.md`. Once the tap_cares run helper (`open_run` and `RunMixin`) is built,
+  plugins use it rather than building run nodes by hand; both are Proposed, so until then plugins follow the
+  convention by hand. *owner ruling 2026-11-25 (regscale session, Q39).* Candidate: flag an edge type
   whose source is a run node and whose targets are minted per run, and a `run_id` written to a node that a later
   batch re-observes.
 
