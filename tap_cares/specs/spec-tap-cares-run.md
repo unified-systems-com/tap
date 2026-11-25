@@ -53,10 +53,10 @@ A plugin declares each of its run node types as an ordinary `BaseModel` (via `ad
 | `failure_kind` | short text, nullable | An open list. Core uses `error`, `invalid_output`, `abandoned`, `cancelled` and `deadline_exceeded`; a plugin may add its own values and documents them in its spec |
 | `failure` | text, nullable | What went wrong, passed through the secrets redaction (`req-tap-cares-secrets-redaction`) before it is stored. No length cap |
 | `results_written` | integer | Nodes this run created and stamped with its `run_id`, counted by the helper |
-| `cleanup_status` | short text, nullable | `pending`, `enqueued`, `succeeded` or `failed` once an abort clean-up is involved (`req-tap-cares-run-abort-cleanup`); empty otherwise |
+| `cleanup_status` | short text, nullable | `pending`, `enqueued`, `succeeded`, `failed` or `refused` once an abort clean-up is involved (`req-tap-cares-run-abort-cleanup`); empty otherwise |
 | `cleanup_task_id` | short text, nullable | The task id of the clean-up task the dispatcher enqueued |
 | `cleanup_started_at` | datetime, nullable | Written by the clean-up task immediately before it calls the hook; once set, the clean-up is never dispatched again |
-| `cleanup_failure` | text, nullable | The redacted failure of a clean-up that failed. No length cap |
+| `cleanup_failure` | text, nullable | The redacted failure of a clean-up that failed, or the reason a refused one was refused (`destination_no_longer_granted`, `code_changed`). No length cap |
 
 A plugin declares further counts as its own integer fields and names them in the run type's `RUN_COUNTS` tuple; the helper increments them on request and writes them at close.
 
@@ -164,7 +164,7 @@ with open_run(RunType, owner_job_id=job_id, **fields) as run:
 1. registers `RunType` for mop-up (idempotent; the mop-up also enumerates every installed model carrying `RunMixin`, so a type is swept after a restart even before its next open);
 2. runs the mop-up for `RunType`'s own `running` rows (`req-tap-cares-run-mopup`) and, for a type that refuses overlap, takes its lock (`req-tap-cares-run-overlap`);
 3. validates `owner_job_id` (`req-tap-cares-run-node-2`), mints the UUIDv7 id and writes the open;
-4. yields a handle whose `submit_grift` fills `run_id` on every node of a type that declares it, refuses a node of such a type that names a different `run_id`, and adds the created count to `results_written`;
+4. yields a handle whose `submit_grift` fills `run_id` on every node of a type that declares it, refuses a node of such a type that names a different `run_id`, and adds the created count to `results_written`. Inside the result batch's own transaction it locks the run row and refuses the batch unless the run is still `running`, and it persists the increment to `results_written` (the default recorded effect, or the run type's own effect record) in that same transaction. The mop-up's abandon takes the same row lock, so an abandon and a result batch are serialized: either the batch commits first and its effect is on the row the abandon reads, or the abandon commits first and the batch is refused whole. An abandoned run whose thread is still alive therefore cannot add results after the abandon, and the clean-up decision never misses an effect that committed;
 5. on leaving the block, closes the run with the conditional write: `complete` on a normal exit; `failed` when the block raised an `Exception`, with `failure_kind` taken from the exception's `failure_kind` attribute when it has one and `error` otherwise; `failed` with `failure_kind = cancelled` when it raised a `BaseException` that is not an `Exception` (there is no `cancelled` state); or the state `run.fail(...)` set. The exception is re-raised after the close.
 
 The helper never swallows the run's exception and never retries. A run that should be retried is a new run.
@@ -177,6 +177,7 @@ The helper never swallows the run's exception and never retries. A run that shou
 | req-tap-cares-run-helper-2 | Exception Classified And Re-Raised | Proposed | An exception in the block closes the run `failed` with the exception's `failure_kind` (or `error`) and redacted text, and propagates unchanged. | |
 | req-tap-cares-run-helper-3 | Foreign run_id Refused | Proposed | A node of a run-minted type submitted with another run's `run_id` is refused and nothing in that batch is written. | |
 | req-tap-cares-run-helper-4 | Registered For Mop-Up | Proposed | After a process restart, a `running` row of a type with no new open since is still found by the tick's mop-up. | |
+| req-tap-cares-run-helper-5 | Abandon Races A Result Batch | Proposed | With a run's result batch and the mop-up's abandon started concurrently, exactly one order is observed: the batch commits with `results_written` raised and the abandon then sees that effect (and sets clean-up pending), or the abandon commits and the batch is refused with nothing written. A batch never commits onto a run already closed. | Codex review scenario: abandonment racing a GRIFT commit. |
 
 ## Close In `finally`, Best-Effort
 ----
@@ -260,7 +261,14 @@ A collector or emitter class may supply `on_abort(self, run)`. The default is a 
 - *Recovered:* a task that was lost or never started. An `enqueued` row with no `cleanup_started_at` whose task the reaper's existing derive steps find gone or dead (no steady_queue `Job`, a `FailedExecution`, a finished `Job`, a claim past `process_alive_threshold`, or the flat-age fallback for an id steady_queue cannot resolve) is set back to `pending` and dispatched again. Nothing plugin-side has run, so this is safe.
 - *Not retried:* a hook that ran. Once `cleanup_started_at` is set the clean-up is never dispatched again. A hook that returned or raised a failure is recorded `failed` with the redacted `cleanup_failure`. A task that died after `cleanup_started_at` was set is recorded `failed` by the sweep, naming the evidence, because the hook may have done part of its work.
 
-**What it receives.** The task's payload is the run type and the run's entity id, nothing else. The task loads the persisted run and its owner job, resolves the capability class from the job's `Collector` or `Emitter` node, and constructs it with the **current** credentials from its envelope (so a rotated credential is used) but **only the destinations the run recorded**, never the destinations the current envelope names. Credential rotation is fine; silent retargeting is not. No in-memory state of the dead run is available, by design.
+**What it receives.** The task's payload is the run type and the run's entity id, nothing else. The task loads the persisted run and its owner job, resolves the capability class from the job's `Collector` or `Emitter` node, and constructs it with the **current** credentials from its envelope (so a rotated credential is used) but **only the destinations the run recorded**, never the destinations the current envelope names, and only after the two checks below pass. Credential rotation is fine; silent retargeting is not. No in-memory state of the dead run is available, by design.
+
+**When it is refused instead.** Before writing `cleanup_started_at`, the task checks two things, and if either fails it sets `cleanup_status = refused`, puts the reason in `cleanup_failure`, never calls the hook, and never dispatches it again. A person handles a refused clean-up.
+
+- *The code changed* (`code_changed`). The currently registered class's `source_hash` must equal the `source_hash` recorded for the run (on its owner job, `req-tap-cares-collector-version` rule 4; on an `EmissionJob` itself). Otherwise the clean-up would be run by code that did not make the effects. v0 has no compatibility declaration and no way to authorize a clean-up across versions; both are Backlog (`req-tap-cares-run-backlog`). Temporal's worker versioning is the larger form of the same problem: work started under one build has to be finished by a compatible one.
+- *The destination is no longer granted* (`destination_no_longer_granted`). For a capability with a destination grant (emitters), the **current** grant, read from the current envelope through `destination_grant`, must still include every destination the run recorded. Otherwise the clean-up would send the current credential to a destination the operator no longer approves. Rotating the credential for the same destination still works, because the grant still includes it. The grant is the check because it is the binding core can see: core cannot tell which field of a plugin's secret binds to which destination, so it cannot verify a credential against a destination directly. A capability with no grant (collectors) skips this check.
+
+`refused` is its own value rather than `failed` because the hook never ran: nothing on the other side was touched, and the run's effects are still there for a person to deal with.
 
 **What it must be.** Idempotent, and safe when the run was actually alive: a deadline abandon closes a run whose thread may still be running. The outcome is recorded on the run: `cleanup_status = succeeded`, or `failed` with the redacted `cleanup_failure`.
 
@@ -273,10 +281,11 @@ A collector or emitter class may supply `on_abort(self, run)`. The default is a 
 | req-tap-cares-run-abort-cleanup-1 | Pending In The Abandon, Dispatched Later | Proposed | Abandoning a run whose class overrides `on_abort` and that recorded an effect sets `cleanup_status = pending` in the abandon's own transaction; the reaper calls no plugin code and enqueues nothing; the next tick or open of the type enqueues one task carrying only the run type and id, records `cleanup_task_id`, and marks the row `enqueued`. | Transactional outbox. |
 | req-tap-cares-run-abort-cleanup-2 | Outside Endings Only | Proposed | A run closed `failed` or `complete` by its own code never gets a clean-up task from the reaper. | |
 | req-tap-cares-run-abort-cleanup-3 | Outcome Recorded, Not Retried | Proposed | A clean-up whose hook raises or reports failure leaves `cleanup_status = failed` with redacted text and is never dispatched again; one that returns leaves `succeeded`; a task that died after `cleanup_started_at` was set is recorded `failed`, not re-dispatched. | |
-| req-tap-cares-run-abort-cleanup-4 | Persisted Records, Recorded Destinations | Proposed | The hook receives the persisted run; the task reconstructs the class from the owner job's capability node with current credentials and only the destinations the run recorded; a test changes the envelope's destination after the abandon and observes the hook given the recorded one. | Rotation yes, retargeting no. |
+| req-tap-cares-run-abort-cleanup-4 | Persisted Records, Recorded Destinations | Proposed | The hook receives the persisted run; the task reconstructs the class from the owner job's capability node with current credentials and only the destinations the run recorded. A test rotates the envelope's credential for the same destination after the abandon and observes the hook run with the new credential and the recorded destination; a test retargets the envelope so the current grant no longer includes the recorded destination and observes `cleanup_status = refused` with `destination_no_longer_granted`, the hook never called, and no re-dispatch. | Codex review scenario: envelope retargeting with clean-up. |
 | req-tap-cares-run-abort-cleanup-5 | Default No-Op | Proposed | A class that does not override `on_abort` gets no clean-up task and its run's `cleanup_status` stays empty. | |
 | req-tap-cares-run-abort-cleanup-6 | Only After A Recorded Effect | Proposed | An abandoned run for which `recorded_effects(run)` is false (for an emitter: a dry run, or an unarmed, `arm_stale` or `destination_unapproved` run) gets no clean-up and `cleanup_status` stays empty. | |
 | req-tap-cares-run-abort-cleanup-7 | Lost Dispatch Recovered | Proposed | An `enqueued` row with no `cleanup_started_at` whose task the reaper's derive steps find gone or dead returns to `pending` and is dispatched once more; at no time does one run have two live clean-up tasks. | Uses only the reaper's existing evidence and numbers. |
+| req-tap-cares-run-abort-cleanup-8 | Code Changed, Refused | Proposed | A test abandons a run, changes the registered class so its `source_hash` differs from the run's, and observes `cleanup_status = refused` with `code_changed`, the hook never called, and no re-dispatch. | Codex review scenario: clean-up after a code change. |
 
 ## Overlap Per Run Type
 ----
@@ -307,6 +316,7 @@ Status: `Backlog`
 
 - **A cooperative stop signal**, so that a running run can be told to close itself on worker shutdown rather than waiting for the mop-up.
 - **Retention** of `failed` and `abandoned` runs and their partial results. Until it is decided, every row is kept.
+- **A compatibility declaration for clean-up across code versions**, and any authorization for a newer build to clean up after an older one. Until then a code change refuses the clean-up (`req-tap-cares-run-abort-cleanup`). Temporal worker versioning is the reference for the larger problem.
 - **`CollectionJob` adopting the convention**, the way `EmissionJob` does. Collectors are not rewritten now; a collector that wants a run node opens one with `open_run` under its `CollectionJob`.
 
 ### Acceptance Criteria
