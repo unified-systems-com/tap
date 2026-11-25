@@ -388,8 +388,10 @@ the authoritative read.
 in the title, so multi-session traffic on origin/main stays attributable at a glance.
 Promote PRs carry it natively (`promote: <session> → main`); ad-hoc/feature-branch PRs
 append the `[via <session>]` suffix, DERIVED never hand-typed: `scripts/pr-via` prints it,
-reading the session label from `.env.local`'s `COMPOSE_PROJECT_NAME` (worktree basename as
-the settings-free fallback). The promote applies it itself; a human opening an ad-hoc PR, or
+reading the session label from `.env.local`'s `COMPOSE_PROJECT_NAME`. A worktree nested inside a
+session's worktree (a side branch or a sub-agent's checkout) has no `.env.local`, so it names the
+spawning session and then itself, `<session>.<worktree>` (e.g. `[via hard-things.repin]`, George
+2026-11-25); the worktree basename is the fallback only when no session is above it. The promote applies it itself; a human opening an ad-hoc PR, or
 an agent opening one in a plugin repository, appends `$(scripts/pr-via)` to the title.
 
 **An agent does not hand-run `gh pr create` in this repository (2026-10-08).** A Claude Code
