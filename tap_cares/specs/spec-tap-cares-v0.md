@@ -279,7 +279,7 @@ The job closes `complete` when `emit` returns and the outcome is `delivered`, or
 
 `SCHEDULED_TARGET` gains `emitter` as a deliberate second target type (`spec-tap-cares-scheduler.md`, `req-tap-cares-scheduler-scope`). The scheduler dispatches on the target's type, calling `run_collection` for a collector and `run_emission(emitter, dry_run=False)` for an emitter, and a fire for any other type fails. Exactly one target per schedule, slot dedupe, no catch-up, and `max_active_runs` are unchanged; for an emitter target, the active runs are the `EmissionJob`s reached through `TRIGGERED_EMISSION` whose status is `running`.
 
-Creating a `Schedule` that targets an emitter, or retargeting an existing one onto an emitter, requires the capability `cares.schedule_emitters`: a write of a `SCHEDULED_TARGET` edge whose target is an `Emitter` is refused for an actor without it.
+Any write that decides when an emitter sends requires the capability `cares.schedule_emitters`: creating a `Schedule` that targets an emitter, retargeting one onto an emitter, and changing an emitter schedule's cadence, enabled state or `max_active_runs`. A write of a `SCHEDULED_TARGET` edge whose target is an `Emitter`, or of any of those fields on a `Schedule` whose target is an `Emitter`, is refused for an actor without it (owner ruling 2026-11-25).
 
 #### Approval stance (v0)
 
@@ -296,7 +296,7 @@ Proposed → approved → executed action workflows, Administrivia buttons, and 
 **Named accepted risks.**
 
 - *Arming approves a declaration, not an enforced boundary.* Emitter code is trusted Python in the worker. Core records the origin and operations the operator approved, and holds the send record to them, but nothing stops an emitter from opening a socket to another host or making an undeclared request without recording it. The protection is review of the plugin's code plus the operator's approval of what it declares. Enforcement (origin allowlist, resolve-check-pin of addresses, refusal of non-global and metadata addresses, `trust_env` and redirect hygiene, dependency floors, test helpers for these, egress manifests and approval records, network-level egress control) is Backlog under Issue# 1369 - tap. This is the same footing as `req-tap-cares-collector-read-boundary-5`.
-- *Who can schedule an armed emitter.* Only an actor holding `cares.schedule_emitters` can point a schedule at an emitter. Once such a schedule exists, a user who may edit `Schedule` nodes can change its cadence or enable it (bounded by minute resolution and `max_active_runs`); they cannot change what is sent or where it goes.
+- *Who can schedule an armed emitter.* Only an actor holding `cares.schedule_emitters` can point a schedule at an emitter or change when an emitter schedule fires (cadence, enabled state, `max_active_runs`). Deleting such a schedule stops sends and is not gated beyond ordinary `Schedule` permissions.
 - *The deadline cannot stop a running thread.* A run closed for its deadline may still be running its code; `record_send` refuses its further requests, and `on_abort` must be safe against it.
 
 #### What is recorded, and what is not
@@ -340,7 +340,7 @@ Surveyed 2026-11-24 from documentation; revised 2026-11-25; no code copied.
 | req-tap-cares-v0-emitter-19 | Key Reused After Unknown | Proposed | `idempotency_key(operation, sha256)` returns the key of the matching `unknown` send record in the emitter's most recent earlier non-dry-run job, and a fresh UUIDv7 otherwise. | One key per logical send. |
 | req-tap-cares-v0-emitter-20 | Version On The Run | Proposed | `EMITTER_VERSION` is an integer of 1 or more declared in the registered class's own body; each run stamps it, the plugin slug, release, commit and source hash as `req-tap-cares-collector-version` does for collectors, and the payload format and destination API versions the emitter reports. | |
 | req-tap-cares-v0-emitter-21 | Accepted Risk Named | Proposed | The spec states that arming approves a declaration, not an enforced boundary, and points to Issue# 1369 - tap for egress enforcement. | `req-sec-honest-risk`. |
-| req-tap-cares-v0-emitter-22 | Scheduling An Emitter Is Gated | Proposed | Writing a `SCHEDULED_TARGET` edge whose target is an `Emitter`, on create or retarget, is refused for an actor without `cares.schedule_emitters`. | |
+| req-tap-cares-v0-emitter-22 | Scheduling An Emitter Is Gated | Proposed | Writing a `SCHEDULED_TARGET` edge whose target is an `Emitter` (create or retarget), or changing `cron`, `enabled` or `max_active_runs` on a `Schedule` whose target is an `Emitter`, is refused for an actor without `cares.schedule_emitters`. | Owner ruling 2026-11-25: cadence and enabling are gated too. |
 | req-tap-cares-v0-emitter-23 | Abort Clean-Up | Proposed | An emitter may override `on_abort(run)`; when the mop-up ends its job from outside, the clean-up runs as its own task per `req-tap-cares-run-abort-cleanup`, once per job. | |
 
 ## Actions
