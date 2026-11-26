@@ -49,6 +49,12 @@ class Boundary(StrEnum):
     #: Present in the artifact but never executes a security operation (e.g. a Go binary linked with
     #: crypto/tls from the stdlib that only ever setuids). Must carry a reachability argument.
     UNREACHED = "unreached"
+    #: An explicit FIPS opt-out (`usedforsecurity=False`, or a `-fips`/`fips=no`/`provider=default`
+    #: property query) reviewed as NOT a security function: the non-approved algorithm it reaches
+    #: protects nothing (FIPS 140-3 IG 2.4.A). With the `default` provider loaded beside `fips`, an
+    #: opt-out can reach ANY algorithm, so each one is inventoried and needs this recorded reason
+    #: (req-fips-optout-inventory, decision D21). Not a failure; an undispositioned opt-out is.
+    NON_SECURITY_USE = "non-security-use"
     #: Non-validated crypto inside the operational boundary — the gate FAILS on this. It is recorded
     #: (not merely absent) so a known-bad provider is tracked with its remediation, not silently green.
     MUST_FIX = "must-fix"
@@ -128,6 +134,10 @@ class Disposition:
     #: True for the OpenSSL-routed entries: `boundary` is a placeholder and the real disposition comes
     #: from `system_openssl_boundary()` at classification time (lazy — see there).
     derived: bool = False
+    #: Opt-out entries only (FIPS_OPT_OUTS): how many opt-outs the reviewed scope holds. One more than
+    #: reviewed fails every finding in that scope, so an opt-out added inside an already-reviewed
+    #: function is a new review, not an inherited approval.
+    count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -314,6 +324,193 @@ NONVALIDATED_CRYPTO_IMPORTS: dict[str, str] = {
 #: a hash, so it is NOT flagged. `usedforsecurity=False` (the auditor-recognized non-security signal)
 #: is exempt.
 WEAK_DIGEST_CALLS: frozenset[str] = frozenset({"md5"})
+
+# --- FIPS opt-out inventory (req-fips-optout-inventory, decision D21) --------------------------------
+OPTOUT_RID = "req-fips-optout-inventory"
+#: The provider name every opt-out finding carries.
+FIPS_OPT_OUT = "fips-opt-out"
+#: Characters a property-query clause may contain (OpenSSL property syntax: names, `-`, `?`, `=`,
+#: `!=`, and quoted values). A string with anything else is prose, not a query.
+_PROPQUERY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_.=?!'\"")
+#: Values that AFFIRM the fips property; any other comparison steps outside `fips=yes`.
+_FIPS_AFFIRMED = frozenset({"yes", "true", "1"})
+#: Providers a `provider=` clause may name without leaving the FIPS boundary.
+_BOUNDARY_PROVIDERS = frozenset({"fips", "base"})
+
+
+def _clause_opts_out(clause: str) -> bool:
+    """One normalised clause: does it remove, negate or bypass `fips=yes`?"""
+    body = clause.removeprefix("?")  # an optional clause opts out exactly as a required one does
+    if body.startswith("-"):  # `-fips` removes the requirement
+        return body[1:] == "fips"
+    name, op, value = body, "", ""
+    for candidate in ("!=", "="):
+        if candidate in body:
+            name, value = body.split(candidate, 1)
+            op = candidate
+            break
+    value = value.strip("'\"")
+    if name == "fips":
+        return not (op == "" or (op == "=" and value in _FIPS_AFFIRMED))
+    if name == "provider":
+        return op == "!=" or (op == "=" and value not in _BOUNDARY_PROVIDERS)
+    return False
+
+
+def is_optout_propquery(text: str) -> bool:
+    """True if `text` is an OpenSSL property query with a clause that steps outside `fips=yes`.
+
+    Every clause is parsed rather than matched against known spellings, so `-fips`, `fips=no`,
+    `fips!=yes`, `?fips=no` and `fips="no"` are all caught, as is a `provider` clause naming anything
+    but `fips` or `base` (`provider=default`, `provider=legacy`, `provider!=fips`). Each comma-
+    separated clause must look like a property clause, so prose that merely mentions FIPS is not a
+    query. A plain split, not a regex (no backtracking on long input)."""
+    clauses = ["".join(c.split()).lower() for c in text.split(",")]
+    if not all(c and set(c) <= _PROPQUERY_CHARS for c in clauses):
+        return False
+    return any(_clause_opts_out(c) for c in clauses)
+
+
+#: Every reviewed opt-out: an fnmatch glob over `<path>::<enclosing qualname>` and the reason the
+#: algorithm it reaches protects nothing. A file AND a function, never a line number, so an upstream
+#: edit that moves a call does not churn this table, while an opt-out added to another function of
+#: the same file, or to a new file, is a new finding.
+FIPS_OPT_OUTS: tuple[Disposition, ...] = (
+    Disposition(
+        "django/db/backends/utils.py::names_digest",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "MD5 shortens long index and constraint names during migrate, on every boot. An identifier, "
+        "not a protection (assessment record §5.1).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/utils/cache.py::set_response_etag",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "An MD5 ETag over a response body the server already holds: a change detector, not a "
+        "protection. Unreached today (no ConditionalGetMiddleware).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/utils/cache.py::_generate_cache_key",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "An MD5 cache key over the request URL and varying headers: a lookup key, not a protection. "
+        "Unreached today (no cache_page or per-site cache).",
+        OPTOUT_RID,
+        count=2,
+    ),
+    Disposition(
+        "django/utils/cache.py::_generate_cache_header_key",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "An MD5 cache key for the stored header list of a cached URL: a lookup key, not a protection. "
+        "Unreached today (no cache_page or per-site cache).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/core/cache/utils.py::make_template_fragment_key",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "A cache lookup key for a template fragment, computed from its name and vary-on values. "
+        "Unreached today (no {% cache %} tag).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/core/cache/backends/filebased.py::FileBasedCache._key_to_file",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "The file-based cache names each entry's file by an MD5 of its key, a lookup path only. "
+        "Unreached today (TAP uses DatabaseCache).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/contrib/staticfiles/storage.py::HashedFilesMixin.file_hash",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "Hashed static file names for cache busting, a content fingerprint in a URL that protects "
+        "nothing. Unreached today (not ManifestStaticFilesStorage).",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "django/test/runner.py::Shuffler._hash_text",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "The test runner hashes test names to derive a shuffle order: test tooling, never on a serving path.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "lark/load_grammar.py::sha256_digest",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "lark hashes grammar text to key its parser cache; the function's own docstring names FIPS "
+        "systems as the reason for the flag. A cache key, not a protection.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "coverage/misc.py::Hasher.__init__",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "coverage.py's Hasher fingerprints measurement settings to key its data: a development tool, "
+        "never on a serving path.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "coverage/data.py::hash_for_data_file",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "coverage.py hashes a data file to tell combined runs apart: a development tool, never on a serving path.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "coverage/files.py::flat_rootname",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "coverage.py hashes a source directory into a flat report file name: a development tool, "
+        "never on a serving path.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "coverage/lcovreport.py::line_hash",
+        FIPS_OPT_OUT,
+        Boundary.NON_SECURITY_USE,
+        "The LCOV file format specifies an MD5 per source line; coverage.py writes it: a development "
+        "tool, never on a serving path.",
+        OPTOUT_RID,
+        count=1,
+    ),
+    Disposition(
+        "requests/auth.py::HTTPDigestAuth.build_digest_header*",
+        FIPS_OPT_OUT,
+        Boundary.UNREACHED,
+        "HTTPDigestAuth computes MD5/SHA-1 with usedforsecurity=False inside an AUTHENTICATION protocol, "
+        "which IS a security use, so this is not a non-security disposition. It is unreached: nothing "
+        "in TAP or any installed plugin constructs HTTPDigestAuth, and the source scan fails any that "
+        "does (REACHED_OPT_OUT_TRIPWIRES).",
+        OPTOUT_RID,
+        count=5,
+    ),
+)
+
+#: Names whose use in TAP or plugin source would REACH an opt-out that serves a security function.
+#: The opt-out itself sits in a dependency and is dispositioned UNREACHED above; touching the name
+#: turns it into a must-fix finding instead of a silent non-security claim.
+REACHED_OPT_OUT_TRIPWIRES: dict[str, str] = {
+    "HTTPDigestAuth": "requests' HTTP Digest auth hashes credentials with MD5/SHA-1 under "
+    "usedforsecurity=False — a security use FIPS mode does not permit",
+}
 
 # --- WASM-runtime tripwire (req-fips-crypto-bom-source) ---------------------------------------------
 # WebAssembly crypto cannot execute without a host runtime, and in Python that runtime is a package —

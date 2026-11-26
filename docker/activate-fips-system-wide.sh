@@ -17,10 +17,22 @@
 # naively leaving FIPS-approval alone to stand in for TLS hardening -- these
 # are different concerns (caught in review, verified directly, see below):
 #
-# - The legacy-provider config ([default], [legacy_sect], [default_sect]) is
-#   DELETED outright, not left as inert leftovers -- we never activate
-#   `legacy`/`default` under strict FIPS (provider_sect names fips+base only),
-#   so it is dead config in a FIPS posture file, which is worse than no config.
+# - Chainguard's legacy-provider config ([default], [legacy_sect]) is DELETED
+#   outright, not left as inert leftovers. Their "Legacy Allowed" provider tags
+#   MD4/MD5/SHA1/SHA-224/AES-ECB `fips=yes`, so a plain request for MD5 -- with
+#   no non-security declaration at all -- would succeed and defeat tap.fips's
+#   negative control (verified 2026-11-25, tap#1390; decision D21).
+# - The OpenSSL `default` provider is KEPT ACTIVE beside fips+base (D21). Every
+#   request still carries `default_properties = fips=yes`, which nothing in
+#   `default` satisfies except key encoders/decoders, so an ordinary request is
+#   served only by the FIPS module. `default` answers only a request that
+#   explicitly opts out (`-fips` / `fips=no`, e.g. Python's
+#   `usedforsecurity=False`), which is how a non-security digest such as
+#   Django's index-name MD5 resolves. This is the layout OpenSSL documents in
+#   fips_module(7) ("Loading the FIPS module at the same time as other
+#   providers"). On Wolfi's 3.6 line the same path ran through MD5/SHA1 patched
+#   into `base`; their 4.0 build dropped that patch. Every opt-out in TAP and
+#   its dependencies is inventoried by the crypto-BOM (req-fips-optout-inventory).
 # - `Groups` is REPLACED with the subset the FIPS module serves; the stock
 #   `SignatureAlgorithms` (incl. ML-DSA) is KEPT. With the 3.0.x module both
 #   directives had to go: their unmodified values broke EVERY outbound TLS
@@ -36,12 +48,11 @@
 #   module: the same Groups line fails under 3.0.x.
 # - `DTLS.MaxProtocol`/`DTLS.MinProtocol` are KEPT, reversing an earlier version
 #   of this script that deleted them as "unused, TAP is an HTTPS app" -- true of
-#   TAP's own code, but not of the library underneath it: Wolfi's `openssl-4.0`
-#   recipe passes `no-dtls1` at Configure time, which removes DTLS1.0 from the
-#   binary entirely, but the `openssl-3.6` line this image actually runs
-#   (`openssl.yaml` on `wolfi-dev/os`) carries no such flag -- DTLS1.0 is
-#   genuinely compiled in, so this config-level floor is load-bearing here, not
-#   redundant documentation of something already true. Never implicated in the
+#   TAP's own code, but not of the library underneath it. Wolfi's `openssl-4.0`
+#   recipe, which this image now runs, passes `no-dtls1` at Configure time and so
+#   removes DTLS1.0 from the binary; the floor is kept anyway, because a later
+#   recipe or a move back to a line without that flag (3.6's `openssl.yaml` has
+#   none) would make it load-bearing again, silently. Never implicated in the
 #   Groups/SignatureAlgorithms breakage above (single lines, not continuation
 #   blocks, no PQC/hybrid content), so there was never a reason to delete them.
 # - `Ciphersuites` and `CipherString` are KEPT. They were never implicated in
@@ -101,14 +112,15 @@ awk '
   $0 == "openssl_conf = openssl_init" {
     print; print ".include /etc/ssl/fipsmodule.cnf"; next
   }
-  $0 == "default = default_sect" { print "fips = fips_sect"; next }
+  $0 == "default = default_sect" { print "fips = fips_sect"; print; next }
   $0 == "legacy = legacy_sect"   { print "base = base_sect"; next }
   $0 == "providers = provider_sect" {
     print; print "alg_section = algorithm_sect"; next
   }
 
-  # Dead config once provider_sect no longer names default/legacy: [legacy_sect]
-  # and [default_sect] -- each header through the next [section] or EOF. [default]
+  # Dead config once provider_sect no longer names legacy: [legacy_sect], from its
+  # header through the next [section] or EOF. [default_sect] stays: it activates
+  # the default provider (see the header comment). [default]
   # is handled separately, by exact known lines, NOT the same way: unlike those two,
   # the ca.cnf include sits physically within defaults extent in the stock file
   # without being part of it (an include is a preprocessor directive, not a section
@@ -121,7 +133,6 @@ awk '
   $0 == "CHAINGUARD_LEGACY_ALLOWED = 1"    { next }
   $0 == "CHAINGUARD_LEGACY_ENABLE_DES = 0" { next }
   $0 == "[legacy_sect]"  { in_dead_section = 1; next }
-  $0 == "[default_sect]" { in_dead_section = 1; next }
   in_dead_section && /^\[/ { in_dead_section = 0 }
   in_dead_section { next }
 
@@ -167,14 +178,17 @@ awk '
   { stale_comment = 0; prev_blank = 0; print }
 ' "$CNF" > "$TMP"
 
-# Strict fips + base provider set, fips=yes globally (base supplies encoders/decoders,
-# no crypto primitives, required for key-file I/O -- not a hole in the boundary, L15).
+# fips + base + default, fips=yes globally (base supplies encoders/decoders, no crypto
+# primitives, required for key-file I/O -- not a hole in the boundary, L15; default serves
+# only requests that explicitly opt out of fips=yes -- D21).
 printf '[base_sect]\nactivate = 1\n\n[algorithm_sect]\ndefault_properties = fips=yes\n' >> "$TMP"
 
 mv "$TMP" "$CNF"
 
 require 'fips = fips_sect'
 require 'base = base_sect'
+require 'default = default_sect'
+require '[default_sect]'
 require 'alg_section = algorithm_sect'
 require 'default_properties = fips=yes'
 require 'ssl_conf = ssl_module'
@@ -190,7 +204,6 @@ require_absent 'CHAINGUARD_LEGACY_ALLOWED = 1'
 require_absent '    *x25519:secp256r1 / \'
 require_absent '    brainpoolP256r1:brainpoolP384r1:brainpoolP512r1'
 require_absent '[legacy_sect]'
-require_absent '[default_sect]'
 require_absent '[default]'
 require 'Groups = \'
 require '    *X25519MLKEM768:SecP256r1MLKEM768 / \'
@@ -210,10 +223,7 @@ providers_output="$(openssl list -providers)"
 echo "$providers_output"
 echo "$providers_output" | grep -qxF '  fips' || { echo "FATAL: openssl itself does not report the fips provider active" >&2; exit 1; }
 echo "$providers_output" | grep -qxF '  base' || { echo "FATAL: openssl itself does not report the base provider active" >&2; exit 1; }
-if echo "$providers_output" | grep -qxF '  default'; then
-  echo "FATAL: openssl itself reports the default (non-FIPS) provider active" >&2
-  exit 1
-fi
+echo "$providers_output" | grep -qxF '  default' || { echo "FATAL: openssl itself does not report the default provider active (D21: non-security opt-outs resolve there)" >&2; exit 1; }
 if echo "$providers_output" | grep -qxF '  legacy'; then
   echo "FATAL: openssl itself reports the legacy (non-FIPS) provider active" >&2
   exit 1
@@ -226,3 +236,7 @@ echo "=== functional check: TLS 1.3 groups the edited policy offers ==="
 tls_groups="$(openssl list -tls-groups -tls1_3 2>&1 || true)"
 echo "$tls_groups"
 echo "$tls_groups" | grep -q 'SecP256r1MLKEM768' || { echo "FATAL: the edited [crypto_policy] does not yield a usable TLS group list" >&2; exit 1; }
+
+# Functional check that fips=yes still governs with `default` loaded (D21). It lives in its own
+# script because the rollback activation (TAP_FIPS_ACTIVATION=legacy, both Dockerfiles) runs it too.
+sh "$(dirname "$0")/prove-fips-governs.sh"

@@ -44,24 +44,3 @@ CVE-2026-59890
 #   by the same psycopg-c setuptools==80.3.1 hard pin. Accepted George Chamales,
 #   2026-08-11. Revisit on psycopg-c bump.
 CVE-2026-23949
-# CVE-2026-119170 (python-3.14, python-3.14-base, python-3.14-dev and their -dev
-#   subpackages at 3.14.8_git20261001-r0): hashlib fetched digests with the
-#   `-fips` property inverted for usedforsecurity=True. Not present in this
-#   build. Upstream states it affects only Python 3.14.10 (python/cpython
-#   gh-160923). The inverted line, `int fips = disable_fips_property(py_ht)`,
-#   entered the 3.14 branch in 3d2f1b2d7a on 2026-10-21 and was fixed in
-#   7d9da9208f on 2026-11-06; the pinned package is built from cpython
-#   a4919937a4 of 2026-10-01 (wolfi-dev/os python-3.14.yaml, expected-commit),
-#   which the regression commit is 175 commits ahead of, and whose
-#   Modules/_hashopenssl.c has no disable_fips_property. Checked in the running image
-#   in FIPS mode: md5(), new("md5"), pbkdf2_hmac("md5") and file_digest("md5")
-#   are refused. Trivy flags by version range (fixed in
-#   3.14.10_git20261111-r0). That build cannot be taken: every python-3.14 apk
-#   after the pinned revision links libcrypto.so.4 / libssl.so.4, and this
-#   image holds one OpenSSL 3.6 core for the FIPS provider (Dockerfile, the
-#   revision-pin notes; tap#931, tap#932). Accepted George Chamales,
-#   2026-11-19. Revisit when a python-3.14 apk built on OpenSSL 3 carries the
-#   fix, or when the image moves to OpenSSL 4. Expires 2026-12-20: thirty days
-#   from the maintainer's ruling of 2026-11-20, so the waiver lapses and the
-#   release gate blocks on this id again unless it is re-accepted.
-CVE-2026-119170 exp:2026-12-20

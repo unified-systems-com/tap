@@ -21,28 +21,14 @@
 # is the OpenSSL config, not the modules directory (L13, D15).
 # Full decision record + re-runnable verification suite: doc-fips-assessment-record.md.
 #
-# DEFAULT IS BACK TO 1, RE-ENABLED HERE PENDING CI CONFIRMATION (tap#933/#931, L18). Accepting
-# Wolfi's floating `openssl`/`openssl-dev` migration to the `openssl-4.0` package family
-# surfaced a real, reproducible defect: `cryptography`, run in the same process as any
-# `_hashlib`/`hashlib` operation, can leave a LATER, unrelated fetch unable to find an algorithm
-# the active provider genuinely implements — confirmed via three independent trigger paths and a
-# minimal, tap-code-free reproduction, 100% reproducible on real CI hardware. A from-scratch,
-# Docker-free, Wolfi-free bare-Ubuntu reproduction (2026-10-05, L18) then ruled out the
-# version-mismatch itself: a vanilla-upstream OpenSSL 4.0.2 host library paired with this same
-# self-built 3.0.22 FIPS provider (the pin at the time) does NOT reproduce the failure, which points at something
-# specific to Wolfi/Chainguard's own `openssl-4.0` build (or their `python-3.14`/`libpq` builds),
-# not at OpenSSL 4.0 as a release line.
-#
-# The actual fix below: the apk packages below are each pinned to the LAST revision confirmed
-# (by direct `apk info`/real `apk add` testing, not assumed) to depend on `libcrypto3`/`libssl3`
-# (the 3.6.x line) rather than `openssl-4.0`'s `libcrypto.so.4`/`libssl.so.4` — `python-3.14-base`
-# and `postgresql-18-dev` each cut over at exactly ONE revision ahead of what is pinned here.
-# This keeps every FIPS-relevant consumer in this image (CPython's own `_hashlib`, `cryptography`,
-# libpq) on the SAME major OpenSSL line (3.x) as the self-built FIPS provider — the condition a
-# clean bare-Ubuntu test (L18) already confirmed does not reproduce the failure, 20/20. These are
-# revision pins, not a track pin: narrower and more likely to need re-verifying on any apk bump
-# than a simple version pin would be, tracked the same way the FIPS provider's own pin is (a
-# deliberate, named pin revisited on real cause, not left to drift silently).
+# OpenSSL line: Wolfi's `openssl-4.0`, moved from the pinned 3.6 closure on 2026-11-25 (tap#1390,
+# decision D21) after upstream OpenSSL ended 3.6 support. The two Wolfi-specific defects that held
+# the image on 3.6 (L18) are both explained: the "unable to fetch drbg" failure was two OpenSSL
+# cores in one process (a stale wheel cache; fixed by the image-identity wipe and the tap.fips
+# two-cores guard), and the missing `hashlib.md5` was Wolfi's 4.0 build dropping the MD5/SHA1
+# base-provider patch its 3.6 build carries (fixed by activating OpenSSL's `default` provider for
+# explicit non-security opt-outs only; docker/activate-fips-system-wide.sh). See the base stage's
+# package list for the one-line rule that keeps it to one core.
 
 # TAP_FIPS is a global build ARG so it can select the final stage below. Default 1 (FIPS on).
 ARG TAP_FIPS=1
@@ -136,74 +122,41 @@ WORKDIR /app
 #   - curl: docker/install-tailwindcss.sh; also in-container debugging.
 #   - tzdata: the IANA zoneinfo DB Debian slim shipped implicitly but Wolfi's minimal base
 #     does not; without it Python's zoneinfo cannot resolve settings.TIME_ZONE and boot aborts.
-#   - openssl-3.6: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also
+#   - openssl-4.0: the CLI + libs. fipsinstall (build-time, fips-1 stage) needs it; also
 #     debugging. NAMED explicitly, not the bare `openssl` alias — see below.
+#   - krb5-libs, libldap-2.7: pulled in by libpq (GSSAPI and LDAP support), NAMED so they
+#     resolve to builds on the same OpenSSL as everything else — see below.
 #   Build toolchain for `cryptography` --no-binary (D7 — applies in BOTH FIPS modes, so it lives
 #   here in base, not in the FIPS stage): the sdist compiles a Rust + C extension against the
 #   system OpenSSL headers at `uv sync` time (dev installs at runtime, not image build).
 #   - build-base: gcc/make/libc headers.
 #   - rust: cargo + rustc for cryptography's Rust extension.
-#   - openssl-3.6-dev: system OpenSSL headers cryptography links against.
+#   - openssl-4.0-dev: system OpenSSL headers cryptography links against.
 #   - pkgconf: pkg-config, used by the build to locate OpenSSL.
 #   - postgresql-18-dev also provides pg_config + libpq headers so psycopg's `[c]` extra builds
 #     against the SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the
 #     `[binary]` wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (pyproject.toml).
 #
-# `openssl-3.6`/`openssl-3.6-dev`, not `openssl-4.0`/`openssl-4.0-dev` or the bare `openssl`/
-# `openssl-dev` floating alias — tap#932/#933, L18. The bare alias migrating to the `openssl-4.0`
-# family is what broke this the first time; naming `openssl-4.0` explicitly (tried next) traded
-# that for a reproducible FIPS self-check failure (`cryptography` + CPython's own `_hashlib`, run
-# in sequence in one process, under the FIPS provider — see L18 for the full investigation,
-# including a from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
-# the cause, pointing instead at something specific to Wolfi/Chainguard's own `openssl-4.0`,
-# `python-3.14`, or `libpq` builds).
+# ONE OpenSSL line in the process: Wolfi's `openssl-4.0` (tap#1390, decision D21). Every package
+# that loads libcrypto in a TAP process links `libcrypto.so.4`/`libssl.so.4`: CPython's
+# `_hashlib`/`_ssl`, `cryptography` (built --no-binary against `openssl-4.0-dev`), and libpq with
+# its two transitive crypto users, krb5 (`libk5crypto.so.3`) and LDAP (`libldap.so.2`). The FIPS
+# provider stays the self-built 3.5.9 `fips.so`; OpenSSL supports a 3.x provider
+# under a 4.0 libcrypto (its FIPS module support policy; upstream tests the pairing nightly).
 #
-# `python-3.14`/`python-3.14-base`/`python-3.14-dev`, `postgresql-18-dev`, and `libpq-18` are
-# EXPLICITLY VERSION-PINNED here, not left floating, because at their current (unpinned) versions
-# they themselves hard-depend on `libcrypto.so.4`/`libssl.so.4` regardless of what OpenSSL package
-# this Dockerfile requests — confirmed directly (apk info / a real `apk add`, not assumed): each
-# cuts over to `openssl-4.0` at exactly ONE apk revision ahead of what is pinned below
-# (`python-3.14-base` at `3.14.8_git20261001-r1`; `postgresql-18-dev` AND `libpq-18` both at
-# `18.6-r5`). Pinned one revision EARLIER than that keeps every FIPS-relevant consumer in this
-# image — CPython's own `_hashlib`, `cryptography`, libpq — on the SAME OpenSSL 3.6.x line as the
-# self-built FIPS provider, avoiding both the apk file-ownership conflict (openssl-3.x-dev and
-# openssl-4.0-dev own the same unversioned header/lib paths — confirmed via a real, non-simulated
-# `apk add`) and the two-cores-in-one-process hazard tap#931 tracks.
+# Why each name is explicit, and why the bare `openssl`/`openssl-dev` alias is NOT used: Wolfi
+# moves its packages between OpenSSL lines one package at a time, and a package left to resolve
+# on its own can land on the other line and load a SECOND OpenSSL core into the process (tap#931,
+# L18). Each vector was found by a failure or by the tap.fips two-cores guard, never by a
+# changelog: python-3.14 and libpq-18 (2026-10, tap#933), krb5-libs (2026-10, the guard), and
+# libldap (2026-11-25, the guard: apk resolved `libldap-2.6`, every build of which still links
+# `libcrypto.so.3`; `libldap-2.7` links `.so.4`). The bare `openssl` alias went back to 3.6.5 on
+# 2026-11-23, so naming it would now pull the OTHER line. The guard, not any pin, is the actual
+# protection for the class; these names keep the build from tripping it.
 #
-# `libpq-18` is the pin that actually mattered most, and missing it the first time around is
-# exactly how this hazard shows up when you are not looking for it: `postgresql-18-client` is
-# just the CLI tools (psql, pg_isready) and does NOT itself ship `libpq.so.5` — that lives in the
-# separate `libpq-18` package, pulled in transitively. Pinning `postgresql-18-client`/
-# `postgresql-18-dev` alone leaves `libpq-18` floating to ITS OWN latest, independently-numbered
-# revision — confirmed directly: with only the CLI/dev packages pinned to `18.6-r4`, `libpq-18`
-# still resolved to `18.6-r5` and linked `libcrypto.so.4`/`libssl.so.4`, while `_hashlib` and
-# `cryptography` in the SAME process used the correctly-pinned `libcrypto.so.3` — two separate
-# OpenSSL cores in one process, exactly as tap#931 describes, and the actual cause of a real
-# `psycopg.OperationalError: ... could not generate nonce` failure at boot (SCRAM's client nonce
-# is a libpq-side RAND draw, a completely different code path from Python's own crypto — L18).
-# Pinning `libpq-18=18.6-r4` explicitly resolves it: confirmed via `strings` on the installed
-# `libpq.so.5`, it then links `libcrypto.so.3`/`libssl.so.3`, matching `_hashlib` exactly.
-#
-# `krb5-libs` is the THIRD, previously-unnoticed vector for this exact hazard, found by
-# bisecting a real two-OpenSSL-cores detection in a live process (bom-bom's Q92a boot guard):
-# `libpq.so.5` links GSSAPI/Kerberos support unconditionally (`libgssapi_krb5.so.2` ->
-# `libkrb5.so.3` -> `libk5crypto.so.3`), and `libk5crypto.so.3`'s OWN crypto backend links
-# directly against whichever OpenSSL `krb5-libs` itself was built against — independent of
-# libpq-18's own pin, since krb5-libs is a wholly separate apk package
-# (`apk info --rdepends krb5-libs` names `libpq-18`, `libcurl-openssl4`, and
-# `postgresql-18-base` as its requirers). Confirmed directly: with every OTHER pin in place,
-# `libk5crypto.so.3` still resolved to `openssl-4.0`'s `libcrypto.so.4`, while everything
-# else in the same process (including `libpq.so.5` itself) correctly used `.so.3` — two real
-# cores in one process, this time via a code path (GSSAPI auth support postgres connections
-# never use) nobody had reason to look at until the boot guard caught it live. Pinning
-# `krb5-libs=1.22.2-r4` resolves it: confirmed via a real, non-simulated `apk add` that this
-# revision depends on `libcrypto.so.3`/`libssl.so.3`, one revision before its own cutover.
-#
-# These are REVISION pins, not track pins, and therefore narrower and more likely to need
-# re-verifying on the next apk bump than a plain version pin would be. Track the same way the
-# FIPS provider's own pin is tracked: a deliberate, named pin, revisited for a real reason (apk
-# fails to resolve, Wolfi EOLs the 3.6 track, or a CVE in these exact packages), never silently
-# bumped to "whatever's current" without re-checking the SONAME each depends on.
+# These are exact revision pins so a rebuild is reproducible. Renovate tracks every name here
+# (renovate.json5); a bump re-runs the cold-boot gate, which runs the two-cores guard. Before
+# moving the line again, re-check each package's `so:libcrypto` dependency in the APKINDEX.
 #
 # `py3-pip-wheel` is pulled in by python-3.14-base and pinned here for a different reason: the
 # registry build cache keeps this layer while the line is unchanged, so a fixed Wolfi revision
@@ -211,23 +164,24 @@ WORKDIR /app
 # changes the line and so busts the cache; bump it when the release CVE gate names it again.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
-    python-3.14=3.14.8_git20261001-r0 \
-    python-3.14-base=3.14.8_git20261001-r0 \
+    python-3.14=3.14.10_git20261125-r0 \
+    python-3.14-base=3.14.10_git20261125-r0 \
     py3-pip-wheel=26.2.2-r2 \
     git \
     bash \
-    postgresql-18-client=18.6-r4 \
-    libpq-18=18.6-r4 \
-    krb5-libs=1.22.2-r4 \
+    postgresql-18-client=18.7-r0 \
+    libpq-18=18.7-r0 \
+    krb5-libs=1.22.3-r0 \
+    libldap-2.7=2.7.2-r1 \
     curl \
     tzdata \
-    openssl-3.6=3.6.5-r1 \
+    openssl-4.0=4.0.3-r8 \
     build-base \
     rust \
-    openssl-3.6-dev=3.6.5-r1 \
+    openssl-4.0-dev=4.0.3-r8 \
     pkgconf \
-    python-3.14-dev=3.14.8_git20261001-r0 \
-    postgresql-18-dev=18.6-r4 \
+    python-3.14-dev=3.14.10_git20261125-r0 \
+    postgresql-18-dev=18.7-r0 \
       ; then break; fi; \
       echo "apk add failed (attempt $i/3)" >&2; \
       if [ "$i" -eq 3 ]; then exit 1; fi; \
@@ -589,7 +543,8 @@ RUN openssl fipsinstall -pedantic -out /etc/ssl/fipsmodule.cnf -module /usr/lib/
 # ============================================================================
 FROM fips-1-base AS fips-1-legacy
 
-# openssl.cnf activating the strict `fips` + `base` provider set with fips=yes globally.
+# openssl.cnf activating `fips` + `base` + `default` with fips=yes globally (`default` answers
+# only explicit non-security opt-outs, D21 -- see docker/activate-fips-system-wide.sh).
 # ORDER IS LOAD-BEARING (L1): `openssl_conf` must be in the default (pre-section) block. The
 # `.include` pulls in fipsmodule.cnf, which STARTS with [fips_sect] — so it must come AFTER
 # `openssl_conf`, else openssl_conf is swallowed into [fips_sect] and NO providers activate
@@ -612,14 +567,21 @@ RUN printf '%s\n' \
   '[provider_sect]' \
   'fips = fips_sect' \
   'base = base_sect' \
+  'default = default_sect' \
   '' \
   '[base_sect]' \
+  'activate = 1' \
+  '' \
+  '[default_sect]' \
   'activate = 1' \
   '' \
   '[algorithm_sect]' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+# The same proof the system activation runs: fips=yes governs with `default` loaded (D21).
+COPY docker/prove-fips-governs.sh /opt/ossl/prove-fips-governs.sh
+RUN sh /opt/ossl/prove-fips-governs.sh
 
 # Keep OpenSSL's legacy provider unloaded, else `cryptography` re-enables MD5/DES (D8).
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
@@ -640,7 +602,7 @@ LABEL org.tap.fips="true"
 # ============================================================================
 FROM fips-1-base AS fips-1-system
 
-COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+COPY docker/activate-fips-system-wide.sh docker/prove-fips-governs.sh /opt/ossl/
 RUN sh /opt/ossl/activate-fips-system-wide.sh
 
 ENV CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1

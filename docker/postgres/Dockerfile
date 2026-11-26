@@ -9,15 +9,15 @@
 #     `docker-entrypoint.sh` (same POSTGRES_DB/USER/PASSWORD/HOST_AUTH_METHOD/INITDB_ARGS
 #     contract + /docker-entrypoint-initdb.d), so we set up the postgres user + PGDATA + gosu
 #     exactly as that image does and the entrypoint behaves identically.
-#   * postgresql-18 is 18.6-r4. It was 16.14 (the version the outgoing alpine image ran) until
+#   * postgresql-18 is 18.7-r0. It was 16.14 (the version the outgoing alpine image ran) until
 #     2026-10-29: upstream released 16.15 on 2026-08-13 with 28 security fixes, Wolfi's
 #     postgresql-16 stayed at 16.14-r1, and the release CVE gate refused to promote tap-db at
 #     v0.3.1 (16 fixable High CVEs, all "fixed in 16.15-r0"). Wolfi's current stream is 18, and
-#     18.6 is the same upstream release as 16.15. `-r4` is pinned, not the newest (`-r6`): from
-#     `-r5` the 18 packages link `libcrypto.so.4` (OpenSSL 4), `-r4` is the last build on
-#     `libcrypto.so.3` (OpenSSL 3.6), the same line `libpq-18=18.6-r4` below is held to. Read
-#     from the Wolfi APKINDEX (x86_64), 2026-10-29. Pinning also changes the `apk add` line, so a
-#     later bump busts the registry build cache instead of being served a stale layer.
+#     18.6 is the same upstream release as 16.15. It was held at 18.6-r4, the last build on
+#     OpenSSL 3.6, until the image moved to `openssl-4.0` on 2026-11-25 (tap#1390, D21); 18.7-r0
+#     links `libcrypto.so.4`. Read from the Wolfi APKINDEX (x86_64), 2026-11-25. Pinning also
+#     changes the `apk add` line, so a later bump busts the registry build cache instead of
+#     being served a stale layer.
 #
 # ⚠️ COLLATION, not crypto, is the load-bearing hazard (§5.4). The outgoing alpine image is
 # musl, which implements NO locale collation: it is *labelled* en_US.utf8 but *sorts like C*.
@@ -79,39 +79,25 @@ LABEL org.opencontainers.image.base.name="${WOLFI_BASE%%@*}" \
 
 # postgresql-18 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
-# image), openssl-3.6 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
+# image), openssl-4.0 (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
 #
-# `openssl-3.6`, not `openssl-4.0` or the bare `openssl` alias — tap#932/#933, L18.
-#
-# `libpq-18` is EXPLICITLY PINNED here too, corrected from an earlier, wrong claim in this
-# comment that it "had not cut over" — checked directly, right now, it has: `postgresql-18-client`
-# pulls `libpq-18` transitively, unpinned, which currently resolves to `18.6-r5` and links
-# `libcrypto.so.4`/`libssl.so.4` (confirmed via `strings` on the installed `libpq.so.5`). This
-# image is runtime-only (no `-dev` packages, no `cryptography`/psycopg build here), so this
-# wouldn't poison a Python process the way it did on the web image — but `psql`/`pg_isready`
-# (used by the healthcheck) are real libpq consumers in this same image, so pinning for
-# consistency and to not leave a second, unpinned copy of the same hazard sitting here.
-# A real, non-simulated `apk add` with this exact package set, `libpq-18=18.6-r4` and
-# `openssl-3.6` resolves clean, no conflicts. See Dockerfile (web image) for the full writeup,
-# including the from-scratch bare-Ubuntu reproduction that ruled out the raw version-mismatch as
-# the cause of the original FIPS self-check failure. The lingering `libssl3`/`libcrypto3` (.so.3)
-# belong to `apk-tools` itself regardless of any of this, and never share a process with postgres.
-#
-# `krb5-libs` pinned for the same reason as the web image (see Dockerfile there for the full
-# writeup): `libpq.so.5` links GSSAPI/Kerberos support unconditionally, and `krb5-libs`'s own
-# crypto backend (`libk5crypto.so.3`) floats to `openssl-4.0` independently of `libpq-18`'s own
-# pin. Pinning for the same consistency reason as `libpq-18` above, not a confirmed live hazard
-# in this specific image (no Python process here to poison), one revision before its own cutover.
+# One OpenSSL line, `openssl-4.0`, named explicitly with libpq's crypto users (krb5-libs for
+# GSSAPI, libldap-2.7 for LDAP) so none resolves to a build on the other line; the bare `openssl`
+# alias went back to 3.6 on 2026-11-23. Same rule and history as the web image (Dockerfile, base
+# stage; tap#1390, D21). No Python process runs here, but postgres, psql and pg_isready are libpq
+# consumers in this image, so the same single-core rule applies. The `libssl3`/`libcrypto3`
+# (.so.3) that remain belong to `apk-tools` and never share a process with postgres.
 RUN for i in 1 2 3; do \
       if apk add --no-cache \
-    postgresql-18=18.6-r4 \
-    postgresql-18-client=18.6-r4 \
-    postgresql-18-oci-entrypoint=18.6-r4 \
-    libpq-18=18.6-r4 \
-    krb5-libs=1.22.2-r4 \
+    postgresql-18=18.7-r0 \
+    postgresql-18-client=18.7-r0 \
+    postgresql-18-oci-entrypoint=18.7-r0 \
+    libpq-18=18.7-r0 \
+    krb5-libs=1.22.3-r0 \
+    libldap-2.7=2.7.2-r1 \
     gosu \
-    openssl-3.6=3.6.5-r1 \
+    openssl-4.0=4.0.3-r8 \
     bash \
     tzdata \
       ; then break; fi; \
@@ -185,7 +171,8 @@ RUN openssl fipsinstall -pedantic -out /etc/ssl/fipsmodule.cnf -module /usr/lib/
 # ============================================================================
 FROM fips-1-base AS fips-1-legacy
 
-# Strict fips + base provider set, fips=yes globally. Order is load-bearing (openssl_conf
+# fips + base + default, fips=yes globally (`default` answers only explicit non-security
+# opt-outs, D21). Order is load-bearing (openssl_conf
 # before the .include, else it is swallowed into [fips_sect] and nothing activates — L1);
 # re-.include ca.cnf which OPENSSL_CONF otherwise displaces (L14).
 RUN printf '%s\n' \
@@ -202,14 +189,21 @@ RUN printf '%s\n' \
   '[provider_sect]' \
   'fips = fips_sect' \
   'base = base_sect' \
+  'default = default_sect' \
   '' \
   '[base_sect]' \
+  'activate = 1' \
+  '' \
+  '[default_sect]' \
   'activate = 1' \
   '' \
   '[algorithm_sect]' \
   'default_properties = fips=yes' \
   > /etc/ssl/openssl-fips.cnf
 ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+# The same proof the system activation runs: fips=yes governs with `default` loaded (D21).
+COPY docker/prove-fips-governs.sh /opt/ossl/prove-fips-governs.sh
+RUN sh /opt/ossl/prove-fips-governs.sh
 ENV TAP_FIPS_MODE=1
 LABEL org.tap.fips="true"
 
@@ -219,7 +213,7 @@ LABEL org.tap.fips="true"
 # ============================================================================
 FROM fips-1-base AS fips-1-system
 
-COPY docker/activate-fips-system-wide.sh /opt/ossl/activate-fips-system-wide.sh
+COPY docker/activate-fips-system-wide.sh docker/prove-fips-governs.sh /opt/ossl/
 RUN sh /opt/ossl/activate-fips-system-wide.sh
 
 ENV TAP_FIPS_MODE=1

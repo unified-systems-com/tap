@@ -71,6 +71,7 @@ roles, and is the reason a plugin can never exempt itself:
 | req-fips-crypto-bom-jvm | [JVM-Arrival Tripwire](#jvm-arrival-tripwire) | Implemented | Java is out of scope, but its arrival (runtime/executable/jar/bridge dist) fails the gate loudly — jars are not ELF, so nothing else catches it. |
 | req-fips-crypto-bom-source | [Source-Level Scan](#source-level-scan) | Implemented | The Python analog of the ELF fingerprinter: AST-scan TAP + plugin source for pure-Python crypto imports, bare weak-digest usage, and WASM-runtime imports — the crypto the native scan cannot see. |
 | req-fips-pin-currency | [Pin Currency](#pin-currency) | Partial | The validated module's pins are re-asserted against upstream, and a bump is transcribed rather than typed. `scripts/verify-openssl-release` built; the schedule is open. |
+| req-fips-optout-inventory | [Every FIPS Opt-Out Is Accounted For](#every-fips-opt-out-is-accounted-for) | Implemented | The `default` provider is loaded beside `fips` under `fips=yes`, so only an explicit opt-out reaches it; every opt-out in TAP, plugin and dependency source is a crypto-BOM finding that needs a reviewed reason, and the build proves an ordinary request is still refused. |
 | req-fips-pedantic-install | [The Module Is Installed Pedantic](#the-module-is-installed-pedantic) | Implemented | `openssl fipsinstall -pedantic` in both images, so a 3.5-line module enforces its per-check switches; proven by SHA-1 signing being refused in FIPS mode (D18). |
 
 ### Crypto Bill-of-Materials
@@ -421,6 +422,32 @@ fail-open-on-the-unknown edge the ELF signatures have.
 | req-fips-crypto-bom-source-2 | Weak-digest security use flagged | Implemented | A bare MD5 construction for a security use (no `usedforsecurity=False`) is flagged at build time; SHA-1 as a hash is approved and not flagged. | Automates the assessment record's F13. |
 | req-fips-crypto-bom-source-3 | WASM runtime tripwire | Implemented | An imported or installed WASM host runtime (`wasmtime`/`wasmer`/`pywasm`) fails closed. | The `libjvm.so` pattern for WASM. |
 
+### Every FIPS Opt-Out Is Accounted For
+----
+RID: `req-fips-optout-inventory`
+
+Status: `Implemented`
+
+Both images load three providers: `fips` (the validated module), `base` (key encoders and decoders, no crypto) and OpenSSL's `default`, under `default_properties = fips=yes` (decision D21, `docs/misc/doc-fips-assessment-record.md`). That property is merged into every fetch in the process, and nothing in `default` satisfies it except key encoders and decoders, so an ordinary request is served by the FIPS module and nothing else. This is the layout OpenSSL documents in `fips_module(7)`, "Loading the FIPS module at the same time as other providers".
+
+`default` answers only a request that explicitly steps outside `fips=yes`: Python's `usedforsecurity=False`, or a `-fips`, `fips=no` or `provider=default` property query. FIPS 140-3 permits a non-approved algorithm for a use that is not a security function (IG 2.4.A), and that is what these are meant for: Django shortens long index names with MD5 on every boot. But once `default` is loaded, an opt-out can reach any algorithm OpenSSL implements, not only MD5. So the posture holds only if no opt-out serves a security function, and that is checked, not assumed.
+
+The crypto-BOM inventories every opt-out in TAP, installed plugin and installed third-party Python source. Each one must match a reviewed entry in `tap.crypto_providers.FIPS_OPT_OUTS`, naming a file, the function that encloses the opt-out (never a line number, and never a whole file) and how many opt-outs that function was reviewed with, plus the reason the algorithm it reaches protects nothing (`non-security-use`), or the reason it is never reached (`unreached`). An opt-out with no entry is unclassified and fails the boot-time gate, so a dependency upgrade that adds one, in another function of an already-reviewed file or inside an already-reviewed function, stops the boot until someone reviews it.
+
+An opt-out that does serve a security function cannot be recorded as non-security. `requests`' HTTP Digest auth hashes credentials with MD5 and SHA-1 under `usedforsecurity=False`. It is recorded as unreached, and any use of `HTTPDigestAuth` in TAP or plugin source is a must-fix finding.
+
+Chainguard's own route to non-security MD5 is different. Their "Legacy Allowed" provider tags MD4, MD5, SHA-1, SHA-224 and AES-ECB `fips=yes`, so a plain MD5 request succeeds with no declaration at all (verified 2026-11-25, tap#1390). That would defeat `tap.fips`'s negative control, so both images keep it off.
+
+The inventory reads Python source only. Native code is out of reach. The ELF layer covers bundled crypto, and the system libraries TAP loads (libpq, krb5, `cryptography`'s extension) pass no property query of their own.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-optout-inventory-1 | Every opt-out is a finding | Implemented | A `usedforsecurity=` argument that is anything but a literal `True` (`False`, `0`, a variable), the `"usedforsecurity"` key spelled as a string (a `**{...}` call), and a string constant that is an OpenSSL property query stepping outside `fips=yes`, in TAP, plugin or installed dependency source, is a crypto-BOM finding. Each clause is parsed, not matched against known spellings: any `fips` clause that does not affirm `yes` (`-fips`, `fips=no`, `fips!=yes`, `?fips=no`) and any `provider` clause naming something other than `fips` or `base`. Test code and `tap.fips` are skipped. | `tap.crypto_bom._optout_findings`; a byte prefilter keeps the scan under a second. |
+| req-fips-optout-inventory-2 | Each needs a reviewed reason | Implemented | An opt-out matches a `FIPS_OPT_OUTS` entry recorded `non-security-use` or `unreached`, with a reason, or it is unclassified and fails the gate. Using a name whose opt-out serves a security function (`HTTPDigestAuth`) is must-fix. | A file, its function and a reviewed count, never a line number or a whole file. One more opt-out than reviewed fails the scope. |
+| req-fips-optout-inventory-3 | `default` stays behind `fips=yes` | Implemented | Both images activate `default` beside `fips` and `base` with `default_properties = fips=yes`, keep Chainguard's legacy provider off, and fail the build unless a plain MD5 and a plain ChaCha20 request are refused and an explicit non-security MD5 request is served. In a FIPS-mode process, plain `hashlib.md5()` is refused and `md5(usedforsecurity=False)` works. | `docker/activate-fips-system-wide.sh`; the rollback activation in both Dockerfiles loads `default` too. |
+
 ### The Module Is Installed Pedantic
 ----
 RID: `req-fips-pedantic-install`
@@ -558,6 +585,7 @@ anywhere requires adding its row here in the same change.
 | Requirement | Home spec | What it covers |
 | --- | --- | --- |
 | `req-fips-crypto-bom` (+ `-ci`, `-conformance`, `-system-gate`, `-waivers`, `-jvm`) | **this spec** | The crypto Bill-of-Materials: scanner, registry, CI gate, per-plugin conformance, boot-time global gate, operator waivers, JVM tripwire. |
+| `req-fips-optout-inventory` | **this spec** | The `default` provider beside `fips` under `fips=yes`, the inventory of every explicit FIPS opt-out with its reviewed reason, and the build-time proof that an ordinary request is still served only by the FIPS module. |
 | `req-fips-pin-currency` | **this spec** | Re-asserting the validated module's pins against upstream, the four bump triggers, and the transcribe-don't-type bump path (`scripts/verify-openssl-release` + the `bump-openssl-fips` skill). |
 | `req-cicd-base-image-lifecycle-3` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | Wolfi is the standard base — chosen partly for in-image, host-independent FIPS (also for Python-currency + CVE floor). |
 | `req-cicd-base-image-lifecycle-5` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The FIPS crypto recipe: self-built OpenSSL FIPS provider at the pinned version (validation derived, D17) on web + DB, `fipsinstall` in-image, `--no-binary cryptography`, `psycopg[c]` (system libpq), Postgres `--encoding=UTF8 --locale=C`. |
@@ -571,7 +599,7 @@ Owned in full by the assessment record (doc §7); named here so the posture stay
 
 - **OE vendor-affirmed portability** (doc §7.1) — accepted + owned; not a blocker. Fallback ladder is a
   base-image swap, not a rewrite.
-- **`usedforsecurity=False`** reaches MD5 via a separate non-FIPS libctx (doc §7.2) — permitted, disclosed.
+- **`usedforsecurity=False`** reaches the `default` provider, and from there any algorithm (D21) — permitted for non-security uses, and every one is inventoried with its reason (`req-fips-optout-inventory`).
 - **`_blake2`** is a built-in non-validated hash, importable though unused (doc §7.3).
 - **Dependency drift** — a new bare `hashlib.md5()`/`SELECT md5()` in a dependency is a boot-breaking
   regression under FIPS; caught by the boot self-check + `F13`/`F16` (doc §7.4).

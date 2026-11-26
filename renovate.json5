@@ -72,17 +72,12 @@
       // what turns that skip into a real lookup, for the apk packages pinned in both
       // Dockerfiles — tap#932/#933, L18 (the Wolfi `openssl-4.0` package family incident).
       //
-      // Was just `openssl-4.0`/`openssl-4.0-dev`, pinned so the next bump stayed deliberate
-      // rather than repeating the silent jump that caused the incident. That pin alone wasn't
-      // the fix: `python-3.14-base`/`python-3.14`/`python-3.14-dev` and `postgresql-18-dev`
-      // (web image) each independently hard-depend on `libcrypto.so.4` at their own current
-      // versions regardless of which OpenSSL package is requested, confirmed directly (apk
-      // info / a real `apk add`). The actual fix pins the whole OpenSSL-touching closure one
-      // apk revision behind each package's own cutover to `openssl-4.0`, onto `openssl-3.6`/
-      // `openssl-3.6-dev` — these are REVISION pins, narrower than a version pin, and every
-      // one of these six names needs Renovate to keep proposing (and a human reviewing) the
-      // next bump individually rather than this group silently re-drifting past the next
-      // cutover the same way the original floating alias did.
+      // Both images pin the whole OpenSSL-touching closure to exact Wolfi revisions on ONE
+      // OpenSSL line (`openssl-4.0` since 2026-11-25, tap#1390, decision D21). Wolfi moves its
+      // packages between OpenSSL lines one package at a time, so each name here needs Renovate
+      // to propose its next revision individually, and a human to review it, rather than the
+      // group drifting past the next move silently. A bump re-runs the cold-boot gate, whose
+      // tap.fips two-cores guard fails a build that loads a second OpenSSL core.
       //
       // Scoped to exactly these names (originally Codex, PR#933; extended here): an unscoped
       // matchDatasources: ["apk"] would silently assign the Wolfi registry and this group to
@@ -90,15 +85,18 @@
       // its name here deliberately rather than widen the match.
       matchDatasources: ["apk"],
       matchPackageNames: [
-        "openssl-3.6",
-        "openssl-3.6-dev",
+        "openssl-4.0",
+        "openssl-4.0-dev",
         "python-3.14",
         "python-3.14-base",
         "python-3.14-dev",
+        "postgresql-18",
         "postgresql-18-client",
         "postgresql-18-dev",
+        "postgresql-18-oci-entrypoint",
         "libpq-18",
         "krb5-libs",
+        "libldap-2.7",
       ],
       registryUrls: ["https://packages.wolfi.dev/os?arch=x86_64"],
       groupName: "pinned apk packages (security-relevant, reviewed individually)",

@@ -37,6 +37,8 @@ from typing import Any
 from tap.boot_naming import profile_path
 from tap.crypto_providers import (
     DISPOSITIONS,
+    FIPS_OPT_OUT,
+    FIPS_OPT_OUTS,
     JVM_ARTIFACT_SUFFIXES,
     JVM_EXECUTABLES,
     JVM_RUNTIME_FILES,
@@ -44,12 +46,15 @@ from tap.crypto_providers import (
     KNOWN_NONFIPS_DISTRIBUTIONS,
     KNOWN_WASM_DISTRIBUTIONS,
     NONVALIDATED_CRYPTO_IMPORTS,
+    OPTOUT_RID,
+    REACHED_OPT_OUT_TRIPWIRES,
     SIGNATURES,
     WASM_RUNTIME_IMPORTS,
     WEAK_DIGEST_CALLS,
     Boundary,
     Disposition,
     Waiver,
+    is_optout_propquery,
     system_openssl_boundary,
 )
 
@@ -364,6 +369,22 @@ def _weak_digest_finding(artifact: str, node: ast.Call) -> Finding | None:
     )
 
 
+def _tripwire_name(node: ast.AST) -> str | None:
+    """The REACHED_OPT_OUT_TRIPWIRES name this node uses, if any: a bare name, an attribute, an
+    import alias, or the name spelled as a string (`getattr(requests.auth, "HTTPDigestAuth")`)."""
+    if isinstance(node, ast.Name):
+        name = node.id
+    elif isinstance(node, ast.Attribute):
+        name = node.attr
+    elif isinstance(node, ast.alias):
+        name = node.name.rsplit(".", 1)[-1]
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        name = node.value
+    else:
+        return None
+    return name if name in REACHED_OPT_OUT_TRIPWIRES else None
+
+
 def _source_findings(roots: Iterable[Path]) -> list[Finding]:
     """AST-scan `.py` source under roots for non-validated crypto imports, WASM-runtime imports, and
     bare weak-digest usage — the Python analog of the ELF fingerprinter (req-fips-crypto-bom-source).
@@ -381,6 +402,8 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
             if _skip_source_file(path):
                 continue
             spath = str(path)
+            # The scanner and its registry name the tripwires they look for; neither reaches them.
+            is_registry = spath.endswith(("/tap/crypto_bom.py", "/tap/crypto_providers.py"))
             try:
                 tree = ast.parse(path.read_bytes())
             except OSError, SyntaxError, ValueError:
@@ -399,7 +422,175 @@ def _source_findings(roots: Iterable[Path]) -> list[Finding]:
                     f = _weak_digest_finding(spath, node)
                     if f is not None:
                         findings.append(f)
+                tripwire = _tripwire_name(node)
+                if tripwire is not None and not is_registry:
+                    findings.append(
+                        Finding(
+                            f"{spath}:{getattr(node, 'lineno', 0)}",
+                            f"{FIPS_OPT_OUT}-reached",
+                            Boundary.MUST_FIX,
+                            f"uses {tripwire}: {REACHED_OPT_OUT_TRIPWIRES[tripwire]}. Remove it, or run this "
+                            "plugin outside FIPS mode.",
+                            OPTOUT_RID,
+                        )
+                    )
     return findings
+
+
+#: Bytes that must appear in a file before it is worth parsing for an opt-out — keeps the dependency
+#: scan to the handful of files that can contain one (a full AST parse of site-packages is not cheap).
+_OPTOUT_PREFILTER = (b"usedforsecurity", b"fips", b"provider")
+
+
+def _optout_finding(artifact: str, scope: str, how: str) -> tuple[Finding, Disposition | None]:
+    """An explicit FIPS opt-out, classified against the reviewed FIPS_OPT_OUTS table (first match).
+
+    A disposition names a file AND the enclosing function (`<path>::<qualname>`), never a whole
+    file: a dependency upgrade that adds an opt-out to a different function of an already-reviewed
+    file is a new, unclassified finding, not an inherited approval."""
+    disp = next(
+        (d for d in FIPS_OPT_OUTS if fnmatch.fnmatch(scope, d.artifact) or fnmatch.fnmatch(scope, f"*/{d.artifact}")),
+        None,
+    )
+    if disp is None:
+        unreviewed = Finding(
+            artifact,
+            FIPS_OPT_OUT,
+            None,
+            f"{how} in {scope.rsplit('::', 1)[-1] or '<module>'} — an explicit FIPS opt-out with no reviewed "
+            "disposition. With the default provider loaded it can reach ANY algorithm; record why it is not "
+            "a security function (tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
+            None,
+        )
+        return unreviewed, None
+    return Finding(artifact, FIPS_OPT_OUT, disp.boundary, disp.rationale, disp.rid), disp
+
+
+def _is_literal_true(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+class _OptOutVisitor(ast.NodeVisitor):
+    """Collect opt-outs with the qualified name of the function or class that encloses each one."""
+
+    def __init__(self, spath: str) -> None:
+        self.spath = spath
+        self.stack: list[str] = []
+        self.findings: list[tuple[Finding, Disposition | None]] = []
+
+    def _scoped(self, node: ast.AST) -> None:
+        self.stack.append(getattr(node, "name", ""))
+        self.generic_visit(node)
+        self.stack.pop()
+
+    visit_FunctionDef = _scoped
+    visit_AsyncFunctionDef = _scoped
+    visit_ClassDef = _scoped
+
+    def _add(self, node: ast.AST, how: str) -> None:
+        scope = f"{self.spath}::{'.'.join(self.stack)}"
+        self.findings.append(_optout_finding(f"{self.spath}:{getattr(node, 'lineno', 0)}", scope, how))
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for kw in node.keywords:
+            # Anything but a literal True: `False`, `0`, `bool(0)`, a variable. A `**mapping` that may
+            # carry the key is caught by the string-constant rule below.
+            if kw.arg == "usedforsecurity" and not _is_literal_true(kw.value):
+                self._add(node, f"usedforsecurity={ast.unparse(kw.value)}")
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str):
+            if node.value == "usedforsecurity":
+                self._add(node, "the 'usedforsecurity' key built dynamically")
+            elif is_optout_propquery(node.value):
+                self._add(node, f"property query {node.value!r}")
+
+
+def _optout_findings(roots: Iterable[Path]) -> list[Finding]:
+    """Inventory every explicit FIPS opt-out in Python source under `roots` (req-fips-optout-inventory):
+    a `usedforsecurity=` argument that is anything but a literal `True`, the `"usedforsecurity"` key
+    spelled as a string (a `**{...}` call or `getattr` route), and a string constant that is an
+    OpenSSL property query stepping outside `fips=yes` (`-fips`, `fips=no`, `provider=default`).
+    Unlike the import/weak-digest scan this one also covers installed THIRD-PARTY source, because a
+    dependency's opt-out reaches the same `default` provider TAP's would. Native code is out of reach
+    here; the ELF layer covers bundled crypto, and the system libraries TAP loads pass no property
+    query of their own."""
+    findings: list[Finding] = []
+    classified: list[tuple[Finding, Disposition | None]] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        files = (root,) if root.is_file() else root.rglob("*.py")
+        for path in files:
+            if path.suffix != ".py" or path in seen:
+                continue
+            seen.add(path)
+            # The scanner and its registry name the keyword and clauses they look for; neither is an opt-out.
+            if _skip_source_file(path) or str(path).endswith(("/tap/crypto_bom.py", "/tap/crypto_providers.py")):
+                continue
+            spath = str(path)
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                # Contents unknown, so it cannot be cleared: fail closed (never a silent skip).
+                findings.append(
+                    Finding(f"{spath}:0", FIPS_OPT_OUT, None, f"unreadable, so not inventoried: {exc}", None)
+                )
+                continue
+            if not any(marker in data.lower() for marker in _OPTOUT_PREFILTER):
+                continue
+            try:
+                tree = ast.parse(data)
+            except SyntaxError, ValueError:
+                # A candidate this interpreter cannot parse cannot be imported by it either, so its
+                # opt-outs never run here. Recorded (visible in the report), not silently skipped.
+                findings.append(
+                    Finding(
+                        f"{spath}:0",
+                        FIPS_OPT_OUT,
+                        Boundary.UNREACHED,
+                        "names an opt-out marker but does not parse under this interpreter, so it cannot be "
+                        "imported and its opt-outs cannot run",
+                        OPTOUT_RID,
+                    )
+                )
+                continue
+            visitor = _OptOutVisitor(spath)
+            visitor.visit(tree)
+            classified.extend(visitor.findings)
+    findings.extend(_over_count_fails(classified))
+    return findings
+
+
+def _over_count_fails(classified: list[tuple[Finding, Disposition | None]]) -> list[Finding]:
+    """A reviewed scope holding MORE opt-outs than its disposition's `count` fails every one of them:
+    the extra one is unreviewed, and which of them it is cannot be told from the scope alone."""
+    seen: dict[int, int] = {}
+    for _, disp in classified:
+        if disp is not None:
+            seen[id(disp)] = seen.get(id(disp), 0) + 1
+    out: list[Finding] = []
+    for finding, disp in classified:
+        reviewed = disp.count if disp is not None else None
+        if disp is not None and reviewed is not None and seen[id(disp)] > reviewed:
+            finding = replace(
+                finding,
+                boundary=None,
+                detail=f"{seen[id(disp)]} opt-outs in {disp.artifact} where {reviewed} were reviewed — an opt-out "
+                "was added inside a reviewed function. Review it and update the entry's count "
+                "(tap.crypto_providers.FIPS_OPT_OUTS), or remove it.",
+                rid=None,
+            )
+        out.append(finding)
+    return out
+
+
+def _dependency_source_roots() -> tuple[Path, ...]:
+    """Every installed distribution's Python source: the venv's site-packages (which includes the
+    plugin namespace; `_optout_findings` de-duplicates files reached twice)."""
+    return tuple((_VENV_ROOT / "lib").glob("python*/site-packages"))
 
 
 def _wasm_dist_findings(dist_names: Iterable[str]) -> list[Finding]:
@@ -433,6 +624,7 @@ def scan(
     libcrypto_roots: Iterable[Path] = (),
     jvm_roots: Iterable[Path] = (),
     source_roots: Iterable[Path] = (),
+    optout_roots: Iterable[Path] = (),
 ) -> Report:
     """Scan the given roots and distributions, returning a Report. This is the reusable core — the
     same call scans core's environment or a single plugin's closure, only the roots differ."""
@@ -451,6 +643,7 @@ def scan(
     report.findings.extend(_distribution_findings(dist_names))
     report.findings.extend(_jvm_findings(jvm_roots, dist_names))
     report.findings.extend(_source_findings(source_roots))
+    report.findings.extend(_optout_findings(optout_roots))
     report.findings.extend(_wasm_dist_findings(dist_names))
     return report
 
@@ -467,6 +660,7 @@ def core_report() -> Report:
         libcrypto_roots=_LIBCRYPTO_ROOTS,
         jvm_roots=(_VENV_ROOT, *_BINARY_ROOTS, *_LIBCRYPTO_ROOTS),
         source_roots=(*core_src, *_plugin_source_roots()),
+        optout_roots=(*core_src, *_dependency_source_roots()),
     )
 
 
@@ -540,6 +734,7 @@ def scan_plugin(plugin_root: Path, dist_names: Iterable[str] = (), extra_native_
         libcrypto_roots=(root,),
         jvm_roots=(root, *extra),
         source_roots=(root,),
+        optout_roots=(root,),
     )
 
 
@@ -758,6 +953,7 @@ def format_report(report: Report) -> str:
     order = {
         None: 0,
         Boundary.MUST_FIX: 1,
+        Boundary.NON_SECURITY_USE: 2,
         Boundary.UNREACHED: 2,
         Boundary.OUT_OF_BOUNDARY: 3,
         Boundary.FIPS_MODE_UNVALIDATED_BUILD: 4,
@@ -816,7 +1012,9 @@ def main(argv: list[str] | None = None) -> int:
     if declined is not None:
         # Off by the deployer's record, on the record: the reason is printed on every start.
         print(f"==> crypto-BOM scan OFF by boot profile '{args.profile}' (fips_system_gate): {declined}")
-        print("==>   FIPS mode and the tap.fips self-check still apply; TAP_FIPS_SYSTEM_GATE=required turns the scan back on.")
+        print(
+            "==>   FIPS mode and the tap.fips self-check still apply; TAP_FIPS_SYSTEM_GATE=required turns the scan back on."
+        )
         return 0
 
     try:
