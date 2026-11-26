@@ -4,6 +4,7 @@
 tap/tests/test_compose_ports.py
 tap/tests/test_crypto_bom.py
 tap/tests/test_dockerignore_guard.py
+tap/tests/test_fips_optout_inventory.py
 tap/tests/test_guards.py
 tap/tests/test_guards_sarif.py
 tap/tests/test_requirement_dispositions.py
