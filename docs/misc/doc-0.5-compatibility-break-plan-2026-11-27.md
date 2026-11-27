@@ -10,9 +10,11 @@ related:
   - tap#1275
   - tap#1288
   - tap#1387
+  - docs/misc/doc-0.5-compatibility-inventory-2026-11-27.md
+  - docs/misc/doc-0.5-ci-review-2026-11-27.md
 ---
 
-> This is a snapshot of the claude.ai doc at revision 24, written by the hard-things and make-it-fast sessions, kept here for the record. At the time of this snapshot, none of its decisions had been ruled on. The two make-it-fast reports listed under Sources were local handoff files and are not in this repository.
+> This is a snapshot of the claude.ai doc at revision 32, written by the hard-things and make-it-fast sessions after Codex reviewed revision 24. It is kept here for the record. At the time of this snapshot, none of its decisions had been ruled on. The two make-it-fast reports under Sources are committed beside this file. Their links below point to those copies, not to the original local handoff paths.
 
 # 0.5.0 Compatibility Break Plan
 
@@ -22,7 +24,7 @@ No production database exists yet, only our local session stacks, so TAP resets 
 
 ## Decisions
 
-Eleven rulings settle the plan, and I recommend yes to each. R is the reset release (D11). The decisions answer Q82 and Q83b–c in the hard-things register. The five open rows from the code inventory follow below.
+Fourteen rulings settle the plan, and I recommend yes to each. R is the reset release (D11). D12–D14, and the revised D5 and D6, come from Codex's review of PR #1397 (hard-things r198); each of its six findings held against the code. The five open rows from the code inventory follow below.
 
 | ID | Decision | Recommendation |
 | --- | --- | --- |
@@ -30,13 +32,16 @@ Eleven rulings settle the plan, and I recommend yes to each. R is the reset rele
 | D2 | One declared floor, R, set in one place and read by boot, record loading, GRIFT, plugin CI and plugin release. | Yes. One concept instead of five drifting checks. |
 | D3 | A fresh real install builds its database from the models: `install.schema_from_models` defaults to true. | Yes. Then no install anywhere replays history. |
 | D4 | A hard reset: delete every app's migration chain, in core and in every plugin, and generate one fresh `0001_baseline` from the models, with no `replaces`. | Yes. It is the cleanest end state, and with no production databases nothing needs `replaces`. |
-| D5 | Once the first production install exists, later minors squash with `replaces` and drop it one minor later. Until then a further reset stays allowed. | Yes. It gives a written window for when real databases exist. |
-| D6 | The CI oracle becomes upgrade parity from R, run nightly, on migration PRs and on release. From-zero replay runs only on named triggers. | Yes. It tests the path real installs take. |
+| D5 | From R, every release upgrades from R and from every later release, including an install that skipped releases. There is no further reset after R. A squash happens only for a measured benefit, and it keeps its `replaces` until a written support-policy change retires that bridge. | Yes. Dropping replaces one minor later strands an install that skipped that minor, because Django needs the bridge to read its history. And once R is released, someone may have adopted it. |
+| D6 | CI proves an upgrade with two separate checks. Schema: the upgraded database's schema equals a fresh model-built head. Meaning: a versioned, populated fixture, written through the source release's own service and GRIFT surface, keeps its identities, references, live and tombstoned rows, history and revision pins, FLIP, dimensions, timestamps and plugin data, except for each migration's declared transformations. Both run from R and from the latest supported release, nightly, on migration PRs and on release, and the stock-versus-shallow comparison runs on the populated upgrade too. From-zero replay runs on release and on named triggers. | Yes. An empty database cannot show a migration that corrupts data, and today's row digest skips every timestamp column (tap/schema\_parity.py:229). |
 | D7 | `product-health` boots its products from the models, following D3. | Yes. Otherwise it is the last from-zero replay outside the triggers. |
 | D8 | Delete the 23 delete-at-0.5 paths in one series of PRs. | Yes. Each is cited and has no live caller. |
 | D9 | Merge the nine CI duplications. Images are pulled or built one way: the provenance-verified way. | Yes. Today one copy skips the attestation check. |
 | D10 | Rule now, build in the next hard-things session after the Monday regscale work. The reset is a fleet pass, run by agents as wave 3 was. The 360-minute limit stays until D6 lands, then gitlab and anchore return to the 90-minute default. | Yes. None of this is on the Monday path. |
 | D11 | R is v0.5.1. v0.5.0 is marked superseded: its database and plugin floors are not supported. | Yes. It keeps 0.5 as the line you named. A reset breaks 0.5.0, so 0.6.0 would be the strict semver choice, but nothing runs 0.5.0. |
+| D12 | The storage shape every TAP model inherits (BaseModel, its history models and the spine copies) is a plugin contract from R. Approved shared-field changes land in the reset. A later change either carries a core-owned upgrade for existing plugin tables or is declared a compatibility break; raising a model version or a plugin floor does not count. CI adds a row that runs an unchanged released plugin wheel on newer core against an upgraded database, starting from a pinned product composition. | Yes. Today a shared field forces every plugin to regenerate migrations and release (tap\_grid/spine\_copies.py:471), and a reset does not remove that coupling. |
+| D13 | Every migration effect the models cannot carry (RunSQL, a RunPython that seeds rows, a trigger) names its fresh-install treatment in the same PR. The reset carries every such effect of the deleted chains into the baseline or a shared init hook. From-zero triggers widen beyond Django's pin to every migration-bearing dependency and to shared init code, such as the spine-copy triggers. | Yes. The model build refuses RunSQL and skips RunPython (tap\_boot/model\_schema.py), so with D3 as the default an unnamed effect is lost on every fresh install. |
+| D14 | The compatibility promise is written down. From R, TAP keeps the supported plugin and service APIs, GRIFT and model-version evolution, the boot and manifest formats, and the meaning of persisted data. A bumped version with a refusal is error handling, not compatibility. | Yes. Without a definition, each check decides for itself what compatible means. |
 
 Inventory rows that need a call:
 
@@ -54,7 +59,7 @@ R, the reset release, is the oldest release TAP supports; v0.5.0 (tag `af6c940e`
 
 | Thing | Kept from R forward | Before R |
 | --- | --- | --- |
-| Database | Upgrades by migration from R or any later release (D5) | Refused at boot, naming the floor and the reload path; every local stack reloads once |
+| Database | Upgrades by migration from R or any later release, including skipped releases (D5) | Refused at boot, naming the floor and the reload path; every local stack reloads once |
 | Grid records (model\_links) | Read and upgraded from v2 | v1 refused (today it is upgraded) |
 | GRIFT documents | Format "1" | Format "0" refused; `TAP_REQUIRE_GRIFT_VERSIONS=0` and `restamp_grift` deleted |
 | Plugin floor (`requires_tap`) | `>=` R | Refused by plugin CI and plugin release (today a pre-0.5 floor resolves silently) |
@@ -66,12 +71,13 @@ Each refusal is explicit and names what to do, under the explicit-over-silent ru
 
 One constant, `COMPAT_FLOOR = "0.5.1"` (R), read by every check below, replaces five checks that would otherwise each pick their own minimum.
 
-- **Boot, schema.** The entrypoint and `cold_boot_gate` read `django_migrations` before choosing a road. The check is per app: an app that has rows in `django_migrations` but no `0001_baseline` among them is refused, naming the floor and the reload command. An app with no rows is a fresh install of that app, such as a plugin added to an existing R database, and migrates normally. The new name matters: every core app already has a `0001_initial`, so a reset that reused that name would be read as already applied on an old database. The check has to run before the `migrate_from_models` branch, because that branch runs plain `migrate` on any non-empty database (req-boot-schema-from-models-2).
-- **Records.** `tap_grid/model_links.py` and `tap_cares/model_links.py` drop their v1→v2 steps and refuse a record below the version its type had at R. The floor is per type: a type added after R, such as the coming RunConfiguration, starts at its own v1 and is never refused for it. This interacts with req-grid-entity-model-version-10 and -14.
+- **Boot, schema.** One shared preflight, used by the entrypoint, `cold_boot_gate` and every supported init or migrate path, reads `django_migrations` before choosing a road. It covers only the TAP-owned apps, core's and each installed plugin's. Django's `auth`, `contenttypes` and other third-party apps keep their own migration names and are never checked. Per app: an app with rows but none from its recognised baseline lineage (`0001_baseline`, or a later squash that replaces it) is refused, naming the floor and the reload command. An app with no rows is a fresh install of that app, such as a plugin added to an existing R database, and migrates normally. The existing refusal of a database newer than the code stays. The new name matters: every core app already has a `0001_initial`, so a reset that reused that name would be read as already applied on an old database. The check runs before the `migrate_from_models` branch, because that branch runs plain `migrate` on any non-empty database (req-boot-schema-from-models-2).
+- **Records.** `tap_grid/model_links.py` and `tap_cares/model_links.py` drop their v1→v2 steps and refuse a record below the version its type had at R. The floor is per type: a type added after R, such as the coming RunConfiguration, starts at its own v1 and is never refused for it. The link validator changes with them: `declaration_problems` (`tap_grid/version_links.py:158`) requires a link from version 1, so a type whose oldest version is 2 is still refused today; the chain must start at the type's floor. This interacts with req-grid-entity-model-version-10 and -14.
 - **GRIFT.** Format "0" and its restamp are deleted. Rule 11 (spec-grift-v0.md:1388) assumes nothing is above version 1, but spine and batch have been at version 2 since 0.5.0, so the format "0" reader may already misread.
-- **Plugins.** `tap/ci_harness.py:150-158` refuses a `requires_tap` floor or `latest_ref` below the floor, with the reason. `plugin-release-sbom.yml` refuses the same floor at release.
+- **Plugins.** `tap/ci_harness.py:150-158` refuses a `requires_tap` floor or `latest_ref` below the floor, with the reason. `plugin-release-sbom.yml` refuses the same floor at release. Preboot enforces it at load too: `_requires_tap_gate` (`tap/preboot.py:1089`) skips a plugin that declares no `requires_tap`, and now refuses it, as well as a floor below R. Before R exists, plugin candidates are tested through an explicit candidate-harness override, because plugin CI requires the floor to resolve to a released tag.
+- **Separate identifiers.** The release version, the migration lineage, the GRIFT format and each type's model version are related boundaries with different identifiers. `COMPAT_FLOOR` names the release, and each check maps it to its own identifier as it stood at R.
 
-The floor moves only when a release stops supporting upgrades from older ones: at a further reset before production, or under the D5 window after it. Every check follows the one constant.
+The floor moves only by a written support-policy change (D5). After R there is no further reset. Every check follows the one constant.
 
 ## Stand-up
 
@@ -117,12 +123,14 @@ No job in any of the 17 workflows tests an upgrade from an older release today, 
 | publish-release-tags | core-ci `line` and `cold-boot` only (45-61) | Add the upgrade lane and the from-zero lane |
 | product-health | A product's real profile on `:latest`, replaying from zero | Model-built (D7), or a product upgrade from its last release |
 | plugin-ci (conformance) | Accepts any existing floor tag (`tap/ci_harness.py:150-158`) | Refuses a floor below `COMPAT_FLOOR` |
-| plugin-ci (`schema_parity` road) | Plugin from zero, then three-road parity | Add an upgrade road: the plugin's last release on core R, then plugin head. Boot model-built, which saves about 13 min of duplicate replay on aws\_core |
+| plugin-ci (`schema_parity` road) | Plugin from zero, then three-road parity | Add an upgrade road: a pinned product composition (a valid core, plugin and dependency set at R or at the latest supported release), then plugin head; and an unchanged released plugin wheel on newer core against the upgraded database (D12). Boot model-built, which saves about 13 min of duplicate replay on aws\_core |
 | plugin-nightly (migrations) | From-zero parity against core main, nightly; gitlab 122 min and anchore 104 min at the 360 limit | Nightly row becomes plugin upgrade parity; from zero runs on a plugin migration PR, a plugin release or a core trigger change. The 360 override is removed (D10) |
 | plugin-nightly (owner-issue) | Night verdict | Re-key to the new row |
 | plugin-release-sbom | Nothing checks `requires_tap` | Refuses a floor below `COMPAT_FLOOR` |
 
 No baseline database exists anywhere, so the upgrade lane mints one each run from R's released images. For core that costs about what today's job does, 75–112 s. Once the plugin floors are at R (0.5.1), the old-harness fallbacks in plugin-ci (821-822, 838-842, 586) never fire and are deleted.
+
+The populated fixture (D6) is built once per supported source release, through that release's own service and GRIFT surface, and kept as a versioned CI artifact. Its meaning check compares timestamps too; only the columns a migration declares it transforms are exempt.
 
 ## Compatibility code
 
@@ -158,22 +166,22 @@ The review found nine pieces of CI written more than once; each becomes one shar
 
 ## Order of work
 
-The floor and the default flip come first, because every later step relies on the refusal. The reset then lands with the fleet in one pass, and the upgrade lane is built on R.
+Everything up to R ships as one release candidate, reviewed in several PRs. The refusal then never lands before the baselines it looks for, and R is not cut until its upgrade harness has run. Earlier drafts put the refusal first, which would have refused databases freshly made by the same code, since they still record `0001_initial`.
 
-1. Rulings on D1–D11 and the five inventory calls.
-2. Core PR: `COMPAT_FLOOR`, the boot refusal, the D3 default flip, and the record and GRIFT floors, with their spec amendments.
-3. Core PRs: the 23 deletions, in groups by the table above.
-4. Core PR: the reset to `0001_baseline`, with its proof. In parallel, agents prepare every plugin's reset PR against that branch.
-5. Merge core and cut R (v0.5.1). Then merge and release each plugin in dependency order, the core plugins first.
-6. Reload every local session stack and the CI fixtures.
-7. Core PR: the `upgraded` road in `tap.schema_parity` starting from R, the core-ci upgrade lane, the product-lines split and gate, and the release-gate lanes.
-8. Core PR: the plugin-ci upgrade road and floor refusal, the plugin-nightly row, and the plugin-release floor check. Then remove the 360 overrides on gitlab-tap and anchore-tap.
-9. The CI merges (D9), any time after step 7.
+1. Rulings on D1–D14 and the five inventory calls.
+2. Commit make-it-fast's inventory and CI review beside the plan, with their reviewed commit (`21e4e525`), so the deletions follow a published checklist. Then the core PRs for the 23 deletions, in groups by the table above; they need no floor.
+3. Core PR: the upgrade harness. That is the `upgraded` road in `tap.schema_parity`, the populated fixture and its meaning check, and the stock-versus-shallow comparison on a populated upgrade. Before R exists it runs against the pinned candidate with a representative later migration.
+4. The core candidate branch: the reset to `0001_baseline`, with every RunSQL or seed effect of the deleted chains carried over (D13), together with `COMPAT_FLOOR`, the shared boot preflight, the D3 default flip, the record and GRIFT floors, the version-link validator change and the preboot refusal, with their spec amendments. In parallel, agents prepare every plugin's reset PR against that branch, tested through the candidate-harness override.
+5. Candidate acceptance, observed before anything merges: both fresh-install roads (models and migrate), a restart, the refusal of an old database, a reset plugin added to an existing candidate database, and the unchanged-released-plugin row (D12).
+6. Merge core and cut R (v0.5.1). Then merge and release each plugin in dependency order, the core plugins first.
+7. Reload every local session stack and the CI fixtures, and mint R's populated fixture.
+8. Core PR: the CI lanes. That is the core-ci upgrade lane, the product-lines split and gate, the release-gate lanes, the plugin-ci upgrade road and floor refusal, the plugin-nightly row and the plugin-release floor check. Then remove the 360 overrides on gitlab-tap and anchore-tap.
+9. The CI merges (D9), any time after step 8.
 
 ## Sources
 
-- make-it-fast, the compatibility inventory with per-file verdicts at origin/main `21e4e525`: `/home/george/tap-sessions/handoffs/2026-11-27-0.5-lockin/compat-inventory.md`
-- make-it-fast, the CI review with per-workflow verdicts and durations: `/home/george/tap-sessions/handoffs/2026-11-27-0.5-lockin/ci-review.md`
+- make-it-fast, the compatibility inventory with per-file verdicts at origin/main `21e4e525`: [doc-0.5-compatibility-inventory-2026-11-27.md](doc-0.5-compatibility-inventory-2026-11-27.md)
+- make-it-fast, the CI review with per-workflow verdicts and durations: [doc-0.5-ci-review-2026-11-27.md](doc-0.5-ci-review-2026-11-27.md)
 - `specs/spec-tap-boot-v0.md`, Schema From Models: req-boot-schema-from-models-2, -5, -6, and line 399 for RunPython and RunSQL
 - Measured nightlies at the 360 limit: gitlab-tap run 45855715519 and anchore-tap run 45855721522; [tap#1288 comment](https://github.com/unified-systems-com/tap/issues/1288#issuecomment-7200203329)
 - The root cause of the slow stock road: [tap#1251](https://github.com/unified-systems-com/tap/issues/1251)
