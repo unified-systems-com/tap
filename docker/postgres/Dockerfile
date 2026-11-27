@@ -38,7 +38,7 @@ ARG TAP_FIPS_ACTIVATION=system
 # The Wolfi base, pinned tag@digest, written ONCE here (req-cicd-base-image-labels): every
 # FROM below uses it, and the two OCI base-image labels in `base` are derived from it, so the
 # pin and the labels cannot disagree. Renovate's dockerfile manager reads this ARG's default.
-ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base:latest@sha256:28c39be5a5e1e9b85081c10740e8495f6518a865b23bc6a486637c4b21e74b43
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base:latest@sha256:4cf5932a0f95a88af352f77e4efa67480cab0e1f7a48f0eddca3cce003a7c0fb
 
 # ============================================================================
 # ossl-builder — compile the pinned OpenSSL FIPS provider (fips.so)
