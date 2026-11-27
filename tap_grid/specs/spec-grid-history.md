@@ -219,8 +219,9 @@ The revision metadata contract is:
 1. `Entity.version` starts at `1` on creation.
 2. The version increments on every canonical persisted mutation, including tombstone/delete transitions.
 3. The version counter is updated through the service layer as part of normal writes.
-4. The version counter does not replace history rows and is not used as the source of truth for point-in-time reconstruction.
-5. The version counter is metadata about the current canonical revision, not a guarantee of exact equivalence to history-row count.
+4. The version counter does not replace history rows; point-in-time reconstruction reads the history rows.
+5. **Invariant (Proposed, owner ruling 2026-11-25):** for every history-tracked entity, the count of its history rows equals `Entity.version`, and a time-travel ordinal, version N, is the Nth of that entity's history rows ordered by `history_id` alone, never by `history_date`. A writer that would break this is fixed to keep it; no version column is added. A pin names the history row itself by its `history_id`, as run configurations do for runs and arming (`req-tap-cares-runconfig-model` in `tap_cares/specs/spec-tap-cares-run-configuration.md`).
+6. **History is append-only (Proposed, owner ruling 2026-11-25).** Nothing deletes or prunes history rows, nothing backdates one, and every write path takes the entity's row lock before its history insert, so `history_id` order is that entity's append order. The case to verify first is a spine-only change: a re-import that changes only `name` or `dimensions` (`req-grid-entity-batch-pointers-9`, Issue# 1382 - tap).
 
 #### Development
 This gives TAP a cheap monotonic "what revision is this object at?" capability without forcing history to depend on it. It should be treated as helpful metadata, not temporal truth.
@@ -234,8 +235,16 @@ Delete lifecycle semantics, including tombstoning and `deleted_at`, are owned by
 | req-grid-history-version-1 | Version Starts At One | Implemented | Canonical entities begin at version `1` when first created. | `Entity.version` default=1 |
 | req-grid-history-version-2 | Version Increments On Mutation | Implemented | Every canonical mutation, including delete/tombstone, increments the entity's version. | `F("version") + 1` in BaseModel.save() and tombstone path |
 | req-grid-history-version-3 | Version Is Metadata Not Truth | Implemented | Historical reconstruction does not rely on the version counter as the authoritative source of prior state. | |
+| req-grid-history-version-4 | History Count Equals Version | Proposed | For every history-tracked entity, its history-row count equals `Entity.version`, and the row at 1-based position *n* in `history_id` order is version *n*. | Rule 5. |
+| req-grid-history-version-5 | Guard Across All Tracked Types | Proposed | A guard test writes each history-tracked type through every write path (create, patch, replace, tombstone, GRIFT re-import) and fails on any entity whose history-row count differs from `Entity.version`. | |
+| req-grid-history-version-6 | Spine-Only Change Keeps It | Proposed | A re-import that changes only the spine `name` or `dimensions` leaves history-row count equal to `Entity.version`. | `req-grid-entity-batch-pointers-9`, Issue# 1382 - tap. |
+| req-grid-history-version-7 | No Pruning | Proposed | No code path deletes or prunes history rows: simple_history's `clean_duplicate_history` and `clean_old_history` commands are refused, and deleting a history row that a pin references is refused. | Rule 6. |
+| req-grid-history-version-8 | No Backdating | Proposed | No `_history_date` or custom history date is set anywhere in core or plugins, and a guard fails any history row dated earlier than the previous row of the same entity. | Rule 6. |
+| req-grid-history-version-9 | Lock Before History Insert | Proposed | Every write path, bulk and population paths included, takes the entity row lock before its history insert; two concurrent writes to one entity leave history rows whose `history_id` order matches their commit order. | Rule 6. |
 
 #### Future
+- **Backlog (owner ruling 2026-11-25):** assert that each history id sequence has `CACHE 1` and that no write supplies an explicit `history_id`; tie-safe wrappers around simple_history's date-based `as_of`, `prev_record` and `next_record`; carrying `history_id` pins verbatim on export and import. A stamped version column with a unique (entity, version) constraint comes back only if a version must survive moving between databases, run as its own fleet wave.
+
 If version metadata proves useful in APIs and the viewer shell, TAP may later expose it through response metadata or badges without changing history semantics.
 
 ### History Scope Configuration

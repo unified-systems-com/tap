@@ -31,7 +31,7 @@ Status messages and richer event records remain backlog (`req-tap-cares-collecto
 | req-tap-cares-collector-model | [Collector Model](#collector-model) | Refactoring | On-grid dual-existence capability node; INTERNAL_ONLY |
 | req-tap-cares-collector-registry | [Collector Registry](#collector-registry) | Implemented | Scoped registry mapping collector keys to registered runner code |
 | req-tap-cares-collector-registration | [Collector Registration](#collector-registration) | Proposed | `register_collector(...)` registers the runner read-only at `ready()`; `reconcile_collector_nodes()` materializes the on-grid Collector node under a bound actor |
-| req-tap-cares-collector-concurrency | [Collector Concurrency Policy](#collector-concurrency-policy) | Backlog | Future per-collector maximum simultaneous run count |
+| req-tap-cares-collector-concurrency | [Collector Concurrency Policy](#collector-concurrency-policy) | Deprecated | Superseded by `req-tap-cares-runconfig-concurrency`: declared overlap, a tighten-only per-configuration cap |
 | req-tap-cares-collector-module-class | [Collector Module Class](#collector-module-class) | Implemented | Registered collector classes instantiated by tap-cares |
 | req-tap-cares-collector-packaging | [Collector Packaging](#collector-packaging) | Refactoring | Each collector is a self-contained `collectors/<name>_collector/` package |
 | req-tap-cares-collector-config | [CollectorConfig](#collectorconfig) | Implemented | JSON-safe collector configuration object |
@@ -73,9 +73,9 @@ Collector-specific model requirements:
 - `collector_registry` stores the fully qualified registry key used to resolve the collector's registered runner.
 - Persisted `collector_registry` values must use `scope:key` format.
 - Persisted collector nodes must not use short keys.
-- Persisted `collector_registry` values are unique per grid in v0; two Collector nodes may not share the same registry key while per-instance configuration is deferred.
-- The on-grid `entity_id` for a Collector is derived today: `entity_id = uuid5(NAMESPACE_COLLECTOR, collector_registry)`, `NAMESPACE_COLLECTOR` a module-level constant in `tap_cares/registry.py`. **This is the recorded, temporary exception to `req-grid-entity-natural-key-1`** (entity ids are assigned, never derived — superseding this clause 2026-09-17). It survives because five plugin schedule bundles (git_serious, zizmor, fedramp_20x_ksi, samsite ×2) hardcode the derived id as a `SCHEDULED_TARGET` target and zizmor re-derives it at runtime; it retires in phase 3 of the identity plan together with those bundles. The model already declares `NATURAL_KEY = KEYLESS`: core reconciles its own collectors and can match on the unique `collector_registry` field with an ordinary query.
-- v0 ships only `name`, `description`, and `collector_registry`. Per-instance configuration is deferred (see [CollectorConfig](#collectorconfig)); the first concrete collector (FedRAMP 20x KSI) hardcodes its behavior in the registered class.
+- Persisted `collector_registry` values are unique per grid in v0; two Collector nodes may not share the same registry key. Per-run settings do not need a second node: a configurable collector has any number of `RunConfiguration` nodes, a not-configurable one exactly the one its plugin seeds (`spec-tap-cares-run-configuration.md`).
+- The on-grid `entity_id` for a Collector is derived today: `entity_id = uuid5(NAMESPACE_COLLECTOR, collector_registry)`, `NAMESPACE_COLLECTOR` a module-level constant in `tap_cares/registry.py`. **This is the recorded, temporary exception to `req-grid-entity-natural-key-1`** (entity ids are assigned, never derived — superseding this clause 2026-09-17). It survives because five plugin schedule bundles (git_serious, zizmor, fedramp_20x_ksi, samsite ×2) hardcode the derived id as a `SCHEDULED_TARGET` target and zizmor re-derives it at runtime; it retires in phase 3 of the identity plan together with those bundles. **Run configurations retire the bundle reason** (owner ruling 2026-11-25, `spec-tap-cares-run-configuration.md`): `Collector` declares `NATURAL_KEY = (collector_registry,)` in place of `KEYLESS`, a schedule bundle targets a configuration by its own author-minted uuid, and a seed names its collector through GRIFT's natural-key endpoint (`to_key`, `req-grid-import-grift-edge-endpoints`), so no bundle hardcodes a derived id. The declaration change is a migration (`req-grid-entity-natural-key-8`) of core's tables only. Two uses of the derived id remain, read 2026-11-25 and not changed by that ruling: `reconcile_collector_nodes()` still mints each node's id as `uuid5(NAMESPACE_COLLECTOR, collector_registry)` and finds existing nodes by it (`tap_cares/registry.py`), and the zizmor collector re-derives github_core's collector id at runtime to find its jobs (zizmor-tap `collectors/zizmor_collector/collector.py`, `_upstream_job_ids`). Until those move to the natural key, the derivation itself stays.
+- v0 ships only `name`, `description`, and `collector_registry`. Run settings live on `RunConfiguration` nodes that `CONFIGURES` the collector (`req-tap-cares-runconfig-model`), never on the `Collector` node.
 - The v0 default dimension is `{"tap_cares": "collector"}`.
 - Instance-derived collector dimensions are deferred until TAP's dimension conventions are revisited.
 
@@ -91,11 +91,12 @@ The scheduler will use `Collector` nodes to determine which collector capability
 | req-tap-cares-collector-model-4 | No Short Keys | Implemented | Persisted Collector nodes reject short, unscoped registry keys. | |
 | req-tap-cares-collector-model-5 | Default Dimension | Implemented | New Collector nodes use the v0 default dimension `{"tap_cares": "collector"}`. | |
 | req-tap-cares-collector-model-6 | Dynamic Dimensions Deferred | Implemented | Instance-derived collector dimension values are explicitly deferred. | |
-| req-tap-cares-collector-model-7 | Unique Registry Key | Implemented | v0 `collector_registry` values are unique within a grid. Attempts to persist a second Collector with an existing `collector_registry` value fail validation. | Enforced via DB-level `unique=True`; revisit when per-instance configuration exists. |
-| req-tap-cares-collector-model-8 | v0 Field Set | Implemented | `Collector` exposes `name`, `description`, `collector_registry`, and the reconcile verb's run configuration: `reconcile_authority` (boolean, default false — a run stays additive-only until an operator turns it on for this collector) and `reconcile_budget` (nullable integer; null means the collector class's `RECONCILE_BUDGET_DEFAULT`). Other per-instance configuration is deferred. | Reconcile fields added by Issue# 652 - tap (`req-grid-reconcile-verb-2`, `-3`); migration `0002_collector_reconcile_authority`. |
+| req-tap-cares-collector-model-7 | Unique Registry Key | Implemented | v0 `collector_registry` values are unique within a grid. Attempts to persist a second Collector with an existing `collector_registry` value fail validation. | Enforced via DB-level `unique=True`. Several configurations of one collector are `RunConfiguration` nodes, not further `Collector` rows (`req-tap-cares-runconfig-edge`). |
+| req-tap-cares-collector-model-8 | v0 Field Set | Implemented | `Collector` exposes `name`, `description`, `collector_registry`, and the reconcile verb's run configuration: `reconcile_authority` (boolean, default false — a run stays additive-only until an operator turns it on for this collector) and `reconcile_budget` (nullable integer; null means the collector class's `RECONCILE_BUDGET_DEFAULT`). Run settings are `RunConfiguration` nodes (`req-tap-cares-runconfig-model`), not `Collector` fields. | Reconcile fields added by Issue# 652 - tap (`req-grid-reconcile-verb-2`, `-3`); migration `0002_collector_reconcile_authority`. |
 | req-tap-cares-collector-model-9 | INTERNAL_ONLY | Implemented | `Collector.INTERNAL_ONLY = True`. Generic `create_node` / `patch_node` / `replace_node` / `delete_node` and GRIFT import all reject the `collector` entity type. |  `_impl.py` refuses generic create/patch/replace/delete on INTERNAL_ONLY types; `test_collector_model.py::TestInternalOnlyGuardsTheArmingSwitch` pins that the reconcile authority switch is not reachable through `patch_node` (Issue# 652 - tap). The one sanctioned writer of the switch is `-12`. |
 | req-tap-cares-collector-model-12 | Operator arming switch | Implemented | The reconcile authority and budget are set only through `tap_cares.services.arm_reconcile`, gated by `cares.arm_reconcile` (an operator act, distinct from `grid.reconcile` and `cares.run_collectors`; no program actor holds it); the write is made as the collector program actor through the trusted-internal patch on a batch of its own whose metadata is the audit record (operator, the shell's OS user, collector, before, after, when), the read-modify-write on a locked Collector row and the batch's close in one transaction; the next run's lifecycle batch carries the new configuration; a call with no actor is refused before any read; an actor without the capability is refused and nothing changes; off stays the default. `manage.py arm_reconcile <collector_registry> --on|--off [--budget N] --as <username>` is the operator command; an Administrivia control is a plugin follow-up. | Issue# 655 - tap. `tap_cares/tests/test_arm_reconcile.py`: armed → fields set, audit batch closed with the record, `_reconcile_config` carries it into the next lifecycle batch; a `grid.read` actor is refused; a bad budget is refused before any write; the command arms and disarms, and refuses a user without the capability. Log `[9bac]`. |
-| req-tap-cares-collector-model-10 | Deterministic Entity ID | Deprecated | A Collector's `entity_id` is `uuid5(NAMESPACE_COLLECTOR, collector_registry)`. The same `scope:key` always yields the same `entity_id` across reloads and across grids. `scope` is a REQUIRED explicit argument to `register_collector` (conventionally the plugin slug), never inferred from `cls.__module__`: the id is a durable, cross-referenced grid key (the reconcile key for the on-grid Collector node and a hardcoded `SCHEDULED_TARGET` target in schedule grift bundles), so a Python module rename must not silently change it. The package-mode migration proved the module path is mutable; the slug is the stable identity. | **Superseded 2026-09-17 by `req-grid-entity-natural-key-1`; retained as the recorded exception until phase 3.** `NAMESPACE_COLLECTOR` is a module-level UUID constant in `tap_cares/registry.py`. Guarded by `tap_cares/tests/test_schedule_grift_targets_resolve.py` (every grift `SCHEDULED_TARGET` resolves to a registered collector's derived id) — the guard that names the blast radius. |
+| req-tap-cares-collector-model-10 | Deterministic Entity ID | Deprecated | A Collector's `entity_id` is `uuid5(NAMESPACE_COLLECTOR, collector_registry)`. The same `scope:key` always yields the same `entity_id` across reloads and across grids. `scope` is a REQUIRED explicit argument to `register_collector` (conventionally the plugin slug), never inferred from `cls.__module__`: the id is a durable, cross-referenced grid key (the reconcile key for the on-grid Collector node and a hardcoded `SCHEDULED_TARGET` target in schedule grift bundles), so a Python module rename must not silently change it. The package-mode migration proved the module path is mutable; the slug is the stable identity. | **Superseded 2026-09-17 by `req-grid-entity-natural-key-1`; retained as the recorded exception until phase 3.** `NAMESPACE_COLLECTOR` is a module-level UUID constant in `tap_cares/registry.py`. Guarded by `tap_cares/tests/test_schedule_grift_targets_resolve.py` (every grift `SCHEDULED_TARGET` resolves to a registered collector's derived id) — the guard that names the blast radius. Under run configurations the `schedule-grift-targets` guard checks configuration uuids and natural-key endpoints instead (`req-tap-cares-runconfig-seed-guard`), and no bundle relies on the derived id; this exception then survives only for reconcile and zizmor's runtime lookup (see the model bullets). |
+| req-tap-cares-collector-model-13 | Natural Key On The Registry Key | Proposed | `Collector` declares `NATURAL_KEY = (collector_registry,)`; a GRIFT edge endpoint `{"entity_type": "collector", "key": {"collector_registry": "<scope:key>"}}` resolves to that collector; the change lands as a core migration and touches no plugin table. | Owner ruling 2026-11-25; `req-grid-entity-natural-key-8`; consumer `req-tap-cares-runconfig-not-configurable`. |
 | req-tap-cares-collector-model-11 | Reconcile Is Sole Creator | Proposed | The only legal path that creates a `Collector` row is `reconcile_collector_nodes()` (see [Collector Registration](#collector-registration)), which writes through `write_batch(..., _internal_only_bypass=True)` from `tap_grid.services`; `register_collector(...)` writes no grid node. | |
 
 ## Collector Registry
@@ -280,38 +281,20 @@ When the dual-existence pattern lands a second concrete consumer (Emitter, Actio
 ----
 RID: `req-tap-cares-collector-concurrency`
 
-Status: `Backlog`
+Status: `Deprecated`
 
-Each `Collector` should eventually declare how many simultaneous runs of that collector may be active.
-
-Possible future model field:
-
-```python
-max_concurrent_runs = models.PositiveIntegerField(default=1)
-```
-
-This requirement is intentionally Backlog until the collector enqueue path, scheduler behavior, and future API trigger surface are untangled together. Concurrency touches all three: manual runs, scheduled runs, and any future externally-triggered collection request need one authoritative policy.
-
-The likely shape is a field stored on the on-grid `Collector` node. Concurrency would be evaluated per `Collector` entity: before enqueuing a new collection job, tap-cares would count active `CollectionJob` records linked from that collector through `HAS_COLLECTION_JOB` whose status is `RUNNING`. If the active count is greater than or equal to `Collector.max_concurrent_runs`, the service layer would refuse to enqueue another job.
-
-The expected default is `1` because most collectors are safer as singleton execution paths until a concrete need for parallel collection exists. The FedRAMP 20x KSI catalog collector should remain singleton; there is no useful reason to refresh the same catalog source multiple times at once.
-
-`max_concurrent_runs` must be a positive integer. `0` is not a disablement mechanism; capability enable/disable is separately tracked as backlog work in `spec-tap-cares-v0.md`.
-
-When implemented, the service layer must be authoritative. Administrative pages may disable or guard Run buttons based on this field, but UI behavior is advisory. Manual runs, future scheduler-triggered runs, and any API-triggered runs must all route through the same concurrency guard.
-
-This requirement intentionally scopes v0 concurrency to one `Collector` node. Today `collector_registry` is unique, so a collector node and a registered runner are effectively one-to-one. If future per-instance configuration allows multiple Collector nodes to share one runner, a later requirement should decide whether concurrency remains per node or moves to a shared `concurrency_key` / runner-level policy.
+**Superseded by `req-tap-cares-runconfig-concurrency`** (`spec-tap-cares-run-configuration.md`, owner ruling 2026-11-25). There is no `max_concurrent_runs` field on `Collector` and no default of 1. Every collector and emitter declares `OVERLAP_WITHIN_CONFIGURATION` and `OVERLAP_ACROSS_CONFIGURATIONS` in code, with no default; a configuration may add an optional, tighten-only `max_concurrent_runs`; admission is atomic in `run_collection` / `run_emission` under the configuration and component row locks; and a run at a limit is refused and recorded naming the blocking run, never queued. The criteria below are kept to show where each moved.
 
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-collector-concurrency-1 | Field Declared | Backlog | `Collector` declares a positive integer `max_concurrent_runs` field with default `1`. | |
-| req-tap-cares-collector-concurrency-2 | Positive Value Required | Backlog | `max_concurrent_runs` must be greater than or equal to `1`; `0` is invalid. | Disablement remains a separate backlog concern. |
-| req-tap-cares-collector-concurrency-3 | Service-Layer Guard | Backlog | `run_collection()` refuses to create/enqueue a new job when linked `RUNNING` jobs meet or exceed the collector limit. | |
-| req-tap-cares-collector-concurrency-4 | UI Reflects Policy | Backlog | Administrivia surfaces disable, guard, or explain manual Run actions when the concurrency limit is already reached. | Service layer remains authoritative. |
-| req-tap-cares-collector-concurrency-5 | KSI Singleton | Backlog | The FedRAMP 20x KSI collector is configured for one simultaneous run. | |
-| req-tap-cares-collector-concurrency-6 | Future Shared Runner Scope Deferred | Backlog | Any runner-level or shared-key concurrency across multiple Collector nodes is deferred until per-instance collector configuration exists. | |
+| req-tap-cares-collector-concurrency-1 | Field Declared | Deprecated | `Collector` declares a positive integer `max_concurrent_runs` field with default `1`. | Moved: the declaration and the optional per-configuration cap, `req-tap-cares-runconfig-concurrency-1`, `-4`. |
+| req-tap-cares-collector-concurrency-2 | Positive Value Required | Deprecated | `max_concurrent_runs` must be greater than or equal to `1`; `0` is invalid. | Moved: `req-tap-cares-runconfig-concurrency-4` (an integer of 1 or more, tighten-only). |
+| req-tap-cares-collector-concurrency-3 | Service-Layer Guard | Deprecated | `run_collection()` refuses to create/enqueue a new job when linked `RUNNING` jobs meet or exceed the collector limit. | Moved: `req-tap-cares-runconfig-concurrency-2`, `-3`, `-5`, `-7`. |
+| req-tap-cares-collector-concurrency-4 | UI Reflects Policy | Deprecated | Administrivia surfaces disable, guard, or explain manual Run actions when the concurrency limit is already reached. | Moved: `req-tap-cares-runconfig-concurrency-8`, `req-tap-cares-runconfig-web`. |
+| req-tap-cares-collector-concurrency-5 | KSI Singleton | Proposed | The FedRAMP 20x KSI collector declares `OVERLAP_WITHIN_CONFIGURATION = False` and `OVERLAP_ACROSS_CONFIGURATIONS = False`. | Now the KSI collector's declaration (`req-tap-cares-runconfig-concurrency`); there is no useful reason to refresh one catalog source twice at once. |
+| req-tap-cares-collector-concurrency-6 | Future Shared Runner Scope Deferred | Deprecated | Any runner-level or shared-key concurrency across multiple Collector nodes is deferred until per-instance collector configuration exists. | Moved: `OVERLAP_ACROSS_CONFIGURATIONS`, `req-tap-cares-runconfig-concurrency-3`. |
 
 ## Collector Module Class
 ----
@@ -457,7 +440,7 @@ Status: `Implemented`
 
 `CollectorConfig` is the configuration object tap-cares passes to a collector class at construction time.
 
-`CollectorConfig` is built by tap-cares, not by plugin code. In v0, it is derived only from the `Collector` node and the collection job being executed. Future versions may add JSON-safe execution data supplied by a scheduler or manual run surface.
+`CollectorConfig` is built by tap-cares, not by plugin code. As built, it is derived only from the `Collector` node and the collection job being executed. `spec-tap-cares-run-configuration.md` (`req-tap-cares-runconfig-delivery`, Proposed) adds the run configuration's id, revision, settings and secret ref, read fresh at run start; the two-ID shape below is what exists until that is built.
 
 The detailed contents of `CollectorConfig` will be refined as the first concrete collector is implemented. v0 should keep the shape deliberately small for the FedRAMP 20x KSI collector, where most behavior can be hard-coded in the registered collector class.
 
@@ -473,7 +456,7 @@ class CollectorConfig:
     collection_job_entity_id: UUID
 ```
 
-These two IDs match the JSON-safe task arguments listed in [Collector Task Execution](#collector-task-execution); the task worker reconstructs the `CollectorConfig` from them after dequeuing. No `params` dict, no scheduler-supplied overrides, no per-instance Collector configuration in v0. Additional fields are introduced when the second concrete collector arrives and demonstrates a real shape requirement.
+These two IDs match the JSON-safe task arguments listed in [Collector Task Execution](#collector-task-execution); the task worker reconstructs the `CollectorConfig` from them after dequeuing. Still true under run configurations: no `params` dict and no scheduler-supplied or launch-time overrides; settings come only from a stored configuration revision (`req-tap-cares-runconfig-selection`).
 
 Design constraints (forward-looking):
 
@@ -493,7 +476,7 @@ This shape keeps collector modules compatible with future stricter process isola
 | req-tap-cares-collector-config-3 | JSON-Safe Shape | Implemented | `CollectorConfig` is JSON-serializable or reducible to JSON-safe data. | |
 | req-tap-cares-collector-config-4 | No Live Model Requirement | Implemented | The public collector module contract does not require live Django model instances inside `CollectorConfig`. | |
 | req-tap-cares-collector-config-5 | Future Isolation Ready | Implemented | The config shape can be passed across a process boundary without changing the collector class contract. | |
-| req-tap-cares-collector-config-6 | v0 Shape Is Two IDs | Implemented | The v0 `CollectorConfig` is a frozen dataclass containing exactly `collector_entity_id: UUID` and `collection_job_entity_id: UUID`. No params dict, no scheduler overrides. | |
+| req-tap-cares-collector-config-6 | v0 Shape Is Two IDs | Implemented | The v0 `CollectorConfig` is a frozen dataclass containing exactly `collector_entity_id: UUID` and `collection_job_entity_id: UUID`. No params dict, no scheduler overrides. | Describes the built shape. `req-tap-cares-runconfig-delivery-1` (Proposed) extends it with the configuration id, revision, settings and secret ref; overrides stay refused. |
 
 ## Collector Self-Test And Readiness
 ----
@@ -663,7 +646,7 @@ class CollectorBase(ABC):
 
 The default implementation returns `ready` with a single `RUNNER_REGISTERED` pass-level check ("a runner exists; no collector-specific self-test is defined"). This is **safe by construction** under the default-on run gate (see [Run Gating](#run-gating)): a collector that declares no meaningful self-test also has nothing to gate on, so default `ready` → run proceeds → behavior is unchanged for trivial collectors. Overriding `self_test()` is exactly how a collector opts into real readiness gating. The earlier `SELF_TEST_NOT_IMPLEMENTED`-warning alternative is rejected: with the gate default-on, a base `warning` would needlessly degrade every collector that has no readiness concept.
 
-**v0 single ambient target.** `self_test()` takes no arguments and is a `classmethod`. It evaluates against a single ambient target the collector discovers itself — for AWS, the single well-known `SecretRef`; for KSI, the pinned URL constant. There is intentionally no per-`Collector`-node configuration in v0, so two `Collector` rows backed by the same runner class self-test identically. Per-target configuration (`self_test(config=...)` or a configured target model) is deferred; the contract leaves space for it without forcing the durable model before a second concrete configured collector proves the shape.
+**v0 single ambient target (as built).** Run configurations replace this: every collector implements `self_test(config)` and is tested per configuration, a not-configurable one against its seeded configuration, and core checks the configuration itself first (`req-tap-cares-runconfig-self-test`); the no-argument form described here is dropped. `self_test()` takes no arguments and is a `classmethod`. It evaluates against a single ambient target the collector discovers itself — for AWS, the single well-known `SecretRef`; for KSI, the pinned URL constant. There is intentionally no per-`Collector`-node configuration in v0, so two `Collector` rows backed by the same runner class self-test identically. Per-target configuration (`self_test(config=...)` or a configured target model) is deferred; the contract leaves space for it without forcing the durable model before a second concrete configured collector proves the shape.
 
 `self_test()` itself is **pure**: it computes and returns a `CollectorSelfTestResult` and performs no grid mutation, GRIFT, job/schedule creation, or external writes (`req-tap-cares-collector-self-test-6`). Registry resolution, exception trapping, logging, and persistence are the *service entry point's* responsibility, not the check code's.
 
@@ -717,13 +700,13 @@ Whether a high-frequency scheduled fire reuses a recent `CollectionJob.self_test
 ### Future
 
 - **Tiered self-tests.** A self-test currently means "this collector with this configuration". A future split into tiers — checks that run *before* configuration is resolved (binary present, plugin importable) versus *after* (this configuration's secret valid, this account reachable) — lets the UI distinguish "collector is fundamentally broken" from "this target is misconfigured". Backlog.
-- **Per-configuration self-test.** When collectors gain multiple configurations / collection targets, the unit of self-test becomes (collector, configuration) and the hook gains a configuration argument (`self_test(config=...)`) or moves onto a configured-target model. v0's single ambient configuration (AWS = the one well-known secret) is the degenerate case. Backlog.
+- **Per-configuration self-test.** Now specified: `req-tap-cares-runconfig-self-test` in `spec-tap-cares-run-configuration.md`.
 
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-collector-self-test-1 | Synchronous Self-Test Hook | In Development | `CollectorBase` exposes a synchronous no-arg `self_test()` classmethod returning `CollectorSelfTestResult`; concrete collectors override it. Never a Django Task. | |
+| req-tap-cares-collector-self-test-1 | Synchronous Self-Test Hook | In Development | `CollectorBase` exposes a synchronous no-arg `self_test()` classmethod returning `CollectorSelfTestResult`; concrete collectors override it. Never a Django Task. | Every collector takes `self_test(config)` instead once run configurations are built (`req-tap-cares-runconfig-self-test-1`). |
 | req-tap-cares-collector-self-test-2 | Result Stored On CollectionJob | Proposed | The full structured result is written to a dedicated `CollectionJob.self_test` field by the run-task body (sole-writer), distinct from the `results` accumulator and the `PRODUCED_BATCH` edges. No separate readiness entity; `CollectionJob` history is the unified run+readiness store. **Deliberate reversal** of the original "never persisted" position. | |
 | req-tap-cares-collector-self-test-3 | Status Vocabulary | In Development | Readiness is one of `ready` / `warning` / `unconfigured` / `misconfigured` / `error`. `blocked` / `unavailable` are not statuses at all; a failed self-test uses the standard failure mode. | |
 | req-tap-cares-collector-self-test-4 | Accumulated Checks | In Development | Self-tests accumulate pass/warn/fail/skip instead of bailing at first failure. | |
@@ -737,7 +720,7 @@ Whether a high-frequency scheduled fire reuses a recent `CollectionJob.self_test
 | req-tap-cares-collector-self-test-12 | Bounded Latency | Proposed | Per-collector declared budget: default ≤ 5s per live check / ~15s aggregate; a collector with unavoidable external-tool cold-start MAY raise it via `CollectorBase.SELF_TEST_{LIVE_CHECK_TIMEOUT,AGGREGATE_DEADLINE}_SECONDS` with documented justification. Timeouts still record explicit non-pass checks, never hang or false-green. | Per-collector budget added 2026-05-17 to support collectors with unavoidable external-tool cold-start. |
 | req-tap-cares-collector-self-test-13 | Redaction-Safe Everywhere | Proposed | No secret material in result, checks, `context`, log line, or `CollectionJob.self_test`. | Cross-ref `spec-tap-cares-secrets.md` redaction. |
 | req-tap-cares-collector-self-test-14 | Skip Does Not Escalate | Proposed | A `skip` is informational; status derives only from `fail` / `warn`. Skip-only ⇒ `ready`. Implementation `check_skip` / `_derive_status` must align. | |
-| req-tap-cares-collector-self-test-15 | v0 Single Ambient Configuration | Proposed | A self-test means "this collector with this configuration"; v0 has one ambient configuration the collector discovers itself (AWS = the one well-known secret). Per-configuration and tiered (pre-/post-config) self-tests are Backlog. | See Future. |
+| req-tap-cares-collector-self-test-15 | v0 Single Ambient Configuration | Deprecated | A self-test means "this collector with this configuration"; v0 has one ambient configuration the collector discovers itself (AWS = the one well-known secret). Per-configuration and tiered (pre-/post-config) self-tests are Backlog. | Superseded by `req-tap-cares-runconfig-self-test`: the configuration is a `RunConfiguration` passed to `self_test(config)`. Tiered self-tests stay Backlog. |
 | req-tap-cares-collector-self-test-16 | Run Mode | Proposed | `CollectionJob` carries a run mode: `full` (phase 1 → phase 2 if runnable) or `self_test_only` (phase 1 → stop). A one-off readiness check is a `self_test_only` job; passing ⇒ `SUCCESSFUL` ("no collection performed"). | Subsumes the Administrivia Self-test button. |
 
 ## Run Collection Entry Point
@@ -754,6 +737,7 @@ Status: `Proposed`
 def run_collection(
     collector: Collector,
     *,
+    run_configuration: RunConfiguration | None = None,  # req-tap-cares-runconfig-selection (Proposed)
     caller_context: CallerContext | None = None,
     manual_run: bool = False,
     manual_run_source: str = "",
@@ -764,7 +748,7 @@ def run_collection(
     0. Open the one batch that carries this run's own lifecycle writes
        (req-tap-cares-collector-run-collection-10); a caller-supplied batch
        scope is not inherited for them.
-    1. Enforce concurrency policy (req-tap-cares-collector-concurrency, Backlog).
+    1. Enforce concurrency policy (req-tap-cares-runconfig-concurrency, Proposed).
     2. Create a CollectionJob node via _create_node_internal
        (since CollectionJob is INTERNAL_ONLY), persisting `manual_run` and
        `manual_run_source` on the row.
@@ -808,7 +792,7 @@ Both fields are durable on `CollectionJob`. They are not passed as transient tas
 `run_collection` does **not** own:
 
 - Deciding *when* to run — that's the scheduler's job (or the human pressing a Run button).
-- Picking which collector — the caller passes a `Collector` instance.
+- Picking which collector — the caller passes a `Collector` instance, and the run configuration when the collector has more than one (`req-tap-cares-runconfig-selection`).
 - Anything that happens during `cls(config).run()` execution — that's the task body's job.
 
 #### v0 callers
@@ -843,17 +827,17 @@ That same check runs at the **other** end too, and the ordering is the substance
 
 #### Concurrency
 
-`run_collection` is the authoritative point for collector concurrency enforcement. When `req-tap-cares-collector-concurrency` lands, the guard fires here — before CollectionJob creation, so a rejected request never produces a grid mutation. Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
+`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here, at kickoff, under the configuration row lock: an admitted request creates its job, which is the reservation, and enqueues its task in that same transaction, not in `on_commit`, so job and task commit together or not at all (owner ruling 2026-11-27; this replaces the deferred-enqueue path described under Sealing, and the reaper also closes a `READY` job stranded without a live task); a refused request is recorded as a closed job marked `overlap_refused` naming the blocking job, and enqueues nothing (two-phase admission). Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-collector-run-collection-1 | Public Entry Point | Proposed | `run_collection(collector, *, caller_context=None, manual_run=False, manual_run_source="") -> CollectionJob` is the sole public callable for starting a collection. | Replaces the v0 internal `enqueue_collection` name. |
+| req-tap-cares-collector-run-collection-1 | Public Entry Point | Proposed | `run_collection(collector, *, caller_context=None, manual_run=False, manual_run_source="") -> CollectionJob` is the sole public callable for starting a collection. | Replaces the v0 internal `enqueue_collection` name. Gains `run_configuration` under `req-tap-cares-runconfig-selection-2`. |
 | req-tap-cares-collector-run-collection-2 | Service-Layer Routing | Proposed | All grid mutations performed by `run_collection` (CollectionJob create, HAS_COLLECTION_JOB create) route through the service layer or the trusted-internal create helper. No direct ORM writes for grid-managed types. | |
 | req-tap-cares-collector-run-collection-3 | CollectionJob Internal Create | Proposed | `run_collection` is the sole legal creator of CollectionJob rows, using `_create_node_internal` (since CollectionJob is INTERNAL_ONLY). | |
 | req-tap-cares-collector-run-collection-4 | Edge Through Service Layer | Proposed | The HAS_COLLECTION_JOB edge is created via `tap_grid.services.create_edge`. | |
-| req-tap-cares-collector-run-collection-5 | Concurrency Chokepoint | Proposed | `run_collection` is where the future concurrency guard (`req-tap-cares-collector-concurrency`) fires; manual, scheduled, and future API triggers all share it. | |
+| req-tap-cares-collector-run-collection-5 | Concurrency Chokepoint | Proposed | `run_collection` is where the future concurrency guard (`req-tap-cares-collector-concurrency`) fires; manual, scheduled, and future API triggers all share it. | The guard is now `req-tap-cares-runconfig-concurrency`'s two-phase admission. |
 | req-tap-cares-collector-run-collection-6 | Scheduler Is Caller, Not Owner | Proposed | The future scheduler subsystem invokes `run_collection`; it does not reach behind it to create CollectionJobs or enqueue tasks directly. | |
 | req-tap-cares-collector-run-collection-7 | Administrivia Caller Permitted In v0 | Proposed | The Administrivia HTMX panel handler is the permitted v0 caller. The path migrates to scheduler-mediated triggering when the scheduler spec lands; `run_collection`'s contract does not change. | See `spec-tap-cares-administrivia.md` `req-tap-cares-administrivia-manual-run`. |
 | req-tap-cares-collector-run-collection-8 | Post-Enqueue Return | Proposed | The function returns the CollectionJob in its post-enqueue state. Under ImmediateBackend the job reflects terminal status; under worker backends it reflects READY or RUNNING. | |
@@ -1404,7 +1388,7 @@ What the comparison supports: wherever work happens in discrete executions the r
 10. Plugin validation reports a registered collector class with no `COLLECTOR_VERSION` in its own body as an info-severity note worded as a warning, as `event-time-declarations` does, because every plugin repository's CI runs validation with `--strict`. With `TAP_REQUIRE_COLLECTOR_VERSION=1` it fails. A value that is not an integer of 1 or more fails in both modes. The switch becomes the default in the collector sweep (Issue# 1289 - tap).
 11. `CollectionJob`'s new fields change its recorded definition. Its version record is rebuilt at version 1 with them, under the owner ruling that no grid exists before 0.5.0 (Issue# 1284 - tap).
 12. A run recorded before this requirement is built has these fields empty. They are not filled in afterwards.
-13. The configuration a run used is not part of this requirement. It belongs with the collector configuration nodes (Issue# 907 - tap).
+13. The configuration a run used is not part of this requirement. It is recorded beside these fields by `req-tap-cares-runconfig-traceability` (`spec-tap-cares-run-configuration.md`).
 
 ### Development
 One number for a collector is coarser than some comparable systems keep: Dagster versions each asset and Airbyte scopes a breaking change to a stream. It matches SARIF and the SBOM formats, and it fits a grid where the unit of re-collection is a run. A finer grain can be added later as a second declaration without changing what a run records.

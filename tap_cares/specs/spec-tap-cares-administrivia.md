@@ -142,7 +142,7 @@ Initial columns:
 | Last Run | latest finished `CollectionJob.status` | `successful`, `failed`, or `never run` |
 | Last Run At | latest finished `CollectionJob.finished_at` | Empty for never run |
 | Summary | latest finished `CollectionJob.summary` | At-a-glance one-liner describing the last run (success or failure); collector-authored on success, count-derived fallback on failure. Empty for collectors that don't set one. |
-| Action | Administrivia panel POST | Self-test button and Manual Run button |
+| Action | Administrivia panel POST | Self-test button and Manual Run button. Under run configurations both move to one row per configuration, replacing the per-collector Run (`req-tap-cares-runconfig-web-3`) |
 
 The Status column is distinct from run history. A collector can have a successful previous run and still be `misconfigured` today because a secret file was removed, a binary disappeared, or a required upstream is unreachable. Conversely, a collector can be `ready` even if it has never been run.
 
@@ -219,7 +219,7 @@ Status: `Implemented`
 
 Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
-The CARES administrivia surface provides a manual Run action for a collector.
+The CARES administrivia surface provides a manual Run action for a collector. Under run configurations the Run action is per configuration and passes it to `run_collection`; the per-collector button is replaced (`req-tap-cares-runconfig-web`, `spec-tap-cares-run-configuration.md`).
 
 The Run action is a human-triggered POST. It must:
 
@@ -230,7 +230,7 @@ The Run action is a human-triggered POST. It must:
 5. Return or display the created `CollectionJob`.
 6. Refresh the homepage row or navigate to the collector detail page.
 
-The Run button may guard against obvious duplicate manual runs, such as a collector already showing a `RUNNING` job, but the general collector concurrency policy is Backlog until the enqueue path and scheduler behavior are specified together. The future service-layer concurrency policy is tracked in `tap_cares/specs/spec-tap-cares-collector.md` (`req-tap-cares-collector-concurrency`).
+The Run button may guard against obvious duplicate manual runs, such as a collector already showing a `RUNNING` job. The service-layer concurrency policy is `req-tap-cares-runconfig-concurrency` (`spec-tap-cares-run-configuration.md`): declared overlap per component, atomic admission, Run disabled at the limit naming the blocking run, and an idempotency key per request.
 
 The UI handler must not create `CollectionJob` nodes or `HAS_COLLECTION_JOB` edges directly. It is an adapter from a browser POST into the CARES execution service. `run_collection()` owns job creation, edge creation, task enqueueing, and concurrency enforcement, and that service must route TAP-managed node and edge creation through the grid service layer.
 
@@ -244,7 +244,7 @@ The UI handler must not create `CollectionJob` nodes or `HAS_COLLECTION_JOB` edg
 | req-tap-cares-administrivia-manual-run-2 | Registry Checked | Implemented | UI checks runner availability before enqueuing and surfaces missing runner errors. | |
 | req-tap-cares-administrivia-manual-run-3 | Uses run_collection | Implemented | Manual execution calls `tap_cares.services.run_collection()`. | |
 | req-tap-cares-administrivia-manual-run-4 | Job Visible | Implemented | The resulting `CollectionJob` is visible after the action completes. | |
-| req-tap-cares-administrivia-manual-run-5 | Duplicate Running Guard | Implemented | UI may prevent or warn against starting a second manual run when the collector already has a `RUNNING` job. | Full concurrency policy is Backlog; cross-ref `req-tap-cares-collector-concurrency`. |
+| req-tap-cares-administrivia-manual-run-5 | Duplicate Running Guard | Implemented | UI may prevent or warn against starting a second manual run when the collector already has a `RUNNING` job. | The concurrency policy is now `req-tap-cares-runconfig-concurrency`: Run disabled at the limit, naming the blocking run, with an idempotency key per request. |
 | req-tap-cares-administrivia-manual-run-6 | No Direct Node Creation In UI | Implemented | The UI handler does not directly create `CollectionJob` nodes or `HAS_COLLECTION_JOB` edges. | Creation belongs to CARES services and the grid service layer. |
 | req-tap-cares-administrivia-manual-run-7 | Readiness Courtesy Check | Proposed | UI reads the latest `CollectionJob.self_test` and refuses the click for a non-runnable last-known status, surfacing the self-test summary/docs links. This is a courtesy gate only; phase-1 of the run is authoritative. | Cross-ref `req-tap-cares-collector-self-test-9` (courtesy) and `-10` (authoritative). |
 
@@ -457,7 +457,7 @@ The table auto-refreshes via a quiet HTMX GET poll every 5 seconds, same pattern
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-administrivia-schedule-table-1 | All Schedules Listed | Implemented | Table includes every on-grid `Schedule` node. | |
-| req-tap-cares-administrivia-schedule-table-2 | Target Linked | Implemented | Each row links to the schedule's target `Collector` detail page via the `SCHEDULED_TARGET` edge. | |
+| req-tap-cares-administrivia-schedule-table-2 | Target Linked | Implemented | Each row links to the schedule's target `Collector` detail page via the `SCHEDULED_TARGET` edge. | When the target becomes a `RunConfiguration` (`req-tap-cares-runconfig-selection-1`), the row links to the configuration page. |
 | req-tap-cares-administrivia-schedule-table-3 | Last Fire Summarized | Implemented | Table shows the most recent `ScheduleFire` status, slot, and summary for each schedule. | |
 | req-tap-cares-administrivia-schedule-table-4 | Active Runs Visible | Implemented | Active-run count and `max_active_runs` cap are displayed per row. | |
 | req-tap-cares-administrivia-schedule-table-5 | Row Drilldown | Implemented | Clicking a schedule row opens the schedule detail page. | |

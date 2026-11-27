@@ -28,6 +28,7 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | req-grid-reconcile-observation-lifetime | [Retirement Ends An Observation, Not A Thing](#retirement-ends-an-observation-not-a-thing) | Proposed | `DROPPED_FROM_OBSERVATION` under a named scope; terminal; never rendered as "deleted" |
 | req-grid-reconcile-evidence | [Evidence Is Six Attributes, Not One Word](#evidence-is-six-attributes-not-one-word) | Implemented | Scope, enumeration, source consistency, interval, admission, application — recorded per surface as a completeness statement |
 | req-grid-reconcile-candidates | [Candidate Derivation And Prerequisites](#candidate-derivation-and-prerequisites) | Implemented | Fan-out from the parent; prerequisite read per parent; withdrawal is not absence — derived and recorded on the run's Batch, authority off |
+| req-grid-reconcile-previous-run | [The Previous Run Is The Same Configuration's](#the-previous-run-is-the-same-configurations) | Proposed | The previous run that withdrawal compares against is the latest successful run of the same run configuration with the same `secret_ref` |
 | req-grid-reconcile-falsifier | [Per-Type Falsifiers And Their Verdicts](#per-type-falsifiers-and-their-verdicts) | Implemented | Manifest-registered probe; five verdicts; probe compares identity and owner, not HTTP status; no falsifier means not reconcilable. Slice 3 landed the contract, registry, classification and the recorded verdicts (authority off); the writes are the verb's (slice 4) |
 | req-grid-reconcile-verb | [Service-Owned Reconciliation](#service-owned-reconciliation) | Implemented | One `reconcile` verb, run-config authority default off, budget, fence against stale verdicts. Slice 4 (Issue# 652 - tap): `grid.reconcile` capability, per-collector authority and budget, verdicts applied behind the fence, collectors never retire |
 | req-grid-reconcile-hysteresis | [No Time-Based Hysteresis](#no-time-based-hysteresis) | Proposed | The completeness gate is the hysteresis; corroboration is a second *independent* observation, not a clock |
@@ -216,6 +217,27 @@ The first contradiction had narrowing-out-of-scope both receiving "the same tomb
 
 #### Future
 Perspectives. When a grid holds observations from more than one observer, the candidate set must be scoped to the observing perspective so one observer's pass cannot retire another's rows. That work is blocked on a dimension-vocabulary cleanup: the dimension keys in use today mix perspective, facet and locator, and at least one is applied inconsistently by code path — evidence recorded in the design document.
+
+---
+
+### The Previous Run Is The Same Configuration's
+----
+RID: `req-grid-reconcile-previous-run`
+
+Status: `Proposed`
+
+Where this spec says "the previous run" or "the previous statement" (the scope comparison of `req-grid-reconcile-candidates`, and `scope_withdrawn` in `-candidates-4`), it means the previous run **of the same run configuration**: the most recently finished successful run whose recorded configuration is this run's, and whose recorded revision names this run's `secret_ref` (`req-tap-cares-runconfig-series` in `tap_cares/specs/spec-tap-cares-run-configuration.md`). As built, `_previous_run` (`tap_cares/tasks.py`) takes the collector's latest successful job; this requirement replaces that when run configurations are built. A run with no such previous run records `previous: null`, as today: withdrawal not observable.
+
+A withdrawal candidate is skipped when the entity's `last_observed_batch_id` is a batch of another configuration's successful job, so one configuration narrowing its scope never retires what another last observed; this mirrors the successful-jobs rule of the per-configuration watermark (`req-tap-cares-progressive-watermark-8`) (owner ruling 2026-11-27). The same protection holds through the cascade. Before a retirement is applied, its contained closure is checked under the locks (`contained_closure_locked`, the same discovery the contradiction fence uses). If any node in that closure has a `last_observed_batch_id` that is a batch of another configuration's successful job, the retirement is refused as `contradicted`, and the protected descendants are named. So retiring a parent never cascades into what another configuration last observed (owner ruling 2026-11-27). The full answer, scoping candidates to an observing perspective, stays deferred (`req-grid-reconcile-candidates` Future).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-reconcile-previous-run-1 | Same Configuration Only | Proposed | With two configurations of one collector, a run's candidates compare its scope only with the latest successful run of its own configuration. | |
+| req-grid-reconcile-previous-run-2 | New Credential Compares Nothing | Proposed | A run whose configuration's `secret_ref` differs from the one its previous run recorded has `previous: null` and no `scope_withdrawn` candidate. | |
+| req-grid-reconcile-previous-run-3 | No Withdrawal Across Configurations | Proposed | An entity that falls out of configuration A's narrowed scope but whose `last_observed_batch_id` is a batch of configuration B's successful job is skipped, not a `scope_withdrawn` candidate of A's run. | Owner ruling 2026-11-27. |
+| req-grid-reconcile-previous-run-4 | No Cascade Across Configurations | Proposed | Configuration A last observed parent P, and configuration B's successful job last observed child C, contained by P. When A's narrowed scope makes P a withdrawal candidate, applying it is refused as `contradicted` and names C; neither P nor C is retired. | Owner ruling 2026-11-27; closes the cascade path. |
 
 ---
 

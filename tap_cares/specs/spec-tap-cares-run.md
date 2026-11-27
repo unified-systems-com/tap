@@ -32,7 +32,7 @@ The tap-best-practices skill carries the short form of this rule ("Runs: a run n
 | req-tap-cares-run-graceful-close | [Close In `finally`, Best-Effort](#close-in-finally-best-effort) | Proposed | The run closes itself on the way out when it can; the steady_queue limitation is named; the reaper is the guarantee |
 | req-tap-cares-run-mopup | [Mop-Up By The Reaper](#mop-up-by-the-reaper) | Proposed | Extends `req-tap-cares-collector-job-reaper`: a `running` run whose owner job is terminal or dead is closed `abandoned`, at the scheduler tick and at the next open of its type; no new numbers |
 | req-tap-cares-run-abort-cleanup | [Abort Clean-Up Hook](#abort-clean-up-hook) | Proposed | Optional `on_abort(run)` on collectors and emitters, only after a recorded effect and refused if the code changed; dispatched through a pending-row outbox at the tick and at open; a lost dispatch is recovered, a hook that ran is never retried |
-| req-tap-cares-run-overlap | [Overlap Per Run Type](#overlap-per-run-type) | Proposed | Allowed by default; a type may refuse overlap with a transaction-scoped advisory lock at open |
+| req-tap-cares-run-overlap | [Overlap Per Run Type](#overlap-per-run-type) | Proposed | A run of a collector or emitter takes its overlap from the component's declaration; any other run type: allowed by default, may refuse with a transaction-scoped advisory lock at open |
 | req-tap-cares-run-backlog | [Deferred Run Work](#deferred-run-work) | Backlog | Cooperative stop signal, retention of failed and abandoned runs, `CollectionJob` adopting the convention |
 
 ## Plugin-Declared Run Nodes
@@ -296,7 +296,9 @@ RID: `req-tap-cares-run-overlap`
 
 Status: `Proposed`
 
-Overlap is declared per run type with `ALLOW_OVERLAP`, default `True`: two runs of the same type may execute at once. A type that sets it to `False` refuses overlap at open.
+**Runs of a collector or emitter take their overlap from the component's declaration.** A run type whose owner job belongs to a collector or an emitter does not default to overlap: its overlap is the component's `OVERLAP_WITHIN_CONFIGURATION` / `OVERLAP_ACROSS_CONFIGURATIONS` (and any `max_concurrent_runs` on the configuration), decided once when the owner job is admitted (`req-tap-cares-runconfig-concurrency`, owner ruling 2026-11-25), and `ALLOW_OVERLAP` does not apply to it. Under `req-tap-cares-run-node-2` every run's owner job is a `CollectionJob` or an `EmissionJob`, so today that is every run type.
+
+**Other run types are left as they were.** For a run type whose owner job belongs to neither, overlap is declared with `ALLOW_OVERLAP`, default `True`: two runs of the same type may execute at once. A type that sets it to `False` refuses overlap at open, as below.
 
 **What counts is what is still executing, not only what is `running`.** A run is executing while its status is `running`, and also while it was closed from outside (`closed_by = mop_up`) but its owner job's task has not finished: the reaper's derive steps still find that task claimed by a live process. A deadline-abandoned run whose thread is still working is the case this covers. This is the same rule the scheduler uses to hold a slot for a deadline-abandoned emission (`req-tap-cares-run-mopup-4`), so `ALLOW_OVERLAP = False` and the scheduler's overlap count agree.
 
@@ -308,7 +310,7 @@ The advisory lock is PostgreSQL-specific. A future SQLite shape needs its own se
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-cares-run-overlap-1 | Allowed By Default | Proposed | Two concurrent opens of a type that does not set `ALLOW_OVERLAP = False` both succeed. | |
+| req-tap-cares-run-overlap-1 | Allowed By Default | Proposed | Two concurrent opens of a type that does not set `ALLOW_OVERLAP = False` both succeed. | Applies only to a run type whose owner job is not a collector's or emitter's; those follow `req-tap-cares-runconfig-concurrency`. |
 | req-tap-cares-run-overlap-2 | Refused Under The Lock | Proposed | For a type with `ALLOW_OVERLAP = False`, of two concurrent opens exactly one succeeds and the other raises `RunOverlapRefused`; a stale `running` row of a dead job is mopped up first and does not block the open; a deadline-abandoned run whose owner task is still claimed by a live process does block it. | Matches the scheduler's slot hold. |
 
 ## Deferred Run Work
