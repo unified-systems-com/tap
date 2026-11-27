@@ -159,6 +159,8 @@ The hazard: if `run_collection(...)` is called inside an uncommitted outer `tran
 
 This keeps the contract simple: callers do not need to know about transaction state. `run_collection` does the right thing regardless.
 
+**Superseded when run configurations land.** Two-phase admission (`req-tap-cares-runconfig-concurrency` in `spec-tap-cares-run-configuration.md`, Proposed) enqueues the task inside the transaction that creates the job instead of in `on_commit`: because the task row shares this database, the worker cannot see it before the job commits, and job and task commit together or not at all (owner ruling 2026-11-27). This requirement describes the code as built until then.
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |

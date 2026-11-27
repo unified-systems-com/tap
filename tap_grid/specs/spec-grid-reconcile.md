@@ -228,12 +228,15 @@ Status: `Proposed`
 
 Where this spec says "the previous run" or "the previous statement" (the scope comparison of `req-grid-reconcile-candidates`, and `scope_withdrawn` in `-candidates-4`), it means the previous run **of the same run configuration**: the most recently finished successful run whose recorded configuration is this run's, and whose recorded revision names this run's `secret_ref` (`req-tap-cares-runconfig-series` in `tap_cares/specs/spec-tap-cares-run-configuration.md`). As built, `_previous_run` (`tap_cares/tasks.py`) takes the collector's latest successful job; this requirement replaces that when run configurations are built. A run with no such previous run records `previous: null`, as today: withdrawal not observable.
 
+A withdrawal candidate is skipped when the entity's `last_observed_batch_id` is a batch of another configuration's successful job, so one configuration narrowing its scope never retires what another last observed; this mirrors the successful-jobs rule of the per-configuration watermark (`req-tap-cares-progressive-watermark-8`) (owner ruling 2026-11-27). The full answer, scoping candidates to an observing perspective, stays deferred (`req-grid-reconcile-candidates` Future).
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-reconcile-previous-run-1 | Same Configuration Only | Proposed | With two configurations of one collector, a run's candidates compare its scope only with the latest successful run of its own configuration. | |
 | req-grid-reconcile-previous-run-2 | New Credential Compares Nothing | Proposed | A run whose configuration's `secret_ref` differs from the one its previous run recorded has `previous: null` and no `scope_withdrawn` candidate. | |
+| req-grid-reconcile-previous-run-3 | No Withdrawal Across Configurations | Proposed | An entity that falls out of configuration A's narrowed scope but whose `last_observed_batch_id` is a batch of configuration B's successful job is skipped, not a `scope_withdrawn` candidate of A's run. | Owner ruling 2026-11-27. |
 
 ---
 

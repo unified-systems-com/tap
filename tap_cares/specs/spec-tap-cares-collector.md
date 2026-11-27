@@ -827,7 +827,7 @@ That same check runs at the **other** end too, and the ordering is the substance
 
 #### Concurrency
 
-`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here, at kickoff, under the configuration row lock: an admitted request creates its job, which is the reservation, and enqueues it; a refused request is recorded as a closed job marked `overlap_refused` naming the blocking job, and enqueues nothing (two-phase admission). Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
+`run_collection` is the authoritative point for collector concurrency enforcement (`req-tap-cares-runconfig-concurrency`, which supersedes `req-tap-cares-collector-concurrency`). When it lands, the guard fires here, at kickoff, under the configuration row lock: an admitted request creates its job, which is the reservation, and enqueues its task in that same transaction, not in `on_commit`, so job and task commit together or not at all (owner ruling 2026-11-27; this replaces the deferred-enqueue path described under Sealing, and the reaper also closes a `READY` job stranded without a live task); a refused request is recorded as a closed job marked `overlap_refused` naming the blocking job, and enqueues nothing (two-phase admission). Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
 
 #### Acceptance Criteria
 

@@ -99,7 +99,7 @@ Status: `Proposed`
 RunConfiguration --CONFIGURES--> Collector | Emitter
 ```
 
-`CONFIGURES` is declared by `tap_cares` through the `add-edge` skill. It is naked (no `property_schema`). Every `RunConfiguration` has exactly one, to the component it configures. A configurable component may have any number of configurations; until it has one it cannot be run. A not-configurable component has exactly one (`req-tap-cares-runconfig-not-configurable`). A write that changes the edge's target validates the configuration against the new target (`req-tap-cares-runconfig-validation`).
+`CONFIGURES` is declared by `tap_cares` through the `add-edge` skill. It is naked (no `property_schema`). Every `RunConfiguration` has exactly one, to the component it configures. A configurable component may have any number of configurations; until it has one it cannot be run. A not-configurable component has exactly one (`req-tap-cares-runconfig-not-configurable`).
 
 ### Acceptance Criteria
 
@@ -229,6 +229,12 @@ Status: `Proposed`
 
 When a configurable component raises `CONFIG_SCHEMA_VERSION`, it may ship migration functions, one per step, each taking the settings at one version and returning them at the next. They are pure: no grid read, no write, no I/O. When a run reads a configuration whose `schema_version` is lower than the component's current one, core applies the steps in order, validates the result against the current schema, and writes it as a new revision authored by the component's program actor, before the run goes on; the run records that new revision. The read and the migration happen inside the run-start snapshot (`req-tap-cares-runconfig-delivery`): the migration write carries `entity_expected_version` equal to the revision it migrated from, so a migration computed from a stale revision is refused rather than overwriting a newer edit, and of two workers racing to migrate the same revision exactly one write lands; the other re-reads and finds the configuration current.
 
+Owner ruling 2026-11-27 adds three rules:
+
+- **The chain is checked at registration.** Registration refuses a configurable component whose migration steps from 1 to its `CONFIG_SCHEMA_VERSION` have a gap.
+- **The editor and the list migrate before validating.** They apply the same pure steps to a configuration's stored settings before validating or drawing them, so a configuration at version 1 opens cleanly against a version 2 schema. Only a run writes the migrated revision; a save from the editor writes at the current version through the configuration service.
+- **Core ships two author test helpers:** `assert_config_schema(cls)`, which checks a component's declaration as registration would, and `assert_migrates(cls, from_fixture, expected)`, which applies the steps to `from_fixture` and asserts the result equals `expected` and validates against the current schema.
+
 A configuration is **invalid** when its settings fail the current schema, when it cannot be migrated (a missing step, a step that raises, a result that fails the schema), or when its `schema_version` is higher than the code's. An invalid configuration:
 
 - refuses to run: the run ends `misconfigured` before any work (`req-tap-cares-runconfig-self-test`), and nothing is written but the job's own record;
@@ -244,6 +250,9 @@ A configuration is **invalid** when its settings fail the current schema, when i
 | req-tap-cares-runconfig-schema-migration-3 | Never Run With Fields Dropped | Proposed | Settings carrying a field the current schema does not allow fail validation; no run strips the field and proceeds. | |
 | req-tap-cares-runconfig-schema-migration-4 | Newer Than The Code | Proposed | A configuration whose `schema_version` is above the component's current version is invalid and is not rewritten. | A downgrade does not migrate backwards. |
 | req-tap-cares-runconfig-schema-migration-5 | Migration Cannot Overwrite An Edit | Proposed | A migration whose `entity_expected_version` no longer matches the configuration's version is refused and writes nothing; an edit made between the read and the migration survives. | |
+| req-tap-cares-runconfig-schema-migration-6 | Gapped Chain Refused | Proposed | A configurable component at `CONFIG_SCHEMA_VERSION = 3` that ships steps 1→2 but not 2→3 is refused at registration, naming the missing step; one with every step is accepted. | Owner ruling 2026-11-27. |
+| req-tap-cares-runconfig-schema-migration-7 | Editor And List Migrate First | Proposed | A configuration stored at version 1 of a component now at version 2 with a 1→2 step opens in the editor with its migrated settings and no validation error, and the list shows it valid; opening it writes nothing. | Owner ruling 2026-11-27. |
+| req-tap-cares-runconfig-schema-migration-8 | Author Test Helpers | Proposed | Core exports `assert_config_schema(cls)`, which fails on a declaration registration would refuse, and `assert_migrates(cls, from_fixture, expected)`, which fails when the migrated fixture differs from `expected` or fails the current schema. | Owner ruling 2026-11-27. |
 
 ## Credential Reference And The Destination Rule
 ----
@@ -252,6 +261,8 @@ RID: `req-tap-cares-runconfig-credential`
 Status: `Proposed`
 
 A configuration names the envelope it uses by `scope:key` in `secret_ref`. It may name only an envelope of a kind its component declares: an emitter declares its kind with `SECRET_KIND` / `SECRET_SCHEMA` (`req-tap-cares-v0-emitter`); a collector declares the kinds its configurations may name, each with its data schema, in a `SECRET_KINDS` mapping on its class. A component that declares no kind has configurations with no `secret_ref`. A not-configurable component's `secret_ref` is written in its plugin's seed, where today's collectors hardcode a fixed `SecretRef` in code. At save, a malformed ref, or a ref to a loaded envelope whose kind the component does not declare, is refused; an envelope not loaded at save time is not refused there, because secrets are provisioned off-grid. At run start, the envelope must resolve, be of a declared kind and validate against that kind's schema (`require_secret_kind(data_schema=...)`, `req-tap-cares-secrets-validation`), or the run ends `misconfigured`. Secret rotation is unchanged: restart to rotate (`req-tap-cares-secrets-rotation`).
+
+**Rotation contract (owner ruling 2026-11-27).** Replacing the credentials stored at a `secret_ref` keeps the same observation series (`req-tap-cares-runconfig-series`): it is the same account under a new credential. Pointing a configuration at a different account means a new `secret_ref`, which starts a new series, or a full reset. A component that can verify the account identity behind its credential does so at run start, and ends the run `misconfigured` when that identity differs from the one the series recorded.
 
 **The destination rule (strict).** Any setting that decides where a credential is sent stays in the secret envelope beside the credential, under the operator's file-system control, and never in a configuration. That covers, by name in today's plugins: API base URLs and hosts (`api_base_url`, `base_url`, `api_host`), TLS trust (`ca_bundle`, `ssl_verify`), an AWS assume-role `role_arn` (and its `role_session_name`, `duration_seconds`), and download mirrors; for an emitter, its destination (`req-tap-cares-v0-emitter-7`). A configuration holds only what to do and how: owner, repositories, regions, scope, limits, persona, selection. grype's and vuln_mosaic's mirror settings stay in their operator settings files (`tap_plugin/grype/settings.py`, `tap_plugin/vuln_mosaic/settings.py`), on purpose. The rule is a contract on the component's schema author, checked in review; core cannot tell from a schema what a field means.
 
@@ -263,6 +274,7 @@ A configuration names the envelope it uses by `scope:key` in `secret_ref`. It ma
 | req-tap-cares-runconfig-credential-2 | Checked Again At Run Start | Proposed | A run whose configuration's envelope is missing, of an undeclared kind, or invalid against its kind's schema ends `misconfigured` and writes no batch. | |
 | req-tap-cares-runconfig-credential-3 | Two Credentials, Two Configurations | Proposed | Two configurations of one configurable collector or emitter naming different envelopes each run with their own envelope. | Issue# 907 - tap reason 3. |
 | req-tap-cares-runconfig-credential-4 | Destination Stays In The Envelope | Proposed | No `CONFIG_SCHEMA` in core or in a first-party plugin declares a field that decides where a credential is sent; such settings are read from the envelope. | Review contract; the listed fields are the known set. |
+| req-tap-cares-runconfig-credential-5 | Rotation Keeps The Series | Proposed | After the credentials stored at a configuration's `secret_ref` are replaced, the next run's previous run is the one before the replacement; a component that verifies account identity ends a run `misconfigured` when the identity behind its credential differs from the one the series recorded. | Owner ruling 2026-11-27; another account is a new `secret_ref` or a full reset. |
 
 ## Destination Deviation
 ----
@@ -359,7 +371,7 @@ Every `CollectionJob` and `EmissionJob`, and every batch it writes, records four
 
 A node reaches the configuration it was written under the way it reaches the code version: from its spine pointers `last_changed_batch_id` or `last_observed_batch_id` (`req-grid-entity-batch-pointers`) to the batch, then to the run (`req-tap-cares-collector-version` rule 9), then to the configuration's history row by the recorded `history_id`. A run-minted node reaches it through its `run_id` (`req-tap-cares-run-id`) and the run's owner job.
 
-What is not added: no node gets a configuration field, no plugin table gets a column, and the run carries no hash of the configuration's content. The `history_id` is the pin. The three job columns land in core's tables in the same version record as the collector-version fields, so core 0.5.0 migrates the fleet once.
+What is not added: no node gets a configuration field, no plugin table gets a column, and the run carries no hash of the configuration's content. The `history_id` is the pin. The three job columns, and the idempotency key column (`req-tap-cares-runconfig-concurrency`), land in core's tables in the same version record as the collector-version fields, so core 0.5.0 migrates the fleet once.
 
 ### Acceptance Criteria
 
@@ -383,6 +395,7 @@ A run compares itself only with runs of the **same configuration**. Two configur
 - **The previous run** of a collection is the most recently finished successful `CollectionJob` whose recorded configuration (`req-tap-cares-runconfig-traceability`) is this run's configuration and whose recorded revision carries this run's `secret_ref`, other than this run. Today `_previous_run` (`tap_cares/tasks.py`) walks `Collector --HAS_COLLECTION_JOB-->` and takes the collector's latest successful job; it becomes this lookup. Candidate derivation (`tap_grid/candidates.py`) compares scope, and derives `scope_withdrawn`, only against that run (`req-grid-reconcile-previous-run`).
 - **Revisions of one configuration are one series.** An edit that narrows a configuration's scope is compared with the run before it and still produces `scope_withdrawn` candidates.
 - **A new `secret_ref` starts a new series.** The series boundary is found from the record: a previous run counts only if the revision it recorded names the same `secret_ref` as this run's. Pointing a configuration at another account therefore has no previous run, and never proposes withdrawing what the old account saw.
+- **No withdrawal across configurations.** A withdrawal candidate is skipped when the entity's `last_observed_batch_id` is a batch of another configuration's successful job, so configuration A narrowing its scope never retires what configuration B last observed; the same successful-jobs rule as the watermark (`req-tap-cares-progressive-watermark-8`) (owner ruling 2026-11-27). The full answer, reconcile perspectives, stays deferred (`req-grid-reconcile-candidates` Future, `tap_grid/specs/spec-grid-reconcile.md`).
 - **All state carried from one run to the next is keyed the same way**, by configuration and within it by `secret_ref`, wherever core or a component keeps it.
 - **Full refresh.** A per-configuration full-refresh action, gated by `cares.run_collectors`, starts one run of that configuration that ignores its watermarks, recorded on its job as a full refresh (`req-tap-cares-progressive-watermark-9`).
 - **Emitters.** Core keeps no previous-run comparison or carried state for an emitter: each run is new, retries live inside a run, and delivery identity is the emitter's own (`req-tap-cares-v0-emitter`). An emitter that keeps state of its own between runs keys it by configuration in the same way.
@@ -395,6 +408,7 @@ A run compares itself only with runs of the **same configuration**. Two configur
 | req-tap-cares-runconfig-series-2 | Edits Stay In The Series | Proposed | A run after a revision that narrowed the scope compares with the run before the edit and records `scope_withdrawn` candidates for what fell out of scope. | |
 | req-tap-cares-runconfig-series-3 | New Credential, New Series | Proposed | A run after a revision that changed `secret_ref` has no previous run (`previous: null`) and records no `scope_withdrawn` candidate. | |
 | req-tap-cares-runconfig-series-4 | Emitters Carry None | Proposed | No emission reads an earlier emission's record to decide what it does. | |
+| req-tap-cares-runconfig-series-5 | No Withdrawal Across Configurations | Proposed | When configuration A narrows its scope, an entity whose `last_observed_batch_id` is a batch of configuration B's successful job is not a `scope_withdrawn` candidate of A's run; one A last observed is. | Owner ruling 2026-11-27; perspectives deferred. |
 
 ## Declared Overlap, Refused At The Limit
 ----
@@ -415,11 +429,15 @@ Registration refuses a class that lacks either. They replace the Backlog `max_co
 
 **Two-phase admission.** At kickoff, `run_collection` / `run_emission` lock the configuration row (and the component row, taken second, for the across rule), count occupancy, and either create the admitted job, which is the reservation, and enqueue it, or record the refusal and enqueue nothing; the worker then takes the revision snapshot (`req-tap-cares-runconfig-delivery`) on that same job. A queued job keeps its reservation if the cap is lowered while it waits (Backlog, Issue# 1394 - tap).
 
+**The task is enqueued in the transaction that creates the job**, not in a `transaction.on_commit` callback: Steady Queue stores its task rows in the same Postgres database (`req-tap-cares-task-backend-transactional-integrity`), so the job and its task commit together or not at all, and no reservation is left without a task (owner ruling 2026-11-27). As built, `run_collection` enqueues in `on_commit` (`tap_cares/services/__init__.py`); this replaces that.
+
+**The reaper closes stranded reservations.** Besides `RUNNING` jobs (`req-tap-cares-collector-job-reaper`), the reaper closes as failed, with a `Reaped:` summary naming the reason, a `READY` job whose task row is missing, or whose task was claimed by a process whose heartbeat is older than steady_queue's `process_alive_threshold` before the job reached `RUNNING`. It uses that existing threshold and no new one, and never touches a job whose task is queued and unclaimed or claimed by a live process (owner ruling 2026-11-27). As built, the reaper scans only `RUNNING` jobs (`tap_cares/services/reaper.py`).
+
 **One occupancy predicate**, shared by admission and the scheduler's overlap count: a job occupies capacity while it is non-terminal, and also while it is a deadline-abandoned `EmissionJob` (its own run, `req-tap-cares-v0-emitter`) whose task is still claimed by a process within steady_queue's `process_alive_threshold`; it releases when that process stops or the task finishes. No new timeout is introduced (`req-tap-cares-run-mopup-5`).
 
-**Refused at the limit, never queued.** A run at a limit (within the configuration, across configurations, or the configuration's cap) is refused and the refusal recorded, naming the blocking run, the same way for manual and scheduled runs: its job is written and closed at once as failed with `overlap_refused` and the blocking job's id, no task is enqueued and no component code runs. A scheduled fire at the limit is also recorded `skipped` with a summary naming the blocking run; it is never queued and never caught up later. Nothing is replaced or cancelled, because that would break the configuration's series (`req-tap-cares-runconfig-series`). A schedule's own `max_active_runs` (`req-tap-cares-scheduler-concurrency`) applies as well.
+**Refused at the limit, never queued.** A run at a limit (within the configuration, across configurations, or the configuration's cap) is refused and the refusal recorded, naming the blocking run, the same way for manual and scheduled runs: its job is written and closed at once as failed with `overlap_refused` and the blocking job's id, recording `run_configuration_id` with a null `run_configuration_history_id` because it never bound a revision (owner ruling 2026-11-27), no task is enqueued and no component code runs. A scheduled fire at the limit is also recorded `skipped` with a summary naming the blocking run; it is never queued and never caught up later. Nothing is replaced or cancelled, because that would break the configuration's series (`req-tap-cares-runconfig-series`). A schedule's own `max_active_runs` (`req-tap-cares-scheduler-concurrency`) applies as well.
 
-**Manual runs.** A manual Run request carries a client-generated idempotency key; a second request with the same key returns the run the first one opened. The landing page disables Run while the limit is reached and names the blocking run (`req-tap-cares-runconfig-web`).
+**Manual runs.** A manual Run request carries a client-generated idempotency key, stored in an `idempotency_key` column on the job (`CollectionJob`, `EmissionJob`) that is unique per configuration (owner ruling 2026-11-27); a second request with the same key returns the run the first one opened. The landing page disables Run while the limit is reached and names the blocking run (`req-tap-cares-runconfig-web`).
 
 Further tighten-only knobs (a cap across configurations, rate limits) are Backlog (`req-tap-cares-runconfig-backlog`).
 
@@ -434,9 +452,11 @@ Further tighten-only knobs (a cap across configurations, rate limits) are Backlo
 | req-tap-cares-runconfig-concurrency-5 | Atomic Admission | Proposed | Of two concurrent starts that together exceed a limit, exactly one opens and the other is recorded refused naming it. | |
 | req-tap-cares-runconfig-concurrency-6 | One Occupancy Predicate | Proposed | A job the reaper has ended does not block admission; admission and the scheduler's overlap count use the same predicate; no admission rule reads a new clock or timeout. | |
 | req-tap-cares-runconfig-concurrency-7 | Refused, Recorded, Never Queued | Proposed | A manual run and a scheduled fire at the limit each leave a closed job naming the blocking run, with no task enqueued; the scheduled fire is `skipped` naming it; no later slot runs it, and no live run is cancelled. | |
-| req-tap-cares-runconfig-concurrency-8 | One Run Per Idempotency Key | Proposed | Two manual Run requests carrying the same idempotency key open one run; the landing page shows Run disabled with the blocking run named while the limit is reached. | |
+| req-tap-cares-runconfig-concurrency-8 | One Run Per Idempotency Key | Proposed | Two manual Run requests carrying the same idempotency key open one run, and the key is on that job's `idempotency_key` column, unique per configuration; the landing page shows Run disabled with the blocking run named while the limit is reached. | |
 | req-tap-cares-runconfig-concurrency-9 | Deadline-Abandoned Emission Still Occupies | Proposed | A second manual start of an emitter configuration, after its emission is deadline-abandoned while that emission's task is still claimed by a live process, is refused naming it; once the process stops or the task finishes, a start is admitted. | |
-| req-tap-cares-runconfig-concurrency-10 | Refusal Enqueues Nothing | Proposed | A refused start leaves one closed job marked `overlap_refused` naming the blocking job and no enqueued task; an admitted start's job is the one the worker snapshots. | Two-phase admission. |
+| req-tap-cares-runconfig-concurrency-10 | Refusal Enqueues Nothing | Proposed | A refused start leaves one closed job marked `overlap_refused` naming the blocking job, carrying `run_configuration_id` and a null `run_configuration_history_id`, and no enqueued task; an admitted start's job is the one the worker snapshots. | Two-phase admission. |
+| req-tap-cares-runconfig-concurrency-11 | Job And Task Commit Together | Proposed | An admitted start whose transaction rolls back after the job is created leaves neither the job nor its task; one that commits leaves both; no `on_commit` callback enqueues it. | Owner ruling 2026-11-27. |
+| req-tap-cares-runconfig-concurrency-12 | Stranded Reservation Frees The Slot | Proposed | A `READY` job with no task row (a crash between admission and enqueue), or whose task's claiming process died before the job reached `RUNNING`, is closed failed by the reaper with a named reason, and the next start of that configuration is admitted; a `READY` job whose task is queued and unclaimed, or claimed by a live process, is left alone. | Owner ruling 2026-11-27. |
 
 ## Capabilities
 ----
@@ -494,10 +514,10 @@ Status: `Proposed`
 This is where emitters and collectors really differ: an emitter's effect lands on someone else's system, so its configuration is armed by an operator before it sends (`req-tap-cares-v0-emitter`). Arming moves from the `Emitter` to the `RunConfiguration` (amending `req-tap-cares-v0-emitter-12`). `manage.py arm_emitter <run configuration entity id> --on|--off --as <username>` is the one writer of the configuration's arming fields, gated by `cares.arm_emitters` and written on a batch of its own whose metadata is the audit record, as today. Arming `--on` binds:
 
 - the code identity: `EMITTER_VERSION` and `source_hash` (`armed_emitter_version`, `armed_source_hash`);
-- the configuration revision (`armed_history_id`, with `armed_version` beside it for display): the `history_id` of the history row the arm write itself produces, so the next write leaves it behind;
+- the configuration revision (`armed_history_id`, with `armed_version` beside it for display): the `history_id` of the configuration's latest history row as it stands before the arm write, since a row cannot hold its own `history_id` (owner ruling 2026-11-27). The arm write's own history row does not make the configuration stale; a later history row that differs outside the arming fields does;
 - the secret ref (`armed_secret_ref`).
 
-At each run, any difference between the present and what was armed (version, source hash, revision, secret ref) makes the run a dry run with `dry_run_reason = arm_stale` until re-armed. Narrowing counts as a change; any change re-arms. An unarmed configuration's runs are dry runs with `dry_run_reason = unarmed`. Each configuration of one emitter is armed separately.
+At each run, any difference between the present and what was armed (version, source hash, a later revision that differs outside the arming fields, secret ref) makes the run a dry run with `dry_run_reason = arm_stale` until re-armed. Narrowing counts as a change; any change re-arms, an edit to `max_concurrent_runs`, `name` or `description` included. An unarmed configuration's runs are dry runs with `dry_run_reason = unarmed`. Each configuration of one emitter is armed separately.
 
 A not-configurable emitter's seeded configuration is armed the same way, by an operator. **Seeding never arms:** a seed that carries arming fields is refused, and a seed that changes a not-configurable configuration (a new `secret_ref`, say) makes a new revision and so leaves it `arm_stale`. A plugin may seed an emitter's `not_configurable` configuration; a configurable emitter's configurations are an operator's to create (editor, API or boot profile), never a plugin bundle's.
 
@@ -508,7 +528,8 @@ v0 has no `SIDE_EFFECTS` (`req-tap-cares-v0-emitter-1`, Retired). When Issue# 13
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-runconfig-emitter-arming-1 | Arming Is Per Configuration | Proposed | Arming one configuration of an emitter leaves its other configurations unarmed; each sends only when itself armed and not stale. | |
-| req-tap-cares-runconfig-emitter-arming-2 | Any Change Re-Arms | Proposed | After arming, an edit to the settings, a change of `secret_ref`, a migration revision, a changed seed, a changed `EMITTER_VERSION` or a changed `source_hash` each make the next run a dry run with `dry_run_reason = arm_stale`. | Precision over churn. |
+| req-tap-cares-runconfig-emitter-arming-2 | Any Change Re-Arms | Proposed | After arming, an edit to the settings, a change of `secret_ref`, an edit to `max_concurrent_runs`, `name` or `description`, a migration revision, a changed seed, a changed `EMITTER_VERSION` or a changed `source_hash` each make the next run a dry run with `dry_run_reason = arm_stale`. | Precision over churn; any change re-arms (owner ruling 2026-11-27). |
+| req-tap-cares-runconfig-emitter-arming-4 | Arm Binds The Prior Row | Proposed | After `arm_emitter --on`, `armed_history_id` is the `history_id` of the configuration's latest history row before the arm write; the next run, with no further write, is not `arm_stale`; a later write that changes any field outside the arming fields makes it `arm_stale`. | Owner ruling 2026-11-27. |
 | req-tap-cares-runconfig-emitter-arming-3 | One Writer | Proposed | Only `arm_emitter`, under `cares.arm_emitters`, writes the arming fields, on its own audit batch; the configuration service and every seed import refuse them. | Seeding never arms. |
 
 ## Web Surfaces
@@ -517,7 +538,7 @@ RID: `req-tap-cares-runconfig-web`
 
 Status: `Proposed`
 
-- **List.** A run configurations list: every configuration of every collector and emitter, with its component, name, description, configurability, schema version and whether it is valid.
+- **List.** A run configurations list: every configuration of every collector and emitter, with its component, name, description, configurability, schema version and whether it is valid, and its last success time, last status and current failure streak; an `overlap_refused` job counts in neither the failures nor the streak (owner ruling 2026-11-27).
 - **Page.** A configuration page: its settings, its secret ref (the reference only, never envelope contents), its revision history, a flag when it is invalid, contradictory or awaits migration, and a table of the runs that used it with the revision each used. A `not_configurable` configuration is labelled "Not configurable", with a line saying the component runs without settings, and offers no edit.
 - **Edit.** Create and edit through the generic editor (`spec-web-editor.md`): one generic `EditorDescriptor` builds a typed Django form from the component's `CONFIG_SCHEMA`, so the editor's typed-first rule holds and raw JSON stays the fallback (`req-web-editor-typed-4`). Save goes through the configuration service and shows its refusals per field.
 - **Run.** Each Run request carries a client-generated idempotency key, so a double-click opens one run; while a configuration is at its limit, Run is disabled and names the blocking run (`req-tap-cares-runconfig-concurrency`). A Full refresh action sits beside Run for a configuration whose component uses watermarks. On the CARES landing page a Run button per configuration replaces the per-collector Run button (amending `req-tap-cares-administrivia-manual-run`); the Self-test button sits beside a collector configuration's. A not-configurable component's row is its one configuration, labelled "Not configurable". Emitter Run controls are Backlog with the emitter table (`req-tap-cares-v0-emitter-14`); when they land they are per configuration too.
@@ -533,6 +554,7 @@ The pages are hosted by the Administrivia plugin (`req-tap-cares-administrivia-o
 | req-tap-cares-runconfig-web-2 | Generic Typed Form | Proposed | One `EditorDescriptor` renders a typed form for any form-safe `CONFIG_SCHEMA`, including a `const`-discriminated `oneOf`, and saves through the configuration service. | |
 | req-tap-cares-runconfig-web-3 | Run Per Configuration | Proposed | The CARES landing page offers Run and Self-test per collector configuration and no per-collector Run; each calls `run_collection` with that configuration. | |
 | req-tap-cares-runconfig-web-4 | Configuration Column | Proposed | Collection and emission job tables show the configuration and revision each run used. | |
+| req-tap-cares-runconfig-web-5 | Status On The List | Proposed | For each configuration the list shows the time of its last successful run, the status of its last run and its current failure streak; after the jobs failed, `overlap_refused`, failed the streak is 2: a refusal neither adds to the failures nor resets the streak. | Owner ruling 2026-11-27. |
 
 ## Boot Profile Configurations
 ----
@@ -568,6 +590,7 @@ Status: `Backlog`
 - **Scoped grants** (Issue# 1204 - tap): grants per component or per configuration, and a per-credential "use" grant.
 - **A collector-side analogue of emitter arming**, and options such as no self-approval (the person who edits a configuration may not arm it) (Issue# 1204 - tap).
 - **Per-configuration `SIDE_EFFECTS`** (Issue# 1371 - tap).
+- **Operations, in Issue# 1394 - tap** (owner ruling 2026-11-27): pausing or disabling a configuration; failure notifications; job retention; export and promotion of configurations made in the UI; a test-before-save self-test of a candidate configuration; the rolling-deploy schema-skew case, where old and new workers see different `CONFIG_SCHEMA_VERSION`s.
 - **Staying on Issue# 907 - tap**, out of this spec: dimensions per collection; edge authority; the actor or role a run executes as (Issue# 1204 - tap); dangling-edge and rejection policy; reconcile authority fields, which stay on `Collector` (`req-tap-cares-collector-model-12`); file-based operator settings.
 
 ### Acceptance Criteria
