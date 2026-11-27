@@ -10,7 +10,7 @@ related:
   - docs/misc/doc-0.5-compatibility-break-plan-2026-11-27.md
 ---
 
-> A read-only review by the make-it-fast session of origin/main at `21e4e525`, which is v0.5.0 (`af6c940e`) plus 8 commits. It is the checklist the 0.5 Compatibility Break Plan cites. Line numbers are as of that commit.
+> A read-only review by the make-it-fast session of origin/main at `21e4e525`, which is v0.5.0 (`af6c940e`) plus 8 commits. It is the checklist the 0.5 Compatibility Break Plan cites. Line numbers are as of that commit. Statements below that a delegated reviewer did the sweep, or that certain claims were spot-checked, are the session's own account, not a committed review record. Every row cites file:line at `21e4e525`, so each one can be re-checked against that commit.
 
 # CI after 0.5: workflow-by-workflow verdicts (items 1 and 7)
 

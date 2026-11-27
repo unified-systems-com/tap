@@ -14,7 +14,7 @@ related:
   - docs/misc/doc-0.5-ci-review-2026-11-27.md
 ---
 
-> This is a snapshot of the claude.ai doc at revision 32, written by the hard-things and make-it-fast sessions after Codex reviewed revision 24. It is kept here for the record. At the time of this snapshot, none of its decisions had been ruled on. The two make-it-fast reports under Sources are committed beside this file. Their links below point to those copies, not to the original local handoff paths.
+> This is a snapshot of the claude.ai doc at revision 32, written by the hard-things and make-it-fast sessions after Codex reviewed revision 24. It is kept here for the record. At the time of this snapshot, none of its decisions had been ruled on. The two make-it-fast reports under Sources are committed beside this file. Their links below point to those copies, not to the original local handoff paths. Where the plan says Codex reviewed it, or that review findings "held", that is the authors' account. The review itself was run outside this repository and is not committed here, so treat those statements as narrative, not evidence. The plan's claims about the code cite file:line and can be checked directly.
 
 # 0.5.0 Compatibility Break Plan
 
