@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.1](https://github.com/unified-systems-com/tap/compare/v0.5.0...v0.5.1) (2026-11-28)
+
+
+### Features
+
+* **fips:** record CMVP [#5586](https://github.com/unified-systems-com/tap/issues/5586), so the pinned OpenSSL FIPS provider 3.5.9 is declared validated ([238ca80](https://github.com/unified-systems-com/tap/commit/238ca804ed2a423d1383cb91c1293d00f3b82a90))
+* **fips:** record CMVP [#5586](https://github.com/unified-systems-com/tap/issues/5586), so the pinned OpenSSL FIPS provider 3.5.9 is declared validated [via make-it-fast] ([21e4e52](https://github.com/unified-systems-com/tap/commit/21e4e525af68f90e294030f43d74c4abaac7c36f))
+
+
+### Bug Fixes
+
+* **dev:** a nested worktree's PR title names the spawning session, then itself ([f6bc3e4](https://github.com/unified-systems-com/tap/commit/f6bc3e497eef6e71a733e751fcfaa10b7b8adf6b))
+* **dev:** a nested worktree's PR title names the spawning session, then itself [via hard-things.pr-via] ([910993e](https://github.com/unified-systems-com/tap/commit/910993ef81fd6909bad230d972011584b6fe37c7))
+
+
+### Documentation
+
+* **fips:** D20 states the certificate lists no vendor-affirmed environments, so Wolfi is neither tested nor affirmed ([e73b310](https://github.com/unified-systems-com/tap/commit/e73b31023baf7d627ef47c5027c43d4633087f5c))
+
 ## [0.5.0](https://github.com/unified-systems-com/tap/compare/v0.4.9...v0.5.0) (2026-11-25)
 
 
